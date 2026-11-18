@@ -368,6 +368,18 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "built_capacity_retirable"),
         ),
         BehaviourChange(
+            id="automatic_replacement_cost",
+            summary=("With lifetime_method reinvest_automatic and a lifetime_technical, capacity is now replaced at "
+                     "the end of its life by a new plant, at the invest_cost, discount_rate, payback_time, "
+                     "lifetime_technical and net_salvage_value of the period the replacement comes online, and "
+                     "replaced again at its own end of life to the end of the horizon. Before, it paid the annuity "
+                     "of its first plant for ever, without its net_salvage_value. Existing capacity reaches its end "
+                     "of life and is replaced the same way (free without an invest_cost), and reinvest_automatic "
+                     "capacity, built or existing, can be retired when its invest_method allows it: retiring it "
+                     "also avoids every replacement still to come (results change)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "automatic_replacement_cost"),
+        ),
+        BehaviourChange(
             id="end_of_life_closest_seam",
             summary=("With lifetime_method reinvest_choice or no_reinvestment, the end of life (start of operation "
                      "plus lifetime_technical; existing capacity from the model start) is now rounded to the "

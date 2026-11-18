@@ -11652,6 +11652,44 @@ def _v82_descriptions(db) -> None:
             db.update_parameter_definition(id=pdef["id"], description=text)
 
 
+def _v82_automatic_replacement_marker(db) -> None:
+    """Part 5 of v82: the behaviour-change marker ``automatic_replacement_cost`` (``{"since": 82, "entities":
+    [...]}``) on a database where a unit, connection or node with ``lifetime_method`` ``reinvest_automatic`` (in some
+    alternative, or without one: the default) and a ``lifetime_technical`` either may invest and has a period map
+    of ``invest_cost``, ``discount_rate``, ``lifetime_technical`` or ``payback_time``, a ``payback_time`` or a
+    non-zero ``net_salvage_value``, or may retire: its capacity is now replaced at the end of its life at the
+    values of the period the replacement comes online, and a retirement avoids the replacements still to come.  A
+    run names those whose costs change.  No value is rewritten.  Idempotent: a rerun finds the marker written.
+    """
+    no_invest = {"not_allowed", "retire_period", "retire_total", "retire_no_limit", "retire_period_total"}
+    no_retire = {"not_allowed", "invest_period", "invest_total", "invest_no_limit", "invest_period_total"}
+    entities: set[str] = set()
+    for cls in ("unit", "connection", "node"):
+        if not db.get_item("entity_class", name=cls):
+            continue
+
+        def values(name: str) -> list[tuple[str, object]]:
+            return [(pv["entity_byname"][0], from_database(pv["value"], pv["type"]))
+                    for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name=name)]
+
+        methods = values("lifetime_method")
+        bounded_only = {e for e, _v in methods} - {e for e, v in methods if v == "reinvest_automatic"}
+        with_life = {e for e, _v in values("lifetime_technical")} - bounded_only
+        invest: dict[str, set[str]] = {}
+        for e, v in values("invest_method"):
+            invest.setdefault(e, set()).add(v)
+        priced: set[str] = {e for e, _v in values("payback_time")}
+        for name in ("invest_cost", "discount_rate", "lifetime_technical"):
+            priced |= {e for e, v in values(name) if isinstance(v, Map)}
+        priced |= {e for e, v in values("net_salvage_value") if any(x != 0.0 for x in _v79_numbers(v))}
+        for e in with_life:
+            own = invest.get(e, set())
+            if (own - no_invest and e in priced) or own - no_retire:
+                entities.add(e)
+    if entities:
+        _v77_set_marker(db, "automatic_replacement_cost", json.dumps({"since": 82, "entities": sorted(entities)}))
+
+
 def _migrate_v82_schema_batch(db) -> None:
     """All schema changes of database version 82 (v81 -> v82), in one step.
 
@@ -11665,6 +11703,9 @@ def _migrate_v82_schema_batch(db) -> None:
        default (:func:`_v82_definitions_part`).
     4. The descriptions of the three and of ``discount_rate`` and ``payback_time`` (unit, connection, node), which
        name them (:func:`_v82_descriptions`).
+    5. The behaviour-change marker ``automatic_replacement_cost`` on the reinvest_automatic entities with a
+       lifetime_technical whose investment cost or retirement now follows the replacements of their capacity
+       (:func:`_v82_automatic_replacement_marker`).
 
     Values change only by the renames of part 2 (they keep their rows; a collision moves them).  Each part is
     idempotent, so a rerun of the step changes nothing.
@@ -11673,6 +11714,7 @@ def _migrate_v82_schema_batch(db) -> None:
     _v82_rename_definitions(db)
     _v82_definitions_part(db)
     _v82_descriptions(db)
+    _v82_automatic_replacement_marker(db)
     _commit_step(db, "v82: inflation_rate is social_discount_rate, inflation_offset_investment is "
                      "discount_offset_investment, inflation_offset_operations is discount_offset_operations")
 

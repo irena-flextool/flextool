@@ -752,10 +752,12 @@ def _per_method_annuity_lf(
         commission: pl.DataFrame | None = None,
         *,
         level: bool = False,
+        per_plant: bool = False,
         ) -> pl.LazyFrame:
     """Lazy ``(e, d, ann)`` frame computing the per-method annuity sum; with ``level`` ``(e, d, ann, a_cap, disc,
     life, technical, method_count)`` (the interest rate, the payback time and the lifetime the price is of, and the
-    number of invest methods the annuity is summed over).
+    number of invest methods the annuity is summed over).  ``per_plant``: the annuity of one plant (a method count
+    of 1 for every unit, connection and node, also one without an invest method).
 
     ``commission`` (``[e, d, d_c]``, the decisions with a construction lead time): the cost, the interest rate and
     the payback time (``lifetime_technical`` for an entity without ``payback_time``) of such a decision are those
@@ -830,7 +832,8 @@ def _per_method_annuity_lf(
     out = (ed_with_life
               .join(method_count_lf, on="e", how="left")
               .with_columns(
-                  method_count=pl.col("method_count").fill_null(0),
+                  method_count=(pl.lit(1, dtype=pl.UInt32) if per_plant
+                                else pl.col("method_count").fill_null(0)),
                   ann_per_method=pl.when(pl.col("cost") == 0).then(0.0).otherwise(annuity_expr),
               )
               .with_columns(
@@ -936,6 +939,150 @@ def _level_prices_lf(source: "InputSource",
               .select("e", "d", "ann", "a_cap", "a_salv", "disc", "life", "nsv_eol"))
 
 
+# ---------------------------------------------------------------------------
+# The replacement generations of a reinvest_automatic chain
+# ---------------------------------------------------------------------------
+
+#: The columns of a generation frame (:func:`chain_generations`).
+_GENERATION_COLUMNS = ("e", "d_build", "cohort", "d_on", "d_eol", "y_on", "y_eol")
+
+
+def chain_generations(cohort: pl.DataFrame | None, kind: str = "invest") -> pl.DataFrame:
+    """``[e, d_build, cohort, d_on, d_eol, y_on, y_eol]`` (Utf8 labels) of the generations of the ``reinvest_automatic``
+    chains of ``cohort`` whose root is of ``kind`` (``invest``: one per investment decision, ``d_build`` its decision
+    period; ``existing``: the existing chains, ``d_build`` null); empty without one."""
+    from flextool.engine.preprocess.params._cohorts import KIND_GENERATION
+    schema = {c: (pl.Float64 if c.startswith("y_") else pl.Utf8) for c in _GENERATION_COLUMNS}
+    if cohort is None or cohort.height == 0 or "root" not in cohort.columns:
+        return pl.DataFrame(schema=schema)
+    return (cohort.filter((pl.col("kind") == KIND_GENERATION) & pl.col("root").str.starts_with(f"{kind}:")
+                          & pl.col("y_on").is_not_null())
+                  .select(*(pl.col(c).cast(t) for c, t in schema.items())))
+
+
+def _chain_years(source: "InputSource", active_solve: str | None, provider: "object | None") -> dict[str, float]:
+    """``{period: run year}`` of the solve's periods (:func:`._cohorts.cohort_years`) and of the branch periods of a
+    stochastic fan (each its anchor's year: a generation's years are lineage-free)."""
+    from flextool.engine.preprocess.params._branch import active_branch_anchor_pairs
+    from flextool.engine.preprocess.params._cohorts import cohort_years
+    years = cohort_years(source, active_solve, None, provider=provider)
+    pairs = active_branch_anchor_pairs()
+    if pairs is not None:
+        for anchor, br in pairs.select(pl.col("anchor").cast(pl.Utf8), pl.col("br").cast(pl.Utf8)).iter_rows():
+            if anchor in years and br not in years:
+                years[br] = years[anchor]
+    return years
+
+
+def generation_prices(source: "InputSource",
+                      rows: pl.DataFrame,
+                      *,
+                      per_plant: bool = False) -> pl.DataFrame:
+    """``rows`` ``[e, cohort, d, d_salv, ...]`` (Utf8: a generation, the period it comes online in and the period
+    its salvage takes the net_salvage_value of) with the prices of the plant as constructed in ``d``
+    (:data:`._cohorts.PRICE_COLUMNS` and ``a_b``, CUR/MW a year in service)::
+
+        pay   = A = invest_cost[e,d]·1000·af(r, n),  r = discount_rate[e,d],  n = payback_time[e,d] (else L)
+        a_cap = A·G(n)/G(L) (A when |n − L| ≤ YEAR_TOL),  L = lifetime_technical[e,d]
+        a_salv = S·(1+r)^−L·af(r, L),  S = nsv_eol = 1000·net_salvage_value[e, d_salv]
+        a_b   = a_cap − a_salv
+
+    (:func:`_per_method_annuity_lf` with ``level``; the invest_cost of an entity with several invest methods
+    counts once per method, as for its investment, or once with ``per_plant``: the replacement of existing
+    capacity, whose entity may not invest).  0 without an invest_cost; no salvage without a lifetime."""
+    from flextool.engine.preprocess._annuity import salvage_credit
+    keys = rows.select("e", "d").unique(maintain_order=True)
+    prices = _utf8_ed(_per_method_annuity_lf(
+        source, keys.lazy().select(alias_to_axis("e", "e"), alias_to_axis("d", "d")), "invest_cost",
+        _INVEST_NOT_ALLOWED, None, level=True, per_plant=per_plant))
+    salv = rows.select("e", "d_salv").unique(maintain_order=True)
+    nsv = _utf8_ed(ed_values_on(source, NET_SALVAGE_VALUE,
+                                salv.lazy().select(alias_to_axis("e", "e"), alias_to_axis("d_salv", "d")),
+                                fill=0.0)).select("e", pl.col("d").alias("d_salv"), s=pl.col("value") * 1000.0)
+    offset = _solve_inflation_scalars(source)[1]
+    count = pl.col("method_count").cast(pl.Float64).fill_null(0.0)
+    return (rows.join(prices, on=["e", "d"], how="left", maintain_order="left")
+                .join(nsv, on=["e", "d_salv"], how="left", maintain_order="left")
+                .with_columns(nsv_eol=pl.col("s").fill_null(0.0), a_cap=pl.col("a_cap").fill_null(0.0))
+                .with_columns(a_salv=salvage_credit(pl.col("nsv_eol"), pl.col("disc"), pl.col("technical"), offset)
+                              * count)
+                .with_columns(pay=pl.col("ann").fill_null(0.0), n_pay=pl.col("life"), r_loan=pl.col("disc"),
+                              a_b=pl.col("a_cap") - pl.col("a_salv"))
+                .select(*rows.columns, *PRICE_COLUMNS, "a_b"))
+
+
+def _generation_walk(walk: pl.DataFrame, years: dict[str, float], gens: pl.DataFrame,
+                     last_period: str | None, root: str = "d") -> pl.DataFrame:
+    """``[e, <root>, d_all, cohort, d_price, d_salv]``: each period ``d_all`` of a chain's walk (``walk`` ``[e, <root>,
+    d_all]``, Utf8, along one lineage) with the generation ``cohort`` in service there (``y_on ≤ y[d_all] < y_eol``,
+    ``years`` the run years), the period ``d_price`` it comes online in and the period ``d_salv`` of its salvage, both
+    on the walk's own lineage: the walk's period at ``y_on`` (``y_eol``) where it has one (a generation starting
+    inside a stochastic fan takes the values of its branch), else the generation's own ``d_on`` (``d_eol``, the
+    last period of the run after the last period start).  ``gens`` is :func:`chain_generations` with ``d_build``
+    renamed to ``<root>``."""
+    from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
+    yr = pl.DataFrame({"d_all": list(years), "y": [float(v) for v in years.values()]},
+                      schema={"d_all": pl.Utf8, "y": pl.Float64})
+    walked = walk.join(yr, on="d_all", how="inner")
+    rows = (walked.join(gens, on=["e", root], how="inner")
+                  .filter((pl.col("y") >= pl.col("y_on") - YEAR_TOL) & (pl.col("y") < pl.col("y_eol") - YEAR_TOL)))
+    at = walked.select("e", root, pl.col("d_all").alias("_at"), pl.col("y").alias("_y"))
+
+    def label(year: str, out: str) -> pl.DataFrame:
+        return (gens.select("e", root, "cohort", year).join(at, on=["e", root], how="inner")
+                    .filter((pl.col("_y") - pl.col(year)).abs() <= YEAR_TOL)
+                    .sort("e", root, "cohort", "_at")
+                    .unique(subset=["e", root, "cohort"], keep="first", maintain_order=True)
+                    .select("e", root, "cohort", pl.col("_at").alias(out)))
+
+    return (rows.join(label("y_on", "_on"), on=["e", root, "cohort"], how="left")
+                .join(label("y_eol", "_eol"), on=["e", root, "cohort"], how="left")
+                .select("e", root, "d_all", "cohort", d_price=pl.coalesce("_on", "d_on"),
+                        d_salv=pl.coalesce("_eol", "d_eol", pl.lit(last_period, dtype=pl.Utf8))))
+
+
+def chain_lumps(source: "InputSource",
+                walk: pl.DataFrame,
+                factor: pl.DataFrame,
+                years: dict[str, float],
+                gens: pl.DataFrame,
+                last_period: str | None) -> pl.DataFrame:
+    """``[e, d, single, a_b, value]`` of the chains of ``gens`` (:func:`chain_generations`) over their walk ``walk``
+    (``[e, d, d_all]``, Utf8, ``factor`` ``[d_all, factor]``; a period without a factor counts 1.0): the price of
+    each generation (:func:`generation_prices`, at the values of the walk's lineage, :func:`_generation_walk`)
+    summed over its periods in service::
+
+        value[e,d] = Σ_g a_b[g]·Σ_{d′ ∈ walk(e,d), y_on[g] ≤ y[d′] < y_eol[g]} factor[d′]
+
+    ``single`` when every period of the walk is priced alike: then ``a_b`` is that one price and the caller
+    multiplies it by its own sum of the walk's factors (the chain of constant values charges today's annuity
+    over the same periods, bit for bit).  A period of the walk that no generation covers is an error."""
+    if gens.height == 0 or walk.height == 0:
+        return pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8, "single": pl.Boolean, "a_b": pl.Float64,
+                                    "value": pl.Float64})
+    keyed = gens.rename({"d_build": "d"})
+    walk = walk.join(keyed.select("e", "d").unique(), on=["e", "d"], how="semi")
+    rows = _generation_walk(walk, years, keyed, last_period)
+    covered = rows.group_by("e", "d").agg(pl.len().alias("_n"))
+    whole = walk.group_by("e", "d").agg(pl.len().alias("_w")).join(covered, on=["e", "d"], how="left")
+    gap = whole.filter(pl.col("_n").fill_null(0) != pl.col("_w"))
+    if gap.height > 0:
+        raise ValueError(f"The replacement generations of {sorted(gap['e'].unique().to_list())} do not cover the "
+                         "periods their capacity is in service in; the chain cannot be priced.")
+    priced = (generation_prices(source, rows.rename({"d": "_dec", "d_price": "d"}))
+              .rename({"d": "d_price", "_dec": "d"})
+              .join(factor, on="d_all", how="left"))
+    parts = (priced.sort("e", "d", "cohort", "d_all")
+                   .group_by("e", "d", "cohort", maintain_order=True)
+                   .agg(pl.col("a_b").first(), pl.col("a_b").n_unique().alias("_k"),
+                        pl.col("factor").fill_null(1.0).sum().alias("_sum")))
+    return (parts.group_by("e", "d", maintain_order=True)
+                 .agg(single=(pl.col("a_b").n_unique() == 1) & (pl.col("_k").max() == 1),
+                      a_b=pl.col("a_b").first(),
+                      value=(pl.col("a_b") * pl.col("_sum")).sum())
+                 .sort("e", "d"))
+
+
 def npv_invest_discounted_lf(
         source: "InputSource",
         active_solve: str | None,
@@ -947,6 +1094,7 @@ def npv_invest_discounted_lf(
         commission: pl.DataFrame | None = None,
         year_rows: pl.DataFrame | None = None,
         provider: "object | None" = None,
+        generations: pl.DataFrame | None = None,
         ) -> pl.LazyFrame:
     """Variant 1: ``ed_entity_annual_discounted`` (invest-side NPV).
 
@@ -957,7 +1105,9 @@ def npv_invest_discounted_lf(
     where ``window`` and ``price`` switch on ``e``'s lifetime_method: ``reinvest_choice`` / ``no_reinvestment`` →
     the periods the cohort of the decision is in service (``yr[c] ≤ yr[d_all] < y_eol``, the window of the lifetime
     fixed cost, :func:`_window_life_to_end_of_life`) at the level yearly price ``a_cap`` of the plant over its real
-    lifetime (:func:`_per_method_annuity_lf` with ``level``); ``reinvest_automatic`` → unbounded, at the annuity.
+    lifetime (:func:`_per_method_annuity_lf` with ``level``); ``reinvest_automatic`` → unbounded, each period at the
+    price of the generation of the decision's chain in service there (``generations``, :func:`chain_generations`;
+    :func:`chain_lumps`), at the annuity for a decision without generation rows.
     An entity may have multiple methods; each contributes a separate sum.  See ``entity_annual_calc_params.py:222-251``.
 
     ``commission`` (``[e, d, d_c, yr_c]``, the decisions with a construction lead time): the price of such a
@@ -1060,6 +1210,26 @@ def npv_invest_discounted_lf(
                               .otherwise(0.0)
                       ),
                   ))
+    # reinvest_automatic: each period at the price of the generation of the chain in service there.
+    chain = _automatic_chain_lumps(source, active_solve, ed_anchor_lf, period_in_use, period_universe, life_lf,
+                                   generations, lineage=lineage, commission_lf=commission_lf, year_rows=year_rows,
+                                   provider=provider)
+    if chain is not None:
+        combined, chain = align_join_dtypes(combined, chain, ["e", "d"])
+        auto = (pl.when(pl.col("_single")).then(pl.col("_a_b") * pl.col("factor_u"))
+                  .when(pl.col("_chain").is_not_null()).then(pl.col("_chain"))
+                  .otherwise(pl.col("ann") * pl.col("factor_u")))
+        combined = (combined.join(chain, on=["e", "d"], how="left")
+                            .with_columns(_single=pl.col("_single").fill_null(False))
+                            .with_columns(value=(pl.when(pl.col("has_choice"))
+                                                   .then((pl.col("a_cap") - pl.col("a_salv")) * pl.col("factor_b"))
+                                                   .otherwise(0.0)
+                                                 + pl.when(pl.col("has_automatic")).then(auto).otherwise(0.0)))
+                            .drop("_single", "_a_b", "_chain"))
+        _notice_automatic_replacement_cost(
+            combined.filter(pl.col("has_automatic"))
+                    .select("e", changed=(pl.col("value") - pl.col("ann") * pl.col("factor_u")).abs()
+                            > 1e-12 * pl.max_horizontal(pl.lit(1.0), (pl.col("ann") * pl.col("factor_u")).abs())))
     # Only the entities whose investment takes the bounded window in this solve (the reinvest_automatic sum is
     # unchanged).  The value before: the annuity over whole periods that start before the end of the lifetime of
     # the start of operation.
@@ -1079,6 +1249,58 @@ def npv_invest_discounted_lf(
                            r_loan=pl.when(bounded).then(pl.col("disc")),
                            a_salv=pl.when(bounded).then(pl.col("a_salv")).otherwise(0.0),
                            nsv_eol=pl.when(bounded).then(pl.col("nsv_eol")))
+
+
+def _automatic_chain_lumps(source: "InputSource",
+                           active_solve: str | None,
+                           ed_anchor_lf: pl.LazyFrame,
+                           period_in_use: list[str],
+                           period_universe: list[str],
+                           life_lf: pl.LazyFrame,
+                           generations: pl.DataFrame | None,
+                           *,
+                           lineage: pl.DataFrame | None,
+                           commission_lf: pl.LazyFrame | None,
+                           year_rows: pl.DataFrame | None,
+                           provider: "object | None") -> pl.LazyFrame | None:
+    """``[e, d, _single, _a_b, _chain]`` (:func:`chain_lumps` renamed) of the investment decisions of
+    ``ed_anchor_lf`` with replacement generations, over the unbounded walk of the investment lump (its lineage and
+    construction lead time) and its investment factors; ``None`` without generations."""
+    if generations is None or generations.height == 0:
+        return None
+    from flextool.engine.preprocess.params._cohorts import salvage_periods
+    from flextool.engine.preprocess.params._derived import _fan_walk_provider
+    walk = _utf8_ed(period_walk_iterator(source, active_solve, ed_anchor_lf, period_in_use, period_universe,
+                                         bounded=False, life_lf=life_lf, factor_side=None, lineage=lineage,
+                                         commission_lf=commission_lf, year_rows=year_rows),
+                    ("e", "d", "d_all"))
+    factor = _utf8_ed(_inflation_factors_lf(source, active_solve, period_universe, provider=_fan_walk_provider(),
+                                            year_rows=year_rows).select(pl.col("d").alias("d_all"),
+                                                                        pl.col("inv_factor").alias("factor")),
+                      ("d_all",))
+    years = _chain_years(source, active_solve, provider)
+    last = salvage_periods(source, active_solve, years, provider, [None])[0]
+    lumps = chain_lumps(source, walk, factor, years, generations, last)
+    return (lumps.lazy().select(alias_to_axis("e", "e"), alias_to_axis("d", "d"), _single=pl.col("single"),
+                                _a_b=pl.col("a_b"), _chain=pl.col("value")))
+
+
+AUTOMATIC_REPLACEMENT_COST = "automatic_replacement_cost"
+
+
+def _notice_automatic_replacement_cost(changed: pl.LazyFrame) -> None:
+    """The ``automatic_replacement_cost`` notice for the entities its marker names (an upgraded database whose
+    reinvest_automatic capacity was charged the annuity of its first plant for ever) whose investment cost now
+    differs: ``changed`` ``[e, changed]``.  Built only while the marker names entities."""
+    from flextool.engine import _behaviour_changes as bc
+    if not bc.has_marker(AUTOMATIC_REPLACEMENT_COST):
+        return
+    names = {str(n) for n in bc.marker_json(AUTOMATIC_REPLACEMENT_COST).get("entities") or []}
+    if not names:
+        return
+    hit = sorted(names & {str(e) for e in changed.filter(pl.col("changed")).select("e").collect()["e"].to_list()})
+    if hit:
+        bc.notice(AUTOMATIC_REPLACEMENT_COST, "entities", hit)
 
 
 def _retire_window_lf(source: "InputSource",
@@ -2452,9 +2674,20 @@ def apply_run_cost_fields(flex_data: object,
                 fc_lf, lambda lf: _ed_fixed_cost_raw_lf(source, lf), commission, "fc")).rename({"fc": "coef"})
             flex_data.ed_lifetime_fixed_cost_run = _ed_param(_fixed_lump(walk, fc, factor_ops, fc_pairs, source))
             if inv.height > 0:
-                # The price over the periods in service, as the objective's investment lump.
-                flex_data.ed_entity_annual_discounted_run = _ed_param(
-                    _lump(walk.join(inv, on=["e", "d"], how="semi"), price, factor_inv, inv))
+                # The price over the periods in service, as the objective's investment lump: a reinvest_automatic
+                # chain at the price of the generation in service in each period (single price: the same product).
+                inv_walk = walk.join(inv, on=["e", "d"], how="semi")
+                chain = _run_chain_lumps(source, active_solve, inv_walk, factor_inv, yr, flex_data, provider)
+                single = chain.filter(pl.col("single")).select("e", "d", kind=pl.lit("unbounded"), _a_b="a_b")
+                price = (price.join(single, on=["e", "d", "kind"], how="left")
+                              .with_columns(coef=pl.coalesce("_a_b", "coef")).drop("_a_b"))
+                multi = chain.filter(~pl.col("single")).select("e", "d", _chain="value")
+                rest = inv_walk.join(multi.select("e", "d").with_columns(kind=pl.lit("unbounded")),
+                                     on=["e", "d", "kind"], how="anti")
+                lump = _lump(rest, price, factor_inv, inv)
+                lump = (lump.join(multi, on=["e", "d"], how="left")
+                            .with_columns(value=pl.col("value") + pl.col("_chain").fill_null(0.0)).drop("_chain"))
+                flex_data.ed_entity_annual_discounted_run = _ed_param(lump)
 
     # Retirement side: from the retirement period until the rounded end of life ``y_eol`` of the existing capacity
     # (the end of the run for reinvest_automatic), the window of _cohorts.retire_active on the run calendar.
@@ -2487,6 +2720,24 @@ def apply_run_cost_fields(flex_data: object,
 
     if years is None:
         _run_lumps_are_the_solves(flex_data)
+
+
+def _run_chain_lumps(source: "InputSource",
+                     active_solve: str | None,
+                     walk: pl.DataFrame,
+                     factor: pl.DataFrame,
+                     yr: dict[str, float],
+                     flex_data: object,
+                     provider: "object | None") -> pl.DataFrame:
+    """:func:`chain_lumps` of the investment decisions of the solve's cohort table over the run's operating window
+    ``walk`` (``[e, d, kind, d_all]``: its ``unbounded`` rows), the factors ``factor`` (``p_inflation_inv_run``)
+    and the run years ``yr``."""
+    from flextool.engine.preprocess.params._cohorts import salvage_periods
+    gens = chain_generations(getattr(flex_data, "cohort", None))
+    rows = walk.filter(pl.col("kind") == "unbounded").select("e", "d", "d_all")
+    years = _chain_years(source, active_solve, provider)
+    last = salvage_periods(source, active_solve, years, provider, [None])[0]
+    return chain_lumps(source, rows, factor, {**years, **yr}, gens, last)
 
 
 def _run_lumps_are_the_solves(flex_data: object) -> None:
@@ -2768,14 +3019,17 @@ def apply_invest_lumps(flex_data: object,
     construction lead time is ``flex_data.ed_invest_commission``.  A helper that returns None (no invest period, no
     entity row) leaves the field as it is."""
     commission = getattr(flex_data, "ed_invest_commission", None)
+    generations = chain_generations(getattr(flex_data, "cohort", None))
     if period_invest:
         lumps = (npv_invest_discounted_lf(source, active_solve, period_invest, period_in_use, period_universe,
                                           lineage=lineage, commission=commission, year_rows=year_rows,
-                                          provider=provider)
+                                          provider=provider, generations=generations)
                  .sort("e", "d").collect())
         if lumps.height > 0:
             flex_data.ed_entity_annual_discounted = Param(("e", "d"), lumps.select("e", "d", "value"))
             _set_cohort_prices(flex_data, lumps)
+            _set_generation_prices(flex_data, source, active_solve, generations, provider=provider)
+            warn_salvage_above_cost(getattr(flex_data, "cohort", None))
             _notice_net_salvage_once(lumps.filter(pl.col("a_salv") != 0.0)["e"].cast(pl.Utf8).unique().to_list())
     fixed = ed_lifetime_fixed_cost_from_source(
         source, active_solve, period_with_history, period_in_use, period_universe,
@@ -2932,6 +3186,55 @@ def _set_cohort_prices(flex_data: object, lumps: pl.DataFrame) -> None:
                         .with_columns(pl.when(invest).then(pl.col(f"_{c}")).otherwise(pl.col(c)).alias(c)
                                       for c in PRICE_COLUMNS)
                         .select(cohort.columns))
+
+
+def warn_salvage_above_cost(cohort: pl.DataFrame | None) -> None:
+    """Warn, once per run and entity, where a plant the model can build is priced below 0 a year: a cohort of an
+    investment decision or a generation of its chain whose salvage credit exceeds its capital price
+    (``a_cap − a_salv < 0``: the net_salvage_value at the end of its life is worth more than invest_cost at its
+    discount_rate).  Every such plant earns money, so the model builds as much as the investment limits allow."""
+    from flextool.engine import _behaviour_changes
+    from flextool.engine.preprocess.params._cohorts import KIND_EXISTING
+    if cohort is None or cohort.height == 0 or "root" not in cohort.columns:
+        return
+    rows = cohort.filter(~pl.col("root").str.starts_with(f"{KIND_EXISTING}:") & pl.col("a_cap").is_not_null()
+                         & pl.col("a_salv").is_not_null() & (pl.col("a_cap") - pl.col("a_salv") < -1e-9))
+    names = sorted({str(e) for e in rows["e"].cast(pl.Utf8).to_list()})
+    if names:
+        _behaviour_changes.warn_once_each(
+            "salvage_above_invest_cost", names,
+            lambda fresh: "Warning: " + ", ".join(fresh) + ": a plant the model can build has a net_salvage_value "
+            "worth more than its invest_cost (the salvage at the end of its life, discounted at discount_rate): "
+            "its yearly cost is below 0, so the model builds as much as the investment limits allow. Check "
+            "net_salvage_value against invest_cost (also in the periods a replacement comes online).")
+
+
+def _set_generation_prices(flex_data: object,
+                           source: "InputSource",
+                           active_solve: str | None,
+                           generations: pl.DataFrame,
+                           *,
+                           provider: "object | None",
+                           per_plant: bool = False) -> None:
+    """``flex_data.cohort`` with the prices (:data:`._cohorts.PRICE_COLUMNS`) of each generation of ``generations``
+    (:func:`chain_generations`): the plant as constructed in its ``d_on``, its salvage at ``d_eol`` (the last period
+    of the run after the last period start), :func:`generation_prices`.  Carried by ``realized_cohort`` as they
+    are; a later solve never prices a carried chain again."""
+    cohort = getattr(flex_data, "cohort", None)
+    if cohort is None or cohort.height == 0 or generations.height == 0:
+        return
+    from flextool.engine.preprocess.params._cohorts import salvage_periods
+    years = _chain_years(source, active_solve, provider)
+    last = salvage_periods(source, active_solve, years, provider, [None])[0]
+    rows = generations.select("e", "cohort", d=pl.col("d_on"),
+                              d_salv=pl.coalesce("d_eol", pl.lit(last, dtype=pl.Utf8)))
+    prices = (generation_prices(source, rows, per_plant=per_plant)
+              .select("e", "cohort", *(pl.col(c).alias(f"_{c}") for c in PRICE_COLUMNS)))
+    left = cohort.with_columns(_e=pl.col("e").cast(pl.Utf8))
+    flex_data.cohort = (left.join(prices.rename({"e": "_e"}), on=["_e", "cohort"], how="left", maintain_order="left")
+                            .with_columns(pl.when(pl.col("_a_cap").is_not_null()).then(pl.col(f"_{c}"))
+                                          .otherwise(pl.col(c)).alias(c) for c in PRICE_COLUMNS)
+                            .select(cohort.columns))
 
 
 def _register_invest_lumps(flex_data: object, provider: "object | None") -> None:

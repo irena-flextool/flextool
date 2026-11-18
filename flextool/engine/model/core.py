@@ -5460,7 +5460,13 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
     #                                                                       (reinvest_choice / no_reinvestment)
     #   inflation_inv[d] (the social discount factor of investment payments) = Σ_y pyr[d,y]·(1 +
     #     social_discount_rate)^−(base[d,y] + pyr[d,y]·discount_offset_investment) (y, pyr, base as for inflation_op)
-    #                          = A[p,c] · Σ_{d′ ∈ solve, yr[d′] ≥ yr[c]} inflation_inv[d′]   (reinvest_automatic)
+    #                          = Σ_{g ∈ gen(p,d)} a_b[g] · Σ_{d′ ∈ L_g(p,d)} inflation_inv[d′]   (reinvest_automatic)
+    #   gen(p,d): the chain of the capacity decided in d: g1 online at c(d); g_{k+1} online at y_eol[g_k] =
+    #     round_end_of_life(y_on[g_k] + lifetime_technical[p, d_on(g_k)], end_of_life_method[p]) (at least one
+    #     period: the next seam when that is at or before y_on[g_k]), until the end of the horizon
+    #   L_g(p,d) = the solve's periods d′ on the walk lineage with yr[c] ≤ yr[d′], y_on[g] ≤ yr[d′] < y_eol[g]
+    #   a_b[g] = a_cap[g] − a_salv[g] as below, every value read at d_on(g) (the period g comes online in, on d′'s
+    #     lineage inside a stochastic fan), S at d_eol(g)
     #   c = c(d) the period the capacity comes online; L(p,d) = the solve's periods d′ with yr[c] ≤ yr[d′] < y_eol[p,d]
     #     (no upper end for reinvest_automatic): the periods the cohort of the decision is in service in, y_eol =
     #     round_end_of_life(yr[c] + lifetime_technical[p,c], end_of_life_method[p]) (engine.md "Capacity symbols")
@@ -5480,7 +5486,11 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
     # payback_time and discount_rate set only the size (with discount_rate = social_discount_rate payback_time changes
     # nothing for a whole number of years). The salvage value at the end of the real lifetime lowers the price: its
     # present value at discount_rate, levelled over the lifetime_technical years (the textbook capital recovery with
-    # salvage when payback_time = lifetime_technical). The inflation-adjusted fixed cost of each period the capacity
+    # salvage when payback_time = lifetime_technical). A reinvest_automatic plant is replaced at the end of its life
+    # by a plant at the invest cost (and discount_rate, payback_time, lifetime_technical, salvage value) of the period
+    # the replacement comes online, and so on to the end of the horizon; each pays its own level yearly cost for its
+    # years in service (with constant values the chain charges the first plant's annuity for every period).
+    # The inflation-adjusted fixed cost of each period the capacity
     # operates in is charged over the same periods (it stops at the rounded end of life), as for existing capacity.
     # With a construction lead time the capacity operates from its start of operation c(d): both windows start there,
     # and the invest cost, interest rate, payback time and lifetime are those of c(d): their period maps describe the

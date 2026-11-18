@@ -36,9 +36,20 @@ Input databases move to data version 82. The FlexTool window, the Spine Toolbox 
   set only its size (with `discount_rate` equal to `social_discount_rate` the payback time changes nothing for a whole
   number of years; with a lower `discount_rate` a shorter payback time costs more). Before, every period that
   started before the end of the lifetime paid the annuity in full (a 12-year lifetime on 5-year periods paid 15 years), also after the capacity
-  was gone. The fixed cost runs over the same years; `reinvest_automatic` still pays the annuity every year to the
-  end of the horizon. Upgraded databases get a notice naming the entities whose investment cost changes (results
-  change).
+  was gone. The fixed cost runs over the same years. Upgraded databases get a notice naming the entities whose
+  investment cost changes (results change).
+- **With `lifetime_method` `reinvest_automatic` capacity is replaced at the end of its life by a new plant, at the
+  values of the period the replacement comes online** (unit, connection, node). A plant with a `lifetime_technical`
+  operates to its end of life as `end_of_life_method` rounds it (at least one period), and its capacity is then
+  held by a replacement with the `invest_cost`, `discount_rate`, `payback_time`, `lifetime_technical` and
+  `net_salvage_value` of that period, replaced again at its own end of life, to the end of the horizon. Each plant
+  pays its own level yearly cost (as `reinvest_choice` does, its salvage value netted in) for its years in service.
+  Before, the capacity paid the annuity of its first plant for every year to the end of the horizon, without a
+  salvage value. With constant values, `payback_time` equal to `lifetime_technical` and no `net_salvage_value` the
+  cost is the same as before; a falling `invest_cost`, a `net_salvage_value` or a `payback_time` now changes it. In
+  a stochastic fan a replacement takes the values of its own branch. A plant without a `lifetime_technical` is
+  never replaced and pays its annuity to the end of the horizon. Upgraded databases get a notice naming the
+  entities whose investment cost changes (results change).
 - **Investments get cheaper by one year of interest at the default `discount_offset_investment` 0: the yearly
   investment payment is sized for when it is paid** (unit, connection, node). The annuity is now `invest_cost ·
   discount_rate / (1 − (1 + discount_rate)^−payback_time) · (1 + discount_rate)^(discount_offset_investment − 1)`.

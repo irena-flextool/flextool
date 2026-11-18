@@ -251,8 +251,11 @@ def test_recourse_branch_native_zero_wins_over_anchor(tmp_path_factory):
     steps = _solve(tmp_path_factory, "stoch_two_period_hedge.json",
                    _stoch_store({"p2035": 1.0, "p2040": 1.0, "p2040_high": 0.0}))
     step = _single(steps)
-    # The branch with its own 0 is still offered (#218), at annuity 0; the others inherit the anchor's cost.
+    # The branch with its own 0 is still offered (#218), at annuity 0; the others inherit the anchor's cost.  The
+    # storage (reinvest_automatic, lifetime 1, net_salvage_value 0.5, discount_rate 5 %, offset 0) has its salvage
+    # credit netted into each plant's price: 0.5·1000·1.05^−1·ann(5 %, 1)·1.05^−1 = 476.19 a year, so the plant of
+    # p2040_high (one year in service, factor 1) costs 0 − 476.19.
     assert _periods_of(_pairs(step.flex_data.ed_invest_set), "store") == STOCH_PERIODS
     annuity = _annuity(step)
-    assert annuity.get(("store", "p2040_high"), 0.0) == 0.0
+    assert annuity.get(("store", "p2040_high"), 0.0) == pytest.approx(-500.0 / 1.05, rel=1e-12)
     assert all(annuity.get(("store", d), 0.0) > 0.0 for d in STOCH_PERIODS - {"p2040_high"}), annuity

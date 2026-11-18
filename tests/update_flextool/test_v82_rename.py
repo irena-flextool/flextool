@@ -196,7 +196,8 @@ def _no_commit(db, step, monkeypatch) -> None:
 
 
 @pytest.mark.parametrize("part", ["_v82_rename_definitions", "_v82_definitions_part", "_v82_descriptions",
-                                  "_migrate_v82_schema_batch", "_refresh_head_schema"])
+                                  "_v82_automatic_replacement_marker", "_migrate_v82_schema_batch",
+                                  "_refresh_head_schema"])
 def test_rerun_commits_nothing(renamed, part, monkeypatch) -> None:
     with DatabaseMapping(renamed["url"]) as db:
         _no_commit(db, getattr(m, part), monkeypatch)

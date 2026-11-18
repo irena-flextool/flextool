@@ -523,9 +523,9 @@ def test_fixed_cost_map_saving_of_a_chain_equals_the_single_solve(tmp_path_facto
                 want, rel=1e-7, abs=1e-6), d
 
 
-def _swap_values(no_retirement_in: str | None = None) -> list:
+def _swap_values(retire_in: tuple[str, ...]) -> list:
     from tests.engine.test_chain_costs import _period_map
-    retire_max = _period_map({d: (0.0 if d == no_retirement_in else 500.0) for d in PERIODS})
+    retire_max = _period_map({d: (500.0 if d in retire_in else 0.0) for d in PERIODS})
     return [["unit", PLANT, "invest_method", b64("invest_retire_period", "str")],
             ["unit", PLANT, "invest_max_period", b64(500.0, "float")],
             ["unit", PLANT, "retire_max_period", retire_max],
@@ -537,25 +537,31 @@ def _swap_values(no_retirement_in: str | None = None) -> list:
 def test_retiring_and_rebuilding_identical_capacity_in_the_last_period(tmp_path_factory, kind) -> None:
     """coal_plant may invest and retire up to 500 MW in every period (invest_retire_period; invest_cost 400 CUR/kW,
     lifetime 30, reinvest_automatic; net_salvage_value 200).  A retired MW of the existing capacity receives the
-    full net salvage value at the start of its retirement period (its investment is sunk); a new MW pays its annuity
-    for the years it operates inside the horizon; both save / pay the same fixed cost.  In p2035, the last period
-    (years 15 … 19), the swap gains, per MW (the finite-horizon effect: the years after the horizon are unseen)::
+    full net salvage value at the start of its retirement period (its investment is sunk); a new MW pays its level
+    yearly price (the annuity less its salvage credit) for the years it operates inside the horizon; both save / pay
+    the same fixed cost.  In p2035, the last period (years 15 … 19), the swap gains, per MW (the finite-horizon
+    effect: the years after the horizon are unseen)::
 
-        200 · 1000 · 1.04^−15 − A · F_inv(p2035) = 111 052.90 − 24 781.50 · 2.570816 = 47 344.21 CUR
-        A = 400 · 1000 · 0.05 / (1 − 1.05^−30) / 1.05 (paid at year starts), F_inv(p2035) = Σ_{y=15..19} 1.04^−y
+        200 · 1000 · 1.04^−15 − (A − a_salv) · F_inv(p2035) = 111 052.90 − 21 914.56 · 2.570816 = 54 714.59 CUR
+        A = 400 · 1000 · 0.05 / (1 − 1.05^−30) / 1.05 = 24 781.50 (paid at year starts),
+        a_salv = 200 · 1000 · 1.05^−30 · 0.05 / (1 − 1.05^−30) / 1.05 = 2 866.94 (the salvage value at the end of
+        the plant's 30 years, levelled over them), F_inv(p2035) = Σ_{y=15..19} 1.04^−y
 
-    so the solve builds the 500 MW limit in p2035 and retires what it does not need: 500 − 137 MW (the twin without
-    the p2035 retirement option builds 137 MW), and its objective is the twin's less 363 · 47 344.21."""
+    Retirement is allowed in p2035 only (an earlier swap can pay too, which would make the twins differ in more than
+    the last period).  So the solve builds the 500 MW limit in p2035 and retires what it does not need, 500 MW less
+    what the twin without a retirement option builds there, and its objective is the twin's less that many times
+    54 714.59."""
     chain = _no_battery_invest(SINGLE if kind == "single" else CHAIN)
     outcomes = []
-    for tag, values in (("case", _swap_values()), ("twin", _swap_values("p2035"))):
+    for tag, values in (("case", _swap_values(("p2035",))), ("twin", _swap_values(()))):
         url, scen = make_db(tmp_path_factory, alt=f"swap_{tag}_{kind}", values=values, base_chain=chain)
         outcomes.append(run(tmp_path_factory, url, scen))
     case, twin = outcomes
     assert sorted(case) == sorted(twin)
-    gain = 200.0 * 1000.0 * 1.04 ** -15 - (400.0 * 1000.0 * 0.05 / (1.0 - 1.05 ** -30) / 1.05
+    af = 0.05 / (1.0 - 1.05 ** -30) / 1.05
+    gain = 200.0 * 1000.0 * 1.04 ** -15 - ((400.0 - 200.0 * 1.05 ** -30) * 1000.0 * af
                                            * sum(1.04 ** -y for y in range(15, 20)))
-    assert gain == pytest.approx(47_344.21, abs=0.01)
+    assert gain == pytest.approx(54_714.59, abs=0.01)
     swapped = 0
     for name, step in case.items():
         assert step.optimal and twin[name].optimal, name
@@ -564,7 +570,7 @@ def test_retiring_and_rebuilding_identical_capacity_in_the_last_period(tmp_path_
             continue
         swapped += 1
         built_twin = _divest_mw(twin[name], var="v_invest_p")["p2035"]
-        assert built_twin == pytest.approx(137.0, abs=0.01), name
+        assert 0.0 < built_twin < 500.0, name
         assert _divest_mw(step, var="v_invest_p")["p2035"] == pytest.approx(500.0, abs=1e-6), name
         retired = _divest_mw(step)["p2035"]
         assert retired == pytest.approx(500.0 - built_twin, abs=1e-6), name
