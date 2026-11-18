@@ -211,3 +211,37 @@ def test_benders_prices_the_cost_lines_of_the_monolith(tmp_path_factory) -> None
     assert retired[0] == pytest.approx(retired[1], rel=1e-9)
     assert retired[0] == pytest.approx([40.0], rel=1e-9)
     runs.clear()
+
+
+@pytest.mark.solver
+def test_the_pre_existing_lines_are_the_objective_constants(tmp_path_factory) -> None:
+    """H4's existing capacity built with include_existing_fixed_cost (which no run sets): the objective moves by
+    exactly the reported pre-existing lines (the salvage credit −15.670523 M; no fixed cost, no replacement), and
+    the decisions do not."""
+    import polars as pl
+    from polar_high import Problem
+
+    from flextool.engine import build_flextool
+    from tests.engine._unit_db import RunCache, utf8
+
+    values = _values(built="", existing=MW, extra=[["unit", PLANT, "age_at_model_start", b64(5.0, "float")]])
+    table, _ = _lines(tmp_path_factory, "h4", values)
+    constants = sum(table[c].sum() for c in ("fixed cost pre-existing", "investment pre-existing",
+                                             "salvage pre-existing") if c in table.columns) * MEGA
+    assert constants == pytest.approx(-15.670523 * MEGA, rel=1e-6)
+    runs = RunCache()
+    steps, _, _ = runs.get(tmp_path_factory, alt="lines_h4_constants", values=values,
+                           base_chain=_no_battery_invest(SINGLE))
+    fd = list(steps.values())[-1].flex_data
+
+    def solve(include: bool):
+        pb = Problem()
+        build_flextool(pb, fd, include_existing_fixed_cost=include)
+        sol = pb.solve()
+        assert sol.optimal
+        return sol.obj, utf8(sol.value("v_divest_p")).filter(pl.col("p") == PLANT)["value"].to_list()
+
+    (with_obj, with_retired), (without_obj, without_retired) = solve(True), solve(False)
+    assert with_retired == pytest.approx(without_retired, abs=1e-9)
+    assert with_obj - without_obj == pytest.approx(constants, rel=1e-6)
+    runs.clear()
