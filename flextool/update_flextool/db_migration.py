@@ -11564,6 +11564,7 @@ def _v82_texts() -> dict[tuple[str, str], str]:
             "the start of the year, between 0 and 1: 0.5 (default) the middle of the year, standing for costs "
             "spread over the year. No effect when social_discount_rate is 0. Constant."),
     }
+    t.update(_v82_storage_texts())
     for cls, (cap, what, per) in _V81_CAPACITY.items():
         t[(cls, "discount_rate")] = _v82_discount_rate_text()
         t[(cls, "payback_time")] = _v82_shipped_payback_time_text(cap).replace(
@@ -11573,6 +11574,41 @@ def _v82_texts() -> dict[tuple[str, str], str]:
         t.update(_v82_replacement_texts(cls, cap, what, per))
         t.update(_v82_life_extension_texts(cls, cap, per))
     return t
+
+
+def _v82_storage_texts() -> dict[tuple[str, str], str]:
+    """The descriptions of ``storage_binding_method`` and ``storage_nested_fix_method``: v82 closes cyclic storage
+    over the rolls of a rolling solve, pins the representative-period chain ends, matches a forward chain's end to
+    a free start, and makes the nested fixes cumulative (fix_usage) and interpolated (fix_quantity)."""
+    return {
+        ("node", "storage_binding_method"): (
+            "[choice] How the storage state is kept over discontinuous timelines and from roll to roll. "
+            "'bind_within_timeblock' cycles the state within each timeblock; 'bind_within_period' cycles within each "
+            "FlexTool period (blocks chain inside the period); 'bind_within_solve' cycles over the whole solve; "
+            "'bind_forward_only' (default) chains the state forward with no closure (where the solve chooses the "
+            "start, the model ends at least at it). 'bind_within_solve_blended_weights', "
+            "'bind_within_period_blended_weights' and 'bind_forward_only_blended_weights' are the representative-"
+            "period variants: the cycle or chain runs on the base-period chain of the chronological level, where "
+            "storage_state_start, storage_state_end and use_reference_value act; in a solve whose timesets have no "
+            "representative_period_weights a blended method is used as its plain variant. 'bind_intraperiod_blocks' "
+            "is an aggregation method: the state is held constant within each block, the block-total flow is "
+            "balanced and the blocks of a period loop. In a rolling_window solve without representative periods a "
+            "cycle is closed over the rolls: a roll that starts inside the solve, period or timeblock continues it "
+            "from the level realised by the previous roll and ends its part at least at that level, and the roll(s) "
+            "holding its end end it at the level it started from. In a rolling solve on representative periods the "
+            "blended methods bind forward only (with a warning). storage_start_end_method fixes the start and the "
+            "end of the whole model."),
+        ("node", "storage_nested_fix_method"): (
+            "[choice] Used in nested solve sequences: makes this storage a long-term storage whose planned level the "
+            "upper-level solve hands to the lower-level solves it contains (at the steps of its "
+            "fix_storage_periods). fix_quantity: the lower solve's state at the end of its horizon is the upper "
+            "level at that moment (interpolated inside an upper step). fix_usage: the lower solve's net use of the "
+            "storage is at most the upper solve's, counted from the start of the period (less what its earlier "
+            "rolls used; an upper step that the horizon cuts counts pro rata). fix_price: the lower solve values "
+            "its end state at the upper solve's price; requires storage_state_reference_price. A lower solve whose "
+            "end is fixed this way starts from the upper solve's planned level where neither a realised level nor "
+            "fix_start applies."),
+    }
 
 
 def _v82_life_extension_texts(cls: str, cap: str, per: str) -> dict[tuple[str, str], str]:
@@ -11908,7 +11944,8 @@ def _migrate_v82_schema_batch(db) -> None:
     4. The descriptions of the three and of ``discount_rate`` and ``payback_time`` (unit, connection, node), which
        name them, and of ``lifetime_method``, ``lifetime_technical``, ``invest_cost``, ``age_at_model_start``,
        ``net_salvage_value`` and ``end_of_life_method``, which say what reinvest_automatic does: the capacity is
-       replaced at the end of its life (:func:`_v82_descriptions`).
+       replaced at the end of its life, and of ``storage_binding_method`` and ``storage_nested_fix_method``, which
+       say how storage closes over rolls and nested solves (:func:`_v82_descriptions`).
     5. The behaviour-change marker ``automatic_replacement_cost`` on the reinvest_automatic entities with a
        lifetime_technical whose investment cost or retirement now follows the replacements of their capacity
        (:func:`_v82_automatic_replacement_marker`).
