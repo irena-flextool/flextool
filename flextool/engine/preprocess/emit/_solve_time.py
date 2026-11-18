@@ -175,12 +175,13 @@ def run(
     # ── L1 batch 18: LP-scaling row scalers ───────────────────────────
     _lp_scaling.emit_lp_scaling_params(input_dir, solve_data_dir, provider=provider)
     _ck("lp_scaling_params")
-    # ── L2 batch 26: the existing capacity from the cohorts (the retirement options of batch 19 read it) ──
+    # ── the existing capacity from the cohorts (the retirement options of the investment sets below read it) ──
     from flextool.engine.preprocess.emit import _chain_params as _chain
     _chain.emit_existing_capacity(input_dir, solve_data_dir, provider=provider)
     _ck("existing_capacity")
     # ── L2 batch 19: invest/divest sets + edd_invest ─────────────────
-    _per_solve.emit_invest_divest_sets(input_dir, solve_data_dir, provider=provider)
+    _per_solve.emit_invest_divest_sets(input_dir, solve_data_dir, provider=provider,
+                                       source=state.input_source)
     _ck("invest_divest_sets")
     # ── L2 batch 20: ed_*_period / ed_cumulative_* (needs batch 19) ───
     _period.emit_ed_period_params(input_dir, solve_data_dir, provider=provider)

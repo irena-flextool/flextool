@@ -3317,7 +3317,7 @@ def ed_invest_set_from_source(source: "InputSource",
               .unique()
               .sort("e", "d")
               .collect())
-    # Γ.6.D: drop pairs forbidden by the no_reinvestment lifetime gate.
+    # Drop the pairs the no_reinvestment lifetime gate closes.
     years = cohort_years(source, active_solve, workdir, provider=provider)
     forbidden = no_reinvestment_closed(
         existing_cohorts(source, active_solve, workdir, provider=provider, years=years), years,
@@ -3329,7 +3329,7 @@ def ed_invest_set_from_source(source: "InputSource",
             out = pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
                                         "d": schema_dtype(_enums, "d")})
         else:
-            # Phase 4: preserve Enum dtypes on the surviving (e, d) rows
+            # Preserve the axis Enum dtypes on the surviving (e, d) rows
             # so downstream partitions / joins see the axis-typed columns
             # rather than Utf8 from the Python-list rebuild.
             out = axis_lazyframe({
@@ -5322,7 +5322,8 @@ def _build_commission_lf(source: "InputSource",
                              ) -> "pl.LazyFrame | None":
     """The start-of-operation frame of the investment decisions (construction lead time), failures surfaced.
 
-    Shared by :func:`apply_derived_c` and :func:`apply_synthetic_invest_sets`.  Returns the frame of
+    Shared by :func:`apply_derived_c`, :func:`apply_synthetic_invest_sets` and the per-solve emit's investment
+    window (``emit/_per_solve._invest_window``).  Returns the frame of
     :func:`._existing.commissioning_year_lf` on the run calendar the sub-solve ``provider`` carries, or ``None``
     when there are no in-use periods or no decision has a lead time.  ``provider`` gives only the run calendar;
     the solve's year calendar is resolved as the availability walks resolve it.

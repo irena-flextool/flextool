@@ -192,7 +192,7 @@ def test_entity_whose_every_investment_never_operates_solves(tmp_path_factory, l
     """wind_plant (the only entity that invests) lifetime_technical 4, previous_seam.  Decided in p2025: y_on 5,
     Y 9 → 5 = y_on.  With a 5-year construction lead time, decided in p2020: starts to operate in p2025, y_on 5,
     Y 9 → 5 = y_on; also with the lifetime the map {p2020: 20, p2025: 4, p2030: 20}, whose online period's value
-    describes the plant (owner decision D50; the decision period's 20 would give Y 25 → 20, in service in p2025
+    describes the plant (as constructed; the decision period's 20 would give Y 25 → 20, in service in p2025
     and p2030).  Each way the one decision would never operate: the solve has no investment set and no investment
     column, and it solves."""
     if lead:
@@ -236,11 +236,12 @@ def test_fixed_cost_of_an_investment_stops_at_its_rounded_end_of_life(tmp_path_f
 def test_lead_time_investment_takes_the_lifetime_of_its_online_period(tmp_path_factory) -> None:
     """wind_plant decided in p2020 (y 0) with a 5-year construction lead time starts to operate in p2025 (y_on 5);
     lifetime_technical is a map {p2020: 3, p2025: 20, p2030: 20}, end_of_life_method next_seam, fixed_cost 10
-    CUR/kW/a.  The period map describes the plant as constructed (owner decision D50), so the lifetime is that of
+    CUR/kW/a.  The period map describes the plant as constructed, so the lifetime is that of
     the online period p2025, 20: Y = 5 + 20 = 25, past the horizon end 20 (the last seam) → next_seam +inf, so the
     cohort is in service in p2025 and p2030 and pays its fixed cost there: ``lifetime_fixed_cost[p2020] = 10 · 1000
     · (inflation_op[p2025] + inflation_op[p2030])``.  (The lifetime of
-    the decision period, 3, would give Y = 8 → 10: p2025 only.)"""
+    the decision period, 3, would give Y = 8 → 10: p2025 only.)  The per-solve emit's investment window
+    (``edd_invest``) is the same."""
     values = solve_values(invest=["p2020"]) + [
         ["unit", WIND, "lifetime_method", b64("reinvest_choice", "str")],
         ["unit", WIND, "invest_method", b64("invest_period", "str")],
@@ -254,6 +255,10 @@ def test_lead_time_investment_takes_the_lifetime_of_its_online_period(tmp_path_f
     (step,) = steps_of(tmp_path_factory, "eol_lead_life", values).values()
     fd = step.flex_data
     assert invest_alive(step) == [("p2020", "p2025"), ("p2020", "p2030")]
+    # The solve's emitted investment window (edd_invest, the bounds of the per-solve emit) is the same window.
+    edd = step.flex_data_provider.get("solve_data/edd_invest").filter(pl.col("entity").cast(pl.Utf8) == WIND)
+    assert sorted((str(a), str(b)) for a, b in edd.select("period_history", "period").iter_rows()) == [
+        ("p2020", "p2025"), ("p2020", "p2030")]
     op = {str(d): float(v) for d, v in fd.p_inflation_op.frame.select(pl.col("d").cast(pl.Utf8), "value").iter_rows()}
     lfc = fd.ed_lifetime_fixed_cost.frame.filter((pl.col("e").cast(pl.Utf8) == WIND)
                                                  & (pl.col("d").cast(pl.Utf8) == "p2020"))
@@ -424,7 +429,7 @@ def _price(fd) -> float:
 def test_lead_time_annuity_without_payback_time_takes_the_lifetime_of_its_online_period(tmp_path_factory) -> None:
     """Without payback_time the annuity of wind_plant (decided in p2020, online in p2025) is over the
     lifetime_technical of its online period, 20 years (not that of p2020, 3): the period map describes the plant as
-    constructed (owner decision D50), as for its end of life.  The same as with payback_time 20.  By hand:
+    constructed, as for its end of life.  The same as with payback_time 20.  By hand:
     1.05^-20 = 0.3768895, factor 0.05 / (1 − 0.3768895) = 0.0802426, annuity 1000 · 1000 · 0.0802426 / 1.05 (paid
     at the start of each year, the default discount_offset_investment 0) = 76 421.51 CUR/MW/a; reinvest_choice pays
     it for 20 years from y_on 5, of which the 15 to the horizon end 20 are in the model (no inflation): 15 · 76 421.51
@@ -441,7 +446,7 @@ def test_payback_time_copy_of_the_lifetime_is_the_empty_payback_time(tmp_path_fa
     """A payback_time equal to lifetime_technical (the period map {p2020: 3, p2025: 20, p2030: 20}, as a database
     migrated by an earlier development build of v81 holds it) builds the same annuity, lumps and LP as an empty
     payback_time, with a construction lead time and period-varying values: both are read at the period the
-    capacity comes online (owner decision D50)."""
+    capacity comes online."""
     empty = _lead_time_annuity_step(tmp_path_factory, "lead_payback_empty", None)
     copy = _lead_time_annuity_step(tmp_path_factory, "lead_payback_copy",
                                    _map({"p2020": 3.0, "p2025": 20.0, "p2030": 20.0}))
@@ -454,7 +459,7 @@ def test_lead_time_investment_reads_every_period_map_at_its_online_period(tmp_pa
     period maps differ between the decision and the online period: invest_cost {p2020: 2000, p2025: 1000, p2030:
     1500} CUR/kW, payback_time {10, 4, 10}, lifetime_technical {3, 7, 30}; discount_rate 0.05, fixed_cost 10
     CUR/kW/a, end_of_life_method next_seam, reinvest_choice, no inflation.  The maps describe the plant as
-    constructed (owner decision D50): every value is that of p2025.  By hand:
+    constructed: every value is that of p2025.  By hand:
 
     * annuity = invest_cost · 1000 · r / (1 − (1+r)^-n) / (1 + r) = 1000 · 1000 · 0.05 / (1 − 1.05^-4) / 1.05 =
       268 582.70 CUR/MW/a, paid back over payback_time 4 years at the start of each year (the default
