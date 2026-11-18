@@ -1611,3 +1611,21 @@ objective of the LP falls from 9005.0207 to 8977.1335 (scaled MPS units, HiGHS o
 Generated with `pytest "tests/test_scenarios.py::test_scenario[network_coal_wind_battery_invest_cumulative]"
 --regenerate network_coal_wind_battery_invest_cumulative`; the solution moves, so its five files are taken whole. The
 scenario passes in compare mode.
+
+## 2026-11-18 — `tests/model/test_invest_chain_regression.py` follows the annuity sized for when it is paid (#187)
+
+**Context.** The test inlines the dispatch objective and the `p_entity_all_existing` frame of
+`5weeks_invest_fullYear_dispatch_coal_wind`; e561af23 (the investment annuity `invest_cost · ann(r, n) · (1 +
+r)^(offset − 1)`) moved both but did not update them (the `tests/expected/` goldens of this scenario were updated in
+that commit, see its entry above).
+
+**What moved, and why (LP diff `_audit_reports/lp_vintage_base` → `lp_p5_6`):** in the invest solve only the
+`v_invest_p` cost coefficients change: wind_plant 64.011963 → 61.549964 (exactly × 1 / 1.04, its discount_rate),
+coal_plant 63.010287 → 62.390750 (annuity 13.010287 → 12.390750 = × 1 / 1.05 plus the unchanged fixed cost 50). The
+cheaper wind invests 8.75 MW. In the dispatch solve only 144 RHS change (72 `maxFlow` and 72
+`profile_flow_upper_limit` rows of wind_plant), each exactly × 1.00875 = 1008.75 / 1000. Nothing else differs.
+
+**New values:** the dispatch solve's `p_entity_all_existing` of wind_plant is 1008.75 (the invest solve's stays 1000);
+the dispatch objective is the commodity cost of its 72 timesteps scaled to the year: 139 603.75 × 8760 / 72 =
+16 985 122.92 (before 146 350 × 8760 / 72 = 17 805 916.67, the old inlined value), the sums of `commodity_cost` in
+this scenario's `costs__dt.csv` golden after and before e561af23.

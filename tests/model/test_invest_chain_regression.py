@@ -73,24 +73,40 @@ SUB_SOLVES = ("invest_1year_5weeks", "y2020_fullYear_dispatch")
 # matches it to ~1e-15 today.  Re-capturing involves a single solver
 # run; the rel_tolerance gate here is what defends against drift.
 OBJ_REL_TOL = 1e-9
-GOLDEN_OBJ = 17805916.666666668
+# Re-derived for the investment annuity sized for when it is paid
+# (``invest_cost · ann(r, n) · (1 + r)^(offset − 1)``, offset 0 here): the
+# invest solve's wind_plant cost coefficient falls by 1 / 1.04 (its
+# discount_rate), so wind_plant invests 8.75 MW and the dispatch solve's
+# wind capacity rises from 1000 to 1008.75 MW (every changed RHS of the
+# dispatch LP is the old one × 1.00875).  The dispatch objective is the
+# commodity cost of its 72 timesteps scaled to the year (× 8760 / 72):
+# before 146 350 × 8760 / 72 = 17 805 916.67, now 139 603.75 × 8760 / 72
+# = 16 985 122.92 (the commodity cost sums of the ``costs__dt`` goldens of
+# this scenario before and after that change).
+GOLDEN_OBJ = 139603.75 * 8760 / 72
 
 # R2 expected frame.  Hand-derived from the fixture spec:
 #   - ``coal_market`` / ``west`` are markets / nodes — ``existing=0``.
 #   - ``coal_plant`` ships with ``existing=500`` MW at ``p2020``.
 #   - ``wind_plant`` ships with ``existing=1000`` MW at ``p2020``.
 #
-# Both sub-solves see the same frame because the invest chain in this
-# fixture is single-period (invest in y2020, no chained carry-over).
-# A future ``work_invest_chain_minimal`` fixture (post-mortem fallback
-# option) would extend this to 2 periods with non-trivial ``p2030``
-# carry-over.
-_EXPECTED_PAE_ROWS = [
-    {"entity": "coal_market", "period": "p2020", "value": "0.0"},
-    {"entity": "west",        "period": "p2020", "value": "0.0"},
-    {"entity": "coal_plant",  "period": "p2020", "value": "500.0"},
-    {"entity": "wind_plant",  "period": "p2020", "value": "1000.0"},
-]
+# The invest solve sees the existing capacity only.  The dispatch solve
+# also sees what the invest solve built: wind_plant invests 8.75 MW (the
+# ``unit_capacity__d`` golden of this scenario), so 1000 + 8.75 = 1008.75.
+_EXPECTED_PAE_ROWS = {
+    "invest_1year_5weeks": [
+        {"entity": "coal_market", "period": "p2020", "value": "0.0"},
+        {"entity": "west",        "period": "p2020", "value": "0.0"},
+        {"entity": "coal_plant",  "period": "p2020", "value": "500.0"},
+        {"entity": "wind_plant",  "period": "p2020", "value": "1000.0"},
+    ],
+    "y2020_fullYear_dispatch": [
+        {"entity": "coal_market", "period": "p2020", "value": "0.0"},
+        {"entity": "west",        "period": "p2020", "value": "0.0"},
+        {"entity": "coal_plant",  "period": "p2020", "value": "500.0"},
+        {"entity": "wind_plant",  "period": "p2020", "value": "1008.75"},
+    ],
+}
 
 
 pytestmark = pytest.mark.solver
@@ -171,7 +187,7 @@ def test_invest_chain_pae_frame_equality(invest_chain_steps, sub_solve):
     )
 
     expected = pl.DataFrame(
-        _EXPECTED_PAE_ROWS,
+        _EXPECTED_PAE_ROWS[sub_solve],
         schema={"entity": pl.Utf8, "period": pl.Utf8, "value": pl.Utf8},
     )
 
