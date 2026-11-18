@@ -1686,3 +1686,15 @@ Files the regeneration rewrote that this change does not touch (`costs__dt`, `no
 `unit__outputNode__dt`, `slack__upward__node_state__dt`, `summary_solve` timestamps; within the 1e-4 compare
 tolerance) were restored to their previous content. All 44 `test_scenario` cases and their `test_obj_decomposition`
 pass.
+
+## 2026-11-18 — the note of *Total cost counted in the objective* in `summary_solve.csv` (19 scenarios, #187)
+
+**Mechanism.** Text only. The note said the row is "the solver objective for one deterministic solve". That holds only
+when the solve realizes every period it optimises: a solve with look-ahead periods has their operation in the solver
+objective but in no cost table, so the row is the realized part of the objective (`test_obj_decomposition` checks
+the equality only for a run whose `Period` row is all realized). The note (`write_outputs.py`) now says so. No number
+moves; the LP is untouched.
+
+**Files.** `summary_solve.csv` of the 19 scenarios that compare it (every golden holding the old note): the one note
+cell replaced by the writer's new text, nothing else changed. Check: the 19 `test_scenario` cases pass (the file is
+compared as text, timestamps stripped).

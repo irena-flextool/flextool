@@ -166,8 +166,9 @@ def _compare_output_raw(wf_ref: Path, wf_sub: Path) -> list[str]:
             bf = b.astype(float)
         except (ValueError, TypeError):
             # Mixed / object cells (index labels embedded) — fall back to
-            # element-wise equality.
-            if not (a == b).all():
+            # cell-wise equality; ``DataFrame.equals`` counts a NaN (a null
+            # read back from parquet) in the same cell on both sides as equal.
+            if not df_ref.equals(df_sub):
                 problems.append(f"{name}: object-cell mismatch")
             continue
         if not np.allclose(af, bf, rtol=1e-9, atol=1e-9, equal_nan=True):
