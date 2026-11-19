@@ -52,17 +52,13 @@ jobs:
       - name: Install newest versions
         id: install
         run: |
-          pip install --upgrade --upgrade-strategy eager -e . pytest pytest-xdist pytest-timeout pyyaml matplotlib
+          pip install --upgrade --upgrade-strategy eager -e ".[dev]"
           pip list
 
       - name: Installed versions vs caps
         if: steps.install.outcome == 'success'
         run: |
           python .github/scripts/dependency_caps.py report --caps "$RUNNER_TEMP/caps.json" | tee -a "$GITHUB_STEP_SUMMARY"
-
-      - name: Set solver binary permissions
-        run: |
-          if [ -f bin/highs ]; then chmod +x bin/highs; fi
 
       - name: Run the whole test suite
         id: tests

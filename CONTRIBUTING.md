@@ -14,9 +14,10 @@
 2. Install in editable mode with dev dependencies:
    ```bash
    pip install -e ".[dev]"
-   pip install pyyaml matplotlib
    ```
-   The `[dev]` extra pulls in `pytest`, `pytest-xdist` and `pytest-timeout`.
+   The `[dev]` extra pulls in `pytest` (pinned to the 9.x series), `pytest-xdist`,
+   `pytest-timeout`, `ruff` and `setuptools`. The CI workflows install the same
+   `.[dev]` extra, so a local run uses the test tools CI uses.
 
 3. Verify the setup by running the tests:
    ```bash

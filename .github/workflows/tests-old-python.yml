@@ -73,12 +73,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -e .
-          pip install pytest pytest-xdist pytest-timeout pyyaml matplotlib setuptools
-
-      - name: Set glpsol executable permission
-        run: |
-          if [ -f bin/glpsol ]; then chmod +x bin/glpsol; fi
+          pip install -e ".[dev]"
 
       - name: Run tests
         env:

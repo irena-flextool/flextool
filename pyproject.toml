@@ -188,20 +188,24 @@ compat = ["polars[rtcompat]>=1.40,<3"]
 # automation pinned to ``pip install flextool[engine-polars]`` keeps
 # working.
 engine-polars = []
-# Dev tooling for running the test suite locally and in CI.  ``pytest``
-# itself is included for completeness even though it's transitively
-# pulled in by ``spinetoolbox``.  ``pytest-timeout`` enforces a hard
-# per-test wallclock cap so a HiGHS solve that wedges in a C extension
-# doesn't stall the full sweep (see ``[tool.pytest.ini_options]``
-# below for the default).
+# Dev tooling for running the test suite locally and in CI; every CI test
+# job installs ``.[dev]``, so this list is the one place that says which
+# test tools (and versions) CI uses.  ``pytest`` is pinned to one major so
+# CI and local runs agree (the canary lifts the cap and tries the newest).
+# ``pytest-timeout`` enforces a hard per-test wallclock cap so a HiGHS solve
+# that wedges in a C extension doesn't stall the full sweep (see
+# ``[tool.pytest.ini_options]`` below for the default).  ``setuptools``:
+# tests/docs/test_generated_docs.py imports it (Python 3.12+ venvs no
+# longer ship it).
 dev = [
-    "pytest>=8.0",
+    "pytest>=9.2,<10",
     "pytest-timeout>=2.3",
     # Parallel test execution.  The default ``addopts`` runs the suite with
     # ``-n 8`` (see ``[tool.pytest.ini_options]`` below), so xdist is a hard
     # dev/CI requirement, not optional.
     "pytest-xdist>=3.0",
     "ruff>=0.5",
+    "setuptools>=61",
 ]
 
 [project.gui-scripts]

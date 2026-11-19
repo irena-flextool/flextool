@@ -7,9 +7,6 @@ name: CI
 #   slow   — nightly only; xlsx workflow + other slow integration tests
 # The whole suite runs sharded in the Tests workflow (tests.yml) and its heaviest
 # modules in that workflow's nightly-heavy job.
-#
-# All jobs use the in-repo HiGHS / glpsol binaries under bin/ (no external
-# secrets). The `chmod +x` step makes them executable after checkout.
 
 on:
   push:
@@ -44,12 +41,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -e .
-          pip install pytest pytest-xdist pytest-timeout pyyaml matplotlib
-
-      - name: Set solver binary permissions
-        run: |
-          if [ -f bin/highs ]; then chmod +x bin/highs; fi
+          pip install -e ".[dev]"
 
       - name: Run smoke gate
         # Just the smoke-marked fast Layer-1 scenarios — the genuine per-commit
@@ -71,8 +63,7 @@ jobs:
       - name: Install dependencies
         # As the smoke job, plus the MkDocs toolchain of docs.yml.
         run: |
-          pip install -e .
-          pip install pytest pytest-xdist pytest-timeout pyyaml matplotlib
+          pip install -e ".[dev]"
           pip install mkdocs mkdocs-material mkdocs-mermaid2-plugin pymdown-extensions
 
       - name: Header grammar, generated pages and output metadata
@@ -109,8 +100,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -e .
-          pip install pytest pytest-xdist pytest-timeout pyyaml matplotlib
+          pip install -e ".[dev]"
 
       - name: Run the Tk tests
         run: >-
@@ -131,12 +121,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -e .
-          pip install pytest pytest-xdist pytest-timeout pyyaml matplotlib
-
-      - name: Set solver binary permissions
-        run: |
-          if [ -f bin/highs ]; then chmod +x bin/highs; fi
+          pip install -e ".[dev]"
 
       - name: Run slow tests
         run: pytest tests/ -v --tb=short -n logical -m slow
@@ -159,12 +144,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -e .
-          pip install pytest pytest-xdist pytest-timeout pyyaml matplotlib
-
-      - name: Set solver binary permissions
-        run: |
-          if [ -f bin/highs ]; then chmod +x bin/highs; fi
+          pip install -e ".[dev]"
 
       - name: Run axis-Enum mode LP parity
         run: pytest -m axis_enums tests/engine/axis_enums -v --tb=short -n logical
