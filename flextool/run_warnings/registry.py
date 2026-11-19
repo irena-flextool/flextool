@@ -8,7 +8,8 @@ Adding a warning
 ----------------
 1. Take the next free code (``W-`` and four digits; never reuse a retired code: keep it in :data:`RETIRED`).
 2. Add a :class:`WarningSpec` to ``_SPECS`` (the input-side codes W-0100..W-0499: to
-   ``flextool/run_warnings/_input_specs.py``).  ``message`` is the short "what is wrong" of the console line,
+   ``flextool/run_warnings/_input_specs.py``; the solve-side codes W-0500..W-0999: to
+   ``flextool/run_warnings/_engine_specs.py``).  ``message`` is the short "what is wrong" of the console line,
    a ``str.format`` template whose fields the call site passes (``solve`` is filled from the call's ``solve=``).
    Keep it short: the line is ``Warning: <message> (<N> cases, e.g. '<name>') [W-0123]`` and should fit in
    100 characters.  ``body`` (Markdown) is the documentation: what it means and how to fix it.
@@ -104,9 +105,12 @@ _SPECS: tuple[WarningSpec, ...] = (
 
 # The input-side codes (W-0100..W-0499: the input derivation's validators, plots) live in their own module.
 from flextool.run_warnings._input_specs import INPUT_SPECS  # noqa: E402
+# The solve-side codes (W-0500..W-0999: the engine's solves, preprocessing and results) likewise.
+from flextool.run_warnings._engine_specs import ENGINE_SPECS  # noqa: E402
 
 #: ``{code: spec}`` of every code in use, in code order.
-WARNINGS: dict[str, WarningSpec] = {spec.code: spec for spec in sorted(_SPECS + INPUT_SPECS, key=lambda s: s.code)}
+WARNINGS: dict[str, WarningSpec] = {spec.code: spec for spec in sorted(_SPECS + INPUT_SPECS + ENGINE_SPECS,
+                                                                   key=lambda s: s.code)}
 
 #: Codes that were used once and are retired: never give them to a new warning (old logs still name them).
 RETIRED: frozenset[str] = frozenset()

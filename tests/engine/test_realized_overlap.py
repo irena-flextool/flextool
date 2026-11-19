@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import logging
 
+import pytest
+
 from flextool.engine.solve._realized_overlap import (
     DispatchOverlap,
     InvestOverlap,
@@ -21,7 +23,9 @@ from flextool.engine.solve._realized_overlap import (
 )
 from flextool.engine.input._solve_state import ActiveTimeEntry
 
-LOGGER_NAME = "flextool.engine.solve._realized_overlap"
+from flextool import run_warnings
+
+LOGGER_NAME = run_warnings.LOGGER_NAME
 
 
 def _ts(i: int) -> str:
@@ -35,6 +39,13 @@ def _window(first: int, last: int) -> list[ActiveTimeEntry]:
 
 def _steps(time_list: dict, period: str) -> list[str]:
     return [e.timestep for e in time_list.get(period, [])]
+
+
+@pytest.fixture(autouse=True)
+def _fresh_run():
+    run_warnings.start_run()
+    yield
+    run_warnings.start_run()
 
 
 def _warnings(caplog) -> list[str]:
@@ -63,10 +74,8 @@ def test_full_overlap_drops_earlier_and_warns(caplog):
     with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
         assert warn_realized_dispatch_overlaps(overlaps) == 1
     (msg,) = _warnings(caplog)
-    assert "'invest'" in msg and "'dispatch'" in msg
-    assert "'p2020'" in msg
-    assert "100 overlapping timesteps" in msg
-    assert "later solve's realization was kept" in msg
+    assert msg == ("Warning: solves realize the same 100 time steps (1 period); the later is kept "
+                   "('invest, dispatch') [W-0500]")
 
 
 def test_later_solve_covers_start_earlier_keeps_tail():
@@ -154,7 +163,7 @@ def test_last_solve_wins_among_three_and_counts_per_pair():
     ]
 
 
-def test_one_warning_line_per_pair_and_period(caplog):
+def test_one_warning_line_per_pair_with_the_periods_counted(caplog):
     rtl = {
         "invest": {"p2020": _window(1, 10), "p2025": _window(1, 10)},
         "dispatch": {"p2020": _window(1, 10), "p2025": _window(1, 4)},
@@ -166,17 +175,19 @@ def test_one_warning_line_per_pair_and_period(caplog):
     ]
     assert _steps(rtl["invest"], "p2025") == [_ts(i) for i in range(5, 11)]
     with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
-        assert warn_realized_dispatch_overlaps(overlaps) == 2
-    msgs = _warnings(caplog)
-    assert "'p2020'" in msgs[0] and "10 overlapping timesteps" in msgs[0]
-    assert "'p2025'" in msgs[1] and "4 overlapping timesteps" in msgs[1]
-
-
-def test_singular_timestep_wording(caplog):
-    with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
-        warn_realized_dispatch_overlaps([DispatchOverlap("a", "b", "p", 1)])
+        assert warn_realized_dispatch_overlaps(overlaps) == 1
     (msg,) = _warnings(caplog)
-    assert "(1 overlapping timestep)" in msg
+    assert "the same 14 time steps (2 periods)" in msg and "('invest, dispatch')" in msg
+
+
+def test_rolls_count_as_their_solve(caplog):
+    """The overlaps of the rolls of a nested rolling solve with its parent make one line (every level)."""
+    overlaps = [DispatchOverlap("invest", f"dispatch_roll_{k}", "p2020", 24) for k in range(5)]
+    overlaps.append(DispatchOverlap("dispatch_roll_1", "dispatch_roll_2", "p2020", 3))  # within one solve: none
+    with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
+        assert warn_realized_dispatch_overlaps(overlaps) == 1
+    (msg,) = _warnings(caplog)
+    assert "the same 120 time steps (1 period)" in msg and "('invest, dispatch')" in msg
 
 
 def test_later_solve_that_does_not_realize_the_period_claims_nothing():
@@ -213,7 +224,7 @@ def test_silent_pair_suppresses_only_that_pair(caplog):
         )
     assert n == 1
     (msg,) = _warnings(caplog)
-    assert "'invest'" in msg
+    assert "('invest, uc__realized_dispatch')" in msg
 
 
 # ---------------------------------------------------------------------------
@@ -232,9 +243,8 @@ def test_invest_overlap_warns_with_both_solves_and_period(caplog):
     with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
         assert warn_realized_invest_overlaps(overlaps) == 1
     (msg,) = _warnings(caplog)
-    assert "'invest_a'" in msg and "'invest_b'" in msg
-    assert "'p2025'" in msg
-    assert "realized by only one solve" in msg
+    assert msg == ("Warning: two solves both realize the investments of period 'p2025' ('invest_a, invest_b') "
+                   "[W-0501]")
 
 
 def test_invest_disjoint_periods_no_warning(caplog):
