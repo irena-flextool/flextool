@@ -1318,8 +1318,14 @@ def validate_group_output_memberships(db, logger: logging.Logger) -> None:
     be summed once per such flowGroup into the nodeGroup dispatch table.
 
     Only warnings are emitted — a user may deliberately stage a partial
-    configuration.
+    configuration.  Each case is one coded line naming how many entities and
+    the first (W-0001, W-0002, W-0003; :mod:`flextool.run_warnings`); the
+    full list goes to the debug log.  *logger* is not used any more (the
+    lines go to the ``flextool.warnings`` logger); the parameter stays for
+    the callers.
     """
+    from flextool import run_warnings
+
     # Collect groups that are members of the relevant entity classes.
     groups_with_node_members: set[str] = set()
     for ent in db.find_entities(entity_class_name="group__node"):
@@ -1339,7 +1345,8 @@ def validate_group_output_memberships(db, logger: logging.Logger) -> None:
         ("print_dispatch", "group__node", groups_with_node_members),
         ("print_indicators", "group__node", groups_with_node_members),
     ]
-    for param_name, required_members, membership_set in node_checks:
+    for param_name, _required_members, membership_set in node_checks:
+        no_members: list[str] = []
         for pv in db.find_parameter_values(
             entity_class_name="group", parameter_definition_name=param_name
         ):
@@ -1349,10 +1356,9 @@ def validate_group_output_memberships(db, logger: logging.Logger) -> None:
                 continue
             group_name = pv["entity_byname"][0]
             if group_name not in membership_set:
-                logger.warning(
-                    "Group '%s' has %s: yes but no %s members — output will be empty.",
-                    group_name, param_name, required_members,
-                )
+                no_members.append(group_name)
+        if no_members:
+            run_warnings.warn_grouped("W-0002", sorted(no_members), parameter=param_name)
 
     # flow_aggregator: an enum METHOD on the ``flowGroup`` class.  Any value
     # other than ``none`` requests dispatch bands and/or standalone
@@ -1363,6 +1369,7 @@ def validate_group_output_memberships(db, logger: logging.Logger) -> None:
     # ``dispatch_plots_only`` and ``both`` — for the overlap check below.
     _DISPATCH_BOUND = {"dispatch_plots_only", "both"}
     dispatch_bound_flowgroups: set[str] = set()
+    without_flows: dict[str, str] = {}
     for pv in db.find_parameter_values(
         entity_class_name="flowGroup", parameter_definition_name="flow_aggregator"
     ):
@@ -1374,12 +1381,9 @@ def validate_group_output_memberships(db, logger: logging.Logger) -> None:
         if pv["parsed_value"] in _DISPATCH_BOUND:
             dispatch_bound_flowgroups.add(group_name)
         if group_name not in flowgroups_with_flow_members:
-            logger.warning(
-                "flowGroup '%s' has flow_aggregator: %s but no "
-                "flowGroup__unit__node or flowGroup__connection__node members "
-                "— output will be empty.",
-                group_name, pv["parsed_value"],
-            )
+            without_flows[group_name] = f"flow_aggregator: {pv['parsed_value']}"
+    if without_flows:
+        run_warnings.warn_grouped("W-0001", sorted(without_flows), details=dict(sorted(without_flows.items())))
 
     # Double-counting guard: a single flow arc ``(process, node)`` that
     # belongs to two (or more) dispatch-bound flowGroups (flow_aggregator in
@@ -1398,14 +1402,10 @@ def validate_group_output_memberships(db, logger: logging.Logger) -> None:
             if flowgroup not in dispatch_bound_flowgroups:
                 continue
             pn_to_aggregators.setdefault((process, node), []).append(flowgroup)
-    for (process, node), flowgroups in pn_to_aggregators.items():
-        if len(flowgroups) >= 2:
-            logger.warning(
-                "Flow (%s, %s) belongs to multiple flowGroups (%s) in effect "
-                "double counting the flow in dispatch plots. Check "
-                "flow_aggregator parameter.",
-                process, node, ", ".join(sorted(flowgroups)),
-            )
+    overlapping = {arc: ", ".join(sorted(fgs)) for arc, fgs in pn_to_aggregators.items() if len(fgs) >= 2}
+    if overlapping:
+        run_warnings.warn_grouped("W-0003", list(overlapping),
+                                  details={arc: f"in flowGroups {fgs}" for arc, fgs in overlapping.items()})
 
 
 def validate_connection_node_memberships(db, logger: logging.Logger) -> None:

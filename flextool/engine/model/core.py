@@ -5094,7 +5094,8 @@ def _user_constraint_live_keys(terms: list) -> set[str]:
 def _check_user_constraints_without_terms(b: _Build, empty_rows: list[tuple[pl.DataFrame, str]],
                                           const_terms: list) -> None:
     """User-constraint rows left without a variable in this solve: an error where ``constant sense constant``
-    cannot hold, else a warning (once per constraint per run) — the row is left out either way."""
+    cannot hold, else warning W-0004 (one line per solve, each constraint once per run) — the row is left out
+    either way."""
     d = b.d
     empty = [(rows, sense) for rows, sense in empty_rows if rows.height > 0]
     if not empty:
@@ -5141,12 +5142,10 @@ def _check_user_constraints_without_terms(b: _Build, empty_rows: list[tuple[pl.D
             f"User constraints without any variable in {where} cannot hold: {', '.join(failing)}. Their "
             "coefficients only refer to flows, storage states, units online, investments or retirements that this "
             "solve does not have. Remove the constraint from the solve, or give it a term that the solve has.")
-    from flextool.engine import _behaviour_changes
-    for cn, cases in sorted(holding.items()):
-        _behaviour_changes.warn_once(
-            ("user_constraint_without_terms", cn),
-            f"Warning: user constraint '{cn}' has no variable in {where} ({'; '.join(cases)}). It always holds "
-            "there, so it is left out.")
+    if holding:
+        from flextool import run_warnings
+        run_warnings.warn_grouped("W-0004", sorted(holding), solve=b.solve_name or "this solve", per_run=True,
+                                  details={cn: "; ".join(cases) for cn, cases in sorted(holding.items())})
 
 
 def _collected(frame) -> pl.DataFrame:
