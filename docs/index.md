@@ -55,4 +55,4 @@ The theory slides below give some background how FlexTool is formulated. There a
 
 # Reporting issues and getting help
 
-Bug reports and feature requests go to the [GitHub issue tracker](https://github.com/irena-flextool/flextool/issues). For modelling questions or design discussion, join the [monthly user support telco](#monthly-user-support-telcos) — Anni Niemi (anni.niemi@vtt.fi) can add you to the calendar invite.
+Bug reports and feature requests go to the [GitHub issue tracker](https://github.com/irena-flextool/flextool/issues). For modelling questions, usage help and design discussion, use [GitHub Discussions](https://github.com/irena-flextool/flextool/discussions) or join the [monthly user support telco](#monthly-user-support-telcos) — Anni Niemi (anni.niemi@vtt.fi) can add you to the calendar invite.

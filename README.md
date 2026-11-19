@@ -37,7 +37,7 @@ IRENA FlexTool is an energy and power systems model for understanding the role o
   change is in how the matrix is generated and solved, not in the model
   formulation.
 
-This is IRENA FlexTool v4 (see the current version in CHANGELOG.md). Report any bugs or difficulties in the [issue tracker](https://github.com/irena-flextool/flextool/issues). 
+This is IRENA FlexTool v4 (see the current version in CHANGELOG.md). Report any bugs or difficulties in the [issue tracker](https://github.com/irena-flextool/flextool/issues); ask modelling and usage questions in [GitHub Discussions](https://github.com/irena-flextool/flextool/discussions). 
 The previous version of IRENA FlexTool can be found in https://www.irena.org/energytransition/Energy-System-Models-and-Data/IRENA-FlexTool.
 
 ## Under the hood: Rust-based matrix generation
