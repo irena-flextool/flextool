@@ -1289,10 +1289,11 @@ class _MemoryRecorder:
         return (anon_kb + swap_kb) / 1024.0
 
     @staticmethod
-    def _read_sys_swap_used_mb() -> float:
+    def _read_sys_swap_used_mb() -> float | None:
         """System-level used swap (MB) = ``SwapTotal - SwapFree`` from
         ``/proc/meminfo``.  Returns 0.0 when there's no swap configured
-        (``SwapTotal == 0``) or ``/proc`` isn't available.
+        (``SwapTotal == 0``), ``None`` when ``/proc/meminfo`` isn't
+        available (Windows, macOS: the cell shows ``-``, not a fake 0).
         """
         total_kb = 0.0
         free_kb = 0.0
@@ -1310,13 +1311,13 @@ class _MemoryRecorder:
                     if total_kb and free_kb:
                         break
         except OSError:
-            pass
+            return None
         if total_kb <= 0:
             return 0.0
         return max(0.0, (total_kb - free_kb) / 1024.0)
 
     @staticmethod
-    def _read_sys_used_mb() -> float:
+    def _read_sys_used_mb() -> float | None:
         """System-level used memory (MB), matching what most monitors
         ("htop", KSysGuard, GNOME) show as "Used".
 
@@ -1334,7 +1335,8 @@ class _MemoryRecorder:
         approaches zero, regardless of which process is consuming the
         pages).
 
-        Returns 0.0 if /proc isn't available.
+        Returns ``None`` if /proc/meminfo isn't available (the cell then
+        shows ``-``).
         """
         total_kb = 0.0
         avail_kb = 0.0
@@ -1352,9 +1354,9 @@ class _MemoryRecorder:
                     if total_kb and avail_kb:
                         break
         except OSError:
-            pass
+            return None
         if total_kb <= 0:
-            return 0.0
+            return None
         return (total_kb - avail_kb) / 1024.0
 
     # Fixed widths of the phase-progress table.  A row reads
@@ -1432,6 +1434,13 @@ class _MemoryRecorder:
         val = f"{cls._fmt_sig3(mb / div)} {label}"
         if delta_mb is None:
             cell = f"{val} (-)"
+        elif float(cls._fmt_sig3(abs(delta_mb) / div)) >= 1000:
+            # A delta far larger than the absolute (swap 2 GB -> 0.5 MB) would not fit in the absolute's unit:
+            # it gets its own (``512 kB (-2 GB)``), so the cell keeps its width.
+            ddiv, dlabel = cls._pick_size_unit(delta_mb)
+            cell = f"{val} ({cls._fmt_signed_sig3(delta_mb / ddiv)} {dlabel})"
+            if len(cell) >= cls._MEM_CELL_W:      # still too wide: the delta as a whole number of its unit
+                cell = f"{val} ({'+' if delta_mb >= 0 else '-'}{max(1, round(abs(delta_mb) / ddiv))} {dlabel})"
         else:
             cell = f"{val} ({cls._fmt_signed_sig3(delta_mb / div)})"
         return f"{cell:>{cls._MEM_CELL_W}}"
@@ -1511,8 +1520,8 @@ class _MemoryRecorder:
         # user wants to see in the compact mode.
         t_section = t_elapsed - (self._t_prev - self.t0)
         delta_rss = rss_mb - self._rss_prev_mb
-        delta_sys = sys_mb - self._sys_prev_mb
-        delta_swap = swap_mb - self._swap_prev_mb
+        delta_sys = None if sys_mb is None else sys_mb - self._sys_prev_mb
+        delta_swap = None if swap_mb is None else swap_mb - self._swap_prev_mb
         # CSV row — only when full diagnostics is enabled and a path was
         # configured.  Always written for every checkpoint (independent
         # of the log-line whitelist) so the CSV remains a complete
@@ -1597,8 +1606,8 @@ class _MemoryRecorder:
             # activity since the last visible checkpoint.
             self._t_prev = time.perf_counter()
             self._rss_prev_mb = rss_mb
-            self._sys_prev_mb = sys_mb
-            self._swap_prev_mb = swap_mb
+            self._sys_prev_mb = sys_mb or 0.0
+            self._swap_prev_mb = swap_mb or 0.0
             if peak_mb is not None:
                 self._peak_prev_mb = peak_mb
 

@@ -69,3 +69,27 @@ def test_header_and_rows_printed_by_a_checkpoint(capsys: pytest.CaptureFixture[s
     assert [m.start() for m in re.finditer(r"\|", second)] == bars
     assert re.match(r"Run start +\d[\d.]*s \(-\) \| ", first)
     assert re.match(r"Matrix built by polar-high +\d[\d.]*s \(\+[\d.]+\) \| ", second)
+
+
+def test_a_delta_far_larger_than_the_absolute_keeps_the_cell_width() -> None:
+    """Swap dropping from 2 GB to 0.5 MB: the delta gets its own unit instead of ``(-2100000)``."""
+    assert M._fmt_mem_cell(0.5, -2048.0).strip() == "512 kB (-2 GB)"
+    assert M._fmt_mem_cell(1e-7, 2000.0).strip() == "0 kB (+1.95 GB)"
+    assert M._fmt_mem_cell(0.9, 5e6).strip() == "922 kB (+5 TB)"
+    for mb, delta in ((0.5, -2048.0), (1e-7, 2000.0), (0.9, 5e6)):
+        assert len(M._fmt_mem_cell(mb, delta)) == M._MEM_CELL_W
+
+
+def test_no_proc_meminfo_shows_a_dash_not_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    import builtins
+
+    real_open = builtins.open
+
+    def no_proc(path, *args, **kwargs):
+        if str(path).startswith("/proc/"):
+            raise FileNotFoundError(path)
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", no_proc)
+    assert M._read_sys_used_mb() is None and M._read_sys_swap_used_mb() is None
+    assert M._fmt_mem_cell(None, None).strip() == "-"
