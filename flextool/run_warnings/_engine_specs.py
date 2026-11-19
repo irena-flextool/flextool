@@ -8,6 +8,7 @@ the registry merges them.
 * W-052x lifetimes, investments and units
 * W-053x outputs of a solve and storage notes
 * W-054x what the solver's outcome means (notes after a solve that ended optimal, but not cleanly)
+* W-055x warm start and how the solves are run (in this process or a separate one)
 * W-06xx behaviour-change notices (their texts: :mod:`flextool.run_warnings._behaviour_specs`)
 """
 from __future__ import annotations
@@ -21,6 +22,7 @@ _LIFETIME = "Lifetimes, investments and units"
 _OUTPUTS = "Results of a solve"
 _STORAGE = "Storage"
 _SOLVER = "Solver outcome"
+_WARM = "Warm start and memory"
 
 _CROSSOVER_FIX = (
     "add `run_crossover` = `on` to the solve's `solver_arguments` to run crossover (or set `solver` = "
@@ -504,6 +506,72 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "by at most that gap. The debug log and the run record (`_run_status.json`) give the numbers. A solve "
             "that fails these checks stops the run with an error instead. Each solve is noted once.\n\n"
             "**How to fix:** usually nothing. If the exact optimum or the prices matter: " + _CROSSOVER_FIX
+        ),
+    ),
+    WarningSpec(
+        code="W-0550",
+        message="warm-start basis not {step} for solve '{solve}'; {effect}",
+        title="Warm-start basis not used",
+        topic=_WARM,
+        entityless=True,
+        body=(
+            "The run has warm start on (`--warm-start` / `FLEXTOOL_WARM_START=1`), and FlexTool could not use the "
+            "cached HiGHS basis of the solve: either loading the basis into the solve failed (`not loaded`: the "
+            "solve ran from scratch) or saving the basis of the finished solve failed (`not saved`: a later "
+            "solve of the same model, in this run or a later one sharing the basis cache, starts without it). "
+            "The results are not affected; only the solve time can be longer. The rolls of a rolling solve share "
+            "one line; the debug log has the error of each.\n\n"
+            "**How to fix:** usually nothing. If it happens in every run, check that the basis cache folder "
+            "(`--basis-cache-dir`, by default `<work folder>/basis_cache`) is writable and its files are not "
+            "damaged (deleting the folder is safe), and report it with the debug log (`--debug`)."
+        ),
+    ),
+    WarningSpec(
+        code="W-0551",
+        message="save-memory mode: every solve is rebuilt and solved by HiGHS in a separate process",
+        title="Save-memory mode",
+        topic=_WARM,
+        severity=NOTE,
+        entityless=True,
+        body=(
+            "The run has `--save-memory` / `FLEXTOOL_SAVE_MEMORY=1` on. Each solve then builds its LP from scratch, "
+            "writes it to an MPS file and lets HiGHS solve it in a separate process, so the memory HiGHS needs "
+            "while solving is not added to this process's memory. An LP is not reused between solves (warm reuse "
+            "is off), and each solve takes some tens of seconds more for the file I/O. The note is printed once "
+            "per run.\n\n"
+            "**How to fix:** nothing, if the mode was meant (for models that run out of memory otherwise). For "
+            "faster solves when memory is enough, run without `--save-memory` and unset `FLEXTOOL_SAVE_MEMORY`."
+        ),
+    ),
+    WarningSpec(
+        code="W-0552",
+        message="warm start is not available for solver '{solver}'; every solve is built from scratch",
+        title="No warm start for this solver",
+        topic=_WARM,
+        severity=NOTE,
+        entityless=True,
+        body=(
+            "Reusing the LP of an earlier solve (and the warm-start basis cache) works with HiGHS only. With "
+            "another solver every solve builds its LP from scratch, so a run with many solves (for example the "
+            "rolls of a rolling solve) takes longer than with HiGHS. The results are not affected. The note is "
+            "printed once per run.\n\n"
+            "**How to fix:** nothing, if the solver was meant. For warm reuse, use HiGHS (the solve's `solver`)."
+        ),
+    ),
+    WarningSpec(
+        code="W-0553",
+        message="warm reuse is off (warm=False); HiGHS solves run in a separate process",
+        title="Warm reuse off",
+        topic=_WARM,
+        severity=NOTE,
+        entityless=True,
+        body=(
+            "The run was started with `warm=False` (`run_chain_from_db` / `run_orchestration` used from Python), "
+            "so no LP is reused between solves. Each HiGHS solve then builds its LP from scratch, writes it to an "
+            "MPS file and is solved by HiGHS in a separate process (as in save-memory mode), which keeps the "
+            "memory of this process low. Each solve takes some tens of seconds more for the file I/O. The results "
+            "are not affected. The note is printed once per run.\n\n"
+            "**How to fix:** nothing, if it was meant. For faster solves, leave `warm` at its default (`True`)."
         ),
     ),
 ) + BEHAVIOUR_SPECS

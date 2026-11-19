@@ -51,7 +51,6 @@ import os
 import re
 import shutil
 import tempfile
-import textwrap
 import threading
 import time
 from dataclasses import dataclass, field
@@ -109,14 +108,6 @@ from flextool.engine.autoscale import (
     write_report as _autoscale_write_report,
 )
 from flextool.sqlite_url import sqlite_url_string
-
-
-def _wrap_log_prose(text: str, width: int = 100, indent: str = "  ") -> str:
-    """Wrap a prose log message at ``width`` chars, continuation indented."""
-    return textwrap.fill(
-        text, width=width, subsequent_indent=indent,
-        break_long_words=False, break_on_hyphens=False,
-    )
 
 
 def _format_solver_args_line(
@@ -3776,28 +3767,14 @@ def _drive_cascade(
             if _warm_disabled_by_save_memory and not getattr(
                 self, "_warm_disabled_by_save_memory_warned", False
             ):
-                state.logger.warning(
-                    _wrap_log_prose(
-                        "FLEXTOOL_SAVE_MEMORY=1: warm-LP reuse disabled; "
-                        "every sub-solve will cold-rebuild, write MPS, and "
-                        "dispatch to a subprocess HiGHS. Expect ~+30-60 s "
-                        "I/O per sub-solve in exchange for HiGHS' "
-                        "active-solve memory living outside this Python "
-                        "process."
-                    ),
-                )
+                # Coded note (``state.logger`` is at ERROR in a cascade, so a
+                # logger warning here never showed); once per run.
+                run_warnings.note("W-0551")
                 self._warm_disabled_by_save_memory_warned = True
             if _warm_disabled_by_solver and not getattr(
                 self, "_warm_disabled_warned", False
             ):
-                state.logger.warning(
-                    _wrap_log_prose(
-                        f"warm-start is unavailable for solver "
-                        f"{_active_solver_cfg.name!r}; falling back to cold "
-                        f"rebuilds per sub-solve, expect slower per-iter "
-                        f"wall-clock."
-                    ),
-                )
+                run_warnings.note("W-0552", solver=_active_solver_cfg.name)
                 self._warm_disabled_warned = True
             # HiGHS soft-promote: warm=False on HiGHS without
             # FLEXTOOL_SAVE_MEMORY=1 used to fall through to an in-
@@ -3817,15 +3794,7 @@ def _drive_cascade(
                 if not getattr(
                     self, "_warm_disabled_softpromote_warned", False,
                 ):
-                    state.logger.warning(
-                        _wrap_log_prose(
-                            "Warm reuse disabled (warm=False); HiGHS solve "
-                            "will route through the cmd_solve_mps "
-                            "subprocess to bound memory footprint.  Set "
-                            "FLEXTOOL_SAVE_MEMORY=1 explicitly to silence "
-                            "this warning."
-                        ),
-                    )
+                    run_warnings.note("W-0553")
                     self._warm_disabled_softpromote_warned = True
                 _save_memory = True
             warm_used = False
@@ -4159,9 +4128,17 @@ def _drive_cascade(
                                         "%s", fresh_fp,
                                     )
                         except Exception as _basis_exc:  # noqa: BLE001
-                            self.state.logger.warning(
+                            self.state.logger.debug(
                                 "in-process warm-basis inject skipped "
                                 "(%s); solving cold", _basis_exc,
+                            )
+                            # Coded: ``state.logger`` is at ERROR in a
+                            # cascade.  One line per complete solve.
+                            run_warnings.warn_grouped(
+                                "W-0550", solve=complete_solve_name,
+                                step="loaded", effect="solved from scratch",
+                                details=f"in '{complete_solve_name}': "
+                                        f"{_basis_exc}",
                             )
                 # ``WarmProblem.solve`` always keeps the HiGHS instance
                 # alive on ``Solution.highs`` — that's the whole point
@@ -4319,9 +4296,15 @@ def _drive_cascade(
                             fresh_fp,
                         )
                     except Exception as _basis_exc:  # noqa: BLE001
-                        self.state.logger.warning(
+                        self.state.logger.debug(
                             "in-process warm-basis capture skipped (%s)",
                             _basis_exc,
+                        )
+                        run_warnings.warn_grouped(
+                            "W-0550", solve=complete_solve_name,
+                            step="saved", effect="a later solve starts cold",
+                            details=f"in '{complete_solve_name}': "
+                                    f"{_basis_exc}",
                         )
                 self._prior_data = data
                 self._prior_fp = fp
