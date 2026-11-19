@@ -19,6 +19,7 @@ The rolling scenario (72 rolls, ~100 s) is marked ``slow``.
 """
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -75,6 +76,9 @@ def _run(scenario: str, db_url: str, solver_config_dir: Path, root: Path) -> str
          "--solver-config-dir", str(solver_config_dir), "--work-folder", str(folder / "work"),
          "--output-location", str(folder / "out"), "--write-methods", "csv", "--threads", "1"],
         capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=folder, timeout=850,
+        # As the GUI runs the engine (execution_manager): UTF-8 output, whatever the console code page (cp1252 on
+        # a Windows runner would turn the tally's "—" and "×" into replacement characters here).
+        env=dict(os.environ, PYTHONIOENCODING="utf-8"),
     )
     log = result.stdout + result.stderr
     assert result.returncode == 0, f"{scenario} exited {result.returncode}:\n{log[-3000:]}"
