@@ -899,10 +899,13 @@ def _check_storage_accounting(b: _Build) -> None:
     * fix_start on a forward chain (bind_forward_only, bind_forward_only_blended_weights) whose capacity at the start
       is not a decision of the solve, with an open end (no fix_end, no use_reference_value, no upper-level fix): the
       start is an endowment the run may use up; a warning with its size (owner decision).
-    * A forward chain without representative periods whose start the solve decides by investing (a free start or
-      fix_start on capacity it can invest in during the start period) in a solve that does not hold the last step
-      of the model: the matching end (storage_state_end_match) needs both ends in one solve, so it is not applied;
-      a warning.  (A representative-period chain always gets rp_inter_period_end_match.)
+    * A forward chain without representative periods whose explicit start (fix_start, or the reference start of
+      use_reference_value) is on capacity the solve invests in or extends during the start period, in a solve that
+      does not hold the last step of the model: the matching end (storage_state_end_match_share) needs both ends in
+      one solve, so it is not applied; a warning.  A free start is not warned about: the later solve that reaches
+      the end of the model matches it (_run_model._sequence_match_rows, _anchor_cyclic_in_rolling).  (A
+      representative-period chain always gets rp_inter_period_end_match.)
+    "Investable" counts life extensions in the start period too (:func:`_start_decision_periods`).
     Each warning prints one line per solve, naming how many nodes and the first (owner rule); the values per node
     go to the log at debug level.
     """
@@ -920,10 +923,7 @@ def _check_storage_accounting(b: _Build) -> None:
                  if getattr(d, "p_state_end", None) is not None else {})
     starting = (fix_start | set(str(n) for n in d.nodeState["n"].to_list())) - carried
     periods = _start_periods(d, starting)
-    invest: dict[str, set[str]] = {}
-    if b.has_invest_n:
-        for n, p in d.nd_invest_set.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8)).iter_rows():
-            invest.setdefault(n, set()).add(p)
+    invest = _start_decision_periods(b)
 
     def investable(n: str) -> bool:
         return bool(invest.get(n, set()) & set(periods.get(n, [])))
@@ -969,13 +969,18 @@ def _check_storage_accounting(b: _Build) -> None:
                                "use_reference_value."),
                 details=f"Endowment in {where}: {', '.join(sizes[n] for n in sorted(sizes))}.")
     if not d.storage_solve_at_model_end:
+        # A free start (fix_nothing, not use_reference_value) is matched by the later solve that reaches the end of
+        # the model and continues the chain (_run_model._sequence_match_rows, _anchor_cyclic_in_rolling: the level
+        # the model started the node from at its nesting level), so only an explicit start on capacity the solve
+        # decides goes unmatched.
         rp_nodes = set(str(n) for n in d.nodeState_rp["n"].to_list()) if _has_rows(d.nodeState_rp) else set()
-        decided = sorted(n for n in forward - nested - rp_nodes if investable(n))
+        decided = sorted(n for n in forward - nested - rp_nodes if investable(n) and (n in fix_start or n in reference))
         if decided:
             _behaviour_changes.storage_message(
                 "storage_end_match_not_applied", b.solve_name, decided,
-                lambda named: (f"Warning: {named} start {where} at a level the solve decides by investing (a free "
-                               "start, or storage_state_start of capacity it can build) and chain forward, but the "
+                lambda named: (f"Warning: {named} start {where} at a level the solve decides by investing "
+                               "(storage_state_start, or the reference value, of capacity it can build or extend) "
+                               "and chain forward, but the "
                                "solve does not reach the end of the model, so the end is not held at least at that "
                                "start: built storage can deliver its start energy without producing it. Use "
                                "bind_within_solve(_blended_weights), or fix_start_end with storage_state_end at least "
@@ -1789,15 +1794,32 @@ def _rp_end_pin_nodes(b: _Build) -> "pl.DataFrame | None":
     return _rp_minus(_rp_node_set(b, d.storage_fix_end), _nested_nodes(b, with_price=False))
 
 
-def _invest_at_start_nodes(b: _Build, nodes: "pl.DataFrame | None", periods: list[str]) -> set[str]:
-    """The ``nodes`` (n) that this solve can invest in during one of ``periods`` (the periods the chain or the solve
-    starts in): their capacity at the start, so also a fix_start start, is a decision of the solve."""
+def _start_decision_periods(b: _Build) -> dict[str, set[str]]:
+    """``{node: {periods}}``: the periods in which this solve decides storage capacity of the node: an investment
+    (nd_invest_set) or a life extension (``_extend.options``: the extended cohort starts to operate there).  A start
+    in such a period is on capacity the solve decides, so it is not an endowment (fix_start_energy and
+    node_in_service count the extended capacity too)."""
     d = b.d
-    if nodes is None or not b.has_invest_n:
+    out: dict[str, set[str]] = {}
+    frames = [d.nd_invest_set] if b.has_invest_n and _has_rows(d.nd_invest_set) else []
+    extend = _extend.options(d, "n")
+    if extend is not None:
+        frames.append(extend)
+    for frame in frames:
+        for n, p in frame.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8)).unique().iter_rows():
+            out.setdefault(n, set()).add(p)
+    return out
+
+
+def _invest_at_start_nodes(b: _Build, nodes: "pl.DataFrame | None", periods: list[str]) -> set[str]:
+    """The ``nodes`` (n) whose capacity this solve decides (invests in or extends, :func:`_start_decision_periods`)
+    during one of ``periods`` (the periods the chain or the solve starts in): their capacity at the start, so also
+    a fix_start start, is a decision of the solve."""
+    if nodes is None:
         return set()
     names = set(str(n) for n in nodes["n"].to_list())
-    inv = d.nd_invest_set.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8))
-    return set(inv.filter(pl.col("n").is_in(list(names)) & pl.col("d").is_in(periods))["n"].to_list())
+    wanted = set(periods)
+    return {n for n, ps in _start_decision_periods(b).items() if n in names and ps & wanted}
 
 
 def _eq_rp_chain_ends(b: _Build) -> None:

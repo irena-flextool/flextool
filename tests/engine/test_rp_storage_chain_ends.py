@@ -315,22 +315,57 @@ def test_reference_below_the_start_on_investable_storage_warns(tmp_path_factory,
     _no_slack(step)
 
 
-def test_investment_solve_short_of_the_model_end_warns(tmp_path_factory, capsys):
+@pytest.mark.parametrize("start", ["fix_nothing", "fix_start"])
+def test_investment_solve_short_of_the_model_end_warns(tmp_path_factory, capsys, start):
     """A sequence of investment solves (y2020_5week … y2035_5week of tests.json) with an investable battery that
-    chains forward from a free start: the first solve does not reach the end of the model and the later ones
-    continue from a carried level, so no solve holds both ends and the matching end cannot be applied; a warning
-    names the battery once."""
+    chains forward: the first solve does not reach the end of the model, so it cannot hold the end at its start.
+
+    * A free start (fix_nothing, the default): the last solve continues from the carry and ends the battery at
+      least at the level the first solve started it from (storage_state_roll_match), so there is no warning
+      (review M5: before, every such run warned that built storage could deliver its start energy for free).
+    * fix_start: the start on built capacity is not matched over the sequence; a warning names the battery once.
+    """
     from tests.engine._unit_db import b64, make_db, run
 
-    url, scen = make_db(tmp_path_factory, alt="end_match_warn",
+    values = [["node", "battery", "storage_binding_method", b64("bind_forward_only", "str")],
+              ["node", "battery", "storage_start_end_method", b64(start, "str")],
+              ["node", "battery", "storage_solve_horizon_method", b64("free", "str")]]
+    if start == "fix_start":
+        values.append(["node", "battery", "storage_state_start", b64(0.5, "float")])
+    url, scen = make_db(tmp_path_factory, alt=f"end_match_warn_{start}",
                         base_chain=["init", "west", "wind", "battery", "battery_invest", "5weeks",
                                     "invest_solveSequence_5weeks"],
-                        values=[["node", "battery", "storage_binding_method", b64("bind_forward_only", "str")],
-                                ["node", "battery", "storage_start_end_method", b64("fix_nothing", "str")],
-                                ["node", "battery", "storage_solve_horizon_method", b64("free", "str")]])
+                        values=values)
     steps = run(tmp_path_factory, url, scen)
     out = capsys.readouterr().out
-    assert out.count("the solve does not reach the end of the model, so the end is not held") == 1, out[-3000:]
-    assert "1 storage node (battery) start" in out
+    warned = out.count("the solve does not reach the end of the model, so the end is not held")
+    if start == "fix_nothing":
+        assert warned == 0, out[-3000:]
+        last = list(steps.values())[-1]
+        assert row_terms(build(last.flex_data), "storage_state_roll_match", "battery,")
+    else:
+        assert warned == 1, out[-3000:]
+        assert "1 storage node (battery) start" in out
     for step in steps.values():
         assert not row_terms(build(step.flex_data), "storage_state_end_match")
+
+
+def test_life_extension_in_the_start_period_is_a_start_decision(monkeypatch):
+    """Review M2: a storage node whose cohort the solve can extend in the start period has its start capacity
+    decided by the solve, as for an investment (fix_start_energy and node_in_service count the extended capacity):
+    both investability checks (the warnings of _check_storage_accounting and the matching end rows through
+    _invest_at_start_nodes) count it.  Before, only nd_invest_set was read: such a fix_start start was taken for an
+    endowment and got no matching end."""
+    from types import SimpleNamespace
+
+    from flextool.engine.model import core
+
+    extend = pl.DataFrame({"n": ["s", "s"], "cohort": ["existing", "existing"], "d": ["p1", "p2"]})
+    monkeypatch.setattr(core._extend, "options", lambda d, axis: extend if axis == "n" else None)
+    b = SimpleNamespace(d=SimpleNamespace(nd_invest_set=pl.DataFrame({"n": ["t"], "d": ["p2"]})), has_invest_n=True)
+    assert core._start_decision_periods(b) == {"s": {"p1", "p2"}, "t": {"p2"}}
+    nodes = pl.DataFrame({"n": ["s", "t"]})
+    assert core._invest_at_start_nodes(b, nodes, ["p1"]) == {"s"}
+    assert core._invest_at_start_nodes(b, nodes, ["p2"]) == {"s", "t"}
+    b.has_invest_n = False
+    assert core._invest_at_start_nodes(b, nodes, ["p1"]) == {"s"}
