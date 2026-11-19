@@ -20,14 +20,13 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
+from tests._support.coded_capture import capture_coded
 from tests.engine._unit_db import b64, run, make_db, utf8
 
 pytestmark = pytest.mark.solver
 
 CHAIN = ["init", "west", "coal", "wind", "network"]
 CONN = "west_east"
-WARNING = ("Connection 'west_east' has a delay: connection delay is not "
-           "implemented yet and is ignored")
 
 
 def _solve(tpf, alt: str, method: str, delay: list | None):
@@ -63,14 +62,14 @@ _MAP_3H = b64({"index_type": "float", "rank": 1,
     ("regular", _MAP_3H),
 ], ids=["regular", "unidirectional", "no_losses_no_variable_cost",
         "regular_map"])
-def test_connection_delay_is_ignored(tmp_path_factory, caplog,
+def test_connection_delay_is_ignored(tmp_path_factory,
                                      method: str, delay: list) -> None:
     """The delayed connection solves exactly like the undelayed one (same
     objective, flows, arc classification) and is not in any delay set;
     one warning names it."""
     tag = f"{method}_{'map' if delay is _MAP_3H else 'c'}"
     base = _solve(tmp_path_factory, f"cd_no_{tag}", method, None)
-    with caplog.at_level("WARNING"):
+    with capture_coded() as got:
         delayed = _solve(tmp_path_factory, f"cd_yes_{tag}", method, delay)
 
     assert delayed.solution.obj == pytest.approx(base.solution.obj, rel=1e-9)
@@ -93,6 +92,4 @@ def test_connection_delay_is_ignored(tmp_path_factory, caplog,
     if pdw is not None:
         assert _conn_frame(pdw.frame).height == 0
 
-    msgs = [r.getMessage() for r in caplog.records
-            if WARNING in r.getMessage()]
-    assert len(msgs) == 1, msgs
+    assert [n for call in got.calls if call.code == "W-0220" for n in call.names] == [CONN]

@@ -15,11 +15,11 @@ from __future__ import annotations
 import base64
 import collections
 import json
-import logging
 
 import polars as pl
 import pytest
 
+from tests._support.coded_capture import capture_coded
 from tests.engine._unit_db import (
     BASE_FIXTURE_JSON, FLEXTOOL_ROOT, PLANT, PLANT_CHAIN, b64, build, make_db, run, solve, time_map, utf8,
 )
@@ -276,12 +276,11 @@ def test_energy_margin_not_in_group_demand(tmp_path_factory, method: str) -> Non
             assert float(m.row_lb[i]) == pytest.approx(-inflow[(node, d, t)], rel=1e-9), nm
 
 
-def test_ratio_without_dynamic_method_warns(tmp_path_factory, caplog) -> None:
+def test_ratio_without_dynamic_method_warns(tmp_path_factory) -> None:
     """A group ratio on a timeseries_only group is ignored, with one warning naming the group."""
     ents, vals = _dz(method="timeseries_only")
     vals.append(["reserve__upDown__group", GRP, "reservation", b64(10.0, "float")])
-    with caplog.at_level(logging.WARNING):
+    with capture_coded() as got:
         step = solve(tmp_path_factory, alt="gd_warn", base_chain=PLANT_CHAIN, entities=ents, values=vals)
-    msgs = [r.getMessage() for r in caplog.records if "increase_reserve_ratio of reserve group" in r.getMessage()]
-    assert len(msgs) == 1 and "dz__up__electricity" in msgs[0], msgs
+    assert [n for call in got.calls if call.code == "W-0109" for n in call.names] == ["dz, up, electricity"]
     assert not _rows(build(step.flex_data))

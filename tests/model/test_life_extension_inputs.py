@@ -16,6 +16,7 @@ from __future__ import annotations
 import pytest
 
 from flextool.engine.input._solve_state import FlexToolConfigError
+from tests._support.coded_capture import capture_coded
 from tests.engine._unit_db import PLANT_CHAIN, b64, make_db
 
 PREFIX = "Input values out of range:\n  "
@@ -74,22 +75,23 @@ def test_negative_extension_cost_names_the_period(tmp_path_factory) -> None:
         "be 0 or above (a negative cost pays the capacity to be extended).")
 
 
-def test_extension_without_a_lifetime_warns(tmp_path_factory, capsys) -> None:
-    """No existing capacity and no invest_method (so reinvest_choice needs no lifetime_technical): a warning."""
-    _validate(*make_db(tmp_path_factory, alt="le_lifeless", base_chain=PLANT_CHAIN, values=[
-        ["unit", "coal_plant", "life_extension_cost", _f(100.0)],
-        ["unit", "coal_plant", "life_extension_years", _f(10.0)], CHOICE,
-        ["unit", "coal_plant", "existing", _f(0.0)]]))
-    assert ("Warning: unit 'coal_plant' has life_extension_cost and life_extension_years but no lifetime_technical: "
-            "its capacity never reaches an end of life, so it is never extended.") in capsys.readouterr().out
+def test_extension_without_a_lifetime_warns(tmp_path_factory) -> None:
+    """No existing capacity and no invest_method (so reinvest_choice needs no lifetime_technical): W-0225."""
+    with capture_coded() as got:
+        _validate(*make_db(tmp_path_factory, alt="le_lifeless", base_chain=PLANT_CHAIN, values=[
+            ["unit", "coal_plant", "life_extension_cost", _f(100.0)],
+            ["unit", "coal_plant", "life_extension_years", _f(10.0)], CHOICE,
+            ["unit", "coal_plant", "existing", _f(0.0)]]))
+    assert got.names("W-0225", cls="unit") == ["coal_plant"]
 
 
-def test_extension_with_a_lifetime_is_silent(tmp_path_factory, capsys) -> None:
-    _validate(*make_db(tmp_path_factory, alt="le_ok", base_chain=PLANT_CHAIN, values=[
-        ["unit", "coal_plant", "life_extension_cost", _f(0.0)],
-        ["unit", "coal_plant", "life_extension_years", _map([["p2020", 10.0]])],
-        ["unit", "coal_plant", "lifetime_technical", _f(10.0)], CHOICE]))
-    assert "Warning" not in capsys.readouterr().out
+def test_extension_with_a_lifetime_is_silent(tmp_path_factory) -> None:
+    with capture_coded() as got:
+        _validate(*make_db(tmp_path_factory, alt="le_ok", base_chain=PLANT_CHAIN, values=[
+            ["unit", "coal_plant", "life_extension_cost", _f(0.0)],
+            ["unit", "coal_plant", "life_extension_years", _map([["p2020", 10.0]])],
+            ["unit", "coal_plant", "lifetime_technical", _f(10.0)], CHOICE]))
+    assert got.codes() == []
 
 
 @pytest.mark.parametrize("alt, method", [("le_auto_default", None), ("le_auto_explicit", "reinvest_automatic")])

@@ -25,12 +25,12 @@ The method / flag values of the fixture are stripped from the JSON, so "not auth
 from __future__ import annotations
 
 import json
-import logging
 from pathlib import Path
 
 import polars as pl
 import pytest
 
+from tests._support.coded_capture import capture_coded
 from tests.engine._unit_db import b64, build, cstr_over, make_db, utf8
 
 REPO = Path(__file__).resolve().parents[2]
@@ -283,10 +283,10 @@ def test_flag_without_limit_next_to_flagged_group_with_limit(tmp_path_factory) -
     assert rows.filter(pl.col("g") == "electricity").height == ref_rows.height == 48
 
 
-def test_flag_without_limit_next_to_unflagged_group_with_limit(tmp_path_factory, caplog) -> None:
+def test_flag_without_limit_next_to_unflagged_group_with_limit(tmp_path_factory) -> None:
     """F = ``capacity_margin`` has_inertia without a limit, U = ``electricity`` has a limit but no flag: no
     requirement anywhere (no crash), and both warnings are logged."""
-    with caplog.at_level(logging.WARNING):
+    with capture_coded() as got:
         steps = _run(tmp_path_factory, "single", [["group", "capacity_margin", "has_inertia", s("yes")],
                                                   ["group", "electricity", "inertia_limit", scalar(200.0)]])
     st = list(steps.values())[-1]
@@ -294,46 +294,40 @@ def test_flag_without_limit_next_to_unflagged_group_with_limit(tmp_path_factory,
     rows = cstr_over(build(st.flex_data), "inertia_constraint")
     assert rows is None or set(rows["g"].to_list()) == {"capacity_margin"}
     _assert_same_objs(steps, _run(tmp_path_factory, "single", []))
-    text = caplog.text
-    assert "Group 'electricity' has inertia_limit but has_inertia is not yes: the limit is ignored." in text
-    assert "Group 'capacity_margin' has has_inertia = yes but no inertia_limit" in text
+    assert got.names("W-0101", limit="inertia_limit") == ["electricity"]
+    assert got.names("W-0102", limit="inertia_limit") == ["capacity_margin"]
 
 
 # ---------------------------------------------------------------------------
 # Warnings
 
 
-def test_limit_without_flag_warns(tmp_path_factory, caplog) -> None:
-    """A limit without its method / flag is ignored, and a warning names the group."""
-    with caplog.at_level(logging.WARNING):
+def test_limit_without_flag_warns(tmp_path_factory) -> None:
+    """A limit without its method / flag is ignored, and a warning (W-0101) names the group."""
+    with capture_coded() as got:
         _run(tmp_path_factory, "single", _limits("single") + [["group", "heat", "inertia_limit", scalar(0.0)]],
              entities=None, warm=False)
-    text = caplog.text
-    assert "Group 'capacity_margin' has capacity_margin_absolute but capacity_margin_method is not absolute" in text
-    assert "Group 'electricity' has inertia_limit but has_inertia is not yes" in text
-    assert "Group 'electricity' has non_synchronous_limit but has_non_synchronous is not yes" in text
+    assert got.names("W-0101", limit="capacity_margin_absolute") == ["capacity_margin"]
+    assert got.detail("W-0101", "capacity_margin") == "capacity_margin_method is not absolute"
+    assert got.names("W-0101", limit="inertia_limit") == ["electricity"]
+    assert got.names("W-0101", limit="non_synchronous_limit") == ["electricity"]
     # An explicit 0 without the flag has no effect and is not reported.
-    assert "Group 'heat'" not in text
+    assert "heat" not in got.names("W-0101")
 
 
-def test_flag_without_limit_warns_only_when_absent(tmp_path_factory, caplog) -> None:
-    """The method / flag without any limit value warns; with an explicit 0 it does not."""
-    with caplog.at_level(logging.WARNING):
+def test_flag_without_limit_warns_only_when_absent(tmp_path_factory) -> None:
+    """The method / flag without any limit value warns (W-0102); with an explicit 0 it does not."""
+    with capture_coded() as absent:
         _run(tmp_path_factory, "single", _flags("single"), warm=False)
-    absent = caplog.text
-    assert "Group 'capacity_margin' has capacity_margin_method = absolute but no capacity_margin_absolute" in absent
-    assert "Group 'electricity' has has_inertia = yes but no inertia_limit" in absent
-    assert "Group 'electricity' has has_non_synchronous = yes but no non_synchronous_limit" in absent
-    caplog.clear()
-    with caplog.at_level(logging.WARNING):
+    assert absent.names("W-0102", limit="capacity_margin_absolute") == ["capacity_margin"]
+    assert absent.names("W-0102", limit="inertia_limit") == ["electricity"]
+    assert absent.names("W-0102", limit="non_synchronous_limit") == ["electricity"]
+    with capture_coded() as explicit:
         steps = _run(tmp_path_factory, "single", _flags("single") + [
             ["group", "capacity_margin", "capacity_margin_absolute", scalar(0.0)],
             ["group", "electricity", "inertia_limit", scalar(0.0)],
             ["group", "electricity", "non_synchronous_limit", scalar(0.0)]], warm=False)
-    explicit = caplog.text
-    assert "but no capacity_margin" not in explicit
-    assert "but no inertia_limit" not in explicit
-    assert "but no non_synchronous_limit" not in explicit
+    assert explicit.names("W-0102") == []
     # An explicit 0 means the same as an absent limit.
     _assert_same_objs(steps, _run(tmp_path_factory, "single", _flags("single"), warm=False))
 

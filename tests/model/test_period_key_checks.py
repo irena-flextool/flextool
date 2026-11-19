@@ -12,8 +12,6 @@ Messages are the expected text, written by hand.
 """
 from __future__ import annotations
 
-import contextlib
-import io
 from pathlib import Path
 
 import polars as pl
@@ -21,6 +19,7 @@ import pytest
 import spinedb_api as api
 
 from flextool.engine.input._solve_state import FlexToolConfigError
+from tests._support.coded_capture import capture_coded
 from tests.engine._unit_db import PLANT_CHAIN, b64, last_stochastic, make_db, run, utf8
 
 PREFIX = "Map keys that are not periods of any solve in the database:\n  "
@@ -42,7 +41,7 @@ def _map(data: list, index_name: str | None = None, index_type: str = "str") -> 
 
 def _check(url: str, scenario: str) -> str:
     """Run the two checks as ``input_derivation.run`` does (whole-database facts, then the scenario filter);
-    return what they print."""
+    return their coded warnings, one ``<code> <name>: <details>`` line each."""
     from flextool.input_derivation import _validators as v
     from flextool.spinedb_backend import SpineDBBackend
 
@@ -56,11 +55,10 @@ def _check(url: str, scenario: str) -> str:
         backend._db = db
         backend._api = api
         backend._scenario_name = scenario
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
+        with capture_coded() as got:
             v.validate_timeline_timestep_duration(db)
             v.validate_period_keys(backend, whole)
-    return out.getvalue()
+    return "".join(f"{call.code} {name}: {call.details.get(name, '')}\n" for call in got.calls for name in call.names)
 
 
 def _error(tmp_path_factory, alt: str, values: list, entities: list | None = None) -> str:
@@ -346,9 +344,7 @@ def test_profile_period_map_without_the_scenario_period_warns(tmp_path_factory, 
     url, scen = make_db(tmp_path_factory, alt=alt, base_chain=PLANT_CHAIN, values=[
         ["profile", "wind_profile", "profile", _map([["p2025", 0.3]], index_name)]])
     assert _check(url, scen) == (
-        f"Warning: profile 'wind_profile', parameter 'profile' (alternative '{alt}') has no value for period(s) "
-        "p2020: the profile is 0 in those periods. Add the periods to the map, or give the profile a constant "
-        "value.\n")
+        f"W-0310 wind_profile: alternative '{alt}': no value for p2020\n")
 
 
 @pytest.mark.parametrize("index_name", [None, "period"])
@@ -379,9 +375,7 @@ def test_profile_period_map_warns_for_a_solve_that_runs(tmp_path_factory) -> Non
         ["model", "flexTool", "solves",
          b64({"value_type": "str", "data": ["y2020_2day_dispatch", "s_extra"]}, "array")]])
     assert _check(url, scen) == (
-        f"Warning: profile 'wind_profile', parameter 'profile' (alternative '{alt}') has no value for period(s) "
-        "p2025: the profile is 0 in those periods. Add the periods to the map, or give the profile a constant "
-        "value.\n")
+        f"W-0310 wind_profile: alternative '{alt}': no value for p2025\n")
 
 
 def test_profile_time_map_is_silent(tmp_path_factory) -> None:
@@ -449,9 +443,7 @@ def test_2d_profile_missing_a_period_of_a_solve_that_runs_warns(tmp_path_factory
         ["model", "flexTool", "solves",
          b64({"value_type": "str", "data": ["y2020_2day_dispatch", "s_extra"]}, "array")]])
     assert _check(url, scen) == (
-        f"Warning: profile 'wind_profile', parameter 'profile' (alternative '{alt}') has no value for period(s) "
-        "p2025: the profile is 0 in those periods. Add the periods to the map, or give the profile a constant "
-        "value.\n")
+        f"W-0310 wind_profile: alternative '{alt}': no value for p2025\n")
 
 
 # The solve: wind_plant (chain init, west, coal, wind) with existing 100 MW and a *fixed* profile.  The profile

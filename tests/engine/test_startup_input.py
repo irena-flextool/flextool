@@ -37,6 +37,7 @@ import polars as pl
 import pytest
 
 from tests.engine._lp_rows import row_terms
+from tests._support.coded_capture import capture_coded
 from tests.engine._unit_db import FLEXTOOL_ROOT, RunCache, b64, build, make_db, time_map, utf8
 
 pytestmark = pytest.mark.solver
@@ -611,25 +612,26 @@ def test_input_error_stops_the_run(tmp_path_factory) -> None:
 
 
 @pytest.mark.parametrize("case, values, ents, methods, message", [
-    ("W1", [], [], ONLINE, "startup_input_method startup_only without a startup_energy"),
+    ("W1", [], [], ONLINE, ("W-0206", "cp, oil_n", "startup_input_method startup_only")),
     ("W2", [["unit__inputNode", ["cp", "oil_n"], "conversion_flow_coeff", _f(0.0)],
             ["unit__inputNode", ["cp", "oil_n"], "input_share_max", _f(0.5)]], [], ONLINE,
-     "conversion_flow_coeff, input_share_max has no effect on a startup_only arc"),
-    ("W3", [], [], ONLINE, "has no energy balance and no commodity"),
+     ("W-0207", "cp, oil_n", "conversion_flow_coeff, input_share_max")),
+    ("W3", [], [], ONLINE, ("W-0208", "cp, oil_n", "")),
     ("W4", [["unit__inputNode", ["gt", "oil_n"], "startup_input_method", _s("startup_only")],
             ["unit__inputNode", ["gt", "oil_n"], "startup_energy", _f(1.0)]],
      [["unit", "gt", None], ["unit__inputNode", ["gt", "oil_n"], None], ["unit__outputNode", ["gt", "elec"], None]],
-     {**ONLINE, "gt": "method_1way_1var_LP"}, "unit 'gt': every input is startup_only"),
+     {**ONLINE, "gt": "method_1way_1var_LP"}, ("W-0209", "gt", "")),
     ("W5", [["unit__inputNode", ["cp", "oil_n"], "constraint_flow_coeff",
              b64({"index_type": "str", "index_name": "constraint", "data": [["c1", 1.0]]}, "map")]], [], ONLINE,
-     "the start-up input is not in constraint c1"),
+     ("W-0211", "cp, oil_n", "constraint c1")),
     ("W6", [["unit__inputNode", ["gt", "oil_n"], "startup_input_method", _s("startup_only")],
             ["unit__inputNode", ["gt", "oil_n"], "startup_energy", _f(1.0)],
             ["unit", "gt", "conversion_method", _s("min_load_efficiency")]],
      [["unit", "gt", None], ["unit__inputNode", ["gt", "oil_n"], None], ["unit__outputNode", ["gt", "elec"], None]],
-     {**ONLINE, "gt": "method_1way_1var_LP"}, "min_load_efficiency with only startup_only inputs"),
+     {**ONLINE, "gt": "method_1way_1var_LP"}, ("W-0210", "gt", "min_load_efficiency")),
 ])
-def test_input_warnings(tmp_path_factory, caplog, case, values, ents, methods, message) -> None:
+def test_input_warnings(tmp_path_factory, case, values, ents, methods, message) -> None:
+    """``message``: the code, the name and the details of the one case the check names."""
     from flextool.input_derivation._validators import validate_startup_inputs
 
     vals = _values(energy=None if case == "W1" else 2.0,
@@ -637,14 +639,15 @@ def test_input_warnings(tmp_path_factory, caplog, case, values, ents, methods, m
     # W3: oil_n is a commodity node of no commodity, so the start-up energy goes nowhere.
     ents_all = [e for e in _entities(ents) if case != "W3" or e[:2] != ["commodity__node", ["oil", "oil_n"]]]
     logger = logging.getLogger("su_check")
-    with caplog.at_level(logging.WARNING, logger="su_check"):
+    with capture_coded() as got:
         _check(tmp_path_factory, f"su_warn_{case}", vals + values, ents_all, methods,
                lambda db, prov: validate_startup_inputs(db, prov, logger))
-    hits = [r.getMessage() for r in caplog.records if message in r.getMessage()]
-    assert len(hits) == 1, [r.getMessage() for r in caplog.records]
+    code, name, detail = message
+    assert [n for call in got.calls if call.code == code for n in call.names] == [name], got.calls
+    assert got.detail(code, name) == detail
 
 
-def test_arc_checks_skip_the_startup_only_arc(tmp_path_factory, capsys, caplog) -> None:
+def test_arc_checks_skip_the_startup_only_arc(tmp_path_factory) -> None:
     """#213 (validate_zero_conversion_coeff) and the input-share checks leave the startup_only arc out: a
     conversion_flow_coeff 0 and an input_share_min on it give no zero-coefficient or input-share line."""
     from flextool.input_derivation._validators import validate_unit_input_shares, validate_zero_conversion_coeff
@@ -657,11 +660,9 @@ def test_arc_checks_skip_the_startup_only_arc(tmp_path_factory, capsys, caplog) 
         validate_zero_conversion_coeff(db)
         validate_unit_input_shares(db, prov, logger)
 
-    with caplog.at_level(logging.WARNING, logger="su_check"):
+    with capture_coded() as got:
         _check(tmp_path_factory, "su_skip", values, _entities(), ONLINE, checks)
-    printed = capsys.readouterr().out
-    assert "oil_n" not in printed
-    assert not [r for r in caplog.records if "oil_n" in r.getMessage()]
+    assert not [n for call in got.calls for n in call.names if "oil_n" in n], got.calls
 
 
 # ---------------------------------------------------------------------------

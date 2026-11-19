@@ -52,6 +52,7 @@ from flextool.engine.input._lifetime_roles import (
 from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.preprocess._co2_methods import CO2_MAX_PERIOD_METHODS, CO2_MAX_TOTAL_METHODS
 from flextool.engine.preprocess.params._existing import DIVEST_NOT_ALLOWED, INVEST_NOT_ALLOWED
+from flextool import run_warnings
 from flextool import units_of_measure as uom
 from flextool.input_derivation._method_constants import METHOD_2WAY_1VAR, METHOD_LP, METHOD_MIP
 
@@ -669,13 +670,13 @@ def validate_time_series_keys(src, vocab: tuple[set[str], dict[str, list[str]]] 
     time-series registry), on the Map and time series values, against the steps of **all** the scenario's
     timelines (a database that keeps series for two timelines gives no noise):
 
-    - some keys of a value are off → one warning per (class, parameter), printed once, naming up to 3 entities,
-      the number of off keys and the first 5;
+    - some keys of a value are off → one coded warning (W-0309) per (class, parameter) naming the entities; the
+      number of off keys and the first 5 go to its debug details;
     - no time key of a value is on a timeline → :class:`FlexToolConfigError` (every value of it would be dropped
       and the parameter would fall back to its default), naming the entity, the parameter, the alternative and the
       first keys (up to 5 values shown), with a case or year hint when one applies;
     - ... unless every key is a time step of a timeline that is not one of this scenario's (another alternative's
-      ``timestep_duration``): plain data of another scenario → a warning (the value is not used).
+      ``timestep_duration``): plain data of another scenario → a warning (W-0308; the value is not used).
 
     The time levels are classified as the readers do (:func:`_time_levels`): a stochastic branch name or a period
     key is never checked; an unnamed level keyed by periods of another scenario is a period level (no value in
@@ -724,8 +725,8 @@ def validate_time_series_keys(src, vocab: tuple[set[str], dict[str, list[str]]] 
 
     period_axis = _period_axis_params()
     errors: list[str] = []
-    other_timeline_warnings: list[str] = []
-    warnings: list[str] = []
+    other_timeline_warnings: list[tuple[str, str, str]] = []  # (parameter, entity, details): W-0308
+    warnings: list[tuple[str, list[str], str]] = []           # (parameter, entities, details): W-0309
     for (cls, par) in TIME_AGGREGATION:
         allowed = PARAM_ALLOWED_SHAPES.get((cls, par))
         allowed_key = frozenset(allowed) if allowed else None
@@ -769,8 +770,8 @@ def validate_time_series_keys(src, vocab: tuple[set[str], dict[str, list[str]]] 
                 if others is not None:
                     names = ", ".join(f"{name!r} (alternative {alt!r})" for name, alt in others[:2])
                     other_timeline_warnings.append(
-                        f"Warning: {where}: its keys ({first}) are time steps of timeline {names}, which is not a "
-                        "timeline of this scenario; the value is not used.")
+                        (f"{cls}.{par}", entity, f"alternative {pv['alternative_name']!r}: keys ({first}) are time "
+                         f"steps of timeline {names}, not a timeline of this scenario"))
                     continue
                 if lower_steps is None:
                     lower_steps = {}
@@ -784,24 +785,23 @@ def validate_time_series_keys(src, vocab: tuple[set[str], dict[str, list[str]]] 
             all_keys.update(keys)
             off_keys.update(dict.fromkeys(off))
         if off_entities:
-            names = ", ".join(repr(e) for e in off_entities[:3])
-            if len(off_entities) > 3:
-                names += f" and {len(off_entities) - 3} more entities"
             first = list(off_keys)[:5]
             rest = len(off_keys) - len(first)
             shown = ", ".join(first) + (f" and {rest} more" if rest else "")
             warnings.append(
-                f"Warning: {cls} {names} parameter {par!r}: {len(off_keys)} of {len(all_keys)} distinct time keys "
-                f"are not time steps of any timeline ({shown}); their values are not used. "
-                f"{_timelines_text(timelines)}")
+                (f"{cls}.{par}", off_entities,
+                 f"{len(off_keys)} of {len(all_keys)} distinct time keys are not time steps of any timeline "
+                 f"({shown}). {_timelines_text(timelines)}"))
     if errors:
         more = f" (+{len(errors) - 5} more)" if len(errors) > 5 else ""
         timeline_list = ", ".join(f"{name}: {_span(steps)}" for name, steps in list(timelines.items())[:3])
         raise FlexToolConfigError(
             "Time series with no key on a timeline: " + " ".join(errors[:5]) + more
             + f" (timelines {timeline_list}). Rename the keys to time steps of a timeline, or remove the value.")
-    for text in other_timeline_warnings + warnings:
-        print(text, flush=True)
+    for parameter, entity, details in other_timeline_warnings:
+        run_warnings.warn("W-0308", entity, parameter=parameter, details={entity: details})
+    for parameter, entities, details in warnings:
+        run_warnings.warn_grouped("W-0309", entities, parameter=parameter, details=f"{parameter}: {details}")
 
 
 def validate_capacity_margin_groups(db, logger: logging.Logger) -> None:
@@ -841,11 +841,7 @@ def validate_capacity_margin_groups(db, logger: logging.Logger) -> None:
             )
         with_demand = sorted(n for n in storage_in_group if any(v < 0.0 for v in inflow.get(n, ())))
         if with_demand:
-            logger.warning(
-                f"Capacity margin group '{g}': the storage node(s) {', '.join(with_demand)} have demand (a "
-                f"negative inflow), which the capacity margin leaves out: it covers the demand of the group's "
-                f"nodes without a storage state. Model the demand on a balance node of the group, connected to the "
-                f"storage node, if the margin should cover it.")
+            run_warnings.warn("W-0100", g, details={g: f"storage nodes with demand: {', '.join(with_demand)}"})
         period_nodes = sorted(n for n in nodes if node_type.get(n) == "balance_within_period")
         if period_nodes:
             raise FlexToolConfigError(
@@ -920,11 +916,10 @@ def validate_group_limit_flags(db, logger: logging.Logger) -> None:
         values = _explicit_values(db, "group", limit)
         for g in sorted(values):
             if g not in flagged and any(v != 0.0 for v in values[g]):
-                logger.warning(
-                    "Group '%s' has %s but %s is not %s: the limit is ignored.", g, limit, flag, on)
+                run_warnings.warn("W-0101", g, limit=limit, details={g: f"{flag} is not {on}"})
         for g in sorted(flagged - set(values)):
-            logger.warning(
-                "Group '%s' has %s = %s but no %s: %s.", g, flag, on, limit, _GROUP_LIMIT_ABSENT[limit])
+            run_warnings.warn("W-0102", g, limit=limit,
+                              details={g: f"{flag} = {on}: {_GROUP_LIMIT_ABSENT[limit]}"})
     default = _definition_default(db, "group", "co2_method")
     methods = {pv["entity_byname"][0]: str(pv["parsed_value"])
                for pv in db.find_parameter_values(entity_class_name="group", parameter_definition_name="co2_method")
@@ -934,10 +929,8 @@ def validate_group_limit_flags(db, logger: logging.Logger) -> None:
         for g, alt in sorted(_explicit_value_alternatives(db, "group", limit).items()):
             method = methods.get(g, "none" if default is None else str(default))
             if method not in capping:
-                logger.warning(
-                    "Group '%s' has %s %s but its co2_method '%s' has no %s cap: the limit is ignored. Use a "
-                    "co2_method with '%s' in it to apply the limit.", g, limit, _where(alt, None), method, kind,
-                    kind)
+                run_warnings.warn("W-0103", g, limit=limit,
+                                  details={g: f"{limit} {_where(alt, None)}, co2_method '{method}' (no {kind} cap)"})
 
 
 def validate_non_sync_one_variable_connections(db, provider, logger: logging.Logger) -> None:
@@ -978,16 +971,8 @@ def validate_non_sync_one_variable_connections(db, provider, logger: logging.Log
             nodes = group_nodes.get(g, set())
             if (n1 in nodes) == (n2 in nodes):
                 continue
-            if conn in dc_pf:
-                logger.warning(
-                    "DC power-flow line '%s' crosses the boundary of group '%s' with a non-synchronous limit: its "
-                    "flows both ways count, and simultaneous flow both ways can loosen the limit at no cost.",
-                    conn, g)
-            else:
-                logger.warning(
-                    "Connection '%s' crosses the boundary of group '%s' with a non-synchronous limit: its flows "
-                    "both ways count, and simultaneous flow both ways can loosen the limit at no cost: use "
-                    "transfer_method exact.", conn, g)
+            run_warnings.warn("W-0104", (conn, g), details={
+                (conn, g): "a DC power-flow line" if conn in dc_pf else "use transfer_method exact"})
 
 
 def validate_min_load_efficiency_inputs(db, logger: logging.Logger) -> None:
@@ -1020,10 +1005,7 @@ def validate_min_load_efficiency_inputs(db, logger: logging.Logger) -> None:
     if errors:
         raise FlexToolConfigError("min_load_efficiency inputs: " + "; ".join(errors) + ".")
     with_min_load = {u for u, vals in min_load.items() if any(v > 0.0 for v in vals)}
-    for unit in sorted((mle & with_min_load) - set(eta_min)):
-        logger.warning(
-            "Unit '%s' uses min_load_efficiency with min_load > 0 but has no efficiency_at_min_load: its "
-            "efficiency is used at minimum load too (a flat curve; the minimum load still applies).", unit)
+    run_warnings.warn_grouped("W-0200", sorted((mle & with_min_load) - set(eta_min)))
 
 
 def _has_time_level(parsed, timesteps: set[str]) -> bool:
@@ -1153,9 +1135,9 @@ def validate_piecewise_linear_inputs(db, logger: logging.Logger) -> None:
     units = _entity_names(db, "unit")
     pw = sorted(u for u in units if cts.get(u, default_ct) == "piecewise_linear")
     curves = parse_piecewise_curves(db, _period_universe(db) | _branch_periods(db))
-    for unit in sorted(curves.units - set(pw)):
-        logger.warning("Unit '%s': piecewise_linear_efficiency is not used (conversion_method is %s)", unit,
-                       cts.get(unit, default_ct))
+    unused = sorted(curves.units - set(pw))
+    run_warnings.warn_grouped("W-0201", unused,
+                              details={u: f"conversion_method is {cts.get(u, default_ct)}" for u in unused})
     if not pw:
         return
     errors: list[str] = []
@@ -1189,8 +1171,7 @@ def validate_piecewise_linear_inputs(db, logger: logging.Logger) -> None:
     for unit in pw:
         params = authored_eff.get(unit, [])
         if params:
-            logger.warning("Unit '%s': %s %s not used by a piecewise_linear unit (its curve gives the efficiency)",
-                           unit, " and ".join(params), "is" if len(params) == 1 else "are")
+            run_warnings.warn("W-0202", unit, details={unit: " and ".join(params)})
     by_unit = curves_by_unit(curves.frame)
     all_periods = _period_universe(db) | _branch_periods(db)
     floors = {pv["entity_byname"][0]: _min_load_floors(pv["parsed_value"], all_periods)
@@ -1230,11 +1211,11 @@ def validate_piecewise_linear_inputs(db, logger: logging.Logger) -> None:
                 if floor >= pts[0][0]:
                     continue
                 eta_floor = floor / (alpha * floor + beta)
-                logger.warning(
-                    "Unit '%s': min_load %s is below the first point of its curve%s (load %s): between them the "
-                    "first segment is extended (efficiency at min_load ≈ %.2g); without a higher min_load the unit "
-                    "can be online at zero output, burning %.2g MW of fuel per MW online", unit, f"{floor:g}",
-                    f" in period {period}" if period is not None else "", f"{pts[0][0]:g}", eta_floor, beta)
+                run_warnings.warn("W-0203", unit, details={unit: (
+                    f"min_load {floor:g} below the first point (load {pts[0][0]:g})"
+                    + (f" in period {period}" if period is not None else "")
+                    + f"; efficiency at min_load ≈ {eta_floor:.2g}, {beta:.2g} MW of fuel per MW online at zero "
+                    "output")})
         if not by_d or not piecewise_unit_flags(by_d.values()).multi_line:
             continue
         remapped = (len(n_inputs.get(unit, [])) == 1 and len(outputs.get(unit, [])) == 1 and unit not in delayed)
@@ -1242,12 +1223,9 @@ def validate_piecewise_linear_inputs(db, logger: logging.Logger) -> None:
                       or piecewise_unit_flags(by_d.values()).needs_online)
         for item, node in _piecewise_w7_items(db, unit, inputs.get(unit, []), remapped,
                                               inertia_from_flow=not has_online or online_left_out):
-            logger.warning("Unit '%s': its %s on input '%s' can be met by burning input above the part-load curve "
-                           "(piecewise_linear rows are 'at least'); check the post-solve warning", unit, item, node)
+            run_warnings.warn("W-0204", (unit, node), details={(unit, node): item})
         for commodity, what, node in _piecewise_w7_values(db, inputs.get(unit, [])):
-            logger.warning("Unit '%s': commodity '%s' of input '%s' has %s: where the input pays, the unit can burn "
-                           "it above its part-load curve (piecewise_linear rows are 'at least'); check the post-solve "
-                           "warning", unit, commodity, node, what)
+            run_warnings.warn("W-0204", (unit, node), details={(unit, node): f"commodity '{commodity}' has {what}"})
 
 
 def validate_ladder_methods(db, logger: logging.Logger) -> None:
@@ -1441,11 +1419,7 @@ def validate_connection_node_memberships(db, logger: logging.Logger) -> None:
             continue
         name = byname[0]
         if name not in connected:
-            logger.warning(
-                "Connection '%s' excluded from this scenario: missing one/both endpoint "
-                "nodes or its connection__node__node — '%s' not included. Check your data!",
-                name, name,
-            )
+            run_warnings.warn("W-0219", name)
 
 
 def _node_flow_sides(db) -> tuple[set[str], set[str]]:
@@ -1504,7 +1478,7 @@ def _node_flow_sides(db) -> tuple[set[str], set[str]]:
 
 def warn_node_connections(db) -> None:
     """Warn about a node whose balance has nothing to work with (#276).  ``db`` is scenario-filtered; called once
-    per run from ``input_derivation.run``; the warnings are printed (:func:`_warn`).  ``commodity`` nodes have no
+    per run from ``input_derivation.run``; coded warnings W-0300..W-0303 (:mod:`flextool.run_warnings`).  ``commodity`` nodes have no
     balance and are skipped.
 
     * A node without any unit (``unit__inputNode`` / ``unit__outputNode``) or connection
@@ -1551,23 +1525,16 @@ def warn_node_connections(db) -> None:
             continue
         if node not in supplied and node not in drained:
             if node in inflow_alt:
-                _warn(f"node '{node}' (alternative '{inflow_alt[node]}') has no units or connections; its inflow "
-                      "can only be met by the penalty slack (penalty_up / penalty_down).")
+                run_warnings.warn("W-0300", node, details={node: f"inflow in alternative '{inflow_alt[node]}'"})
             else:
-                _warn(f"node '{node}' has no units or connections and no inflow; it does nothing in this scenario.")
+                run_warnings.warn("W-0301", node)
             continue
         if node_type not in ("balance", "balance_within_period"):
             continue
         if node not in supplied and node not in inflow_in:
-            _warn(f"node '{node}' (node_type {node_type}) has no positive inflow and its units / connections only "
-                  "take energy out of it; nothing brings energy in, so those flows stay at 0, or only the penalty "
-                  "slack (penalty_up) can supply them. Add a unit or connection that supplies it, give it a "
-                  "positive inflow, or make it a commodity node.")
+            run_warnings.warn("W-0302", node, details={node: f"node_type {node_type}"})
         elif node not in drained and node not in inflow_out:
-            _warn(f"node '{node}' (node_type {node_type}) has no negative inflow (demand) and its units / "
-                  "connections only bring energy into it; nothing takes energy out, so those flows stay at 0, or "
-                  "only the penalty slack (penalty_down) can absorb them. Add a unit or connection that takes from "
-                  "it, or give it a negative inflow.")
+            run_warnings.warn("W-0303", node, details={node: f"node_type {node_type}"})
 
 
 def validate_node_invest_without_storage(db, logger: logging.Logger) -> None:
@@ -1586,11 +1553,7 @@ def validate_node_invest_without_storage(db, logger: logging.Logger) -> None:
         node_type = node_types.get(name, default_type)
         if node_type == "storage":
             continue
-        logger.warning(
-            "Node '%s' has invest_method %s but node_type %s: only storage nodes can invest or retire, "
-            "so '%s' gets no investment. Remove its invest_method or make it a storage node.",
-            name, method, node_type, name,
-        )
+        run_warnings.warn("W-0304", name, details={name: f"invest_method {method}, node_type {node_type}"})
 
 
 
@@ -1666,10 +1629,9 @@ def validate_units_of_measure(db, logger: logging.Logger) -> None:
     node_units = node_units_of_measure(db)
     for (node, *_rest), value in sorted(_str_values(db, "node", "unit_of_measure").items()):
         if uom.looks_like_rate(value):
-            logger.warning(
-                "Node '%s' has unit_of_measure '%s', which looks like a rate: unit_of_measure is the amount unit "
-                "(m3, MWh), not the rate, and flows would be labelled '%s'. Set '%s'.",
-                node, value, uom.rate_of(uom.normalise(value)), uom.amount_of_rate(value))
+            run_warnings.warn("W-0305", node, details={node: (
+                f"unit_of_measure '{value}': flows would be labelled '{uom.rate_of(uom.normalise(value))}'; "
+                f"set '{uom.amount_of_rate(value)}'")})
     if not node_units:
         return
 
@@ -1680,20 +1642,14 @@ def validate_units_of_measure(db, logger: logging.Logger) -> None:
                       key=lambda e: tuple(e["entity_byname"])):
         conn, *ends = ent["entity_byname"]
         if mixed(ends):
-            logger.warning(
-                "Connection '%s' joins nodes with different units of measure: %s. Its flow, losses and capacity "
-                "are labelled '%s'; a connection moves one quantity, so check that this is intended.",
-                conn, _nodes_by_unit(ends, node_units), uom.MIXED_UOM)
+            run_warnings.warn("W-0221", conn, details={conn: _nodes_by_unit(ends, node_units)})
 
     commodity_nodes: dict[str, list[str]] = {}
     for ent in db.find_entities(entity_class_name="commodity__node"):
         commodity_nodes.setdefault(ent["entity_byname"][0], []).append(ent["entity_byname"][1])
     for commodity, nodes in sorted(commodity_nodes.items()):
         if mixed(nodes):
-            logger.warning(
-                "Commodity '%s' is used by nodes with different units of measure: %s. Its price and co2_content "
-                "are per the unit of each node, so one value cannot fit them all.",
-                commodity, _nodes_by_unit(sorted(nodes), node_units))
+            run_warnings.warn("W-0401", commodity, details={commodity: _nodes_by_unit(sorted(nodes), node_units)})
 
     group_nodes: dict[str, list[str]] = {}
     for ent in db.find_entities(entity_class_name="group__node"):
@@ -1721,16 +1677,13 @@ def validate_units_of_measure(db, logger: logging.Logger) -> None:
                if pv["type"] is not None}
     for g in sorted(set(group_nodes) | set(power_groups) | limited):
         nodes = sorted(group_nodes.get(g, []))
-        reasons: list[str] = []
         if mixed(nodes):
-            reasons.append(f"its member nodes have different units of measure ({_nodes_by_unit(nodes, node_units)}), "
-                           f"so its sums are labelled '{uom.MIXED_UOM}'")
+            run_warnings.warn("W-0105", g, details={g: _nodes_by_unit(nodes, node_units)})
         features = sorted(set(power_groups.get(g, [])))
         not_power = [n for n in nodes if not re.fullmatch(r"MWh(_.*)?", uom.node_unit(n, node_units))]
         if features and not_power:
-            reasons.append(f"it has {' and '.join(features)}; these group features are in MW (inertia in MW·s) "
-                           f"and assume power nodes, but {_named_units(not_power, node_units)} "
-                           f"{'is' if len(not_power) == 1 else 'are'} not in MWh")
+            run_warnings.warn("W-0106", g, details={
+                g: f"{' and '.join(features)}; not in MWh: {_named_units(not_power, node_units)}"})
         if g in limited:
             capacity_units: dict[str, list[str]] = {}
             for n in nodes:
@@ -1742,9 +1695,7 @@ def validate_units_of_measure(db, logger: logging.Logger) -> None:
             if len(capacity_units) > 1:
                 parts = ", ".join(f"{', '.join(members[:3])}{' ...' if len(members) > 3 else ''} ({unit})"
                                   for unit, members in capacity_units.items())
-                reasons.append(f"its capacity limits sum the capacities of members in different units ({parts})")
-        if reasons:
-            logger.warning("Group '%s': %s.", g, "; ".join(reasons))
+                run_warnings.warn("W-0107", g, details={g: parts})
 
     flow_group_nodes: dict[str, list[str]] = {}
     for cls in ("flowGroup__unit__node", "flowGroup__connection__node"):
@@ -1754,9 +1705,7 @@ def validate_units_of_measure(db, logger: logging.Logger) -> None:
                 nodes.append(ent["entity_byname"][2])
     for g, nodes in sorted(flow_group_nodes.items()):
         if mixed(nodes):
-            logger.warning(
-                "flowGroup '%s': its flows are at nodes with different units of measure (%s), so its sums are "
-                "labelled '%s'.", g, _nodes_by_unit(sorted(nodes), node_units), uom.MIXED_UOM)
+            run_warnings.warn("W-0108", g, details={g: _nodes_by_unit(sorted(nodes), node_units)})
 
 
 def validate_connection_delay(db, logger: logging.Logger) -> None:
@@ -1779,12 +1728,7 @@ def validate_connection_delay(db, logger: logging.Logger) -> None:
             continue
         if not any(v != 0.0 for v in _numeric_values(pv["parsed_value"])):
             continue
-        logger.warning(
-            "Connection '%s' has a delay: connection delay is not "
-            "implemented yet and is ignored (the connection is modelled "
-            "without a delay). Use a unit with a delay for a delayed flow.",
-            pv["entity_byname"][0],
-        )
+        run_warnings.warn("W-0220", pv["entity_byname"][0])
 
 
 def validate_connection_startup(db, provider) -> None:
@@ -1844,9 +1788,8 @@ def warn_existing_not_whole_units(db, provider) -> None:
             if not fractional:
                 continue
             counts = ", ".join(f"{e:g}" for e in fractional)
-            print(f"Warning: {cls} '{name}' has integer online variables (whole units), but existing gives "
-                  f"{counts} units, not a whole number. With virtual_unitsize, existing is the number of units of "
-                  f"virtual_unitsize ({size:g} MW each).", flush=True)
+            run_warnings.warn("W-0205", name, cls=cls,
+                              details={name: f"existing {counts} units of virtual_unitsize {size:g} MW"})
 
 
 def validate_group_increase_reserve_ratio(db, logger: logging.Logger) -> None:
@@ -1874,11 +1817,7 @@ def validate_group_increase_reserve_ratio(db, logger: logging.Logger) -> None:
         key = tuple(pv["entity_byname"])
         if methods.get(key) in RESERVE_DYNAMIC_METHODS:
             continue
-        logger.warning(
-            "increase_reserve_ratio of reserve group '%s' is used only with a dynamic reserve_method "
-            "(dynamic_only, timeseries_and_dynamic, dynamic_and_large_failure, all); it is ignored.",
-            "__".join(key),
-        )
+        run_warnings.warn("W-0109", key, details={key: f"reserve_method {methods.get(key)}"})
 
 
 def _min_load_floors(parsed, periods: set[str]) -> dict[str | None, float]:
@@ -2047,24 +1986,21 @@ def validate_startup_inputs(db, provider, logger: logging.Logger) -> None:
 
     for arc in sorted(roles):
         if not any(v != 0.0 for v in energy_rows.get(arc, [])):
-            logger.warning("unit__inputNode (%s, %s): startup_input_method %s without a startup_energy (or with "
-                           "only 0): the start-ups take nothing from the node.", arc[0], arc[1], roles[arc])
+            run_warnings.warn("W-0206", arc, details={arc: f"startup_input_method {roles[arc]}"})
     flow_params: dict[tuple[str, str], list[str]] = {}
     for param in _FLOW_ONLY_ARC_PARAMETERS:
         for pv in db.find_parameter_values(entity_class_name="unit__inputNode", parameter_definition_name=param):
             arc = (pv["entity_byname"][0], pv["entity_byname"][1])
             if pv["type"] is not None and arc in only:
                 flow_params.setdefault(arc, []).append(param)
-    for (u, n), params in sorted(flow_params.items()):
-        logger.warning("unit__inputNode (%s, %s): %s has no effect on a startup_only arc (it has no flow).",
-                       u, n, ", ".join(params))
+    for arc, params in sorted(flow_params.items()):
+        run_warnings.warn("W-0207", arc, details={arc: ", ".join(params)})
     node_types = {k[0]: v for k, v in _str_values(db, "node", "node_type").items()}
     default_type = str(_definition_default(db, "node", "node_type") or "balance")
     commodity_nodes = {ent["entity_byname"][1] for ent in db.find_entities(entity_class_name="commodity__node")}
     for u, n in sorted(roles):
         if node_types.get(n, default_type) == "commodity" and n not in commodity_nodes:
-            logger.warning("unit__inputNode (%s, %s): the start-up node '%s' has no energy balance and no "
-                           "commodity: the start-up energy is taken from nowhere and costs nothing.", u, n, n)
+            run_warnings.warn("W-0208", (u, n))
     inputs = _arcs(db, "unit__inputNode")
     with_profile = {ent["entity_byname"][0] for ent in db.find_entities(entity_class_name="unit__node__profile")}
     curve_units = {k[0]: v for k, v in _str_values(db, "unit", "conversion_method").items()
@@ -2073,14 +2009,9 @@ def validate_startup_inputs(db, provider, logger: logging.Logger) -> None:
         if not all((u, n) in only for n in inputs[u]):
             continue
         if u not in with_profile:
-            logger.warning("unit '%s': every input is startup_only and the unit has no profile, so its output "
-                           "costs only the start-up energy.", u)
-        if curve_units.get(u) == "min_load_efficiency":
-            logger.warning("unit '%s': min_load_efficiency with only startup_only inputs: its part-load section "
-                           "has no input to draw from.", u)
-        elif curve_units.get(u) == "piecewise_linear":
-            logger.warning("unit '%s': piecewise_linear with only startup_only inputs: its part-load curve has no "
-                           "input to draw from.", u)
+            run_warnings.warn("W-0209", u)
+        if u in curve_units:
+            run_warnings.warn("W-0210", u, details={u: curve_units[u]})
     groups_of: dict[tuple[str, str], list[str]] = {}
     for ent in db.find_entities(entity_class_name="flowGroup__unit__node"):
         g, u, n = ent["entity_byname"][:3]
@@ -2094,8 +2025,7 @@ def validate_startup_inputs(db, provider, logger: logging.Logger) -> None:
         where = ([f"constraint {cn}" for cn in cn_of.get(arc, [])]
                  + [f"flowGroup {g}" for g in sorted(groups_of.get(arc, []))])
         if where:
-            logger.warning("unit__inputNode (%s, %s): the start-up input is not in %s (only the flow of the arc "
-                           "is).", arc[0], arc[1], ", ".join(where))
+            run_warnings.warn("W-0211", arc, details={arc: ", ".join(where)})
 
 
 def validate_unit_input_shares(db, provider, logger: logging.Logger) -> None:
@@ -2153,10 +2083,7 @@ def validate_unit_input_shares(db, provider, logger: logging.Logger) -> None:
                     f"unit '{unit}' input '{n}': input_share_max "
                     f"{_fmt(maxs)} is negative")
             elif any(v > 1.0 for v in maxs):
-                logger.warning(
-                    "Unit '%s' input '%s': input_share_max %s is above 1; "
-                    "it has the same effect as 1 (no limit).",
-                    unit, n, _fmt(maxs))
+                run_warnings.warn("W-0212", (unit, n), details={(unit, n): f"input_share_max {_fmt(maxs)}"})
             if mins and maxs and max(mins) > min(maxs) + 1e-12:
                 errors.append(
                     f"unit '{unit}' input '{n}' must supply at least "
@@ -2166,14 +2093,9 @@ def validate_unit_input_shares(db, provider, logger: logging.Logger) -> None:
                     "full load")
             if any(v > 0.0 for v in mins):
                 if n not in live:
-                    logger.warning(
-                        "Unit '%s' input '%s': input_share_min has no "
-                        "effect on an input with conversion_flow_coeff = 0.",
-                        unit, n)
+                    run_warnings.warn("W-0213", (unit, n), details={(unit, n): "conversion_flow_coeff = 0"})
                 elif len(live) < 2:
-                    logger.warning(
-                        "Unit '%s' input '%s': input_share_min has no "
-                        "effect on a unit with a single input.", unit, n)
+                    run_warnings.warn("W-0213", (unit, n), details={(unit, n): "the unit has a single input"})
         live_mins = [max(share_min.get((unit, n), [0.0])) for n in live]
         if len(live) >= 2 and sum(live_mins) > 1.0 + 1e-9:
             errors.append(
@@ -2249,11 +2171,7 @@ def validate_output_min_coeff(db, provider, logger: logging.Logger) -> None:
         nodes = outputs[unit]
         explicit = [max(cmin[(unit, n)]) for n in nodes if (unit, n) in cmin]
         if explicit and max(explicit) < 1.0:
-            logger.warning(
-                "Unit '%s': capacity_min_coeff no longer lowers the unit's "
-                "minimum load (the floor is min_load x online capacity on "
-                "the sum of the outputs); set min_load lower (min_load = 0 "
-                "switches it off) instead, or remove the coefficient.", unit)
+            run_warnings.warn("W-0214", unit)
         live = [n for n in nodes
                 if any(v != 0.0 for v in conv.get((unit, n), [1.0]))]
         if not live:
@@ -2266,24 +2184,16 @@ def validate_output_min_coeff(db, provider, logger: logging.Logger) -> None:
         over_cap = [n for n in live
                     if floors[n] * ml > min(cmax.get((unit, n), [1.0])) + 1e-12]
         if total > 1.0 + 1e-9 or over_cap:
-            logger.warning(
-                "Unit '%s': its per-output floors (capacity_min_coeff x "
-                "min_load) %s; the unit may be unable to run while online.",
-                unit,
-                (f"sum to {total:g} of the capacity" if total > 1.0 + 1e-9
-                 else "exceed capacity_max_coeff on "
-                 + ", ".join(over_cap)))
+            run_warnings.warn("W-0215", unit, details={unit: (
+                f"the floors (capacity_min_coeff x min_load) sum to {total:g} of the capacity"
+                if total > 1.0 + 1e-9 else "the floors exceed capacity_max_coeff on " + ", ".join(over_cap))})
 
 
 # ---------------------------------------------------------------------------
 # Profile links, zero conversion coefficients and basic value checks (#104, #213, #170).  Called once per run from
 # ``input_derivation.run`` before the parameter read; ``db`` is the scenario-filtered DatabaseMapping.  Errors are
-# gathered and raised in one FlexToolConfigError; warnings are printed (``print(flush=True)``, as the other
-# once-per-run checks), so they reach the run log.
-
-
-def _warn(text: str) -> None:
-    print(f"Warning: {text}", flush=True)
+# gathered and raised in one FlexToolConfigError; warnings are coded (:mod:`flextool.run_warnings`), one line per
+# code for the pass.
 
 
 def _definition_default(db, entity_class: str, parameter: str):
@@ -2384,8 +2294,7 @@ def validate_profile_links(db, profile_alternatives: dict[str, list[str]] | None
                 errors.append(f"{name}: {where}, so it holds {held} at 0 ({how}). {fix}, set profile_method "
                               "lower_limit or none, or remove the link.")
             elif link not in authored and method == "none" and link_class != "unit__node__profile":
-                _warn(f"{name} has no profile_method, so the profile is not applied (the default is none). Set "
-                      "profile_method upper_limit, lower_limit or fixed, or remove the link.")
+                run_warnings.warn("W-0306", link, cls=link_class)
     if errors:
         raise FlexToolConfigError("Profile links without profile data:\n  " + "\n  ".join(errors))
 
@@ -2455,26 +2364,19 @@ def validate_zero_conversion_coeff(db) -> None:
         arcs = [(unit, n) for n in outputs[unit]]
         if all(a in zero["unit__outputNode"] for a in arcs) and any(a not in tied for a in arcs):
             free = ", ".join(f"'{n}'" for u, n in arcs if (u, n) not in tied)
-            _warn(f"unit '{unit}' uses no input: all its outputs have conversion_flow_coeff 0, so its output to "
-                  f"{free} is free up to max_flow_for_unconstrained_variables ({limit:.15g}). Give an output a "
-                  "non-zero conversion_flow_coeff, or tie the flow with a user constraint.")
+            run_warnings.warn("W-0216", unit, details={
+                unit: f"free outputs {free}, up to max_flow_for_unconstrained_variables ({limit:.15g})"})
             reported.update(arcs)
     for cls, side in (("unit__inputNode", "input"), ("unit__outputNode", "output")):
         for unit, node in sorted(zero[cls]):
             if (unit, node) in tied or (unit, node) in reported:
                 continue
-            risk = (f"the unit can take any amount from '{node}' for free (a dump load on that node)"
-                    if side == "input" else
-                    f"the unit can put any amount into '{node}' for free (a free source on that node)")
-            _warn(f"{cls} ({unit}, {node}): conversion_flow_coeff is 0 and no user constraint, flowGroup maximum "
-                  f"or profile limit ties the {side} flow, so {risk}, up to max_flow_for_unconstrained_variables "
-                  f"({limit:.15g}). Tie it with a user constraint (constraint_flow_coeff), or give it a non-zero "
-                  "conversion_flow_coeff. (A flowGroup min_instant_flow / min_cumulative_flow bounds it only from "
-                  "below.)")
+            risk = "a dump load on the node" if side == "input" else "a free source on the node"
+            run_warnings.warn("W-0217", (unit, node), side=side, details={
+                (unit, node): f"{risk}, up to max_flow_for_unconstrained_variables ({limit:.15g})"})
     for param in ("capacity_max_coeff", "capacity_min_coeff"):
         for unit, node in sorted(set(_arc_values(db, "unit__outputNode", param)) & zero["unit__outputNode"]):
-            _warn(f"unit__outputNode ({unit}, {node}): {param} has no effect on an output with "
-                  "conversion_flow_coeff 0 (the flow is outside the capacity limits).")
+            run_warnings.warn("W-0218", (unit, node), details={(unit, node): param})
 
 
 # ---- basic value checks (#170) --------------------------------------------
@@ -2615,16 +2517,8 @@ def _where(alt: str, key: str | None) -> str:
 _PERCENT_SUSPECT = 1.5
 
 
-# What a negative ``existing`` means, per class (validate_basic_sanity's warning).
-# ``{class: (what it makes, what it can clash with)}``.
-_NEGATIVE_EXISTING = {
-    "unit": ("a negative capacity makes an anti-energy unit (its flows run the other way)",
-             "a profile, min_load or invest / retire limits"),
-    "connection": ("a negative capacity gives the connection a negative transfer capacity",
-                   "invest / retire limits"),
-    "node": ("a negative capacity gives the node a negative storage capacity",
-             "storage state limits or invest / retire limits"),
-}
+# The classes whose negative ``existing`` validate_basic_sanity warns about (W-0223 explains what it means).
+_NEGATIVE_EXISTING = ("unit", "connection", "node")
 
 
 # invest_method values that forbid investing / retiring: the one definition in preprocess/params/_existing.py.
@@ -2730,12 +2624,12 @@ def _missing_lifetime(src, cls: str, methods: dict[str, str]) -> list[str]:
     return errors
 
 
-def _life_extension_pairs(src, cls: str, errors: list[str], warnings: list[str]) -> None:
+def _life_extension_pairs(src, cls: str, errors: list[str]) -> None:
     """The life-extension checks of the ``cls`` entities: an error for an entity that gives only one of
     ``life_extension_cost`` / ``life_extension_years`` (the extension needs both) and for one whose
     ``lifetime_method`` (explicit, or the default) is ``reinvest_automatic`` (its capacity is replaced at its end of
     life, so an extension would be ignored), a warning for one that gives both but no ``lifetime_technical`` (its
-    capacity never reaches an end of life, so there is nothing to extend)."""
+    capacity never reaches an end of life, so there is nothing to extend: W-0225)."""
     entities_with = _entities_with(src, cls)
     cost, years = entities_with(LIFE_EXTENSION_COST), entities_with(LIFE_EXTENSION_YEARS)
     db = getattr(src, "_db", src)
@@ -2758,9 +2652,7 @@ def _life_extension_pairs(src, cls: str, errors: list[str], warnings: list[str])
                       f"{missing}, or remove the {given}.")
     lifeless = sorted((cost & years) - entities_with(LIFETIME_TECHNICAL))
     if lifeless:
-        warnings.append(f"{cls} " + ", ".join(f"'{e}'" for e in lifeless) + f" has {LIFE_EXTENSION_COST} and "
-                        f"{LIFE_EXTENSION_YEARS} but no {LIFETIME_TECHNICAL}: its capacity never reaches an end of "
-                        "life, so it is never extended.")
+        run_warnings.warn_grouped("W-0225", lifeless, cls=cls)
 
 
 def validate_basic_sanity(src) -> None:
@@ -2799,15 +2691,13 @@ def validate_basic_sanity(src) -> None:
     supported (a unit with a negative capacity is an "anti-energy" unit), but more often a typing mistake, and with
     a profile, min_load or invest / retire limits it can make the problem infeasible; a life extension on an entity
     without ``lifetime_technical`` (never extended).  Profiles above 1.5 are
-    :func:`warn_profiles_as_percent`' (after the read).  The warnings are printed before an error is raised.
+    :func:`warn_profiles_as_percent`' (after the read).  The warnings (W-0222..W-0226) are coded.
     """
     errors: list[str] = []
-    warnings: list[str] = []
-    percent = (f"values above {_PERCENT_SUSPECT:g} look like percentages; {{what}} is a share (0.95, not 95)."
-               ).format
 
     def scan(cls: str, param: str, checks, only: set[str] | None = None) -> None:
-        """``checks``: ``[(bad, message, sink), ...]`` on the values of ``cls.param`` (one read per value)."""
+        """``checks``: ``[(bad, message, sink), ...]`` on the values of ``cls.param`` (one read per value); *sink* is
+        ``errors`` or a warning code (``message`` then unused: the registry has the text)."""
         for pv in _pv_rows(src, cls, param):
             if pv["type"] is None:
                 continue
@@ -2817,9 +2707,13 @@ def validate_basic_sanity(src) -> None:
             numbers = _raw_numbers(pv["value"], pv["type"])
             for bad, message, sink in checks:
                 hit = _bad_hit(pv, bad, numbers)
-                if hit is not None:
-                    sink.append(f"{cls} '{name}' {param} = {hit[1]:g} {_where(pv['alternative_name'], hit[0])}: "
-                                + message)
+                if hit is None:
+                    continue
+                value = f"{param} = {hit[1]:g} {_where(pv['alternative_name'], hit[0])}"
+                if isinstance(sink, str):
+                    run_warnings.warn(sink, name, cls=cls, details={name: value})
+                else:
+                    sink.append(f"{cls} '{name}' {value}: " + message)
 
     scan("unit", "efficiency", [(lambda v: v <= 0.0,
          "efficiency must be above 0 (0 gives no output, a negative value pays the unit to run). Use a "
@@ -2827,23 +2721,19 @@ def validate_basic_sanity(src) -> None:
     scan("connection", "efficiency", [
         (lambda v: v <= 0.0, "efficiency must be above 0 (0 gives no output, a negative value pays the unit to "
          "run). Use a fraction such as 0.4.", errors),
-        (lambda v: v > 1.0, "a connection efficiency above 1 creates energy on the way.", warnings)])
+        (lambda v: v > 1.0, "", "W-0222")])
     scan("unit", "min_load", [(lambda v: (v < 0.0) | (v > 1.0),
          "min_load is a share of the online capacity and must lie in [0, 1] (e.g. 0.3 for 30 %).", errors)])
     for cls in ("unit", "connection", "node"):
         scan(cls, "availability", [
             (lambda v: v < 0.0, "availability must be 0 or above.", errors),
-            (lambda v: v > _PERCENT_SUSPECT, percent(what="availability"), warnings)])
+            (lambda v: v > _PERCENT_SUSPECT, "", "W-0226")])
     scan("unit__outputNode", "capacity_max_coeff", [(lambda v: v < 0.0,
          "capacity_max_coeff must be 0 or above (it is the share of the capacity this output may use).", errors)])
     for cls in ("unit", "connection", "node"):
-        scan(cls, "virtual_unitsize", [(lambda v: v <= 0.0,
-             "virtual_unitsize must be above 0; the value is ignored (the entity is one unit of its capacity).",
-             warnings)])
-    for cls, (what, clash) in _NEGATIVE_EXISTING.items():
-        scan(cls, "existing", [(lambda v: v < 0.0,
-             f"{what}. If you did not mean that, use 0 or more. Combined with {clash} it can make the problem "
-             "infeasible.", warnings)])
+        scan(cls, "virtual_unitsize", [(lambda v: v <= 0.0, "", "W-0224")])
+    for cls in _NEGATIVE_EXISTING:
+        scan(cls, "existing", [(lambda v: v < 0.0, "", "W-0223")])
 
     methods: dict[str, dict[str, str]] = {
         cls: {k[0]: v for k, v in _str_values(src, cls, "invest_method").items()}
@@ -2889,11 +2779,9 @@ def validate_basic_sanity(src) -> None:
              f"{LIFE_EXTENSION_YEARS} in years.", errors)])
         scan(cls, LIFE_EXTENSION_COST, [(lambda v: v < 0.0,
              f"{LIFE_EXTENSION_COST} must be 0 or above (a negative cost pays the capacity to be extended).", errors)])
-        _life_extension_pairs(src, cls, errors, warnings)
+        _life_extension_pairs(src, cls, errors)
     errors.extend(_existing_age_errors(src))
 
-    for text in warnings:
-        _warn(text)
     if errors:
         raise FlexToolConfigError("Input values out of range:\n  " + "\n  ".join(errors))
 
@@ -2934,9 +2822,8 @@ def warn_profiles_as_percent(src, provider) -> None:
             continue
         hit = _first_bad(_parsed_then_evict(pv), lambda v: v > _PERCENT_SUSPECT)
         if hit is not None:
-            _warn(f"profile '{pv['entity_byname'][0]}' = {hit[1]:g} {_where(pv['alternative_name'], hit[0])} limits "
-                  f"a unit flow (upper_limit or fixed): values above {_PERCENT_SUSPECT:g} look like percentages; the "
-                  "profile is a share of the capacity (0.35, not 35).")
+            name = pv["entity_byname"][0]
+            run_warnings.warn("W-0307", name, details={name: f"{hit[1]:g} {_where(pv['alternative_name'], hit[0])}"})
 
 
 # ---- period keys (items 46 / 65) ------------------------------------------
@@ -3304,7 +3191,7 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None,
 
     Each error names the entity, the parameter, the alternative and up to 3 keys, with the closest period
     (:func:`_period_suggestions`).  Without ``whole`` (a source that is not a URL) the universe is the scenario's,
-    so the keys that are not periods are printed as warnings; the time-step, time-series and numeric-key errors
+    so the keys that are not periods are a warning (W-0312); the time-step, time-series and numeric-key errors
     still stop the run.  No period at all (no solve periods, no ``periods_available``) → no
     check (the time-structure checks report that).  Each distinct raw value is classified once.
 
@@ -3333,12 +3220,12 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None,
     solve_periods: set[str] | None = None  # periods of the solves that run, read at the first profile map
     errors: list[str] = []      # keys that are no period (depend on the universe)
     shape_errors: list[str] = []  # time steps, time series and numbers (always errors)
-    warnings: list[str] = []
+    unknown_entities: list[str] = []  # the entities of ``errors`` (W-0312 without ``whole``)
     for (cls, par), takes_time in sorted(_period_axis_params().items()):
         for pv in _pv_rows(src, cls, par):
             kind = pv["type"]
-            where = (f"{cls} '{', '.join(str(b) for b in pv['entity_byname'])}', parameter '{par}' "
-                     f"(alternative '{pv['alternative_name']}')")
+            entity = ", ".join(str(b) for b in pv["entity_byname"])
+            where = f"{cls} '{entity}', parameter '{par}' (alternative '{pv['alternative_name']}')"
             if kind == "time_series":
                 if not takes_time:
                     shape_errors.append(f"{where} is a time series, but {par} cannot vary over time. Use a constant or "
@@ -3374,14 +3261,14 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None,
                             "inner level by time step.")
                     elif code == "unknown":
                         one = len(names) == 1
+                        unknown_entities.append(f"{cls} {entity}")
                         errors.append(
                             f"{where}: outer map key{'' if one else 's'} {_shown(names)} "
                             f"{'is not a period' if one else 'are not periods'} (a two-level profile map is "
                             f"period x time).{_did_you_mean(names[:3], names, scenario_periods, suggestable, branch)}")
                     else:
-                        warnings.append(
-                            f"{where} has no value for period(s) {', '.join(names)}: the profile is 0 in those "
-                            "periods. Add the periods to the map, or give the profile a constant value.")
+                        run_warnings.warn("W-0310", entity, details={
+                            entity: f"alternative '{pv['alternative_name']}': no value for {', '.join(names)}"})
             cache_key = (raw, takes_time)
             finding = seen.get(cache_key, False)
             if finding is False:
@@ -3392,6 +3279,7 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None,
             code, keys, bad = finding
             if code == "unknown":
                 one = len(bad) == 1
+                unknown_entities.append(f"{cls} {entity}")
                 errors.append(
                     f"{where}: map key{'' if one else 's'} {_shown(bad)} {'is not a period' if one else 'are not periods'}"
                     f".{_did_you_mean(bad[:3], keys, scenario_periods, suggestable, branch)}")
@@ -3402,13 +3290,11 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None,
                 shape_errors.append(f"{where}: map keys are numbers ({_shown(bad)}); periods are names such as "
                               f"'p2020'.{_did_you_mean(bad[:1], [], scenario_periods, suggestable)}")
             else:
-                warnings.append(f"{where}: map keys ({_shown(keys)}) are neither periods nor time steps of the "
-                                "model; the value is not used.")
-    for text in warnings:
-        _warn(text)
+                run_warnings.warn("W-0311", f"{cls} {entity}", details={
+                    f"{cls} {entity}": f"{par} (alternative '{pv['alternative_name']}'): keys {_shown(keys)}"})
     unknown = _PERIOD_KEY_HEADER + "\n  ".join(errors) + _PERIOD_KEY_ESCAPE if errors else ""
     if whole is None and unknown:
-        _warn(unknown)
+        run_warnings.warn_grouped("W-0312", unknown_entities, details=unknown)
         unknown = ""
     blocks = [unknown] if unknown else []
     if shape_errors:

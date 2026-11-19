@@ -16,6 +16,7 @@ import pytest
 import spinedb_api as api
 
 from flextool.engine.input._solve_state import FlexToolConfigError
+from tests._support.coded_capture import capture_coded
 from tests.engine._unit_db import PLANT_CHAIN, b64, make_db, run
 
 COAL_OBJECTIVE = 1_144_037_750.0
@@ -75,27 +76,28 @@ def test_fixed_method_without_data_is_an_error(tmp_path_factory) -> None:
     assert "holds the flow at 0 (profile_method is fixed)" in str(err.value), str(err.value)
 
 
-def test_lower_limit_without_data_runs_unchanged(tmp_path_factory, capsys) -> None:
+def test_lower_limit_without_data_runs_unchanged(tmp_path_factory) -> None:
     """A floor of 0 does nothing: the coal objective is the base one."""
-    steps = run(tmp_path_factory, *_db(tmp_path_factory, "b104_lower", [
-        ["unit__node__profile", ["coal_plant", "west", "ghost"], "profile_method", b64("lower_limit", "str")]],
-        GHOST))
+    with capture_coded() as got:
+        steps = run(tmp_path_factory, *_db(tmp_path_factory, "b104_lower", [
+            ["unit__node__profile", ["coal_plant", "west", "ghost"], "profile_method", b64("lower_limit", "str")]],
+            GHOST))
     assert list(steps.values())[-1].solution.obj == pytest.approx(COAL_OBJECTIVE, rel=1e-9)
-    assert "unit__node__profile" not in capsys.readouterr().out
+    assert "W-0306" not in got.codes()
 
 
-def test_node_profile_without_method_warns(tmp_path_factory, capsys) -> None:
-    _validate(*_db(tmp_path_factory, "b104_node", [],
-                   [["profile", "ghost", None], ["node__profile", ["west", "ghost"], None]]))
-    assert ("Warning: node__profile (west, ghost) has no profile_method, so the profile is not applied (the "
-            "default is none). Set profile_method upper_limit, lower_limit or fixed, or remove the link."
-            ) in capsys.readouterr().out
+def test_node_profile_without_method_warns(tmp_path_factory) -> None:
+    with capture_coded() as got:
+        _validate(*_db(tmp_path_factory, "b104_node", [],
+                       [["profile", "ghost", None], ["node__profile", ["west", "ghost"], None]]))
+    assert got.names("W-0306", cls="node__profile") == ["west, ghost"]
 
 
-def test_explicit_none_and_profiles_with_data_are_silent(tmp_path_factory, capsys) -> None:
-    _validate(*_db(tmp_path_factory, "b104_quiet", [
-        ["node__profile", ["west", "ghost"], "profile_method", b64("none", "str")],
-        ["profile", "ghost", "profile", b64(0.5, "float")]],
-        [["profile", "ghost", None], ["node__profile", ["west", "ghost"], None],
-         ["unit__node__profile", ["coal_plant", "west", "ghost"], None]]))
-    assert "Warning" not in capsys.readouterr().out
+def test_explicit_none_and_profiles_with_data_are_silent(tmp_path_factory) -> None:
+    with capture_coded() as got:
+        _validate(*_db(tmp_path_factory, "b104_quiet", [
+            ["node__profile", ["west", "ghost"], "profile_method", b64("none", "str")],
+            ["profile", "ghost", "profile", b64(0.5, "float")]],
+            [["profile", "ghost", None], ["node__profile", ["west", "ghost"], None],
+             ["unit__node__profile", ["coal_plant", "west", "ghost"], None]]))
+    assert got.codes() == []

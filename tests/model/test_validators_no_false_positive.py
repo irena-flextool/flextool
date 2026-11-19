@@ -25,6 +25,7 @@ import pytest
 import spinedb_api as api
 
 from flextool._resources import package_data_path
+from tests._support.coded_capture import capture_coded
 
 FLEXTOOL_ROOT = Path(__file__).resolve().parents[2]
 CANONICAL = sorted(Path(str(package_data_path("schemas/canonical_databases"))).glob("*.json"))
@@ -34,32 +35,25 @@ SOURCES = [FLEXTOOL_ROOT / "tests" / "fixtures" / name
                         "case14_dc_power_flow.json", "null_override_clears_map.json")] + CANONICAL
 
 
-_ANTI_ENERGY = ("Warning: unit 'anti_energy_plant' existing = -50 (alternative 'anti_energy_plant'): a negative "
-                "capacity makes an anti-energy unit (its flows run the other way). If you did not mean that, use 0 "
-                "or more. Combined with a profile, min_load or invest / retire limits it can make the problem "
-                "infeasible.\n")
+# The coded warnings of a scenario as ``<code> <name>: <details>`` lines (tests/_support/coded_warnings.py).
+_ANTI_ENERGY = "W-0223 anti_energy_plant: existing = -50 (alternative 'anti_energy_plant')\n"
 
 
 def _empty_with_inflow(node: str, alt: str) -> str:
-    return (f"Warning: node '{node}' (alternative '{alt}') has no units or connections; its inflow can only be met by "
-            "the penalty slack (penalty_up / penalty_down).\n")
+    return f"W-0300 {node}: inflow in alternative '{alt}'\n"
 
 
 def _empty(*nodes: str) -> str:
-    return "".join(f"Warning: node '{n}' has no units or connections and no inflow; it does nothing in this "
-                   "scenario.\n" for n in nodes)
+    return "".join(f"W-0301 {n}: \n" for n in nodes)
 
 
 def _only_drained(*nodes: str) -> str:
-    return "".join(f"Warning: node '{n}' (node_type balance) has no positive inflow and its units / connections "
-                   "only take energy out of it; nothing brings energy in, so those flows stay at 0, or only the "
-                   "penalty slack (penalty_up) can supply them. Add a unit or connection that supplies it, give it a "
-                   "positive inflow, or make it a commodity node.\n" for n in nodes)
+    return "".join(f"W-0302 {n}: node_type balance\n" for n in nodes)
 
 
 _WEST = {s: _empty_with_inflow("west", "west")
          for s in ("base", "base_weighted", "capacity_margin", "fullYear", "scale_to_peak_flow")}
-# {source stem: {scenario: the whole printed text}}: the warnings the shipped data is meant to raise.
+# {source stem: {scenario: the coded warnings}}: the warnings the shipped data is meant to raise.
 EXPECTED = {
     "tests": {"test_a_lot": _ANTI_ENERGY, **_WEST},
     "templates_examples": {"test_a_lot": _ANTI_ENERGY, **_WEST},
@@ -101,15 +95,14 @@ def _check(url: str, scenario: str) -> str:
         backend._db = db
         backend._api = api
         backend._scenario_name = scenario
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
+        with capture_coded() as got:
             v.validate_profile_links(db, alternatives)
             v.validate_basic_sanity(backend)
             v.validate_zero_conversion_coeff(db)
             v.validate_timeline_timestep_duration(db)
             v.validate_period_keys(backend, whole)
             v.warn_node_connections(db)
-    return out.getvalue()
+    return "".join(f"{call.code} {name}: {call.details.get(name, '')}\n" for call in got.calls for name in call.names)
 
 
 @pytest.mark.parametrize("source", SOURCES, ids=lambda p: p.stem)

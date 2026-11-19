@@ -32,6 +32,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
+from tests._support.coded_capture import capture_coded
 from tests.engine._unit_db import b64, build, last_stochastic, make_db, utf8
 
 REPO = Path(__file__).resolve().parents[2]
@@ -266,13 +267,13 @@ def test_no_floor_for_min_load_efficiency_unit_without_min_load(tmp_path_factory
 
 
 @pytest.mark.parametrize("veh", VEHICLES)
-def test_min_load_efficiency_without_efficiency_at_min_load_is_flat(tmp_path_factory, veh, caplog) -> None:
+def test_min_load_efficiency_without_efficiency_at_min_load_is_flat(tmp_path_factory, veh) -> None:
     """``min_load 0.3`` and no ``efficiency_at_min_load``: the unit uses its efficiency at minimum load too, so
     the model equals ``efficiency_at_min_load = efficiency`` given explicitly, the slope is 1/efficiency and the
     minimum load still applies.  A warning names the unit.  Before: no fuel use (single, stoch) or a curve with
     efficiency_at_min_load 0 (roll)."""
     u = UNIT[veh]
-    with caplog.at_level(logging.WARNING):
+    with capture_coded() as got:
         steps = _run(tmp_path_factory, veh, _online(veh) + _mle(u, min_load=0.3))
     ref = _run(tmp_path_factory, veh, _online(veh) + _mle(u, min_load=0.3, eta_min=EFF[veh]))
     _assert_same_model(steps, ref)
@@ -294,8 +295,7 @@ def test_min_load_efficiency_without_efficiency_at_min_load_is_flat(tmp_path_fac
         # solve's commitment, so its objective does not see the floor directly.
         assert float(last_stochastic(steps).solution.obj) != pytest.approx(
             float(last_stochastic(no_floor).solution.obj), rel=1e-6)
-    assert (f"Unit '{u}' uses min_load_efficiency with min_load > 0 but has no efficiency_at_min_load"
-            in caplog.text)
+    assert got.names("W-0200") == [u]
 
 
 @pytest.mark.parametrize("veh", VEHICLES)
@@ -316,7 +316,7 @@ def test_efficiency_at_min_load_map_leaves_cells_out(tmp_path_factory, veh) -> N
         assert _unit_rows(st.flex_data.p_slope, u).height == st.flex_data.dt.height
 
 
-def test_min_load_efficiency_warning_folds_maps(tmp_path_factory, caplog) -> None:
+def test_min_load_efficiency_warning_folds_maps(tmp_path_factory) -> None:
     """The warning sees ``min_load > 0`` in a period map and in a stochastic-time map, and not in a map of
     zeros or when ``efficiency_at_min_load`` is given."""
     from spinedb_api import DatabaseMapping
@@ -337,14 +337,13 @@ def test_min_load_efficiency_warning_folds_maps(tmp_path_factory, caplog) -> Non
     url, scen = make_db(tmp_path_factory, alt="c11c_warn", values=values,
                         base_chain=["init", "west", "coal", "coal_chp", "wind", "fusion"])
     logger = logging.getLogger("c11c_warn")
-    with caplog.at_level(logging.WARNING, logger="c11c_warn"):
+    with capture_coded() as got:
         with DatabaseMapping(url) as db:
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
             scenario_filter_from_dict(db, scenario_filter_config(scen))
             validate_min_load_efficiency_inputs(db, logger)
-    warned = sorted(r.getMessage().split("'")[1] for r in caplog.records if r.name == "c11c_warn")
-    assert warned == ["coal_chp", "coal_plant"]
+    assert sorted(got.names("W-0200")) == ["coal_chp", "coal_plant"]
 
 
 # ---------------------------------------------------------------------------

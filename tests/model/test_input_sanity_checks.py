@@ -17,6 +17,7 @@ from __future__ import annotations
 import pytest
 
 from flextool.engine.input._solve_state import FlexToolConfigError
+from tests._support.coded_capture import capture_coded
 from tests.engine._unit_db import PLANT_CHAIN, b64, make_db, run
 
 NETWORK_CHAIN = ["init", "west", "coal", "wind", "network"]
@@ -194,75 +195,71 @@ def test_lifetime_not_needed_is_silent(tmp_path_factory, alt, values) -> None:
                        values=values or [["unit", "coal_plant", "efficiency", _f(0.4)]]))
 
 
-@pytest.mark.parametrize("alt, values, chain, expected", [
+@pytest.mark.parametrize("alt, values, chain, code, name, cls, detail", [
     ("b170_avail_pct", [["unit", "coal_plant", "availability", _f(95.0)]], PLANT_CHAIN,
-     "Warning: unit 'coal_plant' availability = 95 (alternative 'b170_avail_pct'): values above 1.5 look like "
-     "percentages; availability is a share (0.95, not 95)."),
+     "W-0226", "coal_plant", "unit", "availability = 95 (alternative 'b170_avail_pct')"),
     ("b170_conn_gain", [["connection", "west_east", "efficiency", _f(1.1)]], NETWORK_CHAIN,
-     "Warning: connection 'west_east' efficiency = 1.1 (alternative 'b170_conn_gain'): a connection efficiency "
-     "above 1 creates energy on the way."),
+     "W-0222", "west_east", "connection", "efficiency = 1.1 (alternative 'b170_conn_gain')"),
     ("b170_vus", [["unit", "coal_plant", "virtual_unitsize", _f(0.0)]], PLANT_CHAIN,
-     "Warning: unit 'coal_plant' virtual_unitsize = 0 (alternative 'b170_vus'): virtual_unitsize must be above 0; "
-     "the value is ignored (the entity is one unit of its capacity)."),
+     "W-0224", "coal_plant", "unit", "virtual_unitsize = 0 (alternative 'b170_vus')"),
 ])
-def test_likely_unit_mistakes_warn(tmp_path_factory, capsys, alt, values, chain, expected) -> None:
-    _validate(*make_db(tmp_path_factory, alt=alt, values=values, base_chain=chain))
-    assert expected in capsys.readouterr().out
+def test_likely_unit_mistakes_warn(tmp_path_factory, alt, values, chain, code, name, cls, detail) -> None:
+    with capture_coded() as got:
+        _validate(*make_db(tmp_path_factory, alt=alt, values=values, base_chain=chain))
+    assert got.names(code, cls=cls) == [name]
+    assert got.detail(code, name) == detail
 
 
-_ANTI_UNIT = ("a negative capacity makes an anti-energy unit (its flows run the other way). If you did not mean "
-              "that, use 0 or more. Combined with a profile, min_load or invest / retire limits it can make the "
-              "problem infeasible.")
-
-
-def test_negative_existing_of_a_unit_warns_and_the_run_continues(tmp_path_factory, capsys) -> None:
+def test_negative_existing_of_a_unit_warns_and_the_run_continues(tmp_path_factory) -> None:
     """Anti-energy units are supported (the anti_energy_plant example), so a warning, not an error."""
-    run(tmp_path_factory, *make_db(tmp_path_factory, alt="b170_anti", base_chain=PLANT_CHAIN,
-                                   values=[["unit", "coal_plant", "existing", _f(-50.0)]]))
-    assert ("Warning: unit 'coal_plant' existing = -50 (alternative 'b170_anti'): " + _ANTI_UNIT
-            ) in capsys.readouterr().out
+    with capture_coded() as got:
+        run(tmp_path_factory, *make_db(tmp_path_factory, alt="b170_anti", base_chain=PLANT_CHAIN,
+                                       values=[["unit", "coal_plant", "existing", _f(-50.0)]]))
+    assert got.names("W-0223", cls="unit") == ["coal_plant"]
+    assert got.detail("W-0223", "coal_plant") == "existing = -50 (alternative 'b170_anti')"
 
 
-def test_negative_existing_in_a_period_map_names_the_period(tmp_path_factory, capsys) -> None:
-    _validate(*make_db(tmp_path_factory, alt="b170_anti_map", base_chain=PLANT_CHAIN,
-                       values=[["unit", "coal_plant", "existing", _map([["p2020", -50.0]])]]))
-    assert ("Warning: unit 'coal_plant' existing = -50 (alternative 'b170_anti_map', at p2020): " + _ANTI_UNIT
-            ) in capsys.readouterr().out
+def test_negative_existing_in_a_period_map_names_the_period(tmp_path_factory) -> None:
+    with capture_coded() as got:
+        _validate(*make_db(tmp_path_factory, alt="b170_anti_map", base_chain=PLANT_CHAIN,
+                           values=[["unit", "coal_plant", "existing", _map([["p2020", -50.0]])]]))
+    assert got.detail("W-0223", "coal_plant") == "existing = -50 (alternative 'b170_anti_map', at p2020)"
 
 
-def test_negative_existing_of_a_node_warns(tmp_path_factory, capsys) -> None:
-    _validate(*make_db(tmp_path_factory, alt="b170_node_neg", base_chain=PLANT_CHAIN,
-                       values=[["node", "west", "existing", _f(-10.0)]]))
-    assert ("Warning: node 'west' existing = -10 (alternative 'b170_node_neg'): a negative capacity gives the node a "
-            "negative storage capacity. If you did not mean that, use 0 or more. Combined with storage state limits "
-            "or invest / retire limits it can make the problem infeasible.") in capsys.readouterr().out
+def test_negative_existing_of_a_node_warns(tmp_path_factory) -> None:
+    with capture_coded() as got:
+        _validate(*make_db(tmp_path_factory, alt="b170_node_neg", base_chain=PLANT_CHAIN,
+                           values=[["node", "west", "existing", _f(-10.0)]]))
+    assert got.names("W-0223", cls="node") == ["west"]
+    assert got.detail("W-0223", "west") == "existing = -10 (alternative 'b170_node_neg')"
 
 
-def test_negative_existing_of_a_connection_warns(tmp_path_factory, capsys) -> None:
-    _validate(*make_db(tmp_path_factory, alt="b170_conn_neg", base_chain=NETWORK_CHAIN,
-                       values=[["connection", "west_east", "existing", _f(-100.0)]]))
-    assert ("Warning: connection 'west_east' existing = -100 (alternative 'b170_conn_neg'): a negative capacity "
-            "gives the connection a negative transfer capacity. If you did not mean that, use 0 or more. Combined "
-            "with invest / retire limits it can make the problem infeasible.") in capsys.readouterr().out
+def test_negative_existing_of_a_connection_warns(tmp_path_factory) -> None:
+    with capture_coded() as got:
+        _validate(*make_db(tmp_path_factory, alt="b170_conn_neg", base_chain=NETWORK_CHAIN,
+                           values=[["connection", "west_east", "existing", _f(-100.0)]]))
+    assert got.names("W-0223", cls="connection") == ["west_east"]
+    assert got.detail("W-0223", "west_east") == "existing = -100 (alternative 'b170_conn_neg')"
 
 
-def test_zero_existing_is_silent(tmp_path_factory, capsys) -> None:
-    _validate(*make_db(tmp_path_factory, alt="b170_ex0", base_chain=PLANT_CHAIN, values=[
-        ["unit", "coal_plant", "existing", _f(0.0)], ["node", "west", "existing", _f(0.0)]]))
-    assert "Warning" not in capsys.readouterr().out
+def test_zero_existing_is_silent(tmp_path_factory) -> None:
+    with capture_coded() as got:
+        _validate(*make_db(tmp_path_factory, alt="b170_ex0", base_chain=PLANT_CHAIN, values=[
+            ["unit", "coal_plant", "existing", _f(0.0)], ["node", "west", "existing", _f(0.0)]]))
+    assert "W-0223" not in got.codes()
 
 
-def test_negative_virtual_unitsize_is_ignored(tmp_path_factory, capsys) -> None:
+def test_negative_virtual_unitsize_is_ignored(tmp_path_factory) -> None:
     """The warning says "ignored": the unit is one unit of its existing capacity (unitsize 200, capacity 200), not
     200 units of -5 MW (an anti-energy unit of -1000 MW, which the cascade made of any non-zero value)."""
     import polars as pl
 
     from tests.engine._unit_db import utf8
 
-    steps = run(tmp_path_factory, *make_db(tmp_path_factory, alt="b170_vu_neg", base_chain=PLANT_CHAIN, values=[
-        ["unit", "coal_plant", "existing", _f(200.0)], ["unit", "coal_plant", "virtual_unitsize", _f(-5.0)]]))
-    assert ("Warning: unit 'coal_plant' virtual_unitsize = -5 (alternative 'b170_vu_neg'): virtual_unitsize must be "
-            "above 0; the value is ignored (the entity is one unit of its capacity).") in capsys.readouterr().out
+    with capture_coded() as got:
+        steps = run(tmp_path_factory, *make_db(tmp_path_factory, alt="b170_vu_neg", base_chain=PLANT_CHAIN, values=[
+            ["unit", "coal_plant", "existing", _f(200.0)], ["unit", "coal_plant", "virtual_unitsize", _f(-5.0)]]))
+    assert got.detail("W-0224", "coal_plant") == "virtual_unitsize = -5 (alternative 'b170_vu_neg')"
     fd = next(iter(steps.values())).flex_data
     unitsize = utf8(fd.p_unitsize.frame).filter(pl.col("p") == "coal_plant")["value"].to_list()
     capacity = utf8(fd.p_entity_all_existing.frame).filter(pl.col("e") == "coal_plant")["value"].to_list()
@@ -270,23 +267,23 @@ def test_negative_virtual_unitsize_is_ignored(tmp_path_factory, capsys) -> None:
     assert capacity == [200.0]
 
 
-def test_profile_entered_as_percent_warns(tmp_path_factory, capsys) -> None:
+def test_profile_entered_as_percent_warns(tmp_path_factory) -> None:
     """``warn_profiles_as_percent`` runs after the parameter read (on the reader's profile frames)."""
-    run(tmp_path_factory, *make_db(tmp_path_factory, alt="b170_wind_pct", base_chain=["init", "west", "wind"],
-                                   values=[["profile", "wind_profile", "profile",
-                                            _map([["t0001", 0.3], ["t0002", 35.0]])]]))
-    assert ("Warning: profile 'wind_profile' = 35 (alternative 'b170_wind_pct', at t0002) limits a unit flow "
-            "(upper_limit or fixed): values above 1.5 look like percentages; the profile is a share of the capacity "
-            "(0.35, not 35).") in capsys.readouterr().out
+    with capture_coded() as got:
+        run(tmp_path_factory, *make_db(tmp_path_factory, alt="b170_wind_pct", base_chain=["init", "west", "wind"],
+                                       values=[["profile", "wind_profile", "profile",
+                                                _map([["t0001", 0.3], ["t0002", 35.0]])]]))
+    assert got.names("W-0307") == ["wind_profile"]
+    assert got.detail("W-0307", "wind_profile") == "35 (alternative 'b170_wind_pct', at t0002)"
 
 
-def test_shares_slightly_above_one_are_silent(tmp_path_factory, capsys) -> None:
+def test_shares_slightly_above_one_are_silent(tmp_path_factory) -> None:
     """Measured or reanalysis capacity factors reach a little above 1 (rounding, over-performance)."""
-    run(tmp_path_factory, *make_db(tmp_path_factory, alt="b170_cf", base_chain=["init", "west", "wind"], values=[
-        ["profile", "wind_profile", "profile", _map([["t0001", 0.3], ["t0002", 1.0235]])],
-        ["unit", "coal_plant", "availability", _f(1.2)]]))
-    out = capsys.readouterr().out
-    assert "look like percentages" not in out and "wind_profile" not in out, out
+    with capture_coded() as got:
+        run(tmp_path_factory, *make_db(tmp_path_factory, alt="b170_cf", base_chain=["init", "west", "wind"], values=[
+            ["profile", "wind_profile", "profile", _map([["t0001", 0.3], ["t0002", 1.0235]])],
+            ["unit", "coal_plant", "availability", _f(1.2)]]))
+    assert "W-0307" not in got.codes() and "W-0226" not in got.codes(), got.codes()
 
 
 def test_errors_of_the_input_checks_come_in_one_message(tmp_path_factory) -> None:

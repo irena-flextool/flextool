@@ -222,13 +222,13 @@ def test_notice_names_the_newly_offered_pairs(tmp_path_factory, capsys) -> None:
     assert "invest_max_period 0" in lines[0]
 
 
-def test_f_non_storage_node_invest_method_gets_no_variable(tmp_path_factory, caplog) -> None:
+def test_f_non_storage_node_invest_method_gets_no_variable(tmp_path_factory) -> None:
     """Node investment is storage capacity: the balance node ``west`` with ``invest_method`` ``invest_no_limit``
     and no ``invest_cost`` gets no ``v_invest_n`` (before, a free degenerate column), and the validator names
-    it.  Solved under ``FLEXTOOL_AUTOSCALE_STRICT=1`` (no scale gap for a node outside ``nodeState``)."""
-    import logging
+    it (W-0304).  Solved under ``FLEXTOOL_AUTOSCALE_STRICT=1`` (no scale gap for a node outside ``nodeState``)."""
+    from tests._support.coded_capture import capture_coded
 
-    with caplog.at_level(logging.WARNING):
+    with capture_coded() as got:
         steps = run(tmp_path_factory, *make_db(tmp_path_factory, alt="i218_f", base_chain=CHAIN, values=BASE + [
             ["node", "west", "invest_method", _s("invest_no_limit")],
         ]))
@@ -239,8 +239,7 @@ def test_f_non_storage_node_invest_method_gets_no_variable(tmp_path_factory, cap
         assert utf8(step.solution.value("v_invest_n")).height == 0
     except KeyError:
         pass  # no v_invest_n variable at all
-    assert any("Node 'west' has invest_method invest_no_limit but node_type balance" in r.getMessage()
-               for r in caplog.records), [r.getMessage() for r in caplog.records]
+    assert got.detail("W-0304", "west") == "invest_method invest_no_limit, node_type balance"
 
 
 @pytest.mark.parametrize(("method", "invested"), [("invest_period", 0.0), ("invest_total", 100.0)])

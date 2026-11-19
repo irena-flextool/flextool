@@ -991,9 +991,14 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
 
     skipped_files = 0  # track files not plotted due to only_first_file
 
+    # Plot keys without results: one Note line for all (W-0406), the full list in the debug log.
+    missing = [key for key in plot_settings if key not in results_dict]
+    if missing:
+        from flextool import run_warnings
+        run_warnings.note("W-0406", missing)
+
     for key in plot_settings:
         if key not in results_dict:
-            logger.info(f"Plot key '{key}' not found in results \u2014 skipping")
             continue
         df_orig = results_dict[key]
         if df_orig.empty:

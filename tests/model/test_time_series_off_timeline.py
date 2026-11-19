@@ -19,6 +19,7 @@ import json
 import pytest
 
 from flextool.engine.input._solve_state import FlexToolConfigError
+from tests._support.coded_capture import capture_coded
 from tests.engine._unit_db import BASE_FIXTURE_JSON, PLANT_CHAIN, b64, make_db, run
 
 
@@ -49,13 +50,17 @@ TIMELINE_3H = [["timeline", "y2020", "timestep_duration", _map([[f"t{i:04d}", 3.
                ["timeset", "2day", "timeset_duration", _map([["t0001", 24.0]])]]
 NSD3 = ["solve", "y2020_2day_dispatch", "new_stepduration", b64(3.0, "float")]
 
-WARN_A = ("Warning: node 'west' parameter 'inflow': 48 of 72 distinct time keys are not time steps of any timeline (t0002, "
-          "t0003, t0005, t0006, t0008 and 43 more); their values are not used. Timeline 'y2020': 24 steps, "
-          "t0001 .. t0070.")
-WARN_C = ("Warning: node 'west' parameter 'inflow': 8 of 80 distinct time keys are not time steps of any timeline (t0073, "
-          "t0074, t0075, t0076, t0077 and 3 more); their values are not used. Timeline 'y2020': 72 steps, "
-          "t0001 .. t0072.")
-INFLOW_WARNING = "Warning: node 'west' parameter 'inflow'"
+# W-0309's details (the debug log): the parameter, then the keys.
+WARN_A = ("node.inflow: 48 of 72 distinct time keys are not time steps of any timeline (t0002, t0003, t0005, t0006, "
+          "t0008 and 43 more). Timeline 'y2020': 24 steps, t0001 .. t0070.")
+WARN_C = ("node.inflow: 8 of 80 distinct time keys are not time steps of any timeline (t0073, t0074, t0075, t0076, "
+          "t0077 and 3 more). Timeline 'y2020': 72 steps, t0001 .. t0072.")
+
+
+def _off_timeline(got) -> list[tuple[list[str], str]]:
+    """The W-0309 calls of ``node.inflow``: ``(names, details)``."""
+    return [(call.names, call.details.get("", "")) for call in got.calls
+            if call.code == "W-0309" and call.fmt.get("parameter") == "node.inflow"]
 
 
 def _db(tmp_path_factory, alt: str, values: list) -> tuple[str, str]:
@@ -75,22 +80,22 @@ def _validate(url: str, scenario: str) -> None:
     ("b205_c_extra_keys", [["node", "west", "inflow", _map(EXTRA)]], WARN_C, 1_144_037_750.0),
     ("b205_b_nsd_extra_keys", [NSD3, ["node", "west", "inflow", _map(EXTRA)]], WARN_C, 1_136_436_625.0),
 ])
-def test_off_timeline_keys_warn_once(tmp_path_factory, capsys, alt, values, warning, objective) -> None:
-    steps = run(tmp_path_factory, *_db(tmp_path_factory, alt, values))
-    out = capsys.readouterr().out
-    assert out.count(INFLOW_WARNING) == 1 and warning in out, out
+def test_off_timeline_keys_warn_once(tmp_path_factory, alt, values, warning, objective) -> None:
+    with capture_coded() as got:
+        steps = run(tmp_path_factory, *_db(tmp_path_factory, alt, values))
+    assert _off_timeline(got) == [(["west"], warning)]
     assert list(steps.values())[-1].solution.obj == pytest.approx(objective, rel=1e-9)
 
 
-def test_rolling_solve_warns_once(tmp_path_factory, capsys) -> None:
+def test_rolling_solve_warns_once(tmp_path_factory) -> None:
     rolling = [["solve", "y2020_2day_dispatch", "solve_mode", b64("rolling_window", "str")],
                ["solve", "y2020_2day_dispatch", "rolling_solve_horizon", b64(24.0, "float")],
                ["solve", "y2020_2day_dispatch", "rolling_solve_jump", b64(12.0, "float")]]
-    steps = run(tmp_path_factory, *_db(tmp_path_factory, "b205_rolling",
-                                       rolling + [["node", "west", "inflow", _map(EXTRA)]]))
+    with capture_coded() as got:
+        steps = run(tmp_path_factory, *_db(tmp_path_factory, "b205_rolling",
+                                           rolling + [["node", "west", "inflow", _map(EXTRA)]]))
     assert len(steps) > 1
-    out = capsys.readouterr().out
-    assert out.count(INFLOW_WARNING) == 1 and WARN_C in out, out
+    assert _off_timeline(got) == [(["west"], WARN_C)]
 
 
 def test_no_key_on_a_timeline_is_an_error(tmp_path_factory) -> None:
@@ -115,12 +120,13 @@ def test_no_key_on_a_timeline_without_a_case_match_has_no_case_hint(tmp_path_fac
 
 
 @pytest.mark.parametrize("index_name", [None, "period"])
-def test_period_map_of_another_scenarios_periods_is_not_an_error(tmp_path_factory, capsys, index_name) -> None:
+def test_period_map_of_another_scenarios_periods_is_not_an_error(tmp_path_factory, index_name) -> None:
     """p2030 and p2035 are periods of other scenarios of tests.json (this one's only period is p2020): the map is
     a period map, the unit gets no value in this solve (docs: entities_and_time.md); no error, no warning."""
-    _validate(*_db(tmp_path_factory, f"b205_other_periods_{index_name}", [
-        ["unit", "coal_plant", "availability", _map([["p2030", 0.5], ["p2035", 0.6]], index_name)]]))
-    assert "Warning:" not in capsys.readouterr().out
+    with capture_coded() as got:
+        _validate(*_db(tmp_path_factory, f"b205_other_periods_{index_name}", [
+            ["unit", "coal_plant", "availability", _map([["p2030", 0.5], ["p2035", 0.6]], index_name)]]))
+    assert got.codes() == [], got.codes()
 
 
 @pytest.mark.parametrize("keys, time_error", [
@@ -149,15 +155,16 @@ def _datetime_timeline() -> list:
 
 
 @pytest.mark.parametrize("form", ["space", "no_seconds"])
-def test_date_time_map_keys_are_compared_as_parsed(tmp_path_factory, capsys, form) -> None:
+def test_date_time_map_keys_are_compared_as_parsed(tmp_path_factory, form) -> None:
     """``2050-01-01 00:00:00`` and ``2050-01-01T00:00`` parse to the timeline's ``2050-01-01T00:00:00``."""
     steps = _datetime_steps(0, 72)
     keys = [s.replace("T", " ") for s in steps] if form == "space" else [s[:-3] for s in steps]
     inflow = b64({"index_type": "date_time", "index_name": "time", "data": [[k, 1.0] for k in keys]}, "map")
-    _validate(*make_db(tmp_path_factory, alt=f"b205_dt_{form}", base_chain=PLANT_CHAIN,
-                       values=_datetime_timeline() + [["node", "west", "inflow", inflow]],
-                       entities=[["timeline", "y2050", None]]))
-    assert "Warning:" not in capsys.readouterr().out
+    with capture_coded() as got:
+        _validate(*make_db(tmp_path_factory, alt=f"b205_dt_{form}", base_chain=PLANT_CHAIN,
+                           values=_datetime_timeline() + [["node", "west", "inflow", inflow]],
+                           entities=[["timeline", "y2050", None]]))
+    assert got.codes() == [], got.codes()
 
 
 def test_stamps_of_another_year_say_so(tmp_path_factory) -> None:
@@ -172,7 +179,7 @@ def test_stamps_of_another_year_say_so(tmp_path_factory) -> None:
     assert "Its stamps are of year 2030, the timelines' of 2050." in msg and "case sensitive" not in msg, msg
 
 
-def test_series_on_a_timeline_of_another_scenario_warns(tmp_path_factory, capsys) -> None:
+def test_series_on_a_timeline_of_another_scenario_warns(tmp_path_factory) -> None:
     """Timeline ``y2030`` has its timestep_duration only in alternative ``b205_other_tl``, which this scenario does
     not include: a series keyed on its steps is data of another scenario -> a warning, not an error."""
     data = json.loads(BASE_FIXTURE_JSON.read_text())
@@ -185,38 +192,43 @@ def test_series_on_a_timeline_of_another_scenario_warns(tmp_path_factory, capsys
     url, scen = make_db(tmp_path_factory, alt="b205_on_other_tl", base_chain=PLANT_CHAIN,
                         fixture_json=work / "tests.json",
                         values=[["node", "west", "inflow", _map([[f"h{i:04d}", 1.0] for i in range(1, 25)])]])
-    _validate(url, scen)
-    assert ("Warning: node 'west' parameter 'inflow' (alternative 'b205_on_other_tl'): its keys (h0001, h0002, "
-            "h0003 ...) are time steps of timeline 'y2030' (alternative 'b205_other_tl'), which is not a timeline "
-            "of this scenario; the value is not used.") in capsys.readouterr().out
+    with capture_coded() as got:
+        _validate(url, scen)
+    assert got.names("W-0308", parameter="node.inflow") == ["west"]
+    assert got.detail("W-0308", "west") == (
+        "alternative 'b205_on_other_tl': keys (h0001, h0002, h0003 ...) are time steps of timeline 'y2030' "
+        "(alternative 'b205_other_tl'), not a timeline of this scenario")
 
 
-def test_series_longer_than_the_timeset_passes(tmp_path_factory, capsys) -> None:
+def test_series_longer_than_the_timeset_passes(tmp_path_factory) -> None:
     # All 72 keys are steps of the timeline; the timeset uses 24 of them.
-    _validate(*_db(tmp_path_factory, "b205_subset", [
-        ["timeset", "2day", "timeset_duration", _map([["t0001", 24.0]])],
-        ["node", "west", "inflow", _map(HOURLY)]]))
-    assert "Warning:" not in capsys.readouterr().out
+    with capture_coded() as got:
+        _validate(*_db(tmp_path_factory, "b205_subset", [
+            ["timeset", "2day", "timeset_duration", _map([["t0001", 24.0]])],
+            ["node", "west", "inflow", _map(HOURLY)]]))
+    assert got.codes() == [], got.codes()
 
 
-def test_unnamed_stochastic_map_branch_names_are_not_time_keys(tmp_path_factory, capsys) -> None:
+def test_unnamed_stochastic_map_branch_names_are_not_time_keys(tmp_path_factory) -> None:
     def level(data):
         return {"type": "map", "index_type": "str", "data": data}
     times = level([[k, v] for k, v in HOURLY])
     stoch = b64({"index_type": "str", "data": [
         [branch, level([["t0001", times], ["t0025", times]])] for branch in ("upper", "lower")]}, "map")
-    _validate(*_db(tmp_path_factory, "b205_stochastic", [["node", "west", "inflow", stoch]]))
-    assert "Warning:" not in capsys.readouterr().out
+    with capture_coded() as got:
+        _validate(*_db(tmp_path_factory, "b205_stochastic", [["node", "west", "inflow", stoch]]))
+    assert got.codes() == [], got.codes()
 
 
-def test_unnamed_stochastic_map_off_time_key_warns(tmp_path_factory, capsys) -> None:
+def test_unnamed_stochastic_map_off_time_key_warns(tmp_path_factory) -> None:
     def level(data):
         return {"type": "map", "index_type": "str", "data": data}
     times = level([[k, v] for k, v in HOURLY] + [["t0099", 1.0]])
     stoch = b64({"index_type": "str", "data": [["upper", level([["t0001", times]])]]}, "map")
-    _validate(*_db(tmp_path_factory, "b205_stochastic_off", [["node", "west", "inflow", stoch]]))
-    out = capsys.readouterr().out
-    assert "parameter 'inflow': 1 of 73 distinct time keys are not time steps of any timeline (t0099)" in out, out
+    with capture_coded() as got:
+        _validate(*_db(tmp_path_factory, "b205_stochastic_off", [["node", "west", "inflow", stoch]]))
+    [(names, details)] = _off_timeline(got)
+    assert names == ["west"] and "1 of 73 distinct time keys are not time steps of any timeline (t0099)" in details
 
 
 def _datetime_steps(first_hour: int, n: int) -> list[str]:
@@ -228,27 +240,29 @@ def _datetime_steps(first_hour: int, n: int) -> list[str]:
     # one hour later: the last stamp 2050-01-04T00:00:00 is past the 72-step timeline
     ("2050-01-01T01:00:00", "1 of 72 distinct time keys are not time steps of any timeline (2050-01-04T00:00:00)"),
 ])
-def test_time_series_value_on_a_datetime_timeline(tmp_path_factory, capsys, start, warning) -> None:
+def test_time_series_value_on_a_datetime_timeline(tmp_path_factory, start, warning) -> None:
     # a second timeline (the other series of the chain stay on y2020's t0001..t0072)
     timeline = [["timeline", "y2050", "timestep_duration", _map([[s, 1.0] for s in _datetime_steps(0, 72)])]]
     series = b64({"index": {"start": start, "resolution": "1h", "ignore_year": False, "repeat": False},
                   "data": [v for _k, v in HOURLY]}, "time_series")
-    _validate(*make_db(tmp_path_factory, alt=f"b205_ts_{start[11:13]}", base_chain=PLANT_CHAIN,
-                       values=timeline + [["node", "west", "inflow", series]],
-                       entities=[["timeline", "y2050", None]]))
-    out = capsys.readouterr().out
+    with capture_coded() as got:
+        _validate(*make_db(tmp_path_factory, alt=f"b205_ts_{start[11:13]}", base_chain=PLANT_CHAIN,
+                           values=timeline + [["node", "west", "inflow", series]],
+                           entities=[["timeline", "y2050", None]]))
     if warning is None:
-        assert "Warning:" not in out, out
+        assert got.codes() == [], got.codes()
     else:
-        assert f"Warning: node 'west' parameter 'inflow': {warning}" in out, out
+        [(names, details)] = _off_timeline(got)
+        assert names == ["west"] and details.startswith(f"node.inflow: {warning}"), details
 
 
-def test_timeset_weight_on_a_start_that_is_not_a_step_warns(tmp_path_factory, capsys) -> None:
-    _validate(*_db(tmp_path_factory, "b205_weights", [
-        ["timeset", "2day", "timeset_weights", _map([["t0001", 0.5], ["x0001", 0.5]])]]))
-    out = capsys.readouterr().out
-    assert ("Warning: timeset '2day' parameter 'timeset_weights': 1 of 2 distinct time keys are not time steps of any "
-            "timeline (x0001)") in out, out
+def test_timeset_weight_on_a_start_that_is_not_a_step_warns(tmp_path_factory) -> None:
+    with capture_coded() as got:
+        _validate(*_db(tmp_path_factory, "b205_weights", [
+            ["timeset", "2day", "timeset_weights", _map([["t0001", 0.5], ["x0001", 0.5]])]]))
+    assert got.names("W-0309", parameter="timeset.timeset_weights") == ["2day"]
+    assert got.detail("W-0309", "").startswith(
+        "timeset.timeset_weights: 1 of 2 distinct time keys are not time steps of any timeline (x0001)")
 
 
 @pytest.mark.parametrize("extra, warning", [
@@ -256,13 +270,14 @@ def test_timeset_weight_on_a_start_that_is_not_a_step_warns(tmp_path_factory, ca
     # one key past the end: the period key p2020 is not a time key
     ([["t0073", 1.0]], "1 of 73 distinct time keys are not time steps of any timeline (t0073)"),
 ])
-def test_period_time_map(tmp_path_factory, capsys, extra, warning) -> None:
+def test_period_time_map(tmp_path_factory, extra, warning) -> None:
     hourly = [[k, 0.9] for k, _v in HOURLY]
     value = b64({"index_type": "str", "index_name": "period", "data": [
         ["p2020", {"type": "map", "index_type": "str", "index_name": "time", "data": hourly + extra}]]}, "map")
-    _validate(*_db(tmp_path_factory, f"b205_pt_{len(extra)}", [["unit", "coal_plant", "availability", value]]))
-    out = capsys.readouterr().out
+    with capture_coded() as got:
+        _validate(*_db(tmp_path_factory, f"b205_pt_{len(extra)}", [["unit", "coal_plant", "availability", value]]))
     if warning is None:
-        assert "Warning:" not in out, out
+        assert got.codes() == [], got.codes()
     else:
-        assert f"Warning: unit 'coal_plant' parameter 'availability': {warning}" in out, out
+        assert got.names("W-0309", parameter="unit.availability") == ["coal_plant"]
+        assert got.detail("W-0309", "").startswith(f"unit.availability: {warning}")
