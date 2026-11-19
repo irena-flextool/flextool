@@ -689,7 +689,7 @@ def _is_per_roll_slice_intermediate(name: str) -> bool:
 
 
 def _warn_coverage_gaps(work_folder: Path, files: list[dict]) -> None:
-    """Log warnings for:
+    """Log (at DEBUG) the bundle REGISTRY coverage gaps:
        1. files in ``output_raw/`` with no matching REGISTRY entry,
        2. unconditional REGISTRY entries whose file is missing.
 
@@ -739,12 +739,12 @@ def _warn_coverage_gaps(work_folder: Path, files: list[dict]) -> None:
         if not any((work_folder / sub).is_dir() for sub in subdirs):
             continue
         missing.append(f"{record['path']} (REGISTRY key {record['key']!r})")
-    # One line per kind (the full list at debug level): these are checks of the bundle's REGISTRY, not of the model.
+    # Developer checks of the bundle's REGISTRY, not of the model: DEBUG only (a
+    # warning here reached every run's "Other warnings (no code)" tally).
     for what, items in (("file(s) in output_raw/ with no REGISTRY entry", unregistered),
                         ("registered file(s) missing on disk", missing)):
         if items:
-            _logger.warning("manifest: %d %s (e.g. %s)", len(items), what, items[0].split(" (REGISTRY")[0])
-            _logger.debug("manifest: %s: %s", what, "; ".join(items))
+            _logger.debug("manifest: %d %s: %s", len(items), what, "; ".join(items))
 
 
 def write_manifest(work_folder: Path | str) -> Path:
