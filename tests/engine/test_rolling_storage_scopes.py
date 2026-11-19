@@ -214,7 +214,11 @@ def test_timeblock_in_rolling_is_within_period(tmp_path, coded_log):
         assert tb_set is None or tb_set.height == 0
         pa, pb = build(a.flex_data), build(b.flex_data)
         for name in (ANCHOR, CLOSE):
-            assert row_bounds(pa, name, "tank") == pytest.approx(row_bounds(pb, name, "tank"))
+            ba, bb = row_bounds(pa, name, "tank"), row_bounds(pb, name, "tank")
+            # pytest >= 9.2 approx() rejects a mapping of tuples: compare the keys, then each (lower, upper) pair.
+            assert ba.keys() == bb.keys()
+            for row in ba:
+                assert ba[row] == pytest.approx(bb[row]), row
         assert a.solution.objective_in_user_units == pytest.approx(b.solution.objective_in_user_units, rel=1e-9,
                                                                    abs=1e-6)
         assert levels(a) == pytest.approx(levels(b), abs=1e-6)
