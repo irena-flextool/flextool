@@ -963,7 +963,8 @@ def _check_storage_accounting(b: _Build) -> None:
                 "storage_endowment", b.solve_name, sorted(sizes),
                 lambda named: (f"Warning: {named} start {where} at storage_state_start on capacity the solve "
                                "cannot change and end free (bind forward only, no fix_end, use_reference_value or "
-                               f"upper-level fix), so the run may use this start energy ({total:.6g} MWh in total) "
+                               f"upper-level fix), so the run may use this start energy ({total:.6g} MWh in total, "
+                               "on the existing capacity before any retirement in this solve) "
                                "without producing it. This is a valid model of an initial stock (an endowment); if "
                                "the storage should return it, use fix_start_end, a cyclic storage_binding_method or "
                                "use_reference_value."),
@@ -1039,7 +1040,8 @@ def _warn_fix_start_end_drain(b: _Build, nodes: set, share: dict, end_share: dic
         lambda named: (f"Warning: in solve '{solve}' {named} have storage_start_end_method fix_start_end with "
                        f"storage_state_end below storage_state_start: they drain {total:.6g} MWh of existing "
                        "storage capacity over the model (start share x capacity at the start - end share x "
-                       f"capacity at the model's last period).{tail} This can be intended (a stock drawn down by "
+                       "capacity at the model's last period, on the existing capacity before any investment, life "
+                       f"extension or retirement).{tail} This can be intended (a stock drawn down by "
                        "design); otherwise give storage_state_end at least storage_state_start."),
         details=f"fix_start_end drain in solve '{solve}': " + "; ".join(
             f"{n} start {s_:.6g} end {e_:.6g}, capacity {cs:.6g} -> {ce:.6g} MWh, drains {mwh:.6g} MWh"

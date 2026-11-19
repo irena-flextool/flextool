@@ -5737,7 +5737,12 @@ def load_flextool(source: "Path | str | FlexInputSource",
 def reference_start_shares(flex_data: "FlexData") -> dict:
     """``{node: share}``: the storage_state_reference_value at the first step each use_reference_value storage node
     starts from in this solve (not carried from an earlier solve; the model's first step in the first solve).  With
-    several first steps (a stochastic fan) the first in sorted order.  Empty when there are none."""
+    several first steps (a stochastic fan) the first in sorted order.  Empty when there are none.
+
+    The reference value of a step is the level at its end, so the start level (before the first step) would be the
+    reference of the step before; at the model start no such step exists (and a solve's data holds only its own
+    steps), so the first step's value stands for it (review L2, a decision: the difference is one step's change of the
+    reference series, negligible for a smooth one)."""
     from flextool.engine.input._param_shapes import promote_param_to_dt
     ref, rv, first = (flex_data.storage_use_reference_value, flex_data.p_storage_state_reference_value,
                       flex_data.nodeState_first_dt)

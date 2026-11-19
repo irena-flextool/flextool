@@ -203,7 +203,7 @@ def test_fix_start_on_existing_capacity_is_an_endowment(tmp_path_factory, capsys
                                      "storage_start_end_method": "fix_start", "storage_state_start": 0.5})
     out = capsys.readouterr().out
     lines = [ln for ln in out.splitlines() if "storage_state_start on capacity the solve cannot change" in ln]
-    assert len(lines) == 1 and "1 storage node (s)" in lines[0] and "(1 MWh in total)" in lines[0]
+    assert len(lines) == 1 and "1 storage node (s)" in lines[0] and "(1 MWh in total, on the existing capacity" in lines[0]
     assert "endowment" in lines[0]
     start, end = _chain(step)
     assert (start, end) == pytest.approx((1.0, 0.0), abs=TOL)
