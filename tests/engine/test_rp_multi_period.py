@@ -170,8 +170,12 @@ def test_variant_order_on_two_periods(tmp_path_factory):
     # 16 367 662 856 before c15e1: FA-1 (exact self-discharge of the fixture's 1e-4/h batteries) +2.9e-6 →
     # 16 367 709 994; FA-3 (the bind_within_solve batteries' fix_start pin moved from the end of y2030, mid-horizon,
     # to the end of y2040, the state the first step starts from) +2.8 %: the batteries now end y2040 at the pin and
-    # refill there, competing with y2040's H2 shortfall (the same mechanism as the RP Benders M_rp pin).
-    # 16 820 838 994 → 16 910 567 160 (+0.53 %): the lh2 nodes' fix_start 0.5 now pins the level their y2030 chain
+    # refill there, competing with y2040's H2 shortfall (the same mechanism as the RP Benders M_rp pin) →
+    # 16 820 838 994. Annuity timing, A = C·ann(r, n)·(1 + r)^(offset − 1): pipe_AB / pipe_BC have r = 0.05 and the
+    # default offset 0, so every v_invest objective coefficient is divided by 1.05 (y2030 14.190491 → 13.514754,
+    # y2040 7.095246 → 6.757377) with the v_invest values unchanged; the investment term 6 522 876 / 1.05 =
+    # 6 212 263, −310 613, and dispatch is unchanged → 16 820 528 381.
+    # 16 820 528 381 → 16 910 567 160 (+0.54 %): the lh2 nodes' fix_start 0.5 now pins the level their y2030 chain
     # starts from (rp_inter_period_start_fix; the closure holds y2030's cycle there), not a free offset inside
     # their first block.
     # 16 910 567 160 → 16 457 293 278 (−2.7 %): the fixture's batteries cycle within each representative day

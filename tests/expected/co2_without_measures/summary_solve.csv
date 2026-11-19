@@ -5,7 +5,7 @@
 y2020_2035_2day_dispatch,2628
 "Total cost (calculated) full horizon (M CUR)",2628,"Annualized operational, penalty and investment costs"
 "Total cost (calculated) realized periods (M CUR)",2628
-"Total cost counted in the objective (M CUR)",2628,"The solver objective for one deterministic solve; for several solves or a stochastic solve, the realized run total priced as the objectives price it"
+"Total cost counted in the objective (M CUR)",2628,"The solver objective for one deterministic solve that realizes every period it optimises; with look-ahead periods, the realized part of it (the look-ahead operation is in the solver objective only); for several solves or a stochastic solve, the realized run total priced as the objectives price it"
 "Operational costs for realized periods (M CUR)",2628
 "Investment (M CUR)",0
 "Replacement (M CUR)",0

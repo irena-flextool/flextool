@@ -30,7 +30,6 @@ import numpy as np
 import pandas as pd
 import polars as pl
 
-from flextool.engine.input._axis_enums import align_join_dtypes
 from flextool.process_outputs._inmemory_helpers import (
     series_with_index,
     series_with_multi_index,
@@ -1538,6 +1537,7 @@ def read_parameters(
     # service, net of their own carried retirements).  Single solve: identical to entity_all_existing.
     if getattr(flex_data, "p_entity_pre_existing", None) is not None:
         from polar_high import Param  # local import — Param is heavy
+        from flextool.engine.input._axis_enums import align_join_dtypes  # local: flextool.engine loads polar_high
         pre_lf = flex_data.p_entity_pre_existing.frame.lazy()
         carried = getattr(flex_data, "p_entity_retired_carried", None)
         if carried is not None and carried.frame.height > 0:

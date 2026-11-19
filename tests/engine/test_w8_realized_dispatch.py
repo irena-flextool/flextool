@@ -198,9 +198,11 @@ def test_dispatch_capacity_is_fixed_from_stochastic_invest(chain) -> None:
     )
     ri = stoch.handoff.realized_cohort
     assert ri is not None and ri.height > 0
-    ent_col, val_col = ri.columns[0], ri.columns[-1]
+    # The investment rows carry the committed size; the generation rows of
+    # a reinvest_automatic chain carry none.
+    invest_rows = ri.filter(pl.col("kind") == "invest")
     committed = {
-        r[ent_col]: float(r[val_col]) for r in ri.iter_rows(named=True)
+        r["entity"]: float(r["size"]) for r in invest_rows.iter_rows(named=True)
     }
     assert committed.get("peaker") == pytest.approx(COMMITTED_PEAKER_MW), (
         f"stochastic solve committed {committed.get('peaker')} MW peaker, "

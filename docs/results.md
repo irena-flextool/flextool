@@ -141,7 +141,10 @@ y-axis is `m3/h` for a water node and `MWh/h` by default. A label without tokens
     The investment-type categories (*investment* … *salvage pre-existing*) are events: each is reported in the
     period it happens, at the amount the objective charges for it, so the discounted costs add up to the
     objective (`summary_solve.csv` has the total as *Total cost counted in the objective*: the calculated total
-    without the pre-existing constants). An investment and its salvage are charged inside the horizon only: for
+    without the pre-existing constants). For one deterministic solve that realizes every period it optimises, the
+    total is the solver objective. The operation of a look-ahead period that no solve realizes is in the solver
+    objective but in no cost table, so with look-ahead periods the total is the realized part of the solver
+    objective. An investment and its salvage are charged inside the horizon only: for
     capacity whose life ends at or after the end of the horizon, *investment* and *salvage* are the shares of
     its years in service inside the horizon, and the salvage is reported in the last period (no period holds its
     end of life). The fixed costs of new and retired capacity are reported in each period they are paid or saved,

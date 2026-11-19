@@ -1724,3 +1724,27 @@ in Phases 3 and 4. Phase 5 does not change them (identical failures on 00d145a1)
 
 **Decision** (agent, pending owner review): accept the regeneration; the old values were the behaviour the
 branch fixes (roll-boundary free energy, and a target taken at the wrong moment).
+
+## 2026-11-18 — the note of *Total cost counted in the objective* in `summary_solve.csv` (19 scenarios, #187)
+
+**Mechanism.** Text only. The note said the row is "the solver objective for one deterministic solve". That holds only
+when the solve realizes every period it optimises: a solve with look-ahead periods has their operation in the solver
+objective but in no cost table, so the row is the realized part of the objective (`test_obj_decomposition` checks
+the equality only for a run whose `Period` row is all realized). The note (`write_outputs.py`) now says so. No number
+moves; the LP is untouched.
+
+**Files.** `summary_solve.csv` of the 19 scenarios that compare it (every golden holding the old note): the one note
+cell replaced by the writer's new text, nothing else changed. Check: the 19 `test_scenario` cases pass (the file is
+compared as text, timestamps stripped).
+
+## 2026-11-19 — merge of feat/invest-retire-vintages (dfd1efed) into feat/rolling-storage-carry
+
+- `fullYear_roll/summary_solve.csv`: regenerated on the merged code. Both branches had changed it (the storage
+  branch the roll objectives and totals, the vintages branch the note of *Total cost counted in the objective*). The
+  regenerated file holds the storage branch's numbers (6165.32086306) and the vintages branch's note; nothing else.
+- `tests/engine/test_rp_multi_period.py::test_variant_order_on_two_periods`: the merged code gives 16 457 293 278,
+  the storage branch's pin. The annuity-timing change (e561af23) is in the merge base, so the storage branch's
+  re-captures already contained it; the vintages branch only brought the pin up to date with it. The comment chain
+  now lists the annuity step (16 820 838 994 → 16 820 528 381) before the storage steps.
+
+**Decision** (agent, pending owner review): accept.

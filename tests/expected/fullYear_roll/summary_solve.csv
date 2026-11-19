@@ -1,4 +1,4 @@
-"Diagnostic results from all solves. Output at (UTC): 2026-11-18 23:07:12.369540+00:00"
+"Diagnostic results from all solves. Output at (UTC): 2026-11-19 01:43:52.874477+00:00"
 
 
 "Solve","Objective","Total cost from solver, includes all penalty costs"
@@ -76,7 +76,7 @@ dispatch_fullYear_roll_roll_70,527.475239296
 dispatch_fullYear_roll_roll_71,348.442739296
 "Total cost (calculated) full horizon (M CUR)",6165.32086306,"Annualized operational, penalty and investment costs"
 "Total cost (calculated) realized periods (M CUR)",6165.32086306
-"Total cost counted in the objective (M CUR)",6165.32086306,"The solver objective for one deterministic solve; for several solves or a stochastic solve, the realized run total priced as the objectives price it"
+"Total cost counted in the objective (M CUR)",6165.32086306,"The solver objective for one deterministic solve that realizes every period it optimises; with look-ahead periods, the realized part of it (the look-ahead operation is in the solver objective only); for several solves or a stochastic solve, the realized run total priced as the objectives price it"
 "Operational costs for realized periods (M CUR)",0
 "Investment (M CUR)",0
 "Replacement (M CUR)",0

@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 
-from flextool.engine.preprocess.params._cost_lines import COST_LINES, SALVAGE, SALVAGE_CAUSES, TABLE_LINES
 from flextool.process_outputs._annualize import annualize_dt_to_d
 from flextool.process_outputs.calc_capacity_flows import flows_with_startup
 
@@ -141,6 +140,8 @@ def cost_lines(par, s, v) -> pd.DataFrame:
 def _named(lines: pd.DataFrame, by_cause: bool) -> tuple[pd.DataFrame, list[str]]:
     """``lines`` (:func:`cost_lines`) with the line names of a cost table (the salvage causes as one
     :data:`SALVAGE` line, :data:`TABLE_LINES`) or, ``by_cause``, of the text summary (:data:`COST_LINES`)."""
+    # Imported here: flextool.engine pulls in polar_high and its solver backends, which `import flextool` must not.
+    from flextool.engine.preprocess.params._cost_lines import COST_LINES, SALVAGE, SALVAGE_CAUSES, TABLE_LINES
     if by_cause:
         return lines, list(COST_LINES)
     return lines.assign(line=lines['line'].replace(dict.fromkeys(SALVAGE_CAUSES, SALVAGE))), list(TABLE_LINES)

@@ -115,16 +115,28 @@ def test_v80_database_builds_the_same_lp_after_migration(tmp_path_factory, scena
 # ---------------------------------------------------------------------------
 # payback_time sets the annuity factor
 #
-# coal_plant invests (invest_no_limit) with invest_cost 1000 CUR/kW, discount_rate r = 0.05, fixed_cost 0 and
-# lifetime_technical 20 (the window: every period of the run), payback_time n = 10 or 20.  The objective
-# coefficient of v_invest[coal_plant, d] is invest_cost · 1000 · f(r, n) · (the discounting of the window, the same
-# for both n) · unitsize, so the 10-year coefficient over the 20-year one is
-#   f(r, n) = r / (1 − (1 + r)^−n):  f(0.05, 10) = 0.05 / (1 − 0.6139133) = 0.1295046,
-#                                    f(0.05, 20) = 0.05 / (1 − 0.3768895) = 0.0802426,  ratio 1.6139133.
+# coal_plant invests (invest_no_limit) with invest_cost I = 1000 CUR/kW, discount_rate r = 0.05, fixed_cost 0 and
+# lifetime_technical L = 20 (the window: every period of the run), payback_time n = 10 or 20; the model's
+# social_discount_rate is ρ = 0.04 (alternative invest_solveSequence_5weeks), discount_offset_investment 0.  The plant
+# pays a level yearly price for each year in service (docs/how_to/investment.md "One level price for each year of
+# service"): the loan A = I / ä(n, r), paid at year starts over n years, sized to be worth I at r; its present value
+# at ρ, A · ä(n, ρ), spread evenly over the L years: p(n) = I · ä(n, ρ) / (ä(n, r) · ä(L, ρ)), with the annuity-due
+# factor ä(n, i) = (1 − (1 + i)^−n) · (1 + i) / i.  The objective coefficient of v_invest[coal_plant, d] is
+# p(n) · 1000 · (the discounting of the window, the same for both n) · unitsize, so the 10-year coefficient over the
+# 20-year one is
+#   [ä(10, ρ) / ä(10, r)] / [ä(20, ρ) / ä(20, r)]
+#     ä(10, 0.04) = 0.3244358 · 26 = 8.4353316,   ä(10, 0.05) = 0.3860867 · 21 = 8.1078217,
+#     ä(20, 0.04) = 0.5436131 · 26 = 14.1339394,  ä(20, 0.05) = 0.6231105 · 21 = 13.0853209,
+#   ratio 1.0403945 / 1.0801366 = 0.9632059 (r above ρ: the shorter payback time is cheaper).
 
 
-def _annuity_factor(r: float, n: float) -> float:
-    return r / (1.0 - (1.0 + r) ** -n)
+def _annuity_due(n: float, i: float) -> float:
+    return (1.0 - (1.0 + i) ** -n) * (1.0 + i) / i
+
+
+def _level_price_ratio(r: float, rho: float, n: float, n_ref: float) -> float:
+    """p(n) / p(n_ref) of the level yearly price; the lifetime factor ä(L, ρ) cancels."""
+    return (_annuity_due(n, rho) / _annuity_due(n, r)) / (_annuity_due(n_ref, rho) / _annuity_due(n_ref, r))
 
 
 def _invest_objective(tmp_path_factory, chain: list[str], payback: float) -> dict[str, dict[str, float]]:
@@ -147,8 +159,8 @@ def _invest_objective(tmp_path_factory, chain: list[str], payback: float) -> dic
 def test_payback_time_sets_the_annuity_factor(tmp_path_factory, chain) -> None:
     ten = _invest_objective(tmp_path_factory, chain, 10.0)
     twenty = _invest_objective(tmp_path_factory, chain, 20.0)
-    ratio = _annuity_factor(0.05, 10.0) / _annuity_factor(0.05, 20.0)
-    assert ratio == pytest.approx(1.6139133, rel=1e-7)
+    ratio = _level_price_ratio(0.05, 0.04, 10.0, 20.0)
+    assert ratio == pytest.approx(0.9632059, rel=1e-7)
     assert list(ten) == list(twenty)
     checked = 0
     for solve, cols in twenty.items():

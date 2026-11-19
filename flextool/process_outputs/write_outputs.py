@@ -44,7 +44,6 @@ from flextool.process_outputs.out_ancillary import (
     co2_duals, capacity_margin, reserve_requirement,
 )
 from flextool.process_outputs.out_capacity import cohort_capacity, connection_capacity, node_capacity, unit_capacity
-from flextool.engine.preprocess.params._cost_lines import PRE_EXISTING_LINES
 from flextool.process_outputs.out_costs import (
     generic, cost_summaries, cost_breakdown_by_entity, CO2, realized_leaf_periods, shown_lines,
 )
@@ -496,6 +495,8 @@ def print_namespace_structure(namespace, name='r', max_items=3, output_file='nam
 def write_summary_csv(par, s, v, r, csv_dir):
     """Write summary CSV file matching the GNU MathProg format"""
     import os
+    # Imported here: flextool.engine pulls in polar_high and its solver backends, which `import flextool` must not.
+    from flextool.engine.preprocess.params._cost_lines import PRE_EXISTING_LINES
 
     # Output file path
     fn_summary = os.path.join(csv_dir, 'summary_solve.csv')
@@ -562,8 +563,10 @@ def write_summary_csv(par, s, v, r, csv_dir):
         # optimised objective leaves out (include_existing_fixed_cost is not set by a run).
         constants = (r.costFixedPreExisting_d.sum() + lines_d[list(PRE_EXISTING_LINES)].sum().sum()) / 1000000
         f.write(f'"Total cost counted in the objective (M CUR)",{total_cost_full - constants:.12g},'
-                '"The solver objective for one deterministic solve; for several solves or a stochastic solve, the '
-                'realized run total priced as the objectives price it"\n')
+                '"The solver objective for one deterministic solve that realizes every period it optimises; with '
+                'look-ahead periods, the realized part of it (the look-ahead operation is in the solver objective '
+                'only); for several solves or a stochastic solve, the realized run total priced as the objectives '
+                'price it"\n')
 
         # Operational costs for realized periods (M CUR)
         operational_costs = r.costOper_d.sum(axis=0) / 1000000
