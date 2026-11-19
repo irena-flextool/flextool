@@ -669,3 +669,33 @@ def usage_mwh_period(step, period: str, steps: list[str]) -> float:
     out = (flows.filter(pl.col("p") == "dis")["value"] * flows.filter(pl.col("p") == "dis")["h"]).sum() * us["dis"]
     gen = flows.filter(pl.col("p") == "gen")
     return float(out - (gen["value"] * gen["h"]).sum() * us["gen"])
+
+
+def test_core_storage_notices_print_one_line_per_solve(capsys):
+    """Review M4: the storage notices built in the model (rp_storage_chain_pinned, storage_end_matches_start) print
+    one line per change and complete solve, naming how many nodes and the first, however many rows of the build
+    name them (before: the full list, again for every new name).  The pre-branch storage_default_fix_nothing notice
+    is in the same format (once per run)."""
+    from types import SimpleNamespace
+
+    from flextool.engine import _behaviour_changes
+    from flextool.engine.model.core import _notice_nodes
+
+    marker = '{"since": 82}'
+    _behaviour_changes.start_run({"rp_storage_chain_pinned": marker, "storage_end_matches_start": marker,
+                                  "storage_default_fix_nothing": marker})
+    names = [f"h2_{i:02d}" for i in range(12)]
+    for solve in ("lt_rp", "lt_rp", "mt"):
+        b = SimpleNamespace(solve_name=solve)
+        _notice_nodes("rp_storage_chain_pinned", names[:6], b)        # start pins
+        _notice_nodes("rp_storage_chain_pinned", names[6:], b)        # end pins
+        _notice_nodes("storage_end_matches_start", pl.DataFrame({"n": names}), b)
+    for _ in range(2):
+        _behaviour_changes.notice("storage_default_fix_nothing", "storage nodes", names, solve="")
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 5, lines
+    pinned = [ln for ln in lines if "Affected nodes: 6 nodes (h2_00, ...)." in ln]
+    assert len(pinned) == 2                                            # lt_rp and mt
+    assert sum("Affected nodes: 12 nodes (h2_00, ...)." in ln for ln in lines) == 2
+    assert sum("Affected storage nodes: 12 storage nodes (h2_00, ...)." in ln for ln in lines) == 1
+    assert not any("h2_11" in ln for ln in lines)

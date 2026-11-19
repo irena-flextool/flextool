@@ -1866,7 +1866,7 @@ def _eq_rp_chain_ends(b: _Build) -> None:
             lhs["invest_neg"] = -invested
         if divested is not None:
             lhs["divest"] = divested
-        _notice_nodes("rp_storage_chain_pinned", start_pin)
+        _notice_nodes("rp_storage_chain_pinned", start_pin, b)
         m.add_cstr(
             "rp_inter_period_start_fix",
             over      = over,
@@ -1894,7 +1894,7 @@ def _eq_rp_chain_ends(b: _Build) -> None:
             lhs["invest_neg"] = -invested
         if divested is not None:
             lhs["divest"] = divested
-        _notice_nodes("rp_storage_chain_pinned", end_pin)
+        _notice_nodes("rp_storage_chain_pinned", end_pin, b)
         m.add_cstr(
             "rp_inter_period_end_fix",
             over      = over,
@@ -1922,7 +1922,7 @@ def _eq_rp_chain_ends(b: _Build) -> None:
                  .join(over.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
                                    pl.col("b").cast(pl.Utf8)), on="n", how="inner")
                  .select("n", "d", "b", "value"))
-        _notice_nodes("rp_storage_chain_pinned", carry_start)
+        _notice_nodes("rp_storage_chain_pinned", carry_start, b)
         m.add_cstr(
             "rp_inter_period_start_carry",
             over      = over,
@@ -1946,7 +1946,7 @@ def _eq_rp_chain_ends(b: _Build) -> None:
         lhs = {"state_inter": Where(v_inter, over), "neg_rp_drift": -Where(drift, over)}
         upper = dict(lhs)
         upper.update(_capacity.node_capacity_change_terms(b, free_start, "_rp_start_max"))
-        _notice_nodes("rp_storage_chain_pinned", free_start)
+        _notice_nodes("rp_storage_chain_pinned", free_start, b)
         m.add_cstr(
             "rp_inter_period_start_max_state",
             over      = over,
@@ -2020,7 +2020,7 @@ def _eq_rp_chain_ends(b: _Build) -> None:
         over = match.join(paths, how="cross").select("n", "d", "b", "d_prev", "b_prev")
         rhs = Param(("n", "d"), _rp_typed(b, endowment.with_columns(
             pl.col("n").cast(v_inter.frame.schema["n"], strict=False))).select("n", "d", "value"))
-        _notice_nodes("storage_end_matches_start", match)
+        _notice_nodes("storage_end_matches_start", match, b)
         m.add_cstr(
             "rp_inter_period_end_match",
             over      = over,
@@ -2053,7 +2053,7 @@ def _eq_rp_chain_ends(b: _Build) -> None:
                      .join(b.cap.existing_state_n.frame.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
                                                               pl.col("value").alias("_c")), on=["n", "d"], how="left")
                      .select("n", "d", "b", value=pl.min_horizontal("_s", pl.col("_c").fill_null(pl.col("_s")))))
-            _notice_nodes("storage_end_matches_start", nodes)
+            _notice_nodes("storage_end_matches_start", nodes, b)
             m.add_cstr(
                 "rp_inter_period_start_match",
                 over      = over,
@@ -2103,7 +2103,7 @@ def _eq_rp_chain_ends(b: _Build) -> None:
                 lhs["invest_neg"] = -invested
             if divested is not None:
                 lhs["divest"] = divested
-            _notice_nodes("rp_storage_chain_pinned", nodes)
+            _notice_nodes("rp_storage_chain_pinned", nodes, b)
             m.add_cstr(
                 "rp_inter_period_reference_value",
                 over      = over,
@@ -5486,14 +5486,17 @@ def _state_keys_typed(b: _Build, frame: pl.DataFrame) -> pl.DataFrame:
     return frame.with_columns([pl.col(c).cast(schema[c], strict=False) for c in ("n", "d", "t")])
 
 
-def _notice_nodes(change_id: str, nodes) -> None:
-    """The behaviour-change notice of ``change_id`` for the nodes of ``nodes`` (a frame with n, or names)."""
+def _notice_nodes(change_id: str, nodes, b: "_Build | None" = None) -> None:
+    """The behaviour-change notice of ``change_id`` for the nodes of ``nodes`` (a frame with n, or names): one
+    printed line per change and complete solve of ``b`` (how many nodes and the first; owner rule), the names in the
+    log at debug level, however many rows of the build name the change."""
     if nodes is None:
         return
     names = nodes["n"].to_list() if isinstance(nodes, pl.DataFrame) else list(nodes)
     if names:
         from flextool.engine import _behaviour_changes
-        _behaviour_changes.notice(change_id, "nodes", sorted(set(str(n) for n in names)))
+        _behaviour_changes.notice(change_id, "nodes", sorted(set(str(n) for n in names)),
+                                  solve=(b.solve_name if b is not None else None) or "")
 
 
 def _notice_stochastic_storage_paths(names) -> None:
@@ -5803,7 +5806,7 @@ def _eq_storage_end_match(b: _Build) -> None:
                 .join(ends.with_columns(pl.col("n").cast(free_first.schema["n"], strict=False)), on="n", how="inner")
                 .sort("n", "d", "t", "d_end", "t_end"))
         if over.height > 0:
-            _notice_nodes("storage_end_matches_start", over.select("n").unique())
+            _notice_nodes("storage_end_matches_start", over.select("n").unique(), b)
             m.add_cstr(
                 "storage_state_end_match",
                 over      = over,
@@ -5835,7 +5838,7 @@ def _eq_storage_end_match(b: _Build) -> None:
                 lhs["invest_neg"] = -invested
             if divested is not None:
                 lhs["divest"] = divested
-            _notice_nodes("storage_end_matches_start", nodes)
+            _notice_nodes("storage_end_matches_start", nodes, b)
             m.add_cstr(
                 "storage_state_end_match_share",
                 over      = over,
@@ -6154,7 +6157,7 @@ def _eq_storage_reference_value(b: _Build) -> None:
         # (rp_inter_period_reference_value), not on a state inside the last representative block; a cyclic one
         # none (its closure wins).
         rp_ref = over.join(d.nodeState_rp.select(pl.col("n").cast(over.schema["n"], strict=False)), on="n", how="semi")
-        _notice_nodes("rp_storage_chain_pinned", rp_ref.select("n").unique())
+        _notice_nodes("rp_storage_chain_pinned", rp_ref.select("n").unique(), b)
         over = over.join(d.nodeState_rp.select(pl.col("n").cast(over.schema["n"], strict=False)), on="n", how="anti")
     if _has_rows(d.nodeStateBlock):
         # A bind_intraperiod_blocks node (in storage_use_reference_value in rolling solves only) is pinned where the

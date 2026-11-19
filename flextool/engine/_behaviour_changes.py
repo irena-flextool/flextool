@@ -676,11 +676,19 @@ def notice(change_id: str, kind: str, names: Iterable[str], detail: str = "", so
     if solve is not None:
         names = list(dict.fromkeys(str(n) for n in names))
         key = ("notice", change_id, complete_solve_of(solve))
-        if not names or key in _warned:
+        if not names:
+            return False
+        import logging
+        if key in _warned:
+            fresh = [n for n in names if (change_id, n) not in _announced]
+            if fresh:
+                _announced.update((change_id, n) for n in fresh)
+                logging.getLogger("flextool.engine.storage").debug(
+                    "Behaviour change %s in solve '%s', also affected %s: %s", change_id,
+                    complete_solve_of(solve), kind, ", ".join(fresh))
             return False
         _warned.add(key)
         _announced.update((change_id, n) for n in names)
-        import logging
         affected = names[0] if len(names) == 1 else f"{len(names)} {kind} ({names[0]}, ...)"
         print(notice_text(change_id, kind, [affected], detail), flush=True)
         logging.getLogger("flextool.engine.storage").debug(
