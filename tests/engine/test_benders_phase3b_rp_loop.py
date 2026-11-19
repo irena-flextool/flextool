@@ -83,8 +83,8 @@ _REGIONS = ["region_A", "region_B", "region_C"]
 # horizon) to the end of y2040, the state the solve's first step starts from: 9.0265500853e9 -> 9.4374669527e9
 # (+4.6 %).  The battery schedules swap periods: y2040 now ends at the 0.5 pin and y2030 ends full, so the batteries
 # refill in y2040, where lh2_C is already short; its upward slack grows 35.65 -> 77.48 and that penalty is the rise.
-# Phase 4 (rolling storage carry): a plain bind_within_solve storage in a solve on representative periods is a
-# configuration error (it carried energy between the representative days without their weights), so the fixture's
+# Phase 4 (rolling storage carry): a plain bind_within_solve storage in a solve on representative periods was then a
+# configuration error (now a warning: it moves energy between the representative days without their weights), so the fixture's
 # batteries cycle within each representative day (bind_within_timeblock): 9.4374669527e9 -> 9.0341359565e9 (-4.3 %;
 # the batteries no longer end y2040 at the 0.5 pin of the whole solve's cycle).
 _M_RP_EXPECTED = 9.0341359565e9

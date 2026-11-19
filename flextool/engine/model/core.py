@@ -892,10 +892,9 @@ def _start_periods(d, names: set[str]) -> dict[str, list[str]]:
 def _check_storage_accounting(b: _Build) -> None:
     """Storage start and end conditions that let a solve use energy it never produced (storage_semantics, Q7).
 
-    * fix_start_end with storage_state_end below storage_state_start: a warning with the MWh it drains from existing
-      capacity (_warn_fix_start_end_drain); the matching end still caps the investment.  The same for
-      use_reference_value below the start on storage the solve can invest in (warned where the reference row is
-      built: _warn_reference_below_start).
+    * use_reference_value below the start on storage the solve can invest in: warned where the reference row is
+      built (_warn_reference_below_start).  (fix_start_end with storage_state_end below storage_state_start is not
+      warned about: a drawdown the user stated; the matching end still caps the investment.)
     * fix_start on a forward chain (bind_forward_only, bind_forward_only_blended_weights) whose capacity at the start
       is not a decision of the solve, with an open end (no fix_end, no use_reference_value, no upper-level fix): the
       start is an endowment the run may use up; a warning with its size (owner decision).
@@ -919,8 +918,6 @@ def _check_storage_accounting(b: _Build) -> None:
                if _has_rows(getattr(d, "storage_fix_end", None)) else set())
     share = ({str(n): float(v) for n, v in d.p_state_start.frame.select(pl.col("n").cast(pl.Utf8), "value").iter_rows()}
              if d.p_state_start is not None else {})
-    end_share = ({str(n): float(v) for n, v in d.p_state_end.frame.select(pl.col("n").cast(pl.Utf8), "value").iter_rows()}
-                 if getattr(d, "p_state_end", None) is not None else {})
     starting = (fix_start | set(str(n) for n in d.nodeState["n"].to_list())) - carried
     periods = _start_periods(d, starting)
     invest = _start_decision_periods(b)
@@ -929,7 +926,6 @@ def _check_storage_accounting(b: _Build) -> None:
         return bool(invest.get(n, set()) & set(periods.get(n, [])))
 
     where = (f"solve '{_behaviour_changes.complete_solve_of(b.solve_name)}'" if b.solve_name else "this solve")
-    _warn_fix_start_end_drain(b, fix_start & fix_end, share, end_share, periods, investable)
     _warn_reference_start_mismatch(b, share)
 
     forward = set()
@@ -986,66 +982,6 @@ def _check_storage_accounting(b: _Build) -> None:
                                "start: built storage can deliver its start energy without producing it. Use "
                                "bind_within_solve(_blended_weights), or fix_start_end with storage_state_end at least "
                                "storage_state_start."))
-
-
-def _existing_mwh(d) -> dict:
-    """``{(node, period): MWh}``: the existing storage capacity (p_state_existing_capacity)."""
-    if d.p_state_existing_capacity is None:
-        return {}
-    return {(str(n), str(p)): float(v) for n, p, v in d.p_state_existing_capacity.frame.select(
-        pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), "value").iter_rows()}
-
-
-def _warn_fix_start_end_drain(b: _Build, nodes: set, share: dict, end_share: dict, periods: dict, investable) -> None:
-    """Warn about fix_start_end nodes whose storage_state_end is below their storage_state_start (owner decision,
-    Phase 5; before an error where the solve could invest in them).
-
-    The drawdown can be intended (a stock drawn down by design).  It drains s·E_start − e·E_end MWh of existing
-    capacity (E_start: the capacity at the start, E_end: at the model's last period).  Storage the solve builds
-    in the start period must still return its start energy: storage_state_end_match_share (or
-    rp_inter_period_end_match) stays, so with the end pin e·(E + I) ≥ s·I the investment is capped at
-    e·E / (s − e) (no free energy).  Only in a solve that holds the end of the model (the chain's end there), so the
-    message does not repeat storage_end_match_not_applied of the solve that starts the node; one printed line per
-    solve, the values per node in the log.
-    """
-    d = b.d
-    rp_nodes = set(str(n) for n in d.nodeState_rp["n"].to_list()) if _has_rows(d.nodeState_rp) else set()
-    drained = sorted(n for n in nodes if n in share and n in end_share and end_share[n] < share[n] - 1e-12
-                     and (d.storage_solve_at_model_end or (n in rp_nodes and d.storage_rp_chain_at_model_end)))
-    if not drained:
-        return
-    exist = _existing_mwh(d)
-    last = [str(x) for x in d.period_last["d"].to_list()] if _has_rows(d.period_last) else []
-    rows = []
-    for n in drained:
-        own = sorted(p for (m, p) in exist if m == n)
-        first = sorted(periods.get(n, [])) or own
-        e_start = exist.get((n, first[0]), 0.0) if first else 0.0
-        e_end = max((exist.get((n, p), 0.0) for p in last), default=exist.get((n, own[-1]), 0.0) if own else 0.0)
-        mwh = share[n] * e_start - end_share[n] * e_end
-        can_invest = investable(n)
-        if mwh > 1e-9 or can_invest:
-            rows.append((n, share[n], end_share[n], e_start, e_end, mwh, can_invest))
-    if not rows:
-        return
-    from flextool.engine import _behaviour_changes
-    total = sum(max(r[5], 0.0) for r in rows)
-    invest = [r[0] for r in rows if r[6]]
-    tail = (f" {len(invest)} of them can be invested in: storage built there must still return its start energy "
-            "(the matching end), which caps that investment." if invest else "")
-    solve = _behaviour_changes.complete_solve_of(b.solve_name)
-    _behaviour_changes.storage_message(
-        "storage_fix_start_end_drain", b.solve_name,
-        [r[0] for r in rows],
-        lambda named: (f"Warning: in solve '{solve}' {named} have storage_start_end_method fix_start_end with "
-                       f"storage_state_end below storage_state_start: they drain {total:.6g} MWh of existing "
-                       "storage capacity over the model (start share x capacity at the start - end share x "
-                       "capacity at the model's last period, on the existing capacity before any investment, life "
-                       f"extension or retirement).{tail} This can be intended (a stock drawn down by "
-                       "design); otherwise give storage_state_end at least storage_state_start."),
-        details=f"fix_start_end drain in solve '{solve}': " + "; ".join(
-            f"{n} start {s_:.6g} end {e_:.6g}, capacity {cs:.6g} -> {ce:.6g} MWh, drains {mwh:.6g} MWh"
-            f"{', investable' if inv else ''}" for n, s_, e_, cs, ce, mwh, inv in rows))
 
 
 def _warn_reference_start_mismatch(b: _Build, share: dict) -> None:

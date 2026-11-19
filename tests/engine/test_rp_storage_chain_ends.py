@@ -239,10 +239,10 @@ def test_fix_start_end_pins_both_ends_of_the_chain(tmp_path_factory):
 
 @pytest.mark.parametrize("rp", [True, False], ids=["rp", "hourly"])
 @pytest.mark.parametrize("existing", [0.0, 2.0])
-def test_fix_start_end_drain_on_investable_capacity_warns(tmp_path_factory, capsys, rp, existing):
+def test_fix_start_end_drawdown_caps_the_investment(tmp_path_factory, capsys, rp, existing):
     """fix_start_end 0.5 / 0.25 on storage the solve can invest in (owner decision, Phase 5; before a configuration
-    error): the run solves and prints one warning line with the MWh drained from existing capacity
-    (0.5·E − 0.25·E).  The matching end stays, so storage built must return its start energy: with the end pin
+    error): the run solves without a warning about the drawdown (owner decision 2026-11-19: a drawdown the user
+    stated).  The matching end stays, so storage built must return its start energy: with the end pin
     0.25·(E + I) ≥ 0.5·I the investment is capped at I ≤ 0.25·E / (0.5 − 0.25) = E.  Each MWh built under the cap
     lets the end hold less of the existing start energy, so the store delivers 0.25·(E + I), at most the user's own
     start energy on existing capacity (0.5·E): here storage at 1 per MWh is cheaper than production at 10, so the
@@ -251,11 +251,7 @@ def test_fix_start_end_drain_on_investable_capacity_warns(tmp_path_factory, caps
                 s={"existing": existing, "storage_binding_method": FO_B if rp else "bind_forward_only",
                    "storage_start_end_method": "fix_start_end", "storage_state_start": 0.5,
                    "storage_state_end": 0.25})
-    out = capsys.readouterr().out
-    lines = [ln for ln in out.splitlines() if "fix_start_end with storage_state_end below" in ln]
-    assert len(lines) == 1, out[-2000:]
-    assert "1 storage node (s)" in lines[0] and f"drain {0.25 * existing:.6g} MWh" in lines[0]
-    assert "can be invested in" in lines[0]
+    assert "storage_state_end below storage_state_start" not in capsys.readouterr().out
     invested = _invested(step)
     assert invested == pytest.approx(existing, abs=TOL)
     delivered = 4.0 - _production(step)
@@ -417,26 +413,27 @@ def test_timeblock_fix_start_end_in_a_solve_mixing_representative_and_plain_peri
 
 
 @pytest.mark.parametrize("method", ["bind_within_solve", "bind_within_period"])
-def test_cyclic_fix_start_end_on_representative_periods_chains_on_the_blended_chain(tmp_path_factory, method):
-    """Review M6: with fix_start_end the binding method is ignored, so a plain cyclic method is not the
-    configuration error of plain cycles on representative periods (before: the error, which named the method the
-    run ignores anyway); the node chains forward on the base-period chain, where the start and end pins act."""
+def test_cyclic_fix_start_end_on_representative_periods_chains_on_the_blended_chain(tmp_path_factory, capsys,
+                                                                                   method):
+    """Review M6: with fix_start_end the binding method is ignored, so a plain cyclic method gets no warning about
+    plain cycles on representative periods (the run ignores the method); the node chains forward on the base-period
+    chain, which weights the transfer, and the start and end pins act there."""
     step = _run(tmp_path_factory, s={"storage_binding_method": method, "storage_start_end_method": "fix_start_end",
                                      "storage_state_start": 0.5, "storage_state_end": 0.5, "existing": 2.0})
+    assert "without their weights" not in capsys.readouterr().out
     _no_slack(step)
     start, end = _chain(step)
     assert start == pytest.approx(1.0, abs=TOL) and end == pytest.approx(1.0, abs=TOL)
 
 
-def test_plain_cyclic_error_on_representative_periods_names_the_count_and_the_first(tmp_path_factory):
-    """Review L4: the plain-cyclic error on representative periods is in the one-line format (how many nodes and the
-    first, with its method)."""
-    from flextool.engine.input._solve_state import FlexToolConfigError
-
-    with pytest.raises(FlexToolConfigError) as exc:
-        _run(tmp_path_factory, s={"storage_binding_method": "bind_within_solve"})
-    msg = str(exc.value)
-    assert "1 storage node (s) use a storage_binding_method (e.g. s: bind_within_solve)" in msg, msg
+def test_plain_cyclic_warning_on_representative_periods_names_the_count_and_the_first(tmp_path_factory, capsys):
+    """Review L4, owner decision 2026-11-19: a plain cycle on representative periods is a warning (before a
+    configuration error) in the one-line format (how many nodes and the first, with its method); the run solves."""
+    step = _run(tmp_path_factory, s={"storage_binding_method": "bind_within_solve"})
+    assert step.solution is not None and step.solution.optimal
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if "without their weights" in ln]
+    assert len(lines) == 1, lines
+    assert "1 storage node (s) use a storage_binding_method (e.g. s: bind_within_solve)" in lines[0], lines[0]
 
 
 def test_later_representative_period_solve_returns_the_free_start(tmp_path_factory):

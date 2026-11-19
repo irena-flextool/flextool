@@ -135,23 +135,24 @@ values").
   it was only logged.
 - **Storage warnings and notices print one line per message type and solve**, naming how many storage nodes and
   the first (e.g. "12 storage nodes (KOR_Battery, ...)"); the values per node go to the log at debug level
-  (`--debug`). This covers the endowment, borrowed-start, matching-end, `fix_start_end` drain, reference,
-  slack-bypass and rolling timeblock messages, the storage behaviour-change notices (also
+  (`--debug`). This covers the endowment, borrowed-start, matching-end, reference, slack-bypass, plain cycle on
+  representative periods and rolling timeblock messages, the storage behaviour-change notices (also
   `storage_default_fix_nothing`, once per run) and the storage configuration errors on representative periods.
 - **A rolling solve on representative periods stops with a configuration error.** Rolling over representative
   periods is not supported: use a single solve on the representative periods (e.g. the investment solve) and roll a
   separate solve over a timeset without `representative_period_weights`. Before (#126), its `*_blended_weights`
   storage nodes bound forward only, with a warning, without the weights and without a closure.
 - **`bind_within_solve`, `bind_within_period` or `bind_intraperiod_blocks` storage in a solve on representative
-  periods stops with a configuration error** naming how many nodes and the first (not for a node with
-  `fix_start_end`, whose binding method is ignored: see the next item). These methods carried the storage state from the end of one
-  representative period into the start of the next without their weights, while the flows counted with them, so
-  energy stored in a period of low weight could be used in a period of high weight for free. Use the
-  `*_blended_weights` variant, or `bind_within_timeblock`, which cycles the storage within each representative
-  period and is not affected.
+  periods prints a warning** naming how many nodes and the first (not for a node with `fix_start_end`, whose
+  binding method is ignored: see the next item). These methods move the storage level from the end of one
+  representative period into the start of the next without their weights, while the flows count with them. That
+  is reasonable when the representative periods have equal weights or when the timing of the storage's inflows
+  does not matter (e.g. pumped hydro, a large heat storage); the `*_blended_weights` methods weight the transfer,
+  and `bind_within_timeblock` cycles the storage within each representative period.
 - **`bind_forward_only` storage (also the default) in a solve on representative periods stops with a configuration
   error** naming how many nodes and the first: the forward chain runs through the representative periods without
-  their weights, with the same free energy as above. Blended weights need to be provided: choose a
+  their weights, while the flows count with them, so energy stored in a period of low weight could be used in a
+  period of high weight for free. Blended weights need to be provided: choose a
   `*_blended_weights` method (or `bind_within_timeblock`); nothing is switched automatically. A node with
   `fix_start_end` and a cyclic method (`bind_within_timeblock`, `bind_within_period`, `bind_within_solve`,
   `bind_intraperiod_blocks`) in such a solve chains forward on the base-period chain (as
@@ -209,11 +210,10 @@ values").
   with its size in a warning). An investment solve that does not reach the end of the model warns for nodes with
   an explicit start (`fix_start`, or the reference start) on capacity it can build, which the sequence does not
   match. Upgraded databases get a notice naming the nodes.
-- **`fix_start_end` with `storage_state_end` below `storage_state_start` prints a warning** (in the solve that
-  reaches the end of the model) with the MWh it drains from existing capacity: a planned drawdown can be intended.
-  Storage the solve can invest in during the start period must still return its start energy (the matching end
-  stays), which caps that investment at `storage_state_end` × existing / (`storage_state_start` −
-  `storage_state_end`), so no storage is built for free energy.
+- **`fix_start_end` with `storage_state_end` below `storage_state_start` on storage the solve can invest in runs**
+  (a planned drawdown of the existing storage). Storage the solve can invest in during the start period must still
+  return its start energy (the matching end stays), which caps that investment at `storage_state_end` × existing /
+  (`storage_state_start` − `storage_state_end`), so no storage is built for free energy.
 - **`use_reference_value` without `fix_start` starts the storage from the reference value (results change).** The
   start is the `storage_state_reference_value` at the first step (the model's first step in the first solve), no
   longer a free level bounded by the matching end; a falling reference series therefore drains the existing

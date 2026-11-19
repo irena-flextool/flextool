@@ -3,8 +3,10 @@
 * A rolling_window solve on representative periods stops with a configuration error (rolling over representative
   periods is not supported; before, its *_blended_weights nodes bound forward only).
 * A plain bind_within_solve / bind_within_period / bind_intraperiod_blocks node in a solve on representative
-  periods stops with a configuration error: the state runs from one representative period into the next without their weights while
-  the flows count with them, so the solve makes energy for free (the reproduction below bypasses the guard).
+  periods runs with a warning (owner decision 2026-11-19; before a configuration error): the level moves from one
+  representative period into the next without their weights while the flows count with them.  That is reasonable
+  with equal weights or storage whose inflow timing does not matter; with unequal weights and a timed inflow, as in
+  the reproduction below, energy charged in a period of low weight serves one of high weight.
 * A storage node with balance slack linked to a node with penalty_method off is named in a warning.
 
 The tiny tank model of ``test_rolling_storage_scopes`` (built from the schema JSON, never a checked-in ``.sqlite``),
@@ -35,8 +37,9 @@ def _rp_solve(**extra) -> dict:
             "years_represented": T.tmap({"p1": 1.0}, "period"), "realized_periods": T.arr(["p1"]), **extra}
 
 
-def _run_rp(tmp_path, method: str, solve: dict | None = None) -> dict:
-    """The tank model on the representative periods A and B, the tank on ``method`` with a free start."""
+def _run_rp(tmp_path, method: str, solve: dict | None = None, out: list | None = None) -> dict:
+    """The tank model on the representative periods A and B, the tank on ``method`` with a free start.  The
+    printed output is appended to ``out``."""
     from flextool.engine import run_chain_from_db
     from flextool.update_flextool.db_handle import open_database_mapping
 
@@ -51,8 +54,11 @@ def _run_rp(tmp_path, method: str, solve: dict | None = None) -> dict:
             ("timeset", "rp", "representative_period_weights", rpw, T.ALT)])
         assert not errors, errors
         db.commit_session("rp weights")
-    with contextlib.redirect_stdout(io.StringIO()):
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
         steps = run_chain_from_db(url, T.SCENARIO, work_folder=tmp_path / "work", keep_solutions=True)
+    if out is not None:
+        out.append(buf.getvalue())
     for step in steps.values():
         assert step.solution is not None and step.solution.optimal
     return steps
@@ -74,34 +80,28 @@ BLENDED = {"bind_within_solve": "bind_within_solve_blended_weights",
 
 
 @pytest.mark.parametrize("method", list(BLENDED))
-def test_plain_cycle_on_representative_periods_makes_energy(tmp_path, monkeypatch, method):
-    """The bug the guard stops (battery investigation, variant C), with the guard bypassed: the plain cycle runs
-    v_state from A's last step into B's first step unweighted, so the 20 MWh charged once in A (weight 1) serve the
-    load of B in all three base periods it stands for: weighted, the solve delivers three times what it charged
-    (the timestep weights are the representative weights × blocks / base periods: 0.5 for A, 1.5 for B), and leaves
-    no load unserved.  The blended variant links A and B by their weights on the base-period chain: what the tank
-    delivers is at most what it was charged with."""
-    from flextool.engine.solve import _run_model
-
-    monkeypatch.setattr(_run_model, "_reject_plain_cyclic_in_rp_solve", lambda **_kw: None)
-    plain = _run_rp(tmp_path / "plain", method)["rp_solve"]
+def test_plain_cycle_on_representative_periods_warns_and_moves_energy_unweighted(tmp_path, method):
+    """The documented warning case (battery investigation, variant C): the plain cycle runs v_state from A's last
+    step into B's first step unweighted, so the 20 MWh charged once in A (weight 1) serve the load of B in all three
+    base periods it stands for: weighted, the solve delivers three times what it charged (the timestep weights are
+    the representative weights × blocks / base periods: 0.5 for A, 1.5 for B), and leaves no load unserved.  The
+    run solves and prints one warning line naming the node and the blended variant.  The blended variant links A
+    and B by their weights on the base-period chain: what the tank delivers is at most what it was charged with,
+    and it prints no such warning."""
+    out: list = []
+    plain = _run_rp(tmp_path / "plain", method, out=out)["rp_solve"]
     charged, delivered = _weighted_mwh(plain, "gen"), _weighted_mwh(plain, "dis")
     assert charged == pytest.approx(0.5 * 20.0, abs=1e-6)
     assert delivered == pytest.approx(1.5 * 20.0, abs=1e-6)
-    blended = _run_rp(tmp_path / "blended", BLENDED[method])["rp_solve"]
+    lines = [ln for ln in out[0].splitlines() if "without their weights" in ln]
+    assert len(lines) == 1, out[0][-2000:]
+    assert lines[0].startswith("Warning: solve 'rp_solve' is on representative periods (timeset(s) rp)")
+    assert f"1 storage node (tank) use a storage_binding_method (e.g. tank: {method})" in lines[0]
+    assert "equal weights" in lines[0] and f"{method} -> {BLENDED[method]}" in lines[0]
+    blended = _run_rp(tmp_path / "blended", BLENDED[method], out=out)["rp_solve"]
+    assert "without their weights" not in out[1]
     assert _weighted_mwh(blended, "dis") <= _weighted_mwh(blended, "gen") + 1e-6
     assert blended.solution.obj > plain.solution.obj
-
-
-@pytest.mark.parametrize("method", list(BLENDED))
-def test_plain_cycle_on_representative_periods_is_an_error(tmp_path, method):
-    with pytest.raises(FlexToolConfigError) as exc:
-        _run_rp(tmp_path, method)
-    msg = str(exc.value)
-    assert "Solve 'rp_solve' is on representative periods (timeset(s) rp" in msg
-    assert f"1 storage node (tank) use a storage_binding_method (e.g. tank: {method})" in msg
-    assert f"{method} -> {BLENDED[method]}" in msg
-    assert "bind_within_timeblock" in msg
 
 
 @pytest.mark.parametrize("method", ["bind_within_timeblock", "bind_within_solve_blended_weights",

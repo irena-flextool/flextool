@@ -216,7 +216,7 @@ def _reject_rolling_rp(*, state, complete_solve_name: str, active_timeset_names:
 
 
 # Plain storage_binding_methods that link the representative periods of a solve to each other without their
-# weights, and the *_blended_weights variant to use instead.  Used by :func:`_reject_plain_cyclic_in_rp_solve`.
+# weights, and the *_blended_weights variant that weights the transfer.  Used by :func:`_warn_plain_cyclic_in_rp_solve`.
 _RP_UNWEIGHTED_CYCLES: dict[str, str] = {
     "bind_within_solve":       "bind_within_solve_blended_weights",
     "bind_within_period":      "bind_within_period_blended_weights",
@@ -224,24 +224,24 @@ _RP_UNWEIGHTED_CYCLES: dict[str, str] = {
 }
 
 
-def _reject_plain_cyclic_in_rp_solve(*, complete_solve_name: str, active_timeset_names: list, rp_weights: dict,
-                                     provider) -> None:
-    """Raise for a solve on representative periods with a bind_within_solve, bind_within_period or
-    bind_intraperiod_blocks storage node.
+def _warn_plain_cyclic_in_rp_solve(*, complete_solve_name: str, active_timeset_names: list, rp_weights: dict,
+                                   provider) -> None:
+    """Warn about a solve on representative periods with a bind_within_solve, bind_within_period or
+    bind_intraperiod_blocks storage node (owner decision 2026-11-19; before a configuration error).
 
     In such a solve the representative periods follow each other on the solve's timeline (each one a timeset block),
     so these methods chain v_state from the last step of one representative period to the first step of the next one
     and close the cycle over all of them, unweighted, while the flows of each step count with the weight of its
-    representative period.
-    Energy stored in a period of low weight can then be used in a period of high weight (the energy counts once in
-    the storage but weight-many times in the balance and the objective): the solve makes energy for free.  The
-    *_blended_weights variants chain the representative periods by their weights on the base-period chain.
-    bind_within_timeblock cycles within each timeset block, which in a solve on representative periods is one
-    representative period, so it is not affected.  Checked on the method set in the database, before
-    :func:`_fix_start_end_chains_forward`; a fix_start_end node is exempt (its binding method is ignored: that
-    function maps it to the blended forward chain, or in a solve that mixes periods with and without
-    representative periods to bind_within_timeblock).  The message names how many nodes and the first (the full
-    list goes to the debug log).
+    representative period.  That is reasonable when the representative periods have equal weights, or when the
+    timing of the storage's inflows does not matter (e.g. pumped hydro, a large heat storage); otherwise energy
+    stored in a period of low weight can serve a period of high weight.  The *_blended_weights variants weight the
+    transfer on the base-period chain.  The weights are the user's to use, so this is a warning, not an error.
+    bind_within_timeblock cycles within each timeset block (one representative period), so it is not affected.
+    Checked on the method set in the database, before :func:`_fix_start_end_chains_forward`; a fix_start_end node
+    is not warned about (its binding method is ignored: that function maps it to the blended forward chain, or in a
+    solve that mixes periods with and without representative periods to bind_within_timeblock, so nothing moves
+    between the representative periods unweighted).  One printed line per solve (how many nodes and the first); the
+    nodes and their methods go to the debug log.
     """
     if not any(ts in rp_weights for ts in active_timeset_names):
         return
@@ -262,20 +262,18 @@ def _reject_plain_cyclic_in_rp_solve(*, complete_solve_name: str, active_timeset
         return
     from flextool.engine import _behaviour_changes
     rp = sorted({ts for ts in active_timeset_names if ts in rp_weights})
-    _MODULE_LOGGER.debug("Solve '%s': plain cyclic storage on representative periods: %s", complete_solve_name,
-                         ", ".join(f"{node} ({method})" for node, method in hit.iter_rows()))
     first, method = hit.row(0)
-    named = _behaviour_changes.storages_named(hit["node"].to_list())
     variants = ", ".join(f"{m} -> {_RP_UNWEIGHTED_CYCLES[m]}" for m in sorted(set(hit[col].to_list())))
-    raise FlexToolConfigError(
-        f"Solve '{complete_solve_name}' is on representative periods (timeset(s) {', '.join(rp)} have "
-        f"representative_period_weights) and {named} use a storage_binding_method (e.g. {first}: {method}) that "
-        "carries "
-        "the storage state from one representative period to the next without their weights, while the flows of "
-        "each period count with its weight: energy stored in a period of low weight could be used in a period of "
-        f"high weight, for free. Use the *_blended_weights variant ({variants}), which links the representative "
-        "periods by their weights, or bind_within_timeblock, which cycles the storage within each representative "
-        "period.")
+    _behaviour_changes.storage_message(
+        "storage_plain_cyclic_rp", complete_solve_name, hit["node"].to_list(),
+        lambda named: (f"Warning: solve '{complete_solve_name}' is on representative periods (timeset(s) "
+                       f"{', '.join(rp)}) and {named} use a storage_binding_method (e.g. {first}: {method}) that "
+                       "moves the storage level from one representative period to the next without their weights. "
+                       "This is reasonable when the representative periods have equal weights or when the timing of "
+                       "the storage's inflows does not matter (e.g. pumped hydro, large heat storage). The "
+                       f"*_blended_weights methods ({variants}) weight the transfer."),
+        details=f"Plain cyclic storage on representative periods in solve '{complete_solve_name}': "
+                + ", ".join(f"{node} ({m})" for node, m in hit.iter_rows()) + ".")
 
 
 def _reject_plain_forward_in_rp_solve(*, complete_solve_name: str, active_timeset_names: list, rp_weights: dict,
@@ -283,8 +281,8 @@ def _reject_plain_forward_in_rp_solve(*, complete_solve_name: str, active_timese
     """Raise for a solve on representative periods with a storage node on plain bind_forward_only (the default
     storage_binding_method) (owner decision, Phase 5).
 
-    As for the plain cycles (:func:`_reject_plain_cyclic_in_rp_solve`): the forward chain runs through the
-    representative periods one after the other, unweighted, while the flows of each step count with the weight of
+    The forward chain runs through the representative periods one after the other, unweighted (as the plain cycles
+    of :func:`_warn_plain_cyclic_in_rp_solve` do, which are only a warning), while the flows of each step count with the weight of
     its representative period, so energy stored in a period of low weight can be used in one of high weight.  There
     is no automatic switch to bind_forward_only_blended_weights: the user chooses the blended method.  Checked on
     the method set in the database (a node without one is bind_forward_only), before the engine's own mappings
@@ -1235,8 +1233,8 @@ _FIX_START_END_FORWARD: dict[str, str] = {
 # In a solve on representative periods a plain forward chain would link the representative periods without their
 # weights (a configuration error, :func:`_reject_plain_forward_in_rp_solve`): a fix_start_end node with a cyclic method
 # there chains forward on the base-period chain, where storage_state_start and storage_state_end act (owner decision,
-# Phase 5).  These nodes are exempt from :func:`_reject_plain_cyclic_in_rp_solve` (fix_start_end ignores the binding
-# method).
+# Phase 5).  These nodes are not warned about by :func:`_warn_plain_cyclic_in_rp_solve` (fix_start_end ignores the
+# binding method, and the blended chain weights the transfer).
 _FIX_START_END_FORWARD_RP: dict[str, str] = {
     **_FIX_START_END_FORWARD,
     "bind_within_timeblock":   "bind_forward_only_blended_weights",
@@ -2578,15 +2576,15 @@ def native_run_model(state, solver) -> int:
             provider=sub_solve_provider,
             logger=state.logger,
         )
-        # Rolling over representative periods is not supported; nor are cycles that link the representative
-        # periods without their weights.
+        # Rolling over representative periods is not supported; cycles that link the representative periods
+        # without their weights are warned about.
         _reject_rolling_rp(state=state, complete_solve_name=complete_solve[solve],
                            active_timeset_names=active_timeset_names)
         _reject_rolling_with_gaps(state=state, complete_solve_name=complete_solve[solve],
                                   complete_active_time_list=complete_active_time_lists)
-        _reject_plain_cyclic_in_rp_solve(complete_solve_name=complete_solve[solve],
-                                         active_timeset_names=active_timeset_names,
-                                         rp_weights=state.timeline.rp_weights, provider=sub_solve_provider)
+        _warn_plain_cyclic_in_rp_solve(complete_solve_name=complete_solve[solve],
+                                       active_timeset_names=active_timeset_names,
+                                       rp_weights=state.timeline.rp_weights, provider=sub_solve_provider)
         _reject_plain_forward_in_rp_solve(complete_solve_name=complete_solve[solve],
                                           active_timeset_names=active_timeset_names,
                                           rp_weights=state.timeline.rp_weights, provider=sub_solve_provider)

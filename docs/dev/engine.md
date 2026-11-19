@@ -524,7 +524,7 @@ adds:
 | `maxState_rp_start` | `model._eq_rp_storage_chain` | Sibling capacity bound on `v_state_rp_start[n, d, t]` over `rp_block_first`. Both bounds depend on invest/divest, so they are rows rather than variable bounds. |
 | `non_anticipativity_rp_block_start` | `model._non_anticipativity.add_dispatch_constraints` | `v_state_rp_start` equal across the forecast star at the block starts inside the tie window, for `include_stochastics` nodes in `nodeState_rp`; a block already tied by a `non_anticipativity_storage_state_first` row is left out. |
 
-In a stochastic solve every forecast branch period is an rp period with the timeset of the period it branches from (`_solve_writers._with_branch_period_timesets`); `rp_period_previous` is then a tree (a branch's first period ← the trunk period, later periods ← the same branch). A rolling_window solve on representative periods is a configuration error (`_run_model._reject_rolling_rp`), and so is a plain bind_within_solve / bind_within_period / bind_intraperiod_blocks node in a solve on representative periods (`_run_model._reject_plain_cyclic_in_rp_solve`: the plain cycle links the representative periods unweighted while their flows are weighted).
+In a stochastic solve every forecast branch period is an rp period with the timeset of the period it branches from (`_solve_writers._with_branch_period_timesets`); `rp_period_previous` is then a tree (a branch's first period ← the trunk period, later periods ← the same branch). A rolling_window solve on representative periods is a configuration error (`_run_model._reject_rolling_rp`), and so is a plain bind_forward_only node in a solve on representative periods (`_run_model._reject_plain_forward_in_rp_solve`). A plain bind_within_solve / bind_within_period / bind_intraperiod_blocks node there is a warning (`_run_model._warn_plain_cyclic_in_rp_solve`: the plain cycle moves the level between the representative periods unweighted while their flows are weighted, which is reasonable with equal weights or storage whose inflow timing does not matter; the weights are the user's to use).
 
 The three blended-weights methods that activate the block —
 `bind_within_solve_blended_weights`, `bind_within_period_blended_weights`,
@@ -1180,7 +1180,7 @@ Then `_run_model._timeblock_binds_within_period_in_roll` rewrites
 (`_reject_rolling_with_gaps` has made sure each period is one timeblock),
 so the per-period rolling rule (`_scope_rows`, `scope_*` rows) applies to
 it.  Order per sub-solve: non-RP downgrade → `_reject_rolling_rp` /
-`_reject_rolling_with_gaps` / `_reject_plain_cyclic_in_rp_solve` /
+`_reject_rolling_with_gaps` / `_warn_plain_cyclic_in_rp_solve` /
 `_reject_plain_forward_in_rp_solve` → fix_start_end → rolling timeblock.
 `_restore_methods` captures the frame after these rewrites.
 
