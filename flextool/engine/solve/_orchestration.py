@@ -1104,7 +1104,7 @@ def _autoscale_unscale_post_solve(
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     import polars as pl
     from polar_high import Problem, Solution
@@ -1322,77 +1322,118 @@ class _MemoryRecorder:
             return 0.0
         return (total_kb - avail_kb) / 1024.0
 
-    # Fixed widths used to align the mem output into a table.
-    # Label column fits the longest whitelisted label
-    # ("Matrix built by polar-high", 26 chars).
-    _LABEL_W = 28      # label column (left-aligned)
-    # Each data cell renders "<absolute> (<+/-delta>)" right-aligned
-    # within these widths.  Sized for normal use; cells widen
-    # naturally when values overflow (right-align preserves the gutter).
-    _TIME_CELL_W = 17  # fits e.g. "9999.9s (+999.9)"
-    _MEM_CELL_W = 19   # fits e.g. "-100.00 GB (+99.99)"
+    # Fixed widths of the phase-progress table.  A row reads
+    #   "<label> <time> | <RSS cell> | <system cell> | <swap cell>"
+    # with a single space before each "|" and 17 characters between two
+    # bars (a 16-wide right-aligned cell plus the space before the next
+    # bar), so the bars sit in the same columns on every row:
+    #   Matrix built by polar-high 10000s (+10000) |     544 MB (-5) | ...
+    # The label+time part is ``_LABEL_W`` + 1 + ``_TIME_CELL_W`` wide and
+    # stretches only when a label is longer than ``_LABEL_W`` (one space
+    # is always kept before the time) or a time passes 99999 s.
+    _LABEL_W = 26      # the longest whitelisted label, "Matrix built by polar-high"
+    _TIME_CELL_W = 15  # fits "99999s (+99999)"
+    _MEM_CELL_W = 16   # fits "16.9 GB (-0.01)" plus the space after the bar
+
+    _SIZE_UNITS: tuple[str, ...] = ("kB", "MB", "GB", "TB")
 
     @staticmethod
-    def _pick_size_unit(mb: float) -> tuple[float, str]:
-        """Pick GB vs MB display unit for an absolute MB value.
-        Returns ``(divisor, label)`` — e.g. ``(1024.0, "GB")``.
+    def _fmt_sig3(value: float) -> str:
+        """``value`` (>= 0) to 3 significant figures in at most 4 digits.
+
+        Below 1000 the value keeps at most two decimals so it never
+        passes 4 characters (``0.12``, ``9.1``, ``16.9``, ``544``);
+        trailing zeros are dropped (``9.10`` -> ``9.1``, ``16.0`` ->
+        ``16``).  From 1000 up it is an integer rounded to 3 significant
+        figures (``1230``, ``10000``).
         """
-        if abs(mb) >= 1024.0:
-            return 1024.0, "GB"
-        return 1.0, "MB"
+        if value <= 0 or not math.isfinite(value):
+            return "0"
+        exp = math.floor(math.log10(value))
+        rounded = round(value, 2 - exp)
+        if rounded >= 1000:
+            return f"{rounded:.0f}"
+        exp = math.floor(math.log10(rounded)) if rounded > 0 else 0
+        decimals = min(2, max(0, 2 - exp))
+        text = f"{rounded:.{decimals}f}"
+        if "." in text:
+            text = text.rstrip("0").rstrip(".")
+        return text or "0"
+
+    @classmethod
+    def _fmt_signed_sig3(cls, value: float) -> str:
+        """``value`` with an explicit sign (``+12``, ``-0.01``); ``+0``
+        when it rounds to zero."""
+        text = cls._fmt_sig3(abs(value))
+        if text == "0":
+            return "+0"
+        return ("+" if value >= 0 else "-") + text
+
+    @classmethod
+    def _pick_size_unit(cls, mb: float) -> tuple[float, str]:
+        """Pick the kB/MB/GB/TB unit that keeps ``mb`` in 0-999 once
+        rounded to 3 significant figures.  Returns ``(divisor_in_mb,
+        label)`` — e.g. ``(1024.0, "GB")``."""
+        if mb == 0:
+            return 1.0, "MB"       # an empty swap reads "0 MB", not "0 kB"
+        div = 1.0 / 1024.0
+        for label in cls._SIZE_UNITS[:-1]:
+            if float(cls._fmt_sig3(abs(mb) / div)) < 1000:
+                return div, label
+            div *= 1024.0
+        return div, cls._SIZE_UNITS[-1]
 
     @classmethod
     def _fmt_mem_cell(cls, mb: float | None, delta_mb: float | None) -> str:
-        """Render a memory cell as ``"<absolute> (<±delta>)"`` right-
-        aligned within ``_MEM_CELL_W``.  Both numbers are rendered in
-        the unit chosen for the absolute, so the cell reads as a single
-        consistent magnitude (e.g. ``"5.18 GB (+0.21)"`` — both GB).
-        When ``mb`` is None, a single dash fills the cell.
+        """Render a memory cell as ``"<absolute> <unit> (<±delta>)"``
+        right-aligned within ``_MEM_CELL_W``.  The delta is in the unit
+        of the absolute, so the cell reads as one magnitude (e.g.
+        ``"16.9 GB (-0.01)"``); a negligible delta reads ``+0``.  When
+        ``mb`` is None, a single dash fills the cell.
         """
         if mb is None:
             return f"{'-':>{cls._MEM_CELL_W}}"
         div, label = cls._pick_size_unit(mb)
-        # Two decimals when GB, integer when MB — matches the example.
-        if label == "GB":
-            val = f"{mb / div:.2f} {label}"
-        else:
-            val = f"{mb / div:.0f} {label}"
+        val = f"{cls._fmt_sig3(mb / div)} {label}"
         if delta_mb is None:
             cell = f"{val} (-)"
         else:
-            if abs(delta_mb) < (0.005 if label == "GB" else 0.5):
-                delta_str = "+0"
-            else:
-                sign = "+" if delta_mb >= 0 else "-"
-                a = abs(delta_mb) / div
-                fmt = ".2f" if label == "GB" else ".0f"
-                delta_str = f"{sign}{a:{fmt}}"
-            cell = f"{val} ({delta_str})"
+            cell = f"{val} ({cls._fmt_signed_sig3(delta_mb / div)})"
         return f"{cell:>{cls._MEM_CELL_W}}"
 
     @classmethod
     def _fmt_time_cell(cls, t_elapsed: float, t_section: float | None) -> str:
-        """Render the time cell as ``"<elapsed>s (+<section>)"`` right-
-        aligned within ``_TIME_CELL_W``.  First-row ``t_section is None``
-        renders ``"<elapsed>s (-)"``.
+        """Render the time cell as ``"<elapsed>s (+<section>)"`` (seconds,
+        3 significant figures) right-aligned within ``_TIME_CELL_W``.
+        First-row ``t_section is None`` renders ``"<elapsed>s (-)"``.
         """
+        elapsed = f"{cls._fmt_sig3(t_elapsed)}s"
         if t_section is None:
-            cell = f"{t_elapsed:.1f}s (-)"
+            cell = f"{elapsed} (-)"
         else:
-            sign = "+" if t_section >= 0 else "-"
-            cell = f"{t_elapsed:.1f}s ({sign}{abs(t_section):.1f})"
+            cell = f"{elapsed} ({cls._fmt_signed_sig3(t_section)})"
         return f"{cell:>{cls._TIME_CELL_W}}"
+
+    @classmethod
+    def _fmt_row(cls, label: str, time_cell: str, mem_cells: Sequence[str]) -> str:
+        """Join a label, a time cell and memory cells into one table row.
+
+        The label+time part keeps its fixed width (label left, time
+        right) unless the two do not fit with one space between them.
+        """
+        width = cls._LABEL_W + 1 + cls._TIME_CELL_W
+        lead = f"{label} {time_cell.lstrip()}"
+        if len(lead) < width:
+            lead = f"{label}{time_cell.lstrip():>{width - len(label)}}"
+        return lead + "".join(f" |{cell}" for cell in mem_cells)
 
     def _emit_header(self) -> None:
         """Print the column-header line for the phase-progress table."""
-        blank_label = " " * self._LABEL_W
-        header = (
-            f"{blank_label}  "
-            f"{'time':^{self._TIME_CELL_W}}  "
-            f"|  {'RSS memory':^{self._MEM_CELL_W}}  "
-            f"|  {'system memory':^{self._MEM_CELL_W}}  "
-            f"|  {'system swap':^{self._MEM_CELL_W}}"
-        )
+        header = self._fmt_row(
+            "", f"{'time':>{self._TIME_CELL_W}}",
+            [f"{name:>{self._MEM_CELL_W}}" for name in
+             ("RSS memory", "system memory", "system swap")],
+        ).rstrip()
         try:
             print(header, flush=True)
         except OSError:
@@ -1483,7 +1524,6 @@ class _MemoryRecorder:
         )
         if emit:
             display = user_label or label
-            label_col = f"{display:<{self._LABEL_W}}"
             is_first = self._t_prev == self.t0
             # Emit the column header once, immediately before the first
             # data line.  Inline labels are dropped from data lines
@@ -1511,13 +1551,8 @@ class _MemoryRecorder:
             rss_cell = self._fmt_mem_cell(rss_mb, delta_rss)
             sys_cell = self._fmt_mem_cell(sys_mb, delta_sys)
             swap_cell = self._fmt_mem_cell(swap_mb, delta_swap)
-            line = (
-                f"{label_col}  "
-                f"{time_cell}  "
-                f"|  {rss_cell}  "
-                f"|  {sys_cell}  "
-                f"|  {swap_cell}"
-            )
+            line = self._fmt_row(
+                display, time_cell, (rss_cell, sys_cell, swap_cell))
             try:
                 print(line, flush=True)
             except OSError:
