@@ -18,7 +18,7 @@ from polar_high.engine import Expr, Var
 
 from flextool.engine.input._axis_enums import align_join_dtypes, rename_to_axis
 from flextool.engine.input._param_shapes import drop_no_limit_rows, without_no_limit_rows
-from flextool.engine.model import _coarse_flows, _extend, _lead_time, _retire_built
+from flextool.engine.model import _coarse_flows, _dc_power_flow, _extend, _lead_time, _retire_built
 from flextool.engine.model._common import (
     _entities_of_kind,
     _entity_rows,
@@ -100,10 +100,18 @@ def _group_flow(b: _Build) -> Expr | None:
                  (v_flow[p,s,k,d,t]·unitsize[p]·slope[p,d,t]
                   + v_online[p,d,t]·section[p,d,t]·unitsize[p])   [min_load_efficiency units only]
              − Σ_{(p,s,k,n) ∈ flow_from_n ∩ pss_noEff, (g,p,n) ∈ gpn} v_flow[p,s,k,d,t] · unitsize[p]
+             − Σ_{(p,s,n) ∈ twoway1var_arcs, (g,p,n) ∈ gpn} v_flow_back[p,s,n,d,t] · unitsize[p]   [back at sink]
+             + Σ_{(p,n,k) ∈ twoway1var_arcs, (g,p,n) ∈ gpn} v_flow_back[p,n,k,d,t] · unitsize[p]   [back at source]
       gpn = group_process_node;  flow_to_n / flow_from_n carry the sink / source node as n
     The eff-source term is the same fuel measure as ``nodeBalance_eq`` and the CO2/commodity cost
     terms (``_eff_fuel_input``): eff sources carry no ``conversion_flow_coeff``, and a
     min_load_efficiency unit's section fuel (the units online, linear or integer) is drawn too.
+    The v_flow_back terms are the reverse flow of a one-variable two-way arc (``no_losses_no_variable_cost``
+    and DC power flow, twoway1var_arcs; signed flow = v_flow − v_flow_back) with the nodeBalance signs
+    (``_dc_power_flow.nodeBalance_back_flow_terms``), so such a connection counts by its net flow at the
+    member node, as a two-variable connection does through its reverse arc.  The back term carries no
+    slope while the forward flow's source side goes through ``_eff_fuel_input``: deliberate, as in
+    nodeBalance_eq — these arcs are lossless (slope ≡ 1).  With both ends of the arc in g the terms cancel.
     """
     d, v_flow = b.d, b.v_flow
     gpn = d.group_process_node
@@ -127,6 +135,12 @@ def _group_flow(b: _Build) -> Expr | None:
                 .join(gpn, on=["p", "n"], how="inner"))
         if arcs.height > 0:
             parts.append(-Sum(Where(v_flow * d.p_unitsize, arcs), over=("p", "source", "sink", "n")))
+    if b.v_flow_back is not None and _has_rows(b.twoway1var_arcs):
+        back = _dc_power_flow.nodeBalance_back_flow_terms(b.twoway1var_arcs, b.v_flow_back, d.p_unitsize, None,
+                                                          group_nodes=gpn, group_nodes_on=("p", "n"))
+        for key in ("back_at_sink", "back_at_source"):
+            if key in back:
+                parts.append(Sum(back[key], over=("n",)))
     if not parts:
         return None
     total = parts[0]
@@ -873,7 +887,7 @@ def _eq_cumulative_flow_solve(b: _Build) -> None:
     # Σ_{d,t} F[g,d,t]·w_y[d,t]  ≤ max_cumulative_flow[g] · Σ_{d,t} w_y[d,t]   (max…)
     #                            ≥ min_cumulative_flow[g] · Σ_{d,t} w_y[d,t]   (min…)
     #   ∀ g with a max / min_cumulative_flow (, per leaf under recourse) — an inf max / −inf min is no limit (no row)
-    #   F = net flow into the group (_group_flow)
+    #   F = net flow into the group (_group_flow; a one-variable connection by v_flow − v_flow_back)
     #   w_y[d,t] = step_duration[d,t]·timestep_weight[d,t]·r[d]
     #   r[d] = (years_represented[d]/period_share[d]) / max_d′(years_represented[d′]/period_share[d′])
     # Limits the energy flowing into a flow group over the solve to an average power times the
@@ -935,7 +949,8 @@ def _eq_cumulative_flow_period(b: _Build) -> None:
     # Σ_t F[g,d,t]·sd[d,t]·tw[d,t]  ≤ max_cumulative_flow[g,d] · Σ_t sd[d,t]·tw[d,t]   (max…)
     #                               ≥ min_cumulative_flow[g,d] · Σ_t sd[d,t]·tw[d,t]   (min…)
     #   ∀ (g,d) with a max / min_cumulative_flow (the reader leaves out an inf max / −inf min: no limit in d)
-    #   F = net flow into the group (_group_flow); sd = step_duration, tw = timestep_weight
+    #   F = net flow into the group (_group_flow; a one-variable connection by v_flow − v_flow_back)
+    #   sd = step_duration, tw = timestep_weight
     # Limits the energy flowing into a flow group in each period to an average power times the
     # weighted hours of the period — the same timestep_weight every operational cost term already
     # carries (op_factor), so a representative-period step does not count as a full unweighted
@@ -973,7 +988,7 @@ def _eq_instant_flow(b: _Build) -> None:
     # F[g,d,t]  ≤ max_instant_flow[g,d,t]   (maxInstant_flow)
     #           ≥ min_instant_flow[g,d,t]   (minInstant_flow)
     #   ∀ (g,d,t) ∈ _instant_flow_support(cap, dt); the reader leaves out an inf max / −inf min (no limit there)
-    #   F = net flow into the group (_group_flow), MW
+    #   F = net flow into the group (_group_flow; a one-variable connection by v_flow − v_flow_back), MW
     # Limits the net power flowing into a flow group in every step.  The cap may be authored as a
     # scalar, period map, time map or period-time map; the rows cover every active step of its shape.
     # Row rule (coarse steps): a flow group whose processes are all coarse gets one row per coarse step,
