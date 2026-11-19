@@ -69,3 +69,33 @@ def test_no_rp_marker_without_representative_periods() -> None:
         m._v82_storage_accounting_markers(db)
         assert _marker(db, "rp_storage_chain_pinned") is None
         assert _marker(db, "storage_end_matches_start") == {"since": 82, "nodes": ["dflt", "fo_b", "fwd"]}
+
+
+def test_reference_start_marker_reads_every_alternative() -> None:
+    """Review M7: ``storage_reference_start`` names a use_reference_value storage node that is fix_nothing in some
+    alternative, whichever alternative's value comes last (before, one value per node was kept, so a node with
+    fix_nothing in one alternative and fix_start in another could be missed); a node that is fix_start in every
+    alternative is not named."""
+    db = DatabaseMapping("sqlite://", create=True)
+    db.add_item("entity_class", name="node")
+    for alt in ("a", "base", "z"):
+        db.add_item("alternative", name=alt)
+    for name in ("node_type", "storage_solve_horizon_method", "storage_start_end_method"):
+        db.add_item("parameter_definition", entity_class_name="node", name=name)
+    rows = [("mixed", "node_type", "storage", "base"), ("mixed", "storage_solve_horizon_method",
+                                                         "use_reference_value", "base"),
+            ("mixed", "storage_start_end_method", "fix_nothing", "a"),
+            ("mixed", "storage_start_end_method", "fix_start", "base"),
+            ("mixed", "storage_start_end_method", "fix_start", "z"),
+            ("fixed", "node_type", "storage", "base"), ("fixed", "storage_solve_horizon_method",
+                                                        "use_reference_value", "base"),
+            ("fixed", "storage_start_end_method", "fix_start", "base")]
+    for entity in ("mixed", "fixed"):
+        db.add_item("entity", entity_class_name="node", name=entity)
+    for entity, name, value, alt in rows:
+        raw, typ = to_database(value)
+        db.add_item("parameter_value", entity_class_name="node", entity_byname=(entity,),
+                    parameter_definition_name=name, alternative_name=alt, value=raw, type=typ)
+    with db:
+        m._v82_storage_accounting_markers(db)
+        assert _marker(db, "storage_reference_start") == {"since": 82, "nodes": ["mixed"]}

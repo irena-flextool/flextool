@@ -11933,9 +11933,14 @@ def _v82_storage_accounting_markers(db) -> None:
     nodes = sorted((forward | (storage - with_method)) & storage)
     if nodes:
         _v77_set_marker(db, "storage_end_matches_start", json.dumps({"since": 82, "nodes": nodes}))
-    start_end = {n: v for n, v in values("node", "storage_start_end_method")}
+    # Every value of each node (one per alternative): a node that is fix_nothing in some alternative, or has no
+    # value in some (the default fix_nothing), qualifies whichever alternative comes last.
+    start_end: dict[str, set] = {}
+    for n, v in values("node", "storage_start_end_method"):
+        start_end.setdefault(n, set()).add(v)
     reference = {n for n, v in values("node", "storage_solve_horizon_method") if v == "use_reference_value"}
-    nodes = sorted(n for n in reference & storage if start_end.get(n, "fix_nothing") == "fix_nothing")
+    nodes = sorted(n for n in reference & storage
+                   if n not in start_end or "fix_nothing" in start_end[n] or None in start_end[n])
     if nodes:
         _v77_set_marker(db, "storage_reference_start", json.dumps({"since": 82, "nodes": nodes}))
 
