@@ -298,22 +298,26 @@ def _production_at(step, t: str) -> float:
     return sum(v for k, v in _values(step, "v_flow").items() if k[0] == "src" and k[-1] == t)
 
 
-@pytest.mark.parametrize("fix_start", [None, 0.8, 0.5], ids=["reference", "same", "differs"])
-def test_reference_start_and_fix_start(tmp_path_factory, capsys, fix_start):
+@pytest.mark.parametrize("fix_start, method", [(None, "fix_nothing"), (0.8, "fix_start"), (0.5, "fix_start"),
+                                               (0.5, "fix_nothing")],
+                         ids=["reference", "same", "differs", "start_value_unused"])
+def test_reference_start_and_fix_start(tmp_path_factory, capsys, fix_start, method):
     """A use_reference_value node without fix_start starts at the reference (0.8); with fix_start the share of
-    fix_start wins, and a printed warning names the node where the two differ (one line)."""
+    fix_start wins, and a printed warning names the node where the two differ (one line).  A storage_state_start value
+    that fix_start does not use (method fix_nothing) neither moves the start nor warns (owner 2026-11-19: warn only
+    when both are in use)."""
     s = {"existing": 2.0, "storage_binding_method": "bind_forward_only",
-         "storage_start_end_method": "fix_nothing" if fix_start is None else "fix_start",
+         "storage_start_end_method": method,
          "storage_solve_horizon_method": "use_reference_value", "storage_state_reference_value": 0.8}
     if fix_start is not None:
         s["storage_state_start"] = fix_start
     step = _run(tmp_path_factory, rp=False, s=s)
     out = capsys.readouterr().out
     lines = [ln for ln in out.splitlines() if "differs from the storage_state_reference_value" in ln]
-    share = 0.8 if fix_start is None else fix_start
+    share = 0.8 if method == "fix_nothing" else fix_start
     # start share·2 MWh, end 0.8·2 MWh: the store gives (share − 0.8)·2 net
     assert _production(step) == pytest.approx(4.0 - (share - 0.8) * 2.0, abs=TOL)
-    if fix_start == 0.5:
+    if fix_start == 0.5 and method == "fix_start":
         assert len(lines) == 1 and "1 storage node (s)" in lines[0]
     else:
         assert not lines
