@@ -2807,7 +2807,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             )
             _logger.warning(msg)
             # Per-solve loggers are pinned to ERROR inside the cascade: also print the warning.
-            print(f"WARNING: {msg}", flush=True)
+            print(f"Warning: {msg}", flush=True)
 
     # --- Trust-region stabilization (machine-local env; RANK 3, theory §C).
     # ``trust_region_radius`` is an ABSOLUTE box half-width: Δ₀ = radius·1.0 =

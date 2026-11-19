@@ -328,7 +328,7 @@ def _benders_nonconvergence_banner(name, step) -> str:
     bar = "#" * 76
     return (
         f"\n{bar}\n"
-        f"WARNING: decomposed solve {name!r} did NOT meet its convergence "
+        f"Warning: decomposed solve {name!r} did NOT meet its convergence "
         f"tolerance.\n"
         f"{bar}\n"
         f"  Relative gap reached : {_pct(gap)}\n"

@@ -247,7 +247,7 @@ def warn_benders_no_dump(logger: logging.Logger, solve_name: str, *, console: bo
                f"solve '{solve_name}' is not dumped")
     logger.warning(message)
     if console:
-        print(f"WARNING: {message}", flush=True)
+        print(f"Warning: {message}", flush=True)
 
 
 def assemble_horizon_dump(raw_output_dir: "Path | str", parquet_dir: "Path | str", *, clear_stale: bool) -> int:
