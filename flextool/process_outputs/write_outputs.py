@@ -719,7 +719,7 @@ def write_summary_csv(par, s, v, r, csv_dir, text=None):
     import os
     if text is None:
         text = summary_solve_text(par, s, v, r)
-    with open(os.path.join(csv_dir, 'summary_solve.csv'), 'w') as f:
+    with open(os.path.join(csv_dir, 'summary_solve.csv'), 'w', encoding='utf-8') as f:
         f.write(text)
 
 

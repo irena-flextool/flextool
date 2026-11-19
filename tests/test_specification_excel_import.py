@@ -41,7 +41,7 @@ _V25_TEMPLATE = _PKG / "schemas" / "pre_v26" / "flextool_template_v25.json"
 
 def _current_columns(sheet: str) -> list[str]:
     """Header row of a sheet in the current template layout."""
-    return json.loads(_SPEC.read_text())["tables"][sheet]["layout"]["columns"]
+    return json.loads(_SPEC.read_text(encoding="utf-8"))["tables"][sheet]["layout"]["columns"]
 
 
 def _row(headers: list[str], **values) -> list:

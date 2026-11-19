@@ -400,7 +400,7 @@ NESTED = "multi_fullYear_battery_nested_multi_invest"
 def _child_invests() -> list:
     """``storage_fullYear_6h`` (the child of ``invest_5weeks``) gets ``invest_5weeks``'s array invest periods: each
     nested anchor ``storage_fullYear_6h_<period>`` (not a Spine solve) then invests in its own period."""
-    data = json.loads(BASE_FIXTURE_JSON.read_text())
+    data = json.loads(BASE_FIXTURE_JSON.read_text(encoding="utf-8"))
     return [["solve", "storage_fullYear_6h", pv[2], pv[3]] for pv in data["parameter_values"]
             if pv[:2] == ["solve", "invest_5weeks"] and pv[2] in ("invest_periods", "realized_invest_periods")
             and pv[4] == "invest_oneYear4Times_5weeks"]
