@@ -13,7 +13,7 @@ Augmentations
     'price_ladder_cumulative'`` and a 2d-map ``price_ladder_cumulative``.
   * scenario ``coal_ladder_annual`` = ``coal`` + ``ladder_ann_on``.
   * scenario ``coal_ladder_cumulative`` = ``coal`` + ``ladder_cum_on``.
-  * alt ``inflation_2pct`` — overrides ``model.flexTool.inflation_rate``
+  * alt ``inflation_2pct`` — overrides ``model.flexTool.social_discount_rate``
     from 0.04 to 0.02.  This is the patch on top of
     ``wind_battery_invest_lifetime_renew`` used by
     ``test_db_direct_inflation_2pct.py``.  Add a copy scenario
@@ -119,7 +119,7 @@ def _augment_tests_db(db_path: Path) -> None:
             ("ladder_ann_on", "Phase 3d: enable coal annual price ladder."),
             ("ladder_cum_on", "Phase 3d: enable coal cumulative price ladder."),
             ("inflation_2pct",
-                "Phase 3d: override model.inflation_rate to 0.02 for "
+                "Phase 3d: override model.social_discount_rate to 0.02 for "
                 "test_db_direct_inflation_2pct.py"),
             ("delay_source_coef_on",
                 "Phase 3d: override unit__inputNode."
@@ -166,12 +166,12 @@ def _augment_tests_db(db_path: Path) -> None:
             type=db_type,
         )
 
-        # inflation_2pct: override model.flexTool.inflation_rate
+        # inflation_2pct: override model.flexTool.social_discount_rate
         db_val, db_type = to_database(0.02)
         db.add_parameter_value_item(
             entity_class_name="model",
             entity_byname=("flexTool",),
-            parameter_definition_name="inflation_rate",
+            parameter_definition_name="social_discount_rate",
             alternative_name="inflation_2pct",
             value=db_val,
             type=db_type,

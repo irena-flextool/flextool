@@ -140,12 +140,18 @@ def _shipped() -> dict:
     """The shipped descriptions as v79 left them, under the v79 names.  What v80 changed is undone: its appended
     sentences (``inf`` is no limit, a coarse step mixing no-limit and finite time steps) are taken off, the
     capacity-margin renames are mapped back, a description v80 replaced as a whole is the v79 text, and the
-    piecewise_linear sentences of v80 part 4 are taken off (its new definition is left in: no v79 test reads it)."""
+    piecewise_linear sentences of v80 part 4 are taken off (its new definition is left in: no v79 test reads it).
+    What v81 changed is undone where a v79 test reads it: ``lifetime_technical`` is ``lifetime`` with its v79 text,
+    and the ``discount_rate`` and ``node.unit_of_measure`` texts are the v79 ones."""
     with open(package_data_path("schemas/spinedb_schema.json"), encoding="utf-8") as f:
         schema = json.load(f)
     later = {key: "".join(sentences)
              for key, sentences in {**m._v80_suffixes(), **m._v80_piecewise_sentences()}.items()}
     old_names = {("group", new): ("group", old) for old, new in m.V80_CAPACITY_MARGIN_RENAMES.items()}
+    old_names.update({(cls, "lifetime_technical"): (cls, "lifetime") for cls in m._V79_LIFETIME_DESCRIPTIONS})
+    v81_back = {**{(cls, "lifetime"): text for cls, text in m._V79_LIFETIME_DESCRIPTIONS.items()},
+                **{(cls, "discount_rate"): m._V79_DISCOUNT_RATE_DESCRIPTION for cls in m._V79_LIFETIME_DESCRIPTIONS},
+                ("node", "unit_of_measure"): m.V79_NODE_UNIT_OF_MEASURE_DESCRIPTION}
     v79_texts = {**m._V79_CAPACITY_MARGIN_DESCRIPTIONS, **m._v79_solver_precommand_texts(),
                  ("solve", "reduce_unit_detail_method"): m._V79_REDUCE_DESCRIPTIONS["reduce_unit_detail_method"],
                  ("group", "print_dispatch"): (m._V78_UNIT_PREFIXES[("group", "print_dispatch")] + " "
@@ -155,7 +161,10 @@ def _shipped() -> dict:
         key = (r[0], r[1])
         text, suffix = r[4], later.get(key)
         key = old_names.get(key, key)
-        if key in v79_texts:
+        if key in v81_back:
+            assert key in m._v81_texts() or (key[0], "lifetime_technical") in m._v81_texts(), key
+            text = v81_back[key]
+        elif key in v79_texts:
             assert (key[0], m.V80_CAPACITY_MARGIN_RENAMES.get(key[1], key[1])) in m._v80_texts(), key
             text = v79_texts[key]
         elif suffix and text and text.endswith(suffix):
@@ -551,11 +560,17 @@ def test_adds_the_node_unit_of_measure(plain) -> None:
 
 def test_rewrites_the_rp_descriptions(plain) -> None:
     shipped = _shipped()
+    # v82 rewrites the storage_binding_method description again (the rolling storage carry): the shipped text is
+    # v82's, the v79 step still writes its own.
+    later = m._v82_storage_texts()
     for key in RP_CHANGED:
-        assert plain["after"][key][2] == shipped[key] == m._v79_rp_texts()[key] != plain["before"][key][2]
+        assert plain["after"][key][2] == m._v79_rp_texts()[key] != plain["before"][key][2]
+        assert shipped[key] == later.get(key, m._v79_rp_texts()[key])
         assert plain["after"][key][:2] + plain["after"][key][3:] == plain["before"][key][:2] + plain["before"][key][3:]
     assert "Not allowed in a stochastic solve" in plain["before"][("timeset", "representative_period_weights")][2]
-    assert "bind forward only (bind_forward_only), with a warning" in shipped[("node", "storage_binding_method")]
+    v79 = m._v79_rp_texts()[("node", "storage_binding_method")]
+    assert "bind forward only (bind_forward_only), with a warning" in v79
+    assert "do not work with stochastic" not in v79
     assert "do not work with stochastic" not in shipped[("node", "storage_binding_method")]
 
 

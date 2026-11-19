@@ -16,9 +16,9 @@ Contract (identical to the in-memory multi readers):
 
 * **Solve-keyed attrs** (carry a ``solve`` index level) — the union over
   rolls.  The persisted slices are ALREADY realized-filtered and
-  post-hack (``persist_realized_slice`` applies the three
-  ``entity_lifetime_fixed_cost`` / ``entity_all_existing`` /
-  ``entity_annual_*`` hacks + the realized intersect at persist time),
+  post-hack (``persist_realized_slice`` applies the
+  ``entity_all_existing`` / ``entity_annual_*`` hacks + the realized
+  intersect at persist time),
   so the union is a plain row concat — exactly the ``pd.concat`` in
   ``read_parameters_multi`` / the per-level MultiIndex concat in
   ``read_sets_multi``.  No fillna, no dedup (each roll carries a distinct

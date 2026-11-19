@@ -22,8 +22,8 @@ import pytest
 
 from flextool.engine.preprocess.params import _coarse
 from tests.engine._lp_rows import row_bounds, row_terms
-from tests.engine._unit_db import (FLEXTOOL_ROOT, axis_vocabulary, b64, build, last_stochastic, make_db, run, utf8,
-                                   without_realization)
+from tests.engine._unit_db import (FLEXTOOL_ROOT, axis_vocabulary, b64, build, last_stochastic, make_db,
+                                   record_roll_carry, replay_roll_carry, run, utf8, without_realization)
 
 pytestmark = pytest.mark.solver
 
@@ -318,9 +318,14 @@ def test_lh2_same_optimum_as_fine_flows(tmp_path_factory, monkeypatch, case) -> 
     """lh2 (every per-step parameter of the liquefiers and pipes is constant within a day): the model with one
     flow per day has the objective of the model with hourly flows, in a single solve, a rolling solve (72 h /
     48 h) and a representative-period invest solve, with fewer columns.  Only the objective is compared: with
-    storage at every lh2 node and pipes in both directions the daily energy of each arc is not unique."""
+    storage at every lh2 node and pipes in both directions the daily energy of each arc is not unique.  So is the
+    lh2 level at a roll end, which the next roll continues from: the rolling fine model replays the coarse model's
+    roll-end carry, and each roll is compared from the same start."""
+    carry = record_roll_carry(monkeypatch) if case == "rolling" else None
     coarse = _case(tmp_path_factory, case, f"cf_same_{case}")
     _fine_flows(monkeypatch)
+    if carry is not None:
+        replay_roll_carry(monkeypatch, carry)
     fine = _case(tmp_path_factory, case, f"cf_same_{case}_fine")
     assert len(coarse) == len(fine)
     assert _total_objective(coarse) == pytest.approx(_total_objective(fine), rel=1e-9)
@@ -673,7 +678,7 @@ _MARKER = "flextool_behaviour_change:coarse_process_flows"
 
 
 @pytest.mark.parametrize("marker", [True, False], ids=["marker", "no_marker"])
-def test_behaviour_notice(tmp_path_factory, capsys, marker) -> None:
+def test_behaviour_notice(tmp_path_factory, coded_log, marker) -> None:
     """An upgraded database (marker present) prints one notice naming each coarse process whose results can
     change and why (here hpipe's varying cost and src's varying efficiency; src2 is exact and not named).
     Without the marker, nothing."""
@@ -688,9 +693,9 @@ def test_behaviour_notice(tmp_path_factory, capsys, marker) -> None:
         with DatabaseMapping(url) as db:
             db.add_item("metadata", name=_MARKER, value="77")
             db.commit_session("behaviour-change marker")
-    capsys.readouterr()
+    coded_log()
     run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"))
-    lines = [ln for ln in capsys.readouterr().out.splitlines() if "one flow per coarse step" in ln]
+    lines = [ln for ln in coded_log.notices() if "one flow per coarse step" in ln]
     if not marker:
         assert not lines
         return

@@ -269,7 +269,7 @@ def imported(imported_with_report: tuple[str, ImportReport]) -> str:
 #: energy margin, ladder or unnamed map.  A marker added by a later migration
 #: fails this test: desk-check it the same way, then add it here.
 EXPECTED_MARKERS = sorted("flextool_behaviour_change:" + name for name in (
-    "acceptance_ceiling_follows_tolerance", "capacity_margin_counts_by_flow",
+    "acceptance_ceiling_follows_tolerance", "annuity_timing", "capacity_margin_counts_by_flow",
     "chained_solve_costs_from_run_start",
     "coarse_process_flows", "construction_lead_time_commissioning",
     "dc_power_flow_lines_beside_dc_links", "price_ladder_periods_from_solve_periods",
@@ -1007,6 +1007,13 @@ def test_interest_zero_is_written_and_blank_interest_is_not(tmp_path: Path) -> N
     assert all(v == 0 for v in _values(url, "node", "discount_rate").values())
     conn = _values(url, "connection", "discount_rate")
     assert list(conn.values()) == [0]
+
+
+def test_imported_annuity_is_the_corrected_one(imported: str) -> None:
+    """The imported model keeps the default discount_offset_investment 0 (no value written): its annuity is worth
+    the investment cost at the discount_rate, not FT2's year-end -PMT(interest, lifetime, 1), which is worth
+    invest_cost · (1 + interest)."""
+    assert _values(imported, "model", "discount_offset_investment") == {}
 
 
 def test_ft2_annuity_matches_pmt() -> None:

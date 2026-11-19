@@ -445,14 +445,17 @@ def test_designation_leaves_the_stochastic_lp_unchanged(tmp_path_factory, design
 @pytest.mark.solver
 def test_recourse_label_has_no_investment(tmp_path_factory) -> None:
     """Under recourse a period label invests nothing here-and-now: ``stoch_two_period_invest`` has no ``v_invest``
-    column at p2035 / p2040, only at the forecast branch periods, and the objective equals the parent before #82
-    (75f73acf^, lp_snapshot ``stoch_recourse``: 0.196875 in objective units, here unscaled 196 875)."""
+    column at p2035 / p2040, only at the forecast branch periods, and the objective is the hand calculation of
+    ``build_stoch_two_period_invest.py``: with the annuity 1000 CUR/MW per year (invest_cost 1 CUR/kW, discount_rate
+    0.05, lifetime 1: 1000·0.05 / (1 − 1.05^−1) / 1.05, paid at the start of the year) the branching periods'
+    windows cost 2000 and the continuations' 1000, so 0.25·(60·2000 + 30·1000) + 0.75·(80·2000 + 40·1000) =
+    187 500 (the parent before #82, 75f73acf^, had 196 875 at the year-end payment 1050: 1000 / 1050 of it)."""
     tmp = tmp_path_factory.mktemp("label_recourse")
     steps, mps = _run(RECOURSE, tmp, scenario="recourse", capture_mps=True)
     cols = [c for c in _mps_columns(mps["stoch_2p_inv"]) if c.startswith("v_invest")]
     assert cols
     assert not [c for c in cols if ",p2035]" in c or ",p2040]" in c], sorted(cols)
-    assert _objective(steps, "stoch_2p_inv", tmp) == pytest.approx(196_875.0, rel=1e-9)
+    assert _objective(steps, "stoch_2p_inv", tmp) == pytest.approx(187_500.0, rel=1e-9)
 
 
 @pytest.mark.solver
@@ -716,7 +719,7 @@ def _rolling_online_only(data: dict) -> None:
     no ``separate_dispatch``, no investment; horizon 2 h, jump 1 h, so every roll commits its first step inside the
     fan.  Each roll start t0001-t0003 has an analysis time: ``high`` (wind CF 0.8) and ``low`` (0.0), 0.5 each."""
     drop = {"dispatch_realization_method", "invest_periods", "realized_invest_periods", "invest_method",
-            "invest_cost", "discount_rate", "lifetime", "invest_max_total"}
+            "invest_cost", "discount_rate", "lifetime_technical", "invest_max_total"}
     data["parameter_values"] = [r for r in data["parameter_values"] if r[2] not in drop]
     steps = ("t0001", "t0002", "t0003")
 

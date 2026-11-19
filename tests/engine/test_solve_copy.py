@@ -11,16 +11,17 @@ every LP of the chain (canonical, up to row / column order) and the solve list. 
 independent hand calculations (oracles, from the docs):
 
 * model A with ``new_stepduration`` 2 h: the merged step sums the demand (-200 MWh per 2-h step), so the
-  objectives stay 43 840 121.29 EUR (100 MW invested at the 5-year annuity 401.212936 EUR/MW plus
+  objectives stay 43 838 210.76 EUR (100 MW invested at the 5-year annuity 382.107558 EUR/MW: 5 · 1000 · 0.05 /
+  (1 − 1.05^−20) / 1.05, paid at the start of each year, plus
   100 MW * 2 h * 10 EUR/MWh * 21 900) and 43 800 000 EUR.  Before the fix the split ran at half the demand
   (21 920 060.65 / 21 900 000).
 * model A as a look-ahead ladder (``LOOK_AHEAD``) with a 5-year ``construction_lead_time``: inv_p1 can invest only
   in p1 (a p2 decision would come online after the model horizon), the capacity comes online in p2, so p1 is
   served by the penalty: 100 MW * 2 h * 10 000 EUR/MWh * 21 900 + 100 MW * 2 h * 10 EUR/MWh * 21 900 + 100 MW *
-  401.212936 EUR/MW = 43 843 840 121.29 EUR; inv_p2 43 800 000 EUR.  Before the fix the split refused the lead
+  382.107558 EUR/MW = 43 843 838 210.76 EUR; inv_p2 43 800 000 EUR.  Before the fix the split refused the lead
   time.
 * model A with one row of the 2-D maps holding both periods (``ONE_ROW``): one split solve, the single solve
-  over both periods: 100 MW * 802.425872 EUR/MW + 100 MW * 4 steps * 10 EUR/MWh * 21 900 = 87 680 242.59 EUR.
+  over both periods: 100 MW * 764.215116 EUR/MW + 100 MW * 4 steps * 10 EUR/MWh * 21 900 = 87 676 421.51 EUR.
   Before the fix the split stopped with an IndexError.
 * model B (forecasts high / low with weights 1 / 3 in both periods): 6 570 000 EUR and 7 227 000 EUR.
 * model B with look-ahead (st_p1 over p1 + p2, fan at p1; st_p2 fan at p2; 4380 h per step, gen 10 EUR/MWh,
@@ -32,12 +33,12 @@ independent hand calculations (oracles, from the docs):
 * ``separate_dispatch_noinvest.json`` (one period) split by a 2-D ``realized_periods``: 6 570 000 EUR and the
   realization solve's 4 380 000 EUR (the hand calculation of ``test_separate_dispatch_noinvest_capacity.py``).
 * model A's look-ahead ladder (``LOOK_AHEAD``) containing a dispatch solve ``disp`` over both periods (item
-  243): inv_p1 (over p1 + p2) invests 100 MW in p1 and pays 100 MW * 80.2425872 EUR/MW/a * 10 years + 100 MW *
-  4 steps * 10 EUR/MWh * 21 900 = 87 680 242.59 EUR (the ``one-row`` value); disp_p1, inv_p2 and disp_p2 run one
+  243): inv_p1 (over p1 + p2) invests 100 MW in p1 and pays 100 MW * 76.4215116 EUR/MW/a * 10 years + 100 MW *
+  4 steps * 10 EUR/MWh * 21 900 = 87 676 421.51 EUR (the ``one-row`` value); disp_p1, inv_p2 and disp_p2 run one
   period on the existing 100 MW: 43 800 000 EUR each.  disp_p1 = 43.8 M (not 87.6 M) pins that the contained
   solve runs only the period its containing solve realizes.  Before the fix the hand-written ladder ran
   ``disp`` (not ``disp_p1``) under inv_p1 and the examples' hand-written ladder stopped with a KeyError.
-* model A with ``inflation_rate`` 0.05: see ``test_years_represented_counts_from_the_model_start`` and the tests
+* model A with ``social_discount_rate`` 0.05: see ``test_years_represented_counts_from_the_model_start`` and the tests
   after it (item 242: every solve discounts from the start of the run).
 """
 from __future__ import annotations
@@ -108,24 +109,24 @@ def _scenario(data: dict) -> str:
 
 
 CASES = [
-    pytest.param(lambda mode: scm.model_a(mode), {"inv_p1": 43_840_121.29, "inv_p2": 43_800_000.0},
+    pytest.param(lambda mode: scm.model_a(mode), {"inv_p1": 43_838_210.76, "inv_p2": 43_800_000.0},
                  id="invest-ladder"),
-    pytest.param(_nsd, {"inv_p1": 43_840_121.29, "inv_p2": 43_800_000.0}, id="new_stepduration"),
-    pytest.param(_lead_time, {"inv_p1": 43_843_840_121.29, "inv_p2": 43_800_000.0}, id="construction_lead_time"),
-    pytest.param(lambda mode: scm.model_a_ladder(mode, ONE_ROW), {"inv_p1": 87_680_242.59}, id="one-row"),
+    pytest.param(_nsd, {"inv_p1": 43_838_210.76, "inv_p2": 43_800_000.0}, id="new_stepduration"),
+    pytest.param(_lead_time, {"inv_p1": 43_843_838_210.76, "inv_p2": 43_800_000.0}, id="construction_lead_time"),
+    pytest.param(lambda mode: scm.model_a_ladder(mode, ONE_ROW), {"inv_p1": 87_676_421.51}, id="one-row"),
     pytest.param(lambda mode: scm.model_b(mode), {"st_p1": 6_570_000.0, "st_p2": 7_227_000.0},
                  id="stochastic_branches"),
     pytest.param(lambda mode: scm.model_b(mode, look_ahead=True), {"st_p1": 13_797_000.0, "st_p2": 7_227_000.0},
                  id="stochastic_branches-look-ahead"),
     pytest.param(lambda mode: scm.model_a_ladder(mode, {par: {"first": ["p1"], "second": ["p2"]}
                                                         for par in scm.SPLIT_PARAMS}),
-                 {"inv_first": 43_840_121.29, "inv_second": 43_800_000.0}, id="row-names"),
+                 {"inv_first": 43_838_210.76, "inv_second": 43_800_000.0}, id="row-names"),
     pytest.param(_separate_dispatch,
                  {"stoch_rd_p2035": 6_570_000.0, "stoch_rd_p2035__realized_dispatch": 4_380_000.0},
                  id="separate_dispatch"),
     # Item 243: before, the hand-written inv_p1 stood for both periods it looks ahead to, so ``disp`` kept its
     # name under it (steps inv_p1, disp, inv_p2, disp_p2) and the hand-written examples' ladder stopped.
-    pytest.param(_nested_look_ahead, {"inv_p1": 87_680_242.59, "disp_p1": 43_800_000.0, "inv_p2": 43_800_000.0,
+    pytest.param(_nested_look_ahead, {"inv_p1": 87_676_421.51, "disp_p1": 43_800_000.0, "inv_p2": 43_800_000.0,
                                       "disp_p2": 43_800_000.0}, id="nested-look-ahead"),
 ]
 
@@ -221,17 +222,17 @@ def test_a_solve_contained_in_a_split_solve_gets_the_period_whatever_the_row_nam
     assert named_steps["disp_p2"].obj == pytest.approx(43_800_000.0, rel=1e-9)
 
 
-#: ``inflation_rate`` 0.05 on the model.
-INFLATION = [["model", "flextool", "inflation_rate", scm.pack(0.05, "float")]]
+#: ``social_discount_rate`` 0.05 on the model.
+INFLATION = [["model", "flextool", "social_discount_rate", scm.pack(0.05, "float")]]
 
 # Hand calculation (``advanced_concepts.md``: every solve discounts from the start of the run, investments at the
 # start of each year, operations at mid-year; 4380 h per step and year; offsets inv 0 / ops 0.5):
-# annuity A = 1000 * 0.05 / (1 - 1.05**-20) = 80.2425872 EUR/MW/a; F_inv(p1) = sum_{y=0..4} 1.05**-y = 4.54595050,
-# F_inv(p2) = sum_{y=5..9} 1.05**-y = 3.56187117; F_ops(p1) = sum_{y=0..4} 1.05**-(y + 0.5) = 4.43639343,
-# F_ops(p2) = sum_{y=5..9} 1.05**-(y + 0.5) = 3.47603034.
-INV_P1 = 364.778830          # A * F_inv(p1)
-INV_P2 = 285.813758          # A * F_inv(p2)
-INV_P1_WINDOW = 650.592588   # A * (F_inv(p1) + F_inv(p2)): a p1 decision of a solve over p1 and p2
+# annuity A = 1000 * 0.05 / (1 - 1.05**-20) / 1.05 = 76.4215116 EUR/MW/a (paid at the start of each year);
+# F_inv(p1) = sum_{y=0..4} 1.05**-y = 4.54595050, F_inv(p2) = sum_{y=5..9} 1.05**-y = 3.56187117;
+# F_ops(p1) = sum_{y=0..4} 1.05**-(y + 0.5) = 4.43639343, F_ops(p2) = sum_{y=5..9} 1.05**-(y + 0.5) = 3.47603034.
+INV_P1 = 347.408409          # A * F_inv(p1)
+INV_P2 = 272.203579          # A * F_inv(p2)
+INV_P1_WINDOW = 619.611988   # A * (F_inv(p1) + F_inv(p2)): a p1 decision of a solve over p1 and p2
 OPS_P1 = 194_314.032         # 10 EUR/MWh * 4380 h * F_ops(p1), per MW and step
 OPS_P2 = 152_250.129         # 10 EUR/MWh * 4380 h * F_ops(p2)
 
@@ -404,13 +405,13 @@ def test_rolls_of_a_later_solve_count_from_the_model_start(tmp_path_factory):
 
 def test_fractional_years_represented_count_the_fraction(tmp_path_factory):
     """Item 259: one solve over p1 (2.5 years) and p2 (5 years) with inflation 0.05.  p2 starts 2.5 years after
-    the run start, so (hand calculation, as above) its investment is A * 1.05**-2.5 * F_inv(p1) = 322.891326 EUR/MW
+    the run start, so (hand calculation, as above) its investment is A * 1.05**-2.5 * F_inv(p1) = 307.515548 EUR/MW
     and its operations 10 * 4380 * 1.05**-2.5 * F_ops(p1) = 172 000.978 EUR per MW and step.  Before, the half
     year of p1 counted as a whole year: p2 started at year 3 (315.109668 / 167 855.767)."""
     built, _ = scm.run_spec(scm.model_a("single", years=(2.5, 5.0), model_rows=INFLATION),
                             tmp_path_factory.mktemp("frac"))
     ((solve, mps, _),) = built
-    _coefficients(mps, {"v_invest_p[gen,p2]": 322.891326, "v_flow[gen,gen,elec,p2,t03]": 172_000.978})
+    _coefficients(mps, {"v_invest_p[gen,p2]": 307.515548, "v_flow[gen,gen,elec,p2,t03]": 172_000.978})
 
 
 # ---------------------------------------------------------------------------

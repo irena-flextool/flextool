@@ -153,6 +153,54 @@ def is_realization(name: str) -> bool:
     return REALIZATION_SUFFIX in name
 
 
+# The SolveHandoff fields a rolling roll continues from (storage level, units online, their history, the last flow
+# and the recorded start levels of the closures).
+_ROLL_CARRY_FIELDS = ("roll_end_state", "upward_roll_end_state", "roll_end_online", "online_history",
+                      "roll_end_flow", "cycle_start_state", "scope_start_state")
+
+
+def record_roll_carry(monkeypatch) -> list:
+    """Record the handoff of every sub-solve of the next run, in solve order (the rolls of a solve share its
+    name), for :func:`replay_roll_carry`."""
+    from flextool.engine.preprocess import flex_data
+
+    original = flex_data.build_handoff_from_solution
+    seen: list = []
+
+    def recording(sol, work_folder, solve_name, *args, **kwargs):
+        handoff = original(sol, work_folder, solve_name, *args, **kwargs)
+        seen.append((solve_name, handoff))
+        return handoff
+
+    recording.__wrapped__ = original
+    monkeypatch.setattr(flex_data, "build_handoff_from_solution", recording)
+    return seen
+
+
+def replay_roll_carry(monkeypatch, seen: list) -> None:
+    """Make every sub-solve of the next run hand on the carry that the same sub-solve of the recorded run
+    (:func:`record_roll_carry`, same solves in the same order) handed on, instead of its own.  Two models with the
+    same optimum per roll can realise different levels at a roll end when that level is not unique (a degenerate
+    optimum), and a rolling solve continues each roll from it, so their rolling totals can differ; replayed, each
+    roll of both starts from the same carry and the rolls compare one to one."""
+    from flextool.engine.preprocess import flex_data
+
+    assert seen, "no handoff recorded: the run was not solved under record_roll_carry"
+    recorded = list(seen)
+    original = flex_data.build_handoff_from_solution
+    original = getattr(original, "__wrapped__", original)
+
+    def replaying(sol, work_folder, solve_name, *args, **kwargs):
+        handoff = original(sol, work_folder, solve_name, *args, **kwargs)
+        name, source = recorded.pop(0)
+        assert name == solve_name, (name, solve_name)
+        for field in _ROLL_CARRY_FIELDS:
+            setattr(handoff, field, getattr(source, field))
+        return handoff
+
+    monkeypatch.setattr(flex_data, "build_handoff_from_solution", replaying)
+
+
 def without_realization(steps: dict) -> dict:
     """*steps* without the engine-added realization solves: the stochastic (or deterministic) solves only."""
     return {k: s for k, s in steps.items() if not is_realization(k)}

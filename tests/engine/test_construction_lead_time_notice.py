@@ -16,7 +16,7 @@ MARKER = "flextool_behaviour_change:construction_lead_time_commissioning"
 NOTICE = "With a construction lead time, 'invested' and the per-period investment limits count capacity coming online"
 
 
-def _run_output(tmp_path_factory, capsys, alt: str, lead: float, marker: bool) -> str:
+def _run_output(tmp_path_factory, log, alt: str, lead: float, marker: bool) -> str:
     from flextool.engine import run_chain_from_db
 
     url, scen = make_db(tmp_path_factory, alt=alt, values=_values(lead, {"p2025": 100.0, "p2030": 50.0}),
@@ -25,19 +25,19 @@ def _run_output(tmp_path_factory, capsys, alt: str, lead: float, marker: bool) -
         with DatabaseMapping(url) as db:
             db.add_item("metadata", name=MARKER, value="77")
             db.commit_session("behaviour-change marker")
-    capsys.readouterr()
+    log()
     run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"))
-    return capsys.readouterr().out
+    return "\n".join(log.notices())
 
 
-def test_notice_printed_once_per_run(tmp_path_factory, capsys) -> None:
-    out = _run_output(tmp_path_factory, capsys, "lt_notice", 5.0, marker=True)
+def test_notice_printed_once_per_run(tmp_path_factory, coded_log) -> None:
+    out = _run_output(tmp_path_factory, coded_log, "lt_notice", 5.0, marker=True)
     lines = [ln for ln in out.splitlines() if NOTICE in ln]
     assert len(lines) == 1, out
     assert f"Affected entities: {PLANT}." in lines[0] and MARKER in lines[0]
 
 
 @pytest.mark.parametrize("lead, marker", [(5.0, False), (0.0, True)], ids=["no_marker", "no_lead_time"])
-def test_no_notice(tmp_path_factory, capsys, lead, marker) -> None:
-    out = _run_output(tmp_path_factory, capsys, f"lt_notice_{lead}_{marker}", lead, marker=marker)
+def test_no_notice(tmp_path_factory, coded_log, lead, marker) -> None:
+    out = _run_output(tmp_path_factory, coded_log, f"lt_notice_{lead}_{marker}", lead, marker=marker)
     assert NOTICE not in out

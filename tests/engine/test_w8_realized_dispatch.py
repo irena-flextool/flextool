@@ -170,7 +170,7 @@ def test_dispatch_capacity_is_fixed_from_stochastic_invest(chain) -> None:
 
     Detection of "capacity fixed":
       * the stochastic solve DID build a process invest set + deposited a
-        non-empty handoff with ``realized_invest[peaker] = 60``;
+        non-empty handoff with a ``realized_cohort`` of 60 MW for the peaker;
       * the dispatch solve's FlexData has ``pd_invest_set is None`` (it
         builds NO ``v_invest`` for the peaker) yet carries
         ``p_entity_invested[peaker] = 60`` — i.e. the 60 MW arrived purely
@@ -196,11 +196,13 @@ def test_dispatch_capacity_is_fixed_from_stochastic_invest(chain) -> None:
     assert stoch.handoff is not None and not stoch.handoff.is_empty(), (
         "stochastic solve deposited no handoff"
     )
-    ri = stoch.handoff.realized_invest
+    ri = stoch.handoff.realized_cohort
     assert ri is not None and ri.height > 0
-    ent_col, val_col = ri.columns[0], ri.columns[-1]
+    # The investment rows carry the committed size; the generation rows of
+    # a reinvest_automatic chain carry none.
+    invest_rows = ri.filter(pl.col("kind") == "invest")
     committed = {
-        r[ent_col]: float(r[val_col]) for r in ri.iter_rows(named=True)
+        r["entity"]: float(r["size"]) for r in invest_rows.iter_rows(named=True)
     }
     assert committed.get("peaker") == pytest.approx(COMMITTED_PEAKER_MW), (
         f"stochastic solve committed {committed.get('peaker')} MW peaker, "

@@ -77,7 +77,10 @@ GENERATED_PAGES: tuple[str, ...] = (FORMULATION_PAGE, RESULTS_CATALOGUE_PAGE)
 # Generated pages of the web docs only: not in the assistant's documentation cache or search index (the
 # parameter catalogue is one large table per class, and describe_parameter already serves each parameter).
 PARAMETER_CATALOGUE_PAGE = "parameter_catalogue.md"
-WEB_ONLY_PAGES: tuple[str, ...] = (PARAMETER_CATALOGUE_PAGE,)
+# The warnings page, from the registry flextool.run_warnings.registry (its WARNINGS_PAGE; the code's links point
+# here).
+WARNINGS_PAGE = "reference/warnings.md"
+WEB_ONLY_PAGES: tuple[str, ...] = (PARAMETER_CATALOGUE_PAGE, WARNINGS_PAGE)
 
 # Every generated page of the web docs.
 WEB_PAGES: tuple[str, ...] = GENERATED_PAGES + WEB_ONLY_PAGES

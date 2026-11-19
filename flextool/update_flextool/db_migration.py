@@ -233,16 +233,19 @@ def migrate_database(
 def _current_version_ro(path, up_to: int | None) -> int | None:
     """The data version of *path* when it has nothing to migrate or refresh (read read-only), else ``None``.
 
-    Nothing to do means: the current data version (and not below *up_to*), a current SpineDB schema revision and no
-    superseded unit-count description (:func:`_refresh_unit_count_texts` would rewrite one).  Anything that cannot be
-    read gives ``None``: it is decided under the lock.
+    Nothing to do means: the current data version (and not below *up_to*), a current SpineDB schema revision, no
+    superseded unit-count description (:func:`_refresh_unit_count_texts` would rewrite one), every definition and
+    list member the current version's schema step adds and no superseded shipped default and description pair
+    (:func:`_refresh_head_schema` would add or replace one).  Anything that cannot be read gives ``None``: it is
+    decided under the lock.
     """
     from flextool.update_flextool.frozen import read_db_version_ro, schema_outdated_ro
 
     version = read_db_version_ro(path)
     if version != FLEXTOOL_DB_VERSION or (up_to is not None and up_to > version):
         return None
-    if schema_outdated_ro(path) or _unit_count_texts_stale_ro(path):
+    if (schema_outdated_ro(path) or _unit_count_texts_stale_ro(path) or _head_schema_missing_ro(path)
+            or _head_defaults_stale_ro(path)):
         return None
     return version
 
@@ -2019,6 +2022,10 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 _migrate_v79_schema_batch(db)
             elif next_version == 80:
                 _migrate_v80_schema_batch(db)
+            elif next_version == 81:
+                _migrate_v81_schema_batch(db)
+            elif next_version == 82:
+                _migrate_v82_schema_batch(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -2035,7 +2042,9 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
         else:
             if int(version) == FLEXTOOL_DB_VERSION:
                 _refresh_unit_count_texts(db)
-                _commit_step(db, "Refreshed existing / virtual_unitsize descriptions")
+                _refresh_head_schema(db)
+                _commit_step(db, "Refreshed existing / virtual_unitsize descriptions, added the current "
+                                 "version's new definitions and replaced its superseded defaults")
             print(database_path+ " already up-to-date at version "+ str(version))
 
 def _rename_or_drop_parameter_definition(db, entity_class_name, old_name, new_name, description=None):
@@ -8220,8 +8229,8 @@ def _migrate_v56_fix_wrong_defaults(db) -> None:
 
     * ``model.inflation_offset_investment`` — current default ``1.0``,
       patched to ``0.0`` to match the engine fallback in
-      :func:`flextool.engine.preprocess.params._npv._inflation_scalars`
-      (line 355) and the symmetric fallback in ``_period_calc.py``
+      :func:`flextool.engine.preprocess.params._discount._solve_inflation_scalars`
+      and the symmetric fallback in ``_period_calc.py``
       (line 295).
 
     * ``commodity.unitsize`` — current default ``1.0``, patched to
@@ -10924,6 +10933,1215 @@ def _migrate_v80_schema_batch(db) -> None:
                      "relative_of_peak_demand, solver_precommand, solver_arguments, "
                      "reduce_unit_detail_method and print_dispatch descriptions, "
                      "conversion_method piecewise_linear and unit.piecewise_linear_efficiency")
+
+
+# ─── v81: technical lifetime and payback time, net salvage value, no_reinvestment ───
+#
+# The step is table-driven: the tables below say what it adds, moves, renames and rewrites.  The tables are frozen
+# since v82.  A database migrated to 81 by a development build of this step is brought up to them by the v81 refresh
+# (:func:`_v81_refresh`, part 1 of v82): it adds the missing definitions and list members, and a shipped field of a
+# definition that was superseded (:func:`_v81_superseded`: a default and its description, together; a definition
+# without a default has the pair (None, description)) is replaced where the database still has exactly a pair
+# FlexTool shipped, never a value and never an edited pair.  The refresh writes neither the behaviour-change markers
+# nor a description that is not part of a superseded pair.
+
+#: v81: parameters whose values move to new names (old name -> the new names that each get a copy of every value).
+#: ``lifetime`` moves to ``lifetime_technical`` only: an entity without ``payback_time`` pays back over its
+#: ``lifetime_technical`` (``engine/input/_lifetime_roles.py``), so a copy into ``payback_time`` would only repeat it.
+#: Databases migrated to 81 by an earlier development build of this step also hold a ``payback_time`` copy of each
+#: ``lifetime``; they are not migrated again and keep it, which builds the same model as the fallback (equal values,
+#: both read at the period the capacity comes online, also after a construction lead time).
+V81_VALUE_MOVES: dict[str, tuple[str, ...]] = {
+    "lifetime": ("lifetime_technical",),
+    "salvage_value": ("net_salvage_value",),
+}
+#: v81: value-list members renamed (list -> {old member: new member}); every stored value is rewritten.
+V81_LIST_MEMBER_RENAMES: dict[str, dict[str, str]] = {
+    "lifetime_methods": {"no_investment": "no_reinvestment"},
+}
+#: v81: value lists to create (when absent) with these members, or to complete with the members they lack (appended
+#: in this order).
+V81_NEW_VALUE_LISTS: dict[str, tuple[str, ...]] = {
+    "end_of_life_methods": ("closest_seam", "previous_seam", "next_seam"),
+}
+#: v81: the default of ``end_of_life_method`` (the rounding of an end of life to a period start).
+V81_END_OF_LIFE_METHOD_DEFAULT = "closest_seam"
+#: v81: the default of ``end_of_life_method`` that FlexTool shipped before it became closest_seam (its description:
+#: :func:`_v81_superseded_end_of_life_text`).
+V81_SUPERSEDED_END_OF_LIFE_METHOD_DEFAULT = "next_seam"
+#: The shipped default of ``discount_rate`` (unit, connection, node), which v81 keeps; with the superseded description
+#: it forms a superseded pair (:func:`_v81_superseded`).
+V81_DISCOUNT_RATE_DEFAULT = 0.05
+
+_V81_CAPACITY = {"unit": ("capacity", "unit", "kW"), "connection": ("capacity", "connection", "kW"),
+                 "node": ("storage capacity", "node", "kWh")}
+
+
+def _v81_texts() -> dict[tuple[str, str], str]:
+    """The whole descriptions v81 writes: those of its new definitions and of the existing definitions whose text
+    names a renamed parameter or value."""
+    t: dict[tuple[str, str], str] = {}
+    for cls, (cap, what, per) in _V81_CAPACITY.items():
+        t[(cls, "lifetime_technical")] = (
+            f"[years] Technical lifetime: how long the {cap} operates. It starts when the {cap} starts to operate: "
+            "with a construction lead time, after the construction. Its end is rounded to a period start by "
+            "end_of_life_method; for existing capacity it counts from the model start minus age_at_model_start "
+            "(or model.start_year - build_year). What happens at its end depends on "
+            f"lifetime_method: reinvest_automatic keeps the {cap} to the end of the model horizon, reinvest_choice "
+            "retires it, no_reinvestment retires it and allows investment only during the first technical lifetime "
+            "from the model start. Without payback_time, invest_cost is annualized over it. Required when the "
+            f"{what} invests or retires with a cost (invest_cost, net_salvage_value) and has no payback_time, and "
+            "when lifetime_method is reinvest_choice or no_reinvestment (also for existing capacity without "
+            f"investment). Constant or period: the value of the period when the {cap} comes online is used, for "
+            f"existing {cap} that of the first period.")
+        t[(cls, "payback_time")] = _v81_payback_time_text(cap, "changes nothing (a whole number of years)")
+        t[(cls, "net_salvage_value")] = _v81_net_salvage_text(cap, per)
+        t[(cls, "lifetime_method")] = (
+            "[choice] What happens when capacity reaches the end of its lifetime_technical. reinvest_automatic "
+            "(default): the capacity is kept to the end of the model horizon and the annualized investment cost is "
+            "paid on, without a model choice. reinvest_choice: the capacity retires at the end of its "
+            "lifetime_technical and the model decides how much new capacity to build. no_reinvestment: the "
+            "capacity retires at the end of its lifetime_technical; investment is possible only during the first "
+            "technical lifetime from the model start, and the capacity is not rebuilt. With reinvest_choice and "
+            "no_reinvestment the investment cost is paid as a level yearly cost of the lifetime_technical (the "
+            "annuity over payback_time spread over it) for each year the capacity is in service.")
+        t[(cls, "discount_rate")] = (
+            "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and "
+            "risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. "
+            "When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the "
+            "payback time, sized so that the yearly payments are worth invest_cost at this rate when the capacity "
+            "starts to operate: annuity = invest_cost x r / (1 - (1 + r)^-payback_time) x (1 + r)^"
+            "(inflation_offset_investment - 1). 0 gives the straight-line annuity invest_cost / payback_time. No "
+            "value means 0.05. Must be 0 or above. Constant or period.")
+        t[(cls, "invest_cost")] = (
+            f"[CUR/{per}] Overnight investment cost of new {cap}. It is annualized over payback_time with "
+            "discount_rate; with lifetime_method reinvest_choice or no_reinvestment that annuity is spread evenly "
+            f"over lifetime_technical and paid for each year the {cap} is in service (every year to the end of the "
+            "model horizon with reinvest_automatic). Construction time costs with "
+            f"their interest must be included here. Constant or period: the value of the period when the {cap} is "
+            "built (comes online) is used.")
+        t[(cls, "age_at_model_start")] = (
+            f"[years] Age of the existing {cap} at the start of the model. Its end of life is lifetime_technical "
+            "minus the age from the model start, rounded to a period start by end_of_life_method; with "
+            f"lifetime_method reinvest_automatic the {cap} is kept and the age has no effect. Give "
+            "age_at_model_start or build_year, not both. No value: new at the model start. Constant, 0 or more.")
+        t[(cls, "build_year")] = (
+            f"[year] Calendar year the existing {cap} was built: its age at the model start is model.start_year "
+            "minus build_year. Needs model.start_year and must not be after it. Not with age_at_model_start. "
+            "Constant.")
+        t[(cls, "end_of_life_method")] = (
+            f"[choice] How the end of life of {cap} (start of operation plus lifetime_technical; existing {cap}: "
+            "lifetime_technical minus its age, from the model start) is rounded to a period start. closest_seam "
+            "(default): the nearer start, a tie goes to the later one. next_seam: the start at or after it "
+            "(operates to the end of the period its life ends in; the rounding of FlexTool 4.5 and earlier). "
+            "previous_seam: the start at or before it (gone for that whole period; for capacity-adequacy studies, "
+            "which must not count capacity past its life). The yearly investment cost is paid for each year in "
+            f"service. An end of life after the model horizon keeps the {cap} to the end. Used with "
+            "lifetime_method reinvest_choice / no_reinvestment.")
+    t[("model", "start_year")] = (
+        "[year] The calendar year in which the first period of the model's first solve starts. Used by "
+        "build_year (age = start_year - build_year).")
+    t[("node", "unit_of_measure")] = V79_NODE_UNIT_OF_MEASURE_DESCRIPTION.replace(
+        "(invest_cost, fixed_cost, salvage_value)", "(invest_cost, fixed_cost, net_salvage_value)")
+    t[("group", "penalty_capacity_margin")] = (
+        "[CUR/kW/a] Penalty for violating the capacity margin constraint. Uses operational discounting (not "
+        "annualized over a payback time like investment costs), so the value is not directly comparable to "
+        "annualized investment costs. Constant or period.")
+    return t
+
+
+def _v81_payback_time_text(cap: str, equal_rates: str) -> str:
+    """The description of ``payback_time`` on a class whose capacity is *cap*; *equal_rates* says what payback_time
+    does when discount_rate equals inflation_rate (the shipped and the superseded wording differ only there)."""
+    return ("[years] Years over which invest_cost is annualized with discount_rate (the annuity factor): with "
+            "discount_rate it sets the size of the yearly investment cost. With lifetime_method reinvest_choice or "
+            "no_reinvestment the present value of the annuity (discounted at the model inflation_rate) is spread "
+            "evenly over lifetime_technical and paid for each year the capacity is in service: with discount_rate "
+            f"equal to inflation_rate payback_time {equal_rates}, below it a shorter payback_time costs more. "
+            "With reinvest_automatic the annuity is paid in every year to the end of the model horizon. No value: "
+            "lifetime_technical. Must be above 0. Constant or period: the value of the period when the "
+            f"{cap} comes online is used.")
+
+
+def _v81_net_salvage_text(cap: str, per: str) -> str:
+    """The description of ``net_salvage_value`` on a class whose capacity is *cap*, priced per *per*."""
+    return (f"[CUR/{per}] Net salvage value: scrap value minus decommissioning cost, negative when decommissioning "
+            "costs more than the scrap is worth. A retirement of existing capacity receives it in full at the start "
+            "of the retirement period (the investment in existing capacity is sunk). With lifetime_method "
+            "reinvest_choice or no_reinvestment the value at the end of life is a level yearly credit over the "
+            f"lifetime at discount_rate: it lowers the yearly cost of new {cap}, existing {cap} holds it over its "
+            "service years, and a retirement gives the credits back. Constant or period: the value of the period "
+            "the salvage happens in, after the last period the last value.")
+
+
+def _v81_superseded_net_salvage_text(cap: str, per: str) -> str:
+    """The description of ``net_salvage_value`` that FlexTool shipped before the salvage terms of retirement and of
+    new capacity (verbatim)."""
+    return (f"[CUR/{per}] Net salvage value: scrap value minus decommissioning cost, received once when {cap} is "
+            "retired (at end of life or earlier). Negative when decommissioning costs more than the scrap is worth. "
+            "Does not depend on age. Constant or period.")
+
+
+def _v81_superseded_end_of_life_text(cls: str) -> str:
+    """The description of ``end_of_life_method`` on ``cls`` that FlexTool shipped with the default ``next_seam``
+    (verbatim)."""
+    cap = _V81_CAPACITY[cls][0]
+    return (f"[choice] How the end of life of {cap} (start of operation plus lifetime_technical; existing {cap}: "
+            "lifetime_technical minus its age, from the model start) is rounded to a period start. next_seam "
+            "(default): the start at or after it (operates to the end of the period its life ends in). "
+            "closest_seam: the nearer start, a tie goes to the later one. previous_seam: the start at or before "
+            f"it (gone for that whole period). An end of life after the model horizon keeps the {cap} to the "
+            "end. Used with lifetime_method reinvest_choice / no_reinvestment.")
+
+
+def _v81_superseded_discount_rate_text() -> str:
+    """The description of ``discount_rate`` (unit, connection, node) that FlexTool shipped with the annuity formula
+    before the yearly payment was sized for when it is paid (verbatim)."""
+    return ("[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and "
+            "risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. "
+            "When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the "
+            "payback time: annuity = invest_cost x r / (1 - (1 + r)^-payback_time). 0 gives the straight-line "
+            "annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.")
+
+
+def _v81_superseded() -> dict[tuple[str, str], tuple[str | None, str]]:
+    """``{(class, name): (default, description)}``: the default and description pairs of v81 definitions that
+    FlexTool shipped and has since superseded (the current pair is in :func:`_v81_definitions`; for a definition
+    that v81 does not add, only the description of :func:`_v81_texts` is current and the default stays).  A
+    database at 81 that has exactly such a pair gets the current one (:func:`_refresh_head_schema`)."""
+    out: dict[tuple[str, str], tuple[str | None, str]] = {}
+    for cls, (cap, _what, per) in _V81_CAPACITY.items():
+        out[(cls, "end_of_life_method")] = (V81_SUPERSEDED_END_OF_LIFE_METHOD_DEFAULT,
+                                            _v81_superseded_end_of_life_text(cls))
+        out[(cls, "payback_time")] = (None, _v81_payback_time_text(cap, "changes nothing"))
+        out[(cls, "net_salvage_value")] = (None, _v81_superseded_net_salvage_text(cap, per))
+        out[(cls, "discount_rate")] = (V81_DISCOUNT_RATE_DEFAULT, _v81_superseded_discount_rate_text())
+    return out
+
+
+def _v81_definitions(texts: dict[tuple[str, str], str] | None = None) -> dict[tuple[str, str], dict]:
+    """The definitions v81 adds, with the fields it gives them (types, group, default, value list, description).
+    *texts* replaces a description of :func:`_v81_texts` (a later step's text of the same definition)."""
+    texts = {**_v81_texts(), **(texts or {})}
+    out: dict[tuple[str, str], dict] = {}
+    for cls in _V81_CAPACITY:
+        for name, group in (("lifetime_technical", "investment"), ("payback_time", "investment"),
+                            ("net_salvage_value", "retirement")):
+            out[(cls, name)] = {"parameter_type_list": ("float", "1d_map"), "parameter_group_name": group,
+                                "default_value": None, "default_type": None, "parameter_value_list_name": None,
+                                "description": texts[(cls, name)]}
+        for name, types in (("age_at_model_start", ("float",)), ("build_year", ("float",))):
+            out[(cls, name)] = {"parameter_type_list": types, "parameter_group_name": "retirement",
+                                "default_value": None, "default_type": None, "parameter_value_list_name": None,
+                                "description": texts[(cls, name)]}
+        default_value, default_type = to_database(V81_END_OF_LIFE_METHOD_DEFAULT)
+        out[(cls, "end_of_life_method")] = {"parameter_type_list": ("str",), "parameter_group_name": "retirement",
+                                          "default_value": default_value, "default_type": default_type,
+                                          "parameter_value_list_name": "end_of_life_methods",
+                                          "description": texts[(cls, "end_of_life_method")]}
+    out[("model", "start_year")] = {"parameter_type_list": ("float",), "parameter_group_name": "model",
+                                    "default_value": None, "default_type": None, "parameter_value_list_name": None,
+                                    "description": texts[("model", "start_year")]}
+    return out
+
+
+#: Colour and priority of the parameter groups v81 definitions use (as v44 / v45 create them), for a database built
+#: without the standard groups.
+_V81_GROUPS = {"investment": ("7fb095", 20), "retirement": ("a3b08c", 25), "model": ("a3a3a3", 80)}
+
+
+def _v81_value_lists(db) -> None:
+    """Part 1 of v81: each list of :data:`V81_NEW_VALUE_LISTS` exists and has its members (the missing ones are
+    appended in the table's order).  Idempotent."""
+    for name, members in V81_NEW_VALUE_LISTS.items():
+        if not db.get_item("parameter_value_list", name=name):
+            db.add_parameter_value_list(name=name)
+        items = db.get_items("list_value", parameter_value_list_name=name)
+        have = {x["parsed_value"] for x in items}
+        index = max((x["index"] for x in items), default=-1)
+        for member in members:
+            if member in have:
+                continue
+            index += 1
+            val, typ = to_database(member)
+            db.add_list_value(parameter_value_list_name=name, value=val, type=typ, index=index)
+            have.add(member)
+
+
+def _v81_definitions_part(db, *, update: bool = True, texts: dict[tuple[str, str], str] | None = None) -> None:
+    """Part 2 of v81: each definition of :func:`_v81_definitions` (with *texts*) on an existing class is added, or
+    (``update``) set to the given fields.  ``update=False`` only adds the missing ones (an existing one keeps its own
+    fields, e.g. a description the user edited).  Idempotent."""
+    for (cls, name), fields in _v81_definitions(texts).items():
+        if not db.get_item("entity_class", name=cls):
+            continue
+        group = fields["parameter_group_name"]
+        if group is not None:
+            _ensure_parameter_group(db, group, *_V81_GROUPS[group])
+        pdef = _pdef_or_none(db, cls, name)
+        if pdef is None:
+            db.add_parameter_definition(entity_class_name=cls, name=name,
+                                        **{k: v for k, v in fields.items() if v is not None})
+        elif update and any((tuple(pdef[k] or ()) if k == "parameter_type_list" else pdef[k]) != v
+                            for k, v in fields.items()):
+            db.update_parameter_definition(id=pdef["id"], **fields)
+
+
+def _v81_move_values(db) -> None:
+    """Part 3 of v81: the values of each old parameter of :data:`V81_VALUE_MOVES` go to each of its new names, then
+    the old definition is removed.
+
+    Every value goes as it is stored (its bytes and type: a constant, a map with any index, every alternative), on
+    each class that defines the old name, to each new name where that (entity, alternative) has no value yet; a
+    value already there is kept, and the old one it would have replaced is printed.  Without the old definition the
+    part does nothing, so a rerun never brings back a value.
+
+    A value goes to the last new name by moving it there (it keeps its row) and to any other new name by a copy, so
+    the only values removed with the old definition are those a new name already had, in bounded commits
+    (:func:`_remove_items_bounded`): a database of any size moves.
+    """
+    for old, news in V81_VALUE_MOVES.items():
+        for pdef in [d for d in db.get_items("parameter_definition") if d["name"] == old]:
+            cls = pdef["entity_class_name"]
+            values = list(db.find_parameter_values(entity_class_name=cls, parameter_definition_name=old))
+            targets = [new for new in news if _pdef_or_none(db, cls, new) is not None]
+            for new in targets:
+                move = new == targets[-1]
+                taken = {(tuple(pv["entity_byname"]), pv["alternative_name"])
+                         for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name=new)}
+                kept = []
+                for pv in values:
+                    key = (tuple(pv["entity_byname"]), pv["alternative_name"])
+                    if key in taken:
+                        kept.append(pv)
+                    elif move:
+                        db.update_parameter_value(id=pv["id"], parameter_definition_name=new)
+                    else:
+                        db.add_parameter_value(entity_class_name=cls, entity_byname=key[0],
+                                               parameter_definition_name=new, alternative_name=key[1],
+                                               value=pv["value"], type=pv["type"])
+                if kept:
+                    print(f"v81: {cls} {new} already had a value where {old} had one; kept the {new} value, the "
+                          f"{old} value was not copied to {new}:")
+                    for pv in kept:
+                        print("  " + _describe_pv(pv))
+            _remove_items_bounded(db, "parameter_definition", [pdef["id"]], f"v81: removed {cls}.{old}")
+
+
+def _v81_list_member_renames(db) -> None:
+    """Part 4 of v81: the value-list members of :data:`V81_LIST_MEMBER_RENAMES` are renamed.
+
+    Each member is renamed in place (its index, so the list order, is kept); when the new name is already a member
+    (a database built from the current template but stamped with an older version), the old member is removed
+    instead (never a duplicate).  Every stored value, and a default, of every definition that uses the list then
+    reads the new name; each renamed stored value is printed.  Idempotent: a rerun finds the new names.
+
+    A stored value and a default refer to their list member, so a value follows the in-place rename on its own and
+    is found by its old name only before it.  A default that still refers to the old member makes every later update
+    of its definition fail ("not in the list"), so it is cleared before the members change and set to the new name
+    after (:func:`_detach_list_defaults`, :func:`_attach_list_defaults`).
+    """
+    for list_name, renames in V81_LIST_MEMBER_RENAMES.items():
+        if not db.get_item("parameter_value_list", name=list_name):
+            continue
+        pdefs = [d for d in db.get_items("parameter_definition") if d["parameter_value_list_name"] == list_name]
+        pending = _detach_list_defaults(db, list_name, renames)
+        renamed = []
+        for pdef in pdefs:
+            for pv in db.find_parameter_values(entity_class_name=pdef["entity_class_name"],
+                                               parameter_definition_name=pdef["name"]):
+                parsed = from_database(pv["value"], pv["type"])
+                if isinstance(parsed, str) and parsed in renames:
+                    renamed.append(f"{pv['entity_class_name']} {'/'.join(pv['entity_byname'])} "
+                                   f"{pdef['name']} [{pv['alternative_name']}]: {parsed} -> {renames[parsed]}")
+        items = db.get_items("list_value", parameter_value_list_name=list_name)
+        members = {x["parsed_value"] for x in items}
+        for item in sorted(items, key=lambda x: x["index"]):
+            new = renames.get(item["parsed_value"])
+            if new is None:
+                continue
+            if new in members:
+                db.remove_item("list_value", item["id"])
+            else:
+                val, typ = to_database(new)
+                db.update_list_value(id=item["id"], value=val, type=typ)
+                members.add(new)
+        for pdef in pdefs:
+            # A value of a removed old member (the new name was already a member) still reads the old name.
+            for pv in db.find_parameter_values(entity_class_name=pdef["entity_class_name"],
+                                               parameter_definition_name=pdef["name"]):
+                parsed = from_database(pv["value"], pv["type"])
+                if isinstance(parsed, str) and parsed in renames:
+                    val, typ = to_database(renames[parsed])
+                    db.update_parameter_value(id=pv["id"], value=val, type=typ)
+        _attach_list_defaults(db, pending)
+        if renamed:
+            print("v81: value names changed: " + ", ".join(renamed))
+
+
+def _v81_descriptions(db) -> None:
+    """Part 5 of v81: the whole descriptions of :func:`_v81_texts`.  No value is rewritten.  Idempotent."""
+    for (cls, name), text in _v81_texts().items():
+        if not db.get_item("entity_class", name=cls):
+            continue
+        pdef = _pdef_or_none(db, cls, name)
+        if pdef is not None and (pdef["description"] or "") != text:
+            db.update_parameter_definition(id=pdef["id"], description=text)
+
+
+def _v81_annuity_marker(db) -> None:
+    """Part 6 of v81: the behaviour-change marker ``annuity_over_payback_time`` (``{"since": 81, "entities": [...]}``)
+    on a database where an entity with the ``lifetime_method`` ``reinvest_choice`` or ``no_reinvestment`` (in some
+    alternative) has a non-zero ``invest_cost``: its investment cost is now the level yearly cost of the plant over
+    its ``lifetime_technical`` (the annuity over ``payback_time``, its present value spread evenly over the
+    lifetime), paid for each year the capacity is in service (before: the annuity in every period that started
+    before the end of the lifetime).  A run names those whose investment cost changes.  No value is rewritten.
+    Idempotent: a rerun finds the marker written.
+    """
+    entities: set[str] = set()
+    for cls in ("unit", "connection", "node"):
+        if not db.get_item("entity_class", name=cls):
+            continue
+        bounded = {pv["entity_byname"][0] for pv in db.find_parameter_values(
+            entity_class_name=cls, parameter_definition_name="lifetime_method")
+            if from_database(pv["value"], pv["type"]) in ("reinvest_choice", "no_reinvestment")}
+        for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name="invest_cost"):
+            name = pv["entity_byname"][0]
+            if name in bounded and any(v != 0.0 for v in _v79_numbers(from_database(pv["value"], pv["type"]))):
+                entities.add(name)
+    if entities:
+        _v77_set_marker(db, "annuity_over_payback_time", json.dumps({"since": 81, "entities": sorted(entities)}))
+
+
+def _v81_end_of_life_marker(db) -> None:
+    """Part 7 of v81: the behaviour-change marker ``end_of_life_closest_seam`` (``{"since": 81, "entities": [...]}``)
+    on a database with an entity whose ``lifetime_method`` is ``reinvest_choice`` or ``no_reinvestment`` (in some
+    alternative): ``end_of_life_method`` now defaults to ``closest_seam``, so an end of life inside a period may be
+    rounded to the start of that period (before: always to the next period start), which moves its capacity in
+    service and fixed cost.  A run names those whose end of life moves and that set no ``end_of_life_method``.  No
+    value is rewritten.  Idempotent: a rerun finds the marker written.
+    """
+    entities: set[str] = set()
+    for cls in ("unit", "connection", "node"):
+        if not db.get_item("entity_class", name=cls):
+            continue
+        entities |= {pv["entity_byname"][0] for pv in db.find_parameter_values(
+            entity_class_name=cls, parameter_definition_name="lifetime_method")
+            if from_database(pv["value"], pv["type"]) in ("reinvest_choice", "no_reinvestment")}
+    if entities:
+        _v77_set_marker(db, "end_of_life_closest_seam", json.dumps({"since": 81, "entities": sorted(entities)}))
+
+
+def _v81_fixed_cost_marker(db) -> None:
+    """Part 8 of v81: the behaviour-change marker ``fixed_cost_per_operating_period`` (``{"since": 81, "entities":
+    [...]}``) on a database where an entity with an ``invest_method`` that allows investment (in some alternative)
+    has a ``fixed_cost`` whose values differ (a period map, in some alternative): new capacity now pays the
+    fixed_cost of each period it operates in (before: that of the period it came online, in every period).  A run
+    names those whose fixed cost changes.  No value is rewritten.  Idempotent: a rerun finds the marker written.
+    """
+    no_invest = {"not_allowed", "retire_period", "retire_total", "retire_no_limit", "retire_period_total"}
+    entities: set[str] = set()
+    for cls in ("unit", "connection", "node"):
+        if not db.get_item("entity_class", name=cls):
+            continue
+        investing = {pv["entity_byname"][0] for pv in db.find_parameter_values(
+            entity_class_name=cls, parameter_definition_name="invest_method")
+            if from_database(pv["value"], pv["type"]) not in no_invest}
+        for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name="fixed_cost"):
+            name = pv["entity_byname"][0]
+            if name in investing and len(set(_v79_numbers(from_database(pv["value"], pv["type"])))) > 1:
+                entities.add(name)
+    if entities:
+        _v77_set_marker(db, "fixed_cost_per_operating_period", json.dumps({"since": 81, "entities": sorted(entities)}))
+
+
+def _v81_annuity_timing_marker(db) -> None:
+    """Part 9 of v81: the behaviour-change marker ``annuity_timing`` (``{"since": 81, "entities": [...]}``) on a
+    database where an entity has a non-zero ``invest_cost`` with an ``invest_method`` that allows investment, or a
+    non-zero ``net_salvage_value`` with one that allows retirement (in some alternative), and a ``discount_rate``
+    that is not 0 in every alternative: the yearly payment of the annuity is now sized for the moment
+    ``inflation_offset_investment`` places it in the year (the annuity times (1 + discount_rate)^(offset − 1)), so
+    the loan is worth the investment cost at the discount_rate; before, at the default offset 0 it was worth the
+    cost times 1 + discount_rate.  A run names those whose annuity changes (offset not 1).  No value is rewritten.
+    Idempotent: a rerun finds the marker written.
+    """
+    no_invest = {"not_allowed", "retire_period", "retire_total", "retire_no_limit", "retire_period_total"}
+    no_retire = {"not_allowed", "invest_period", "invest_total", "invest_no_limit", "invest_period_total"}
+    entities: set[str] = set()
+    for cls in ("unit", "connection", "node"):
+        if not db.get_item("entity_class", name=cls):
+            continue
+        methods: dict[str, set[str]] = {}
+        for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name="invest_method"):
+            methods.setdefault(pv["entity_byname"][0], set()).add(from_database(pv["value"], pv["type"]))
+        rates: dict[str, list[float]] = {}
+        for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name="discount_rate"):
+            rates.setdefault(pv["entity_byname"][0], []).extend(
+                _v79_numbers(from_database(pv["value"], pv["type"])))
+        for param, excluded in (("invest_cost", no_invest), ("net_salvage_value", no_retire)):
+            for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name=param):
+                name = pv["entity_byname"][0]
+                if (methods.get(name, set()) - excluded
+                        and any(v != 0.0 for v in _v79_numbers(from_database(pv["value"], pv["type"])))
+                        and not (rates.get(name) and all(v == 0.0 for v in rates[name]))):
+                    entities.add(name)
+    if entities:
+        _v77_set_marker(db, "annuity_timing", json.dumps({"since": 81, "entities": sorted(entities)}))
+
+
+def _v81_net_salvage_marker(db) -> None:
+    """Part 10 of v81: the behaviour-change marker ``net_salvage_once`` (``{"since": 81, "entities": [...]}``) on a
+    database where an entity has a non-zero ``net_salvage_value`` (in some alternative) and an ``invest_method`` that
+    allows retirement, or one that allows investment together with the ``lifetime_method`` ``reinvest_choice`` or
+    ``no_reinvestment``: a retirement of existing capacity now receives the whole net salvage value at the start of
+    the retirement period (before: its annuity over lifetime_technical, inside the horizon), and the net salvage
+    value at the end of life of new capacity lowers its yearly cost (before: no effect).  A run names those whose
+    costs change.  No value is rewritten.  Idempotent: a rerun finds the marker written.
+    """
+    no_invest = {"not_allowed", "retire_period", "retire_total", "retire_no_limit", "retire_period_total"}
+    no_retire = {"not_allowed", "invest_period", "invest_total", "invest_no_limit", "invest_period_total"}
+    entities: set[str] = set()
+    for cls in ("unit", "connection", "node"):
+        if not db.get_item("entity_class", name=cls):
+            continue
+        methods: dict[str, set[str]] = {}
+        for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name="invest_method"):
+            methods.setdefault(pv["entity_byname"][0], set()).add(from_database(pv["value"], pv["type"]))
+        bounded = {pv["entity_byname"][0] for pv in db.find_parameter_values(
+            entity_class_name=cls, parameter_definition_name="lifetime_method")
+            if from_database(pv["value"], pv["type"]) in ("reinvest_choice", "no_reinvestment")}
+        for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name="net_salvage_value"):
+            name = pv["entity_byname"][0]
+            own = methods.get(name, set())
+            if (any(v != 0.0 for v in _v79_numbers(from_database(pv["value"], pv["type"])))
+                    and (own - no_retire or (name in bounded and own - no_invest))):
+                entities.add(name)
+    if entities:
+        _v77_set_marker(db, "net_salvage_once", json.dumps({"since": 81, "entities": sorted(entities)}))
+
+
+def _v81_built_retirable_marker(db) -> None:
+    """Part 11 of v81: the behaviour-change marker ``built_capacity_retirable`` (``{"since": 81, "entities":
+    [...]}``) on a database where an entity has an ``invest_method`` (in some alternative) that allows both
+    investment and retirement and the ``lifetime_method`` ``reinvest_choice`` or ``no_reinvestment``: the capacity
+    the model builds can now be retired too (before: only the existing capacity).  A run names those with a
+    retirement option of model-built capacity.  No value is rewritten.  Idempotent: a rerun finds the marker
+    written.
+    """
+    no_invest = {"not_allowed", "retire_period", "retire_total", "retire_no_limit", "retire_period_total"}
+    no_retire = {"not_allowed", "invest_period", "invest_total", "invest_no_limit", "invest_period_total"}
+    entities: set[str] = set()
+    for cls in ("unit", "connection", "node"):
+        if not db.get_item("entity_class", name=cls):
+            continue
+        bounded = {pv["entity_byname"][0] for pv in db.find_parameter_values(
+            entity_class_name=cls, parameter_definition_name="lifetime_method")
+            if from_database(pv["value"], pv["type"]) in ("reinvest_choice", "no_reinvestment")}
+        for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name="invest_method"):
+            method = from_database(pv["value"], pv["type"])
+            if pv["entity_byname"][0] in bounded and method not in no_invest and method not in no_retire:
+                entities.add(pv["entity_byname"][0])
+    if entities:
+        _v77_set_marker(db, "built_capacity_retirable", json.dumps({"since": 81, "entities": sorted(entities)}))
+
+
+def _migrate_v81_schema_batch(db) -> None:
+    """All schema changes of database version 81 (v80 -> v81), in one step.
+
+    1. The value lists of :data:`V81_NEW_VALUE_LISTS` and their members (:func:`_v81_value_lists`):
+       ``end_of_life_methods`` (closest_seam, previous_seam, next_seam).
+    2. ``lifetime_technical`` and ``payback_time`` (group ``investment``) and ``net_salvage_value`` (group
+       ``retirement``) on unit, connection and node: a constant or a period map, no default; on the same
+       classes (group ``retirement``) ``age_at_model_start`` and ``build_year`` (a constant, no default) and
+       ``end_of_life_method`` (a choice of ``end_of_life_methods``, default ``closest_seam``); ``model.start_year``
+       (group ``model``, a constant, no default) (:func:`_v81_definitions_part`).
+    3. ``lifetime`` values go to ``lifetime_technical`` (how long the capacity operates); ``payback_time`` (the
+       years of the annuity) gets no value: without one an entity pays back over its ``lifetime_technical``.
+       ``salvage_value`` values go to ``net_salvage_value``; the old definitions are removed
+       (:func:`_v81_move_values`).  A database migrated to 81 by an earlier development build of this step, which
+       also copied each ``lifetime`` value to ``payback_time``, keeps that copy (a value move never reaches a
+       database already at 81); the copy equals the fallback, and both are read at the period the capacity comes
+       online (also after a construction lead time), so the model is the same.
+    4. The ``lifetime_method`` value ``no_investment`` is ``no_reinvestment``, in the value list and in every stored
+       value (:func:`_v81_list_member_renames`).
+    5. The descriptions of the new definitions and of ``lifetime_method``, ``discount_rate``, ``invest_cost``,
+       ``node.unit_of_measure`` and ``group.penalty_capacity_margin`` (:func:`_v81_descriptions`).
+    6. The behaviour-change marker ``annuity_over_payback_time`` on the entities whose investment cost is now the
+       level yearly cost of the lifetime, paid for each year in service (:func:`_v81_annuity_marker`).
+    7. The behaviour-change marker ``end_of_life_closest_seam`` on the entities with ``lifetime_method``
+       ``reinvest_choice`` / ``no_reinvestment``, whose end of life is now rounded to the closest period start
+       (:func:`_v81_end_of_life_marker`).
+    8. The behaviour-change marker ``fixed_cost_per_operating_period`` on the investing entities whose
+       ``fixed_cost`` differs between periods: new capacity now pays the fixed cost of each period it operates in
+       (:func:`_v81_fixed_cost_marker`).
+    9. The behaviour-change marker ``annuity_timing`` on the entities with an investment or salvage annuity: its
+       yearly payment is now sized for where inflation_offset_investment places it in the year
+       (:func:`_v81_annuity_timing_marker`).
+    10. The behaviour-change marker ``net_salvage_once`` on the entities with a net_salvage_value that a retirement
+        or a new plant's yearly cost now counts differently (:func:`_v81_net_salvage_marker`).
+    11. The behaviour-change marker ``built_capacity_retirable`` on the reinvest_choice / no_reinvestment entities
+        that may invest and retire: the capacity the model builds can now be retired (:func:`_v81_built_retirable_marker`).
+
+    Values change only by the moves of part 3 and the renames of part 4.  Each part is idempotent, so a rerun of the
+    step changes nothing.
+    """
+    _v81_value_lists(db)
+    _v81_definitions_part(db)
+    _v81_move_values(db)
+    _v81_list_member_renames(db)
+    _v81_descriptions(db)
+    _v81_annuity_marker(db)
+    _v81_end_of_life_marker(db)
+    _v81_fixed_cost_marker(db)
+    _v81_annuity_timing_marker(db)
+    _v81_net_salvage_marker(db)
+    _v81_built_retirable_marker(db)
+    _commit_step(db, "v81: lifetime is lifetime_technical (payback_time added, no value), salvage_value is "
+                     "net_salvage_value, the lifetime_method value no_investment is no_reinvestment")
+
+
+# ─── v82: social_discount_rate and the discount offsets ───
+#
+# The step renames the model's discount parameters and rewrites the descriptions that name them.  While 82 is the
+# current data version, new schema entries go to the v82 tables; the v81 tables are frozen.  A database already at 81
+# from a development build of v81 gets, from the v81 refresh, the v81 definitions and list members it lacks and the
+# current pair in place of a superseded shipped one, then the whole v82 step; the v81 behaviour-change markers and a
+# v81 description that is not a superseded pair are not written to it.
+
+#: v82: ``model`` parameters renamed (old name -> new name).  Each keeps its id, so its values, default, types and
+#: group (published for the assistant's old-name translation).
+V82_PARAMETER_RENAMES: dict[str, str] = {
+    "inflation_rate": "social_discount_rate",
+    "inflation_offset_investment": "discount_offset_investment",
+    "inflation_offset_operations": "discount_offset_operations",
+}
+#: v82: the parameters of a life extension, added on unit, connection and node (types ``float`` and ``1d_map``, group
+#: ``investment``, no default).
+V82_LIFE_EXTENSION: tuple[str, ...] = ("life_extension_cost", "life_extension_years")
+#: v82: the default a definition of :func:`_v82_definitions` gets when the step adds it (a renamed one keeps its own).
+#: ``social_discount_rate`` has none: without a value the engine uses 0; a life extension has none: it is opt-in.
+V82_DEFAULTS: dict[str, float | None] = {
+    "social_discount_rate": None,
+    "discount_offset_investment": 0.0,
+    "discount_offset_operations": 0.5,
+    **{name: None for name in V82_LIFE_EXTENSION},
+}
+
+
+def _v82_discount_rate_text() -> str:
+    """The description of ``discount_rate`` on unit, connection and node from v82 on."""
+    return ("[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and "
+            "risk premium for this technology. In the same terms as the cost inputs: a real rate for inputs in real "
+            "prices, a nominal rate for nominal inputs. Not the model's social_discount_rate, which weighs costs over "
+            "time. Used to annualize investment costs over the payback time, sized so that the yearly payments are "
+            "worth invest_cost at this rate when the capacity starts to operate: annuity = invest_cost x r / (1 - "
+            "(1 + r)^-payback_time) x (1 + r)^(discount_offset_investment - 1). 0 gives the straight-line annuity "
+            "invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.")
+
+
+def _v82_texts() -> dict[tuple[str, str], str]:
+    """The whole descriptions v82 writes: those of the renamed definitions and of the definitions whose text names
+    one of them."""
+    t: dict[tuple[str, str], str] = {
+        ("model", "social_discount_rate"): (
+            "[-] e.g. 0.03 means 3% per year. The model's time discount rate: a cost or income is weighed by 1 / "
+            "(1 + social_discount_rate)^t, with t the years from the start of the run to the moment it falls (its "
+            "year plus discount_offset_investment or discount_offset_operations). Give it in the same terms as the "
+            "cost inputs. 0 (default): no time preference; a cost in a later period weighs the same as now (with "
+            "real-price inputs, inflation is already in the prices). Above 0: later costs and incomes weigh less "
+            "(the planner's preference for now over later); with nominal inputs, use the combined rate "
+            "(1 + inflation) x (1 + social rate) - 1. Not the discount_rate of a unit, connection or node: that is "
+            "the investor's rate (WACC), which turns invest_cost into yearly payments. Constant."),
+        ("model", "discount_offset_investment"): (
+            "[years] Where in each year the yearly investment payments and the yearly salvage credits fall, "
+            "counted from the start of the year, between 0 and 1: 0 (default) the start, 1 the end. The loan over "
+            "payback_time is sized so that, at the entity's discount_rate, its payments are worth invest_cost when "
+            "the capacity starts to operate, at any offset; the salvage credits are sized the same way. The offset "
+            "moves the payments and credits that social_discount_rate weighs. No effect when both rates are 0. "
+            "Constant."),
+        ("model", "discount_offset_operations"): (
+            "[years] Where in each year operating and fixed costs are weighed by social_discount_rate, counted from "
+            "the start of the year, between 0 and 1: 0.5 (default) the middle of the year, standing for costs "
+            "spread over the year. No effect when social_discount_rate is 0. Constant."),
+    }
+    t.update(_v82_storage_texts())
+    for cls, (cap, what, per) in _V81_CAPACITY.items():
+        t[(cls, "discount_rate")] = _v82_discount_rate_text()
+        t[(cls, "payback_time")] = _v82_shipped_payback_time_text(cap).replace(
+            "With reinvest_automatic the annuity is paid in every year to the end of the model horizon.",
+            "With reinvest_automatic each plant (the first one and each replacement) is priced the same way, at the "
+            "values of the period it comes online.")
+        t.update(_v82_replacement_texts(cls, cap, what, per))
+        t.update(_v82_life_extension_texts(cls, cap, per))
+    return t
+
+
+def _v82_storage_texts() -> dict[tuple[str, str], str]:
+    """The descriptions of ``storage_binding_method`` and ``storage_nested_fix_method``: v82 closes cyclic storage
+    over the rolls of a rolling solve, pins the representative-period chain ends, matches a forward chain's end to
+    a free start, and makes the nested fixes cumulative (fix_usage) and interpolated (fix_quantity)."""
+    return {
+        ("node", "storage_binding_method"): (
+            "[choice] How the storage state is kept over discontinuous timelines and from roll to roll. "
+            "'bind_within_timeblock' cycles the state within each timeblock; 'bind_within_period' cycles within each "
+            "FlexTool period (blocks chain inside the period); 'bind_within_solve' cycles over the whole solve; "
+            "'bind_forward_only' (default) chains the state forward with no closure (where the solve chooses the "
+            "start, the model ends at least at it). 'bind_within_solve_blended_weights', "
+            "'bind_within_period_blended_weights' and 'bind_forward_only_blended_weights' are the representative-"
+            "period variants: the cycle or chain runs on the base-period chain of the chronological level, where "
+            "storage_state_start, storage_state_end and use_reference_value act; in a solve whose timesets have no "
+            "representative_period_weights a blended method is used as its plain variant. 'bind_intraperiod_blocks' "
+            "is an aggregation method: the state is held constant within each block, the block-total flow is "
+            "balanced and the blocks of a period loop. In a rolling_window solve without representative periods a "
+            "cycle is closed over the rolls: a roll that starts inside the solve or period continues it from the "
+            "level realised by the previous roll and ends its part at least at that level, and the roll(s) holding "
+            "its end end it at the level it started from; such a solve uses bind_within_timeblock as "
+            "bind_within_period and needs a continuous timeline (a period with several timeblocks is a "
+            "configuration error). A rolling solve on representative periods is a configuration error, and so is "
+            "bind_forward_only (also the default), bind_within_solve, bind_within_period or bind_intraperiod_blocks "
+            "in a solve on representative periods (use a blended method or bind_within_timeblock). "
+            "storage_start_end_method fixes the start and the end of the whole model."),
+        ("node", "storage_nested_fix_method"): (
+            "[choice] Used in nested solve sequences: makes this storage a long-term storage whose planned level the "
+            "upper-level solve hands to the lower-level solves it contains (at the steps of its "
+            "fix_storage_periods). fix_quantity: the lower solve's state at the end of its horizon is the upper "
+            "level at that moment (interpolated inside an upper step). fix_usage: the lower solve's net use of the "
+            "storage is at most the upper solve's, counted from the start of the period (less what its earlier "
+            "rolls used; an upper step that the horizon cuts counts pro rata). fix_price: the lower solve values "
+            "its end state at the upper solve's price; requires storage_state_reference_price. A lower solve whose "
+            "end is fixed this way starts from the upper solve's planned level where neither a realised level nor "
+            "fix_start applies."),
+    }
+
+
+def _v82_life_extension_texts(cls: str, cap: str, per: str) -> dict[tuple[str, str], str]:
+    """The descriptions of :data:`V82_LIFE_EXTENSION` on the class *cls* whose capacity is *cap* (priced per
+    *per*)."""
+    both = "Give both life_extension_cost and life_extension_years, or neither."
+    return {
+        (cls, "life_extension_cost"): (
+            f"[CUR/{per}] One-off cost of keeping {cap} in service for life_extension_years beyond the end of its "
+            "lifetime_technical, paid when the extension starts: at the end of life (rounded by end_of_life_method). "
+            f"The model decides how much of the {cap} still in service at its end of life to extend, at most all of "
+            "it; no invest_method is needed, but the period the extension starts in must be an invest_period of the "
+            "solve. The extension is priced as a plant of its own: life_extension_cost plus the net_salvage_value "
+            "the capacity would have received at its end of life (given up: it stays in the plant), financed at "
+            "discount_rate over life_extension_years, less the net_salvage_value received at the extended end of "
+            "life, paid as a level yearly cost for each year in service, with the fixed_cost of each year. With "
+            "lifetime_method reinvest_choice it competes with new capacity; with no_reinvestment it is the only "
+            "way to keep the capacity after its end of life. Not with reinvest_automatic, whose capacity is "
+            "replaced at its end of life (an input error). An extension is never extended again. Extended capacity "
+            "can be retired when invest_method allows retirement, and counts as capacity, not as investment, in "
+            f"the investment limits. {both} Constant or period: the value of the period the extension starts in is "
+            "used."),
+        (cls, "life_extension_years"): (
+            f"[years] How long {cap} can be kept in service beyond the end of its lifetime_technical for "
+            "life_extension_cost (see there): the extended end of life is the end of life plus "
+            "life_extension_years, rounded by end_of_life_method; the extension is financed over these years at "
+            f"discount_rate. {both} Must be above 0. Constant or period: the value of the period the extension "
+            "starts in is used."),
+    }
+
+
+def _v82_shipped_payback_time_text(cap: str) -> str:
+    """The description of ``payback_time`` a development build of v82 shipped (superseded, :func:`_v82_superseded`)."""
+    return _v81_payback_time_text(cap, "changes nothing (a whole number of years)").replace(
+        "inflation_rate", "social_discount_rate")
+
+
+def _v82_replacement_texts(cls: str, cap: str, what: str, per: str) -> dict[tuple[str, str], str]:
+    """The descriptions v82 writes for the replacement of reinvest_automatic capacity at its end of life, on the
+    class *cls* whose capacity is *cap* (of a *what*, priced per *per*)."""
+    v81 = _v81_texts()
+    return {
+        (cls, "lifetime_method"): (
+            "[choice] What happens when capacity reaches the end of its lifetime_technical. reinvest_automatic "
+            "(default): the plant is replaced, without a model choice, by a plant at the invest_cost, discount_rate, "
+            "payback_time, lifetime_technical and net_salvage_value of the period the replacement comes online, and "
+            "so on to the end of the model horizon (existing capacity too, free without an invest_cost); each plant "
+            "pays its own level yearly cost for its years in service, and retiring the capacity avoids the "
+            "replacements still to come. reinvest_choice: the capacity retires at the end of its lifetime_technical "
+            "and the model decides how much new capacity to build. no_reinvestment: the capacity retires at the end "
+            "of its lifetime_technical; investment is possible only during the first technical lifetime from the "
+            "model start, and the capacity is not rebuilt. The investment cost of a plant is paid as a level yearly "
+            "cost of its lifetime_technical (the annuity over payback_time spread over it, its net_salvage_value "
+            "netted in) for each year it is in service."),
+        (cls, "lifetime_technical"): v81[(cls, "lifetime_technical")].replace(
+            f"lifetime_method: reinvest_automatic keeps the {cap} to the end of the model horizon, reinvest_choice",
+            f"lifetime_method: reinvest_automatic replaces the {cap} (to the end of the model horizon), "
+            "reinvest_choice"),
+        (cls, "invest_cost"): v81[(cls, "invest_cost")].replace(
+            "(every year to the end of the model horizon with reinvest_automatic)",
+            "(with reinvest_automatic: each replacement at the invest_cost of the period it comes online, for its "
+            "years in service)"),
+        (cls, "age_at_model_start"): v81[(cls, "age_at_model_start")].replace(
+            f"with lifetime_method reinvest_automatic the {cap} is kept and the age has no effect.",
+            f"with lifetime_method reinvest_automatic the existing {cap} reaches its end of life (its age less the "
+            "replacements before the model start) and is then replaced."),
+        (cls, "net_salvage_value"): v81[(cls, "net_salvage_value")].replace(
+            "With lifetime_method reinvest_choice or no_reinvestment the value at the end of life is a level yearly "
+            "credit over the lifetime at discount_rate:",
+            "The value at the end of life is a level yearly credit over the lifetime at discount_rate (with "
+            "reinvest_automatic for each plant of the chain; a replacement without an invest_cost keeps it):"),
+        (cls, "end_of_life_method"): v81[(cls, "end_of_life_method")].replace(
+            "Used with lifetime_method reinvest_choice / no_reinvestment.",
+            "Used with every lifetime_method (with reinvest_automatic it sets when each plant is replaced)."),
+    }
+
+
+def _v82_shipped_life_extension_cost_text(cap: str, per: str) -> str:
+    """The description of ``life_extension_cost`` a development build of v82 shipped, when a life extension was
+    also offered under reinvest_automatic (superseded, :func:`_v82_superseded`)."""
+    return (f"[CUR/{per}] One-off cost of keeping {cap} in service for life_extension_years beyond the end of its "
+            "lifetime_technical, paid when the extension starts: at the end of life (rounded by end_of_life_method). "
+            f"The model decides how much of the {cap} still in service at its end of life to extend, at most all of "
+            "it; no invest_method is needed, but the period the extension starts in must be an invest_period of the "
+            "solve. The extension is priced as a plant of its own: life_extension_cost plus the net_salvage_value "
+            "the capacity would have received at its end of life (given up: it stays in the plant), financed at "
+            "discount_rate over life_extension_years, less the net_salvage_value received at the extended end of "
+            "life, paid as a level yearly cost for each year in service, with the fixed_cost of each year. With "
+            "lifetime_method reinvest_choice it competes with new capacity, with no_reinvestment it is the only "
+            "way to keep the capacity after its end of life, and with reinvest_automatic it competes with the "
+            "replacement: the extended capacity is replaced at the extended end of life instead (each end of life "
+            "of the chain can be extended). An extension, and the replacements of an extension, are never extended "
+            "again. Extended capacity can be retired when invest_method allows retirement, and counts as capacity, "
+            "not as investment, in the investment limits. Give both life_extension_cost and life_extension_years, "
+            "or neither. Constant or period: the value of the period the extension starts in is used.")
+
+
+def _v82_superseded() -> dict[tuple[str, str], tuple[str | None, str]]:
+    """``{(class, name): (default, description)}``: the default and description pairs of v82 definitions that a
+    development build of v82 shipped and that have since been superseded (the current description is in
+    :func:`_v82_texts`; the default stays).  A database at 82 that has exactly such a pair gets the current
+    description (:func:`_refresh_head_schema`)."""
+    out: dict[tuple[str, str], tuple[str | None, str]] = {("model", "discount_offset_operations"): (
+        0.5, "[years] Where in each year operating and fixed costs are weighed by social_discount_rate, counted from "
+             "the start of the year: 0.5 (default) the middle of the year, standing for costs spread over the year. "
+             "No effect when social_discount_rate is 0. Constant.")}
+    # The descriptions of the replacement of reinvest_automatic capacity: a database at 82 has the v81 text (the
+    # shipped v82 text of payback_time).
+    v81 = _v81_texts()
+    defaults = {"lifetime_method": "reinvest_automatic", "end_of_life_method": "closest_seam"}
+    for cls, (cap, what, per) in _V81_CAPACITY.items():
+        for _cls, name in _v82_replacement_texts(cls, cap, what, per):
+            out[(cls, name)] = (defaults.get(name), v81[(cls, name)])
+        out[(cls, "payback_time")] = (None, _v82_shipped_payback_time_text(cap))
+        out[(cls, "life_extension_cost")] = (None, _v82_shipped_life_extension_cost_text(cap, per))
+    return out
+
+
+def _v82_definitions() -> dict[tuple[str, str], dict]:
+    """The definitions v82 adds, with the fields it gives them: the ``model`` definitions of
+    :data:`V82_PARAMETER_RENAMES` (new names; a constant, ``float``, group ``model``) and those of
+    :data:`V82_LIFE_EXTENSION` on unit, connection and node (``float`` and ``1d_map``, group ``investment``), each
+    with its description.  The default is not among them: a renamed definition keeps its own
+    (:func:`_v82_definitions_part`)."""
+    texts = _v82_texts()
+    out = {("model", new): {"parameter_type_list": ("float",), "parameter_group_name": "model",
+                            "description": texts[("model", new)]}
+           for new in V82_PARAMETER_RENAMES.values()}
+    for cls in _V81_CAPACITY:
+        for name in V82_LIFE_EXTENSION:
+            out[(cls, name)] = {"parameter_type_list": ("float", "1d_map"), "parameter_group_name": "investment",
+                                "description": texts[(cls, name)]}
+    return out
+
+
+def _v82_rename_definitions(db) -> None:
+    """Part 2 of v82: each old name of :data:`V82_PARAMETER_RENAMES` becomes its new name.
+
+    Without the new definition the old one is renamed in place: it keeps its id, so its values (every alternative,
+    their bytes and types), its default, its types and its group; no value row is touched.  When both exist (the
+    user added the new name, a template was re-applied, or old-named data was imported into a database at 81), each
+    old value moves to the new name where that alternative has no value under it yet, a value already there is kept
+    and the old one is printed, and the old definition is removed (:func:`_remove_items_bounded`).  Without the old
+    definition the part does nothing, so a rerun changes nothing.
+    """
+    if not db.get_item("entity_class", name="model"):
+        return
+    for old, new in V82_PARAMETER_RENAMES.items():
+        old_def = _pdef_or_none(db, "model", old)
+        if old_def is None:
+            continue
+        if _pdef_or_none(db, "model", new) is None:
+            db.update_parameter_definition(id=old_def["id"], name=new)
+            continue
+        taken = {(tuple(pv["entity_byname"]), pv["alternative_name"])
+                 for pv in db.find_parameter_values(entity_class_name="model", parameter_definition_name=new)}
+        kept = []
+        for pv in list(db.find_parameter_values(entity_class_name="model", parameter_definition_name=old)):
+            if (tuple(pv["entity_byname"]), pv["alternative_name"]) in taken:
+                kept.append(pv)
+            else:
+                db.update_parameter_value(id=pv["id"], parameter_definition_name=new)
+        if kept:
+            print(f"v82: model {new} already had a value where {old} had one; kept the {new} value, the {old} "
+                  f"value was not moved to {new}:")
+            for pv in kept:
+                print("  " + _describe_pv(pv))
+        _remove_items_bounded(db, "parameter_definition", [old_def["id"]], f"v82: removed model.{old}")
+
+
+def _v82_definitions_part(db, *, update: bool = True) -> None:
+    """Part 3 of v82: each definition of :func:`_v82_definitions` on an existing class is added (with the default of
+    :data:`V82_DEFAULTS`, and its parameter group), or (``update``) given its types, group and description.  A
+    default is never compared or written on an existing definition (a renamed one keeps its own, also a stored empty
+    one).  ``update=False`` only adds the missing ones.  Idempotent."""
+    for (cls, name), fields in _v82_definitions().items():
+        if not db.get_item("entity_class", name=cls):
+            continue
+        _ensure_parameter_group(db, fields["parameter_group_name"], *_V81_GROUPS[fields["parameter_group_name"]])
+        pdef = _pdef_or_none(db, cls, name)
+        if pdef is None:
+            default = V82_DEFAULTS[name]
+            extra = {} if default is None else dict(zip(("default_value", "default_type"), to_database(default)))
+            db.add_parameter_definition(entity_class_name=cls, name=name, **fields, **extra)
+        elif update and any((tuple(pdef[k] or ()) if k == "parameter_type_list" else (pdef[k] or "")) != v
+                            for k, v in fields.items()):
+            db.update_parameter_definition(id=pdef["id"], **fields)
+
+
+def _v82_descriptions(db) -> None:
+    """Part 4 of v82: the whole descriptions of :func:`_v82_texts`.  No value is rewritten.  Idempotent."""
+    for (cls, name), text in _v82_texts().items():
+        if not db.get_item("entity_class", name=cls):
+            continue
+        pdef = _pdef_or_none(db, cls, name)
+        if pdef is not None and (pdef["description"] or "") != text:
+            db.update_parameter_definition(id=pdef["id"], description=text)
+
+
+def _v82_automatic_replacement_marker(db) -> None:
+    """Part 5 of v82: the behaviour-change marker ``automatic_replacement_cost`` (``{"since": 82, "entities":
+    [...]}``) on a database where a unit, connection or node with ``lifetime_method`` ``reinvest_automatic`` (in some
+    alternative, or without one: the default) and a ``lifetime_technical`` either may invest and has a period map
+    of ``invest_cost``, ``discount_rate``, ``lifetime_technical`` or ``payback_time``, a ``payback_time`` or a
+    non-zero ``net_salvage_value``, or may retire: its capacity is now replaced at the end of its life at the
+    values of the period the replacement comes online, and a retirement avoids the replacements still to come.  A
+    run names those whose costs change.  No value is rewritten.  Idempotent: a rerun finds the marker written.
+    """
+    no_invest = {"not_allowed", "retire_period", "retire_total", "retire_no_limit", "retire_period_total"}
+    no_retire = {"not_allowed", "invest_period", "invest_total", "invest_no_limit", "invest_period_total"}
+    entities: set[str] = set()
+    for cls in ("unit", "connection", "node"):
+        if not db.get_item("entity_class", name=cls):
+            continue
+
+        def values(name: str) -> list[tuple[str, object]]:
+            return [(pv["entity_byname"][0], from_database(pv["value"], pv["type"]))
+                    for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name=name)]
+
+        methods = values("lifetime_method")
+        bounded_only = {e for e, _v in methods} - {e for e, v in methods if v == "reinvest_automatic"}
+        with_life = {e for e, _v in values("lifetime_technical")} - bounded_only
+        invest: dict[str, set[str]] = {}
+        for e, v in values("invest_method"):
+            invest.setdefault(e, set()).add(v)
+        priced: set[str] = {e for e, _v in values("payback_time")}
+        for name in ("invest_cost", "discount_rate", "lifetime_technical"):
+            priced |= {e for e, v in values(name) if isinstance(v, Map)}
+        priced |= {e for e, v in values("net_salvage_value") if any(x != 0.0 for x in _v79_numbers(v))}
+        for e in with_life:
+            own = invest.get(e, set())
+            if (own - no_invest and e in priced) or own - no_retire:
+                entities.add(e)
+    if entities:
+        _v77_set_marker(db, "automatic_replacement_cost", json.dumps({"since": 82, "entities": sorted(entities)}))
+
+
+def _v82_rolling_storage_markers(db) -> None:
+    """Part 6 of v82: the behaviour-change markers of the storage carry in rolling and nested solves.  No value is
+    rewritten.  Idempotent: a rerun finds the markers written.
+
+    * ``rolling_cyclic_storage_anchored`` (``{"since": 82, "nodes": [...]}``) when a solve has ``solve_mode``
+      ``rolling_window`` and a storage node has a cyclic ``storage_binding_method`` (``bind_within_solve``,
+      ``bind_within_period``, their ``_blended_weights`` variants, ``bind_within_timeblock`` or
+      ``bind_intraperiod_blocks``, in some alternative): such a node now continues each roll from the previous roll
+      (per period or timeblock where a roll starts inside one), ends a roll's part at least at its start level and
+      closes the solve, period or timeblock at the level it started from.
+    * ``nested_storage_start_borrowed`` (``{"since": 82, "nodes": [...]}``) when a solve has ``contains_solves``
+      and a node has a ``storage_nested_fix_method``: its first lower-level solve can now start from the upper
+      solve's planned level.
+    * ``nested_storage_fix_cumulative`` (``{"since": 82, "nodes": [...]}``) when a solve has ``contains_solves`` and
+      a node has ``storage_nested_fix_method`` ``fix_usage`` or ``fix_quantity``: the usage cap is cumulative and pro
+      rata, and the quantity target is interpolated inside an upper step.
+
+    The markers are broader than the changes (the migration does not read which alternatives a scenario
+    combines); a run names the nodes whose rows change.
+    """
+    if not (db.get_item("entity_class", name="solve") and db.get_item("entity_class", name="node")):
+        return
+
+    def values(cls: str, name: str) -> list[tuple[str, object]]:
+        return [(pv["entity_byname"][0], from_database(pv["value"], pv["type"]))
+                for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name=name)]
+
+    storage = {n for n, v in values("node", "node_type") if v == "storage"}
+    if any(v == "rolling_window" for _s, v in values("solve", "solve_mode")):
+        cyclic = ("bind_within_solve", "bind_within_solve_blended_weights", "bind_within_period",
+                  "bind_within_period_blended_weights", "bind_within_timeblock", "bind_intraperiod_blocks")
+        nodes = sorted({n for n, v in values("node", "storage_binding_method") if v in cyclic} & storage)
+        if nodes:
+            _v77_set_marker(db, "rolling_cyclic_storage_anchored", json.dumps({"since": 82, "nodes": nodes}))
+    if any(v is not None for _s, v in values("solve", "contains_solves")):
+        fix = values("node", "storage_nested_fix_method")
+        nodes = sorted({n for n, v in fix if v} & storage)
+        if nodes:
+            _v77_set_marker(db, "nested_storage_start_borrowed", json.dumps({"since": 82, "nodes": nodes}))
+        nodes = sorted({n for n, v in fix if v in ("fix_usage", "fix_quantity")} & storage)
+        if nodes:
+            _v77_set_marker(db, "nested_storage_fix_cumulative", json.dumps({"since": 82, "nodes": nodes}))
+
+
+def _v82_storage_accounting_markers(db) -> None:
+    """Part 7 of v82: the behaviour-change markers of the storage start and end accounting.  No value is rewritten.
+    Idempotent: a rerun finds the markers written.
+
+    * ``rp_storage_chain_pinned`` (``{"since": 82, "nodes": [...]}``) when a timeset has
+      ``representative_period_weights`` and a storage node has a ``*_blended_weights`` ``storage_binding_method``
+      (in some alternative): storage_state_start / storage_state_end / use_reference_value now set the level at the
+      ends of its base-period chain, and a forward chain's start is within the capacity.
+    * ``storage_end_matches_start`` (``{"since": 82, "nodes": [...]}``) when a storage node chains forward
+      (``storage_binding_method`` bind_forward_only or bind_forward_only_blended_weights in some alternative, or no
+      value: the default bind_forward_only): where the solve decides its start, the model now ends at least at it.
+    * ``storage_reference_start`` (``{"since": 82, "nodes": [...]}``) when a storage node has
+      ``storage_solve_horizon_method`` use_reference_value and storage_start_end_method fix_nothing (in some
+      alternative; fix_end turns the reference off): it now starts from the reference value instead of a free
+      level.
+
+    The markers are broader than the changes (the migration does not read which alternatives a scenario combines,
+    nor which solves invest); a run names the nodes whose rows change.
+    """
+    if not db.get_item("entity_class", name="node"):
+        return
+
+    def values(cls: str, name: str) -> list[tuple[str, object]]:
+        return [(pv["entity_byname"][0], from_database(pv["value"], pv["type"]))
+                for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name=name)]
+
+    storage = {n for n, v in values("node", "node_type") if v == "storage"}
+    if not storage:
+        return
+    methods = values("node", "storage_binding_method")
+    if db.get_item("entity_class", name="timeset") and any(
+            v is not None for _t, v in values("timeset", "representative_period_weights")):
+        nodes = sorted({n for n, v in methods if isinstance(v, str) and v.endswith("_blended_weights")} & storage)
+        if nodes:
+            _v77_set_marker(db, "rp_storage_chain_pinned", json.dumps({"since": 82, "nodes": nodes}))
+    with_method = {n for n, _v in methods}
+    forward = {n for n, v in methods if v in ("bind_forward_only", "bind_forward_only_blended_weights")}
+    nodes = sorted((forward | (storage - with_method)) & storage)
+    if nodes:
+        _v77_set_marker(db, "storage_end_matches_start", json.dumps({"since": 82, "nodes": nodes}))
+    # Every value of each node (one per alternative): a node that is fix_nothing in some alternative, or has no
+    # value in some (the default fix_nothing), qualifies whichever alternative comes last.
+    start_end: dict[str, set] = {}
+    for n, v in values("node", "storage_start_end_method"):
+        start_end.setdefault(n, set()).add(v)
+    reference = {n for n, v in values("node", "storage_solve_horizon_method") if v == "use_reference_value"}
+    nodes = sorted(n for n in reference & storage
+                   if n not in start_end or "fix_nothing" in start_end[n] or None in start_end[n])
+    if nodes:
+        _v77_set_marker(db, "storage_reference_start", json.dumps({"since": 82, "nodes": nodes}))
+
+
+def _migrate_v82_schema_batch(db) -> None:
+    """All schema changes of database version 82 (v81 -> v82), in one step.
+
+    1. The v81 refresh (:func:`_v81_refresh`): a database migrated to 81 by a development build of v81 gets the v81
+       definitions and list members it lacks and the current pair in place of a superseded shipped one (with the
+       v82 descriptions); after a full v81 it changes nothing.
+    2. ``model.inflation_rate`` is ``social_discount_rate``, ``inflation_offset_investment`` is
+       ``discount_offset_investment`` and ``inflation_offset_operations`` is ``discount_offset_operations``, with
+       every value and the default (:func:`_v82_rename_definitions`).
+    3. The three definitions: a constant, group ``model``, the description; a missing one is added with its shipped
+       default (:func:`_v82_definitions_part`).  With them, ``life_extension_cost`` and ``life_extension_years`` on
+       unit, connection and node (a constant or a period map, group ``investment``, no default): capacity at its end
+       of life can be kept in service longer for a one-off cost.
+    4. The descriptions of the three and of ``discount_rate`` and ``payback_time`` (unit, connection, node), which
+       name them, and of ``lifetime_method``, ``lifetime_technical``, ``invest_cost``, ``age_at_model_start``,
+       ``net_salvage_value`` and ``end_of_life_method``, which say what reinvest_automatic does: the capacity is
+       replaced at the end of its life, and of ``storage_binding_method`` and ``storage_nested_fix_method``, which
+       say how storage closes over rolls and nested solves (:func:`_v82_descriptions`).
+    5. The behaviour-change marker ``automatic_replacement_cost`` on the reinvest_automatic entities with a
+       lifetime_technical whose investment cost or retirement now follows the replacements of their capacity
+       (:func:`_v82_automatic_replacement_marker`).
+    6. The behaviour-change markers ``rolling_cyclic_storage_anchored``, ``nested_storage_start_borrowed`` and
+       ``nested_storage_fix_cumulative`` of the storage carry in rolling and nested solves
+       (:func:`_v82_rolling_storage_markers`).
+    7. The behaviour-change markers ``rp_storage_chain_pinned``, ``storage_end_matches_start`` and
+       ``storage_reference_start`` of the storage start and end accounting (:func:`_v82_storage_accounting_markers`).
+
+    Values change only by the renames of part 2 (they keep their rows; a collision moves them).  Each part is
+    idempotent, so a rerun of the step changes nothing.
+    """
+    _v81_refresh(db, _v82_texts())
+    _v82_rename_definitions(db)
+    _v82_definitions_part(db)
+    _v82_descriptions(db)
+    _v82_automatic_replacement_marker(db)
+    _v82_rolling_storage_markers(db)
+    _v82_storage_accounting_markers(db)
+    _commit_step(db, "v82: inflation_rate is social_discount_rate, inflation_offset_investment is "
+                     "discount_offset_investment, inflation_offset_operations is discount_offset_operations")
+
+
+#: The schema step of the current data version.  The template sync reruns it on the master template, so that schema
+#: entries appended to its tables after the version was first stamped reach the shipped schema (a database at the
+#: current version is otherwise not migrated again).
+RERUNNABLE_HEAD_STEP: dict[int, Callable] = {82: _migrate_v82_schema_batch}
+
+
+def _head_schema_additions() -> tuple[set[tuple[str, str]], dict[str, tuple[str, ...]]]:
+    """``(definitions, list members)`` the schema step of the current data version adds: what a database at that
+    version must have (on the classes it has)."""
+    if FLEXTOOL_DB_VERSION != 82:
+        return set(), {}
+    return set(_v81_definitions()) | set(_v82_definitions()), dict(V81_NEW_VALUE_LISTS)
+
+
+def _head_schema_missing_ro(path) -> bool:
+    """Whether the database *path* (read read-only) lacks a definition or a list member that the schema step of the
+    current data version adds (``True`` when it cannot be read)."""
+    import sqlite3
+
+    from flextool.update_flextool.frozen import _connect_ro
+
+    definitions, lists = _head_schema_additions()
+    if not definitions and not lists:
+        return False
+    try:
+        con = _connect_ro(path)
+    except sqlite3.Error:
+        return True
+    try:
+        classes = {r[0] for r in con.execute("SELECT name FROM entity_class").fetchall()}
+        have = set(con.execute(
+            "SELECT ec.name, pd.name FROM parameter_definition pd "
+            "JOIN entity_class ec ON pd.entity_class_id = ec.id").fetchall())
+        members: dict[str, set] = {}
+        for name, value, typ in con.execute(
+                "SELECT pvl.name, lv.value, lv.type FROM list_value lv "
+                "JOIN parameter_value_list pvl ON lv.parameter_value_list_id = pvl.id").fetchall():
+            members.setdefault(name, set()).add(from_database(value, typ))
+    except sqlite3.Error:
+        return True
+    finally:
+        con.close()
+    if any(cls in classes and (cls, name) not in have for cls, name in definitions):
+        return True
+    return any(not set(wanted) <= members.get(name, set()) for name, wanted in lists.items())
+
+
+def _head_superseded() -> dict[tuple[str, str], list[tuple[str | None, str]]]:
+    """The superseded shipped ``(default, description)`` pairs that the refresh of the current data version replaces
+    (:func:`_v81_superseded` through :func:`_v81_refresh`, and :func:`_v82_superseded`), per definition: a
+    definition can have one of each (e.g. ``end_of_life_method``: the ``next_seam`` default of an early v81 build,
+    and the v81 text that v82 rewrote)."""
+    if FLEXTOOL_DB_VERSION != 82:
+        return {}
+    out: dict[tuple[str, str], list[tuple[str | None, str]]] = {}
+    for superseded in (_v81_superseded(), _v82_superseded()):
+        for key, pair in superseded.items():
+            out.setdefault(key, []).append(pair)
+    return out
+
+
+def _is_superseded_pair(cls: str, name: str, default, description: str | None) -> bool:
+    """Whether the definition ``(cls, name)`` has exactly a superseded shipped pair of :func:`_head_superseded`:
+    its parsed default and its description both equal to what FlexTool shipped.  The test of
+    :func:`_head_defaults_stale_ro`; :func:`_replace_superseded_pairs` applies the same one (:func:`_pair_is`)."""
+    return any(_pair_is(pair, default, description) for pair in _head_superseded().get((cls, name), ()))
+
+
+def _pair_is(old: tuple[object, str] | None, default, description: str | None) -> bool:
+    """Whether a parsed default and a description are exactly the shipped pair *old* (``None``: no pair)."""
+    return old is not None and (default, description or "") == old
+
+
+def _head_defaults_stale_ro(path) -> bool:
+    """Whether the database *path* (read read-only) has a definition with a superseded shipped default and
+    description (:func:`_is_superseded_pair`; ``True`` when it cannot be read)."""
+    import sqlite3
+
+    from flextool.update_flextool.frozen import _connect_ro
+
+    superseded = _head_superseded()
+    if not superseded:
+        return False
+    names = sorted({name for _cls, name in superseded})
+    try:
+        con = _connect_ro(path)
+    except sqlite3.Error:
+        return True
+    try:
+        rows = con.execute(
+            "SELECT ec.name, pd.name, pd.default_value, pd.default_type, pd.description FROM parameter_definition pd "
+            "JOIN entity_class ec ON pd.entity_class_id = ec.id WHERE pd.name IN (%s)" % ",".join("?" * len(names)),
+            names).fetchall()
+        # A default from a value list is stored as a reference to its list member.
+        members = {int(i): (v, t) for i, v, t in con.execute("SELECT id, value, type FROM list_value").fetchall()}
+    except sqlite3.Error:
+        return True
+    finally:
+        con.close()
+
+    def parsed(value, typ):
+        if value is None:
+            return None
+        if typ == "list_value_ref":
+            member = members.get(int(value))
+            return from_database(*member) if member is not None else None
+        return from_database(value, typ)
+
+    return any(_is_superseded_pair(cls, name, parsed(value, typ), desc) for cls, name, value, typ, desc in rows)
+
+
+def _v81_refresh(db, texts: dict[tuple[str, str], str]) -> None:
+    """Bring a database migrated to 81 by a development build of v81 up to the frozen v81 tables: add the value lists,
+    list members and definitions it lacks (an existing definition keeps its fields) and replace a superseded shipped
+    default and description pair (:func:`_v81_superseded`) with the current one, both together.  *texts* are the
+    current descriptions where a later step rewrote a v81 one (an added definition and a replaced pair get them).  A
+    description the user edited, a default the user set and every value are kept; the behaviour-change markers of v81
+    and its other descriptions are not written.  After a full v81 it changes nothing.  Idempotent."""
+    texts = {**_v81_texts(), **texts}
+    _v81_value_lists(db)
+    _v81_definitions_part(db, update=False, texts=texts)
+    _replace_superseded_pairs(db, _v81_superseded(), _v81_definitions(texts), texts)
+
+
+def _replace_superseded_pairs(db, superseded: dict[tuple[str, str], tuple[str | None, str]],
+                              current: dict[tuple[str, str], dict], texts: dict[tuple[str, str], str]) -> None:
+    """Replace each definition that has exactly a *superseded* shipped ``(default, description)`` pair: with the
+    default and description of *current* where the step defines the whole definition, else with the description
+    of *texts* (the default stays).  An edited description or default is kept.  Idempotent."""
+    for (cls, name), old in superseded.items():
+        pdef = _pdef_or_none(db, cls, name)
+        if pdef is None:
+            continue
+        default = (from_database(pdef["default_value"], pdef["default_type"])
+                   if pdef["default_value"] is not None else None)
+        if not _pair_is(old, default, pdef["description"]):
+            continue
+        fields = current.get((cls, name))
+        if fields is None:  # a definition the step does not add: only its description was superseded
+            db.update_parameter_definition(id=pdef["id"], description=texts[(cls, name)])
+        else:
+            db.update_parameter_definition(id=pdef["id"], default_value=fields["default_value"],
+                                           default_type=fields["default_type"], description=fields["description"])
+
+
+def _refresh_head_schema(db) -> None:
+    """Bring a database at the current data version to the schema of its schema step: the v81 refresh with the
+    current descriptions (:func:`_v81_refresh`: missing v81 definitions and list members, superseded shipped pairs),
+    the v82 definitions it lacks (:func:`_v82_definitions_part`; an existing definition keeps its fields) and the
+    current description in place of a superseded shipped v82 pair (:func:`_v82_superseded`).  A description the
+    user edited, a default the user set and every value are kept; otherwise a description is never rewritten.
+    Idempotent."""
+    if FLEXTOOL_DB_VERSION == 82:
+        _v81_refresh(db, _v82_texts())
+        _v82_definitions_part(db, update=False)
+        _replace_superseded_pairs(db, _v82_superseded(), {}, _v82_texts())
 
 
 if __name__ == '__main__':

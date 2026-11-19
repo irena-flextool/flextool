@@ -14,7 +14,6 @@ From ``process_arc_unions.py``:
 * ``write_process_source_delayed_partition``                         (~18 LOC)
 * ``write_process_source_sink_profile_method_connection``            (~35 LOC)
 * ``write_process_method_sources_sinks``                             (~56 LOC)
-* ``write_ed_history_realized_first``                                (~56 LOC)
 * ``write_process_source_sink_ramp_method``                          (~32 LOC)
 * ``write_process_source_sink_coeff_zero``                           (~24 LOC)
 * ``write_process_source_sink_delayed_partition``                    (~18 LOC)
@@ -351,104 +350,6 @@ def emit_process_source_sink_profile_method_connection(
     )
 
 
-# ---- ed_history_realized_first (mod L993) ---------------------------------
-
-def derive_ed_history_realized_first(
-    input_dir: Path, solve_data_dir: Path,
-    *,
-    provider: "object | None" = None,
-) -> pl.DataFrame:
-    """entity × realized periods, but only on the first solve.
-
-    Honours the ``solveFirst`` flag on ``p_model``: non-first solves
-    emit an empty frame.
-    """
-    # solveFirst gate: short-circuit to empty.
-    solve_first = False
-    pm = _read_csv(
-        solve_data_dir / "p_model.csv", ["key", "value"], provider=provider,
-    )
-    if pm.height > 0:
-        row = pm.filter(pl.col("key") == "solveFirst")
-        if row.height > 0:
-            try:
-                solve_first = bool(int(row.get_column("value")[0]))
-            except (ValueError, TypeError):
-                solve_first = False
-    if not solve_first:
-        return pl.DataFrame(
-            {"entity": [], "period": []},
-            schema={"entity": pl.Utf8, "period": pl.Utf8},
-        )
-
-    entities = (
-        _drop_blank_rows(
-            _read_csv(input_dir / "entity.csv", ["entity"], provider=provider),
-            ["entity"],
-        ).get_column("entity").to_list()
-    )
-    d_realize_invest = frozenset(
-        _drop_blank_rows(
-            _read_csv(
-                solve_data_dir / "realized_invest_periods_of_current_solve.csv",
-                ["period"],
-                provider=provider,
-            ),
-            ["period"],
-        ).get_column("period").to_list()
-    )
-    d_fix_storage = frozenset(
-        _drop_blank_rows(
-            _read_csv(
-                solve_data_dir / "d_fix_storage_period_set.csv", ["period"],
-                provider=provider,
-            ),
-            ["period"],
-        ).get_column("period").to_list()
-    )
-    d_realized = frozenset(
-        _drop_blank_rows(
-            _read_csv(
-                solve_data_dir / "d_realized_period_set.csv", ["period"],
-                provider=provider,
-            ),
-            ["period"],
-        ).get_column("period").to_list()
-    )
-    realized_periods = d_realize_invest | d_fix_storage | d_realized
-
-    pb = _drop_blank_rows(
-        _read_csv(
-            solve_data_dir / "period__branch.csv", ["period", "branch"],
-            provider=provider,
-        ),
-        ["period", "branch"],
-    )
-    diag_periods = frozenset(
-        d for d, b in pb.iter_rows() if d == b
-    )
-
-    rows: list[tuple[str, str]] = [
-        (e, d) for e in entities
-        for d in realized_periods if d in diag_periods
-    ]
-    return pl.DataFrame(
-        {"entity": [r[0] for r in rows], "period": [r[1] for r in rows]},
-        schema={"entity": pl.Utf8, "period": pl.Utf8},
-    )
-
-
-def emit_ed_history_realized_first(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider,
-) -> None:
-    """Emit ``ed_history_realized_first`` to the Provider."""
-    _emit(provider, "solve_data/ed_history_realized_first.csv",
-          derive_ed_history_realized_first(
-              input_dir, solve_data_dir, provider=provider,
-          ))
-
-
 # ---- process_source_sink_coeff_zero (mod L1973) ---------------------------
 
 def derive_process_source_sink_coeff_zero(
@@ -667,20 +568,26 @@ def emit_process_source_sink_ramp_family(
 #
 # Update both sites in lockstep if base.dat changes; the parity tests
 # catch drift.
+#
+# ``payback_time`` is in none of them: these sets only feed ``pdProcess`` /
+# ``pdNode``, whose readers (the existing-capacity chain and the node
+# inflow scaling) do not use it; the annuity reads it from the input
+# database (``params/_period_values.ed_values_online``, by
+# ``_lifetime_roles.source_role_sources``).
 
 # flextool_base.dat:144-152 — processPeriodParam family.
 _PROCESS_PERIOD_PARAM: frozenset[str] = frozenset((
-    "fixed_cost", "other_operational_cost", "lifetime", "existing",
-    "discount_rate", "invest_cost", "salvage_value",
+    "fixed_cost", "other_operational_cost", "lifetime_technical", "existing",
+    "discount_rate", "invest_cost", "net_salvage_value",
     "invest_max_period", "invest_min_period",
     "cumulative_max_capacity", "cumulative_min_capacity",
     "retire_forced", "retire_max_period", "retire_min_period", "startup_cost",
 ))
 _PROCESS_PERIOD_PARAM_REQUIRED: frozenset[str] = frozenset((
-    "fixed_cost", "other_operational_cost", "lifetime", "existing",
+    "fixed_cost", "other_operational_cost", "lifetime_technical", "existing",
 ))
 _PROCESS_PERIOD_PARAM_INVEST: frozenset[str] = frozenset((
-    "discount_rate", "invest_cost", "salvage_value",
+    "discount_rate", "invest_cost", "net_salvage_value",
     "invest_max_period", "invest_min_period",
     "cumulative_max_capacity", "cumulative_min_capacity",
     "retire_forced", "retire_max_period", "retire_min_period",
@@ -703,20 +610,20 @@ _SOURCE_SINK_TIME_PARAM_REQUIRED: frozenset[str] = frozenset((
 # flextool_base.dat:168-177 — nodePeriodParam family.
 _NODE_PERIOD_PARAM: frozenset[str] = frozenset((
     "annual_flow", "peak_inflow", "fixed_cost", "discount_rate",
-    "invest_cost", "salvage_value",
-    "invest_max_period", "invest_min_period", "lifetime",
+    "invest_cost", "net_salvage_value",
+    "invest_max_period", "invest_min_period", "lifetime_technical",
     "cumulative_max_capacity", "cumulative_min_capacity",
     "retire_forced", "retire_max_period", "retire_min_period",
     "virtual_unitsize",
     "storage_state_reference_price", "existing", "penalty_up", "penalty_down",
 ))
 _NODE_PERIOD_PARAM_REQUIRED: frozenset[str] = frozenset((
-    "annual_flow", "peak_inflow", "fixed_cost", "lifetime",
+    "annual_flow", "peak_inflow", "fixed_cost", "lifetime_technical",
     "storage_state_reference_price", "existing",
     "penalty_up", "penalty_down",
 ))
 _NODE_PERIOD_PARAM_INVEST: frozenset[str] = frozenset((
-    "discount_rate", "invest_cost", "salvage_value",
+    "discount_rate", "invest_cost", "net_salvage_value",
     "invest_max_period", "invest_min_period",
     "cumulative_max_capacity", "cumulative_min_capacity",
     "retire_forced", "retire_max_period", "retire_min_period",

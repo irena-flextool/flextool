@@ -1,5 +1,17 @@
 import pandas as pd
 
+from flextool.process_outputs.calc_costs import lines_by_entity
+
+
+def shown_lines(lines: pd.DataFrame) -> list[str]:
+    """The cost lines of ``lines`` (columns: the lines of a cost table, or of the text summary by cause) a table
+    shows, in their order: every line, the two pre-existing ones only where they are not 0 (the objective constants
+    of existing capacity, as *fixed cost pre-existing*)."""
+    # Imported here: flextool.engine pulls in polar_high and its solver backends, which `import flextool` must not.
+    from flextool.engine.preprocess.params._cost_lines import PRE_EXISTING_LINES
+    return [c for c in lines.columns
+            if c not in PRE_EXISTING_LINES or bool(lines[c].fillna(0.0).ne(0.0).any())]
+
 
 def generic(par, s, v, r, debug):
     if debug:
@@ -17,6 +29,8 @@ def generic(par, s, v, r, debug):
 
 def cost_summaries(par, s, v, r, debug):
     """Cost summaries for periods and timesteps"""
+    # Imported here: flextool.engine pulls in polar_high and its solver backends, which `import flextool` must not.
+    from flextool.engine.preprocess.params._cost_lines import PRE_EXISTING_LINES
 
     results = []
 
@@ -96,51 +110,37 @@ def cost_summaries(par, s, v, r, debug):
     # The fixed cost of existing capacity is reported in every period of the run (also one no solve realizes,
     # the last solve's look-ahead, which the fixed-cost lumps of new capacity cover too).
     period_in_use = par.complete_period_share_of_year.index
+    lines = r.costLines_d
     investment_index = (s.d_realize_invest.union(s.d_realized_period).union(period_in_use)
-                        .union(r.costFixedPreExisting_d.index))
+                        .union(r.costFixedPreExisting_d.index).union(lines.index))
     investment_costs = pd.DataFrame(index=investment_index, dtype=float)
     investment_costs.columns.name = 'category'
-    # Invest + divest are independent per-period series: a scenario may
-    # realize investment but no divestment anywhere in the cascade (and
-    # vice-versa).  When ``v_divest`` is empty across every sub-solve the
-    # divest-cost series is row-less, so a bare ``invest + divest`` would
-    # align on the index union and yield NaN at EVERY period the divest
-    # series lacks — which ``fillna(0.0)`` below then silently zeroes,
-    # discarding the valid investment cost (the ``unit investment &
-    # retirement`` cost-path collapse for nested-invest scenarios with no
-    # divestment).  ``add(fill_value=0)`` is the correct additive-identity
-    # union: a period present in only one operand keeps that operand's
-    # value instead of becoming NaN.  Byte-identical when both series carry
-    # the same full period index (the divest-active scenarios).
-    investment_costs['unit investment & retirement'] = r.costInvestUnit_d.add(r.costDivestUnit_d, fill_value=0) / to_millions
-    investment_costs['connection investment & retirement'] = r.costInvestConnection_d.add(r.costDivestConnection_d, fill_value=0) / to_millions
-    investment_costs['storage investment & retirement'] = r.costInvestState_d.add(r.costDivestState_d, fill_value=0) / to_millions
+    # The investment-type costs by cost line (calc_costs.cost_lines), each in the period its event is reported in;
+    # the two pre-existing lines (objective constants, as the fixed cost pre-existing) only where they are not 0.
+    shown = shown_lines(lines)
+    for line in shown:
+        if line in PRE_EXISTING_LINES:
+            continue
+        investment_costs[line] = lines[line].reindex(investment_index) / to_millions
     investment_costs['fixed cost pre-existing'] = r.costFixedPreExisting_d / to_millions
+    for line in (c for c in shown if c in PRE_EXISTING_LINES):
+        investment_costs[line] = lines[line].reindex(investment_index) / to_millions
     investment_costs['fixed cost invested'] = r.costFixedInvested_d / to_millions
     investment_costs['fixed cost reduction of divestments'] = r.costFixedDivested_d / to_millions
     investment_costs['capacity margin penalty'] = r.costPenalty_capacity_margin_d / to_millions
     investment_costs = investment_costs.fillna(0.0)
 
-    # Annualized: the fixed cost of existing capacity and the capacity margin penalty are the discounted costs
-    # without the discount factor; investment, retirement and the fixed costs of new and retired capacity are
-    # the yearly amounts of every vintage and retirement in effect in the period (calc_costs ANN.), in every
-    # period the capacity operates or the retirement applies.
-    yearly = {
-        'unit investment & retirement': r.costInvestUnit_yearly.add(r.costDivestUnit_yearly, fill_value=0),
-        'connection investment & retirement': r.costInvestConnection_yearly.add(r.costDivestConnection_yearly,
-                                                                                fill_value=0),
-        'storage investment & retirement': r.costInvestState_yearly.add(r.costDivestState_yearly, fill_value=0),
-        'fixed cost invested': r.costFixedInvested_yearly,
-        'fixed cost reduction of divestments': r.costFixedDivested_yearly,
-    }
-    extra = [d for frame in yearly.values() for d in frame.index[frame.fillna(0.0).ne(0.0)]]
-    annual_index = investment_index.union(pd.Index(list(dict.fromkeys(extra)), name=investment_index.name))
-    annual_invest_costs = pd.DataFrame(index=annual_index, columns=investment_costs.columns, dtype=float)
+    # Annualized: every category is the discounted cost divided by the period's discount factor (investment for the
+    # cost lines, operations for the others): an event spread evenly over the period's years, a fixed cost its
+    # yearly amount.
+    discount_inv = par.inflation_factor_investment_yearly
+    annual_invest_costs = pd.DataFrame(index=investment_index, columns=investment_costs.columns, dtype=float)
     annual_invest_costs.columns.name = 'category'
-    for col, series in yearly.items():
-        annual_invest_costs[col] = series.reindex(annual_index) / to_millions
-    annual_invest_costs['fixed cost pre-existing'] = investment_costs['fixed cost pre-existing'].div(discount_ops, axis=0)
-    annual_invest_costs['capacity margin penalty'] = investment_costs['capacity margin penalty'].div(discount_ops, axis=0)
+    for line in shown:
+        annual_invest_costs[line] = investment_costs[line].div(discount_inv.reindex(investment_index), axis=0)
+    for column in ('fixed cost pre-existing', 'fixed cost invested', 'fixed cost reduction of divestments',
+                   'capacity margin penalty'):
+        annual_invest_costs[column] = investment_costs[column].div(discount_ops.reindex(investment_index), axis=0)
     annual_invest_costs = annual_invest_costs.fillna(0.0)
 
     # 4. Combined summary (investment + dispatch aggregated to period)
@@ -306,30 +306,28 @@ def cost_breakdown_by_entity(par, s, v, r, debug):
                 if d is not None:
                     dis_pieces[cat] = d
 
-        # --- Investment / fixed (already discounted M-path) ---
-        # Skip categories whose sliced frame is empty (dispatch-only models
-        # have empty v.invest / v.divest).
-        invest_label = 'storage investment' if kind == 'node' else 'investment'
-        divest_label = 'storage retirement' if kind == 'node' else 'retirement'
-        # Annualized: the fixed cost of existing capacity without its discount factor; the others are the
-        # yearly amounts in every period the capacity operates or the retirement applies (calc_costs ANN.).
+        # --- Investment-type cost lines (already discounted, by event) ---
+        # The lines of the class's entities (calc_costs.cost_lines), each in the period its event is reported in;
+        # the annualized value is the discounted one divided by the period's investment discount factor.  Only for
+        # a class with a line (dispatch-only models have none); the pre-existing lines only where not 0.
+        own = lines_by_entity(r.cost_lines, entities)
+        if not own.empty:
+            factor = par.inflation_factor_investment_yearly.reindex(own.index.get_level_values('period')).to_numpy()
+            for line in shown_lines(own):
+                dis_pieces[line] = own[line] / to_millions
+                ann_pieces[line] = own[line].div(factor) / to_millions
+
+        # --- Fixed costs (already discounted M-path) ---
+        # Skip categories whose sliced frame is empty (no capacity of the class in service).  Annualized: the
+        # discounted cost without the period's operations discount factor (the yearly fixed cost).
         inv_specs = [
-            (invest_label, r.cost_entity_invest_d, r.cost_entity_invest_yearly),
-            (divest_label, r.cost_entity_divest_d, r.cost_entity_divest_yearly),
-            ('fixed cost pre-existing', r.cost_entity_fixed_pre_existing, None),
-            ('fixed cost invested', r.cost_entity_fixed_invested, r.cost_entity_fixed_invested_yearly),
-            ('fixed cost reduction of divestments', r.cost_entity_fixed_divested,
-             r.cost_entity_fixed_divested_yearly),
+            ('fixed cost pre-existing', r.cost_entity_fixed_pre_existing),
+            ('fixed cost invested', r.cost_entity_fixed_invested),
+            ('fixed cost reduction of divestments', r.cost_entity_fixed_divested),
         ]
-        for cat, frame, yearly in inv_specs:
+        for cat, frame in inv_specs:
             d = _inv_discounted(frame, entities)
-            if yearly is None:
-                a = _inv_annualized(frame, entities, discount=discount_ops)
-            else:
-                # Already per year (/1e6 only); the rows of the discounted lumps stay (as zeros where no
-                # capacity of the entity operates), so a category keeps its column without investments.
-                index = yearly.index.union(frame.index) if len(yearly.index) else frame.index
-                a = _inv_discounted(yearly.reindex(index=index, columns=frame.columns).fillna(0.0), entities)
+            a = _inv_annualized(frame, entities, discount=discount_ops)
             if a is not None:
                 ann_pieces[cat] = a
             if d is not None:

@@ -1,7 +1,9 @@
 category,0
-unit investment & retirement,10.7263
-connection investment & retirement,0.0
-storage investment & retirement,3.2179
+investment,13.032
+replacement,0.0
+extension,0.0
+retirement,0.0
+salvage,0.0
 fixed cost pre-existing,0.0
 fixed cost invested,0.0
 fixed cost reduction of divestments,0.0

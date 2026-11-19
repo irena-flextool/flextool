@@ -11,6 +11,8 @@ _V_DROP = [
     'q_state_up', 'q_state_down', 'q_reserve',
     'q_inertia', 'q_non_synchronous', 'q_state_up_group', 'q_capacity_margin',
     'invest', 'divest', 'invest_fan',
+    'divest_built', 'divested_built', 'divest_built_lines',
+    'extend', 'extended', 'extend_lines', 'divest_fan',
     # trade (v_trade, commodity price ladder, #57): period-only, same
     # rolling treatment as invest/divest — the committing roll's tier
     # purchase for a period wins over an earlier look-ahead roll's.
@@ -72,8 +74,10 @@ _PAR_DROP = [
     # The invest / divest lumps come from the solve that realizes the
     # decision period only (persist_realized_slice); keep='last' ties the
     # rolls of one solve.
-    'entity_annual_discounted', 'entity_annual_divest_discounted',
-    'entity_annuity_yearly', 'entity_divest_annuity_yearly',
+    # The cost lines of the investment and retirement decisions (rows (period_decision, line, period_report)) too.
+    'entity_annual_discounted', 'entity_invest_lines', 'entity_divest_lines',
+    # The cost lines of a MW of existing capacity: every solve computes them for its periods.
+    'entity_existing_lines',
     # The reported costs' discount factors count from the start of the run,
     # so every solve holding a period gives it the same value.
     'inflation_factor_investment_yearly',
@@ -114,7 +118,7 @@ _PAR_DEDUP = [
     'entity_max_units',
     'process_startup_cost',
     'process_ramp_cost',
-    'entity_fixed_cost', 'entity_lifetime_fixed_cost', 'entity_lifetime_fixed_cost_divest',
+    'entity_fixed_cost',
     'node_annual_flow',
     'group_penalty_inertia', 'group_penalty_non_synchronous',
     'node_capacity_for_scaling', 'group_capacity_for_scaling',
@@ -157,6 +161,8 @@ def _reduce_share_per_period(csoy: pd.Series) -> pd.Series:
 # The investment duals too (item 266): the v_invest reduced costs and the per-period cap / floor duals.
 _V_REALIZING_SOLVE = frozenset({
     'invest', 'divest', 'q_capacity_margin',
+    'divest_built', 'divested_built', 'divest_built_lines',
+    'extend', 'extended', 'extend_lines',
     'dual_invest_connection', 'dual_invest_node', 'dual_invest_unit',
     'dual_maxInvest_period', 'dual_maxCumulative', 'dual_maxInvestGroup_period', 'dual_maxInvestGroup_cumulative',
     'dual_minInvest_period', 'dual_minCumulative', 'dual_minInvestGroup_period', 'dual_minInvestGroup_cumulative',
@@ -402,10 +408,7 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
     # investment is at the label (``v.invest_fan``), so the labels that hold
     # one are decisions too.
     realized_invest = set(s.d_realize_invest) | set(v.invest_fan.index)
-    # The operating / retirement windows of the annualized costs are keyed by their decision likewise.
-    for attr, decision in (('edd_invest_commission', 'period_invest'), ('edd_invest_in_construction', 'period_invest'),
-                           ('edd_operating_window', 'period_invest'), ('edd_retire_window', 'period_divest'),
-                           ('edd_salvage_window', 'period_divest')):
+    for attr, decision in (('edd_invest_commission', 'period_invest'), ('edd_invest_in_construction', 'period_invest')):
         idx = getattr(s, attr).droplevel('solve').unique()
         setattr(s, attr, idx[idx.get_level_values(decision).isin(realized_invest)])
 

@@ -65,5 +65,18 @@ def test_migration_markers_are_registered() -> None:
                                                               "discount_rate_zero_is_zero",
                                                               "invest_without_cost_offered",
                                                               "stochastic_storage_paths_tied",
-                                                              "chained_solve_discount_from_run_start"}
+                                                              "chained_solve_discount_from_run_start",
+                                                              "annuity_over_payback_time",
+                                                              "end_of_life_closest_seam",
+                                                              "fixed_cost_per_operating_period",
+                                                              "annuity_timing",
+                                                              "net_salvage_once",
+                                                              "built_capacity_retirable",
+                                                              "automatic_replacement_cost",
+                                                              "rolling_cyclic_storage_anchored",
+                                                              "nested_storage_start_borrowed",
+                                                              "nested_storage_fix_cumulative",
+                                                              "rp_storage_chain_pinned",
+                                                              "storage_end_matches_start",
+                                                              "storage_reference_start"}
     assert written <= set(BEHAVIOUR_CHANGES)

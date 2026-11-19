@@ -24,6 +24,11 @@ the root logger's handlers write is shown with its control characters escaped
 (:func:`flextool._safe_text.printable`), so that a name from the input data
 cannot act on the terminal or the Toolbox console as a command.
 
+It also makes ``sys.stdout`` / ``sys.stderr`` tolerant of characters their encoding cannot write
+(:func:`tolerant_console_encoding`): a pipe or file on Windows gets the locale code page (cp1252, cp437, ...),
+and a ``print`` of ``×``, ``—`` or a node name in another script would otherwise raise ``UnicodeEncodeError``
+at the end of a run whose outputs are already written.
+
 Use it at a Tool's ``__main__`` boundary, and as the console script
 (``cli``)::
 
@@ -89,11 +94,29 @@ def printable_console():
             sys.stderr = old_err
 
 
+def tolerant_console_encoding(errors: str = "backslashreplace") -> None:
+    """Let ``sys.stdout`` / ``sys.stderr`` write what their encoding cannot encode as escapes (``\\xd7``) instead of
+    raising ``UnicodeEncodeError``.  Only a stream with ``errors="strict"`` that can be reconfigured changes (a
+    UTF-8 console or ``PYTHONIOENCODING`` keeps its setting; a stream wrapped by :func:`printable_console` is
+    reconfigured underneath)."""
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        stream = getattr(stream, "inner", stream)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None or getattr(stream, "errors", None) != "strict":
+            continue
+        try:
+            reconfigure(errors=errors)
+        except (OSError, ValueError, TypeError):  # a stream that cannot change now: leave it
+            pass
+
+
 def run_tool(entry):
     """Run ``entry`` (a zero-arg callable) reconciling CLI vs Basic Console.
 
     See the module docstring for the rationale.
     """
+    tolerant_console_encoding()
     try:
         with printable_console():
             rc = entry()

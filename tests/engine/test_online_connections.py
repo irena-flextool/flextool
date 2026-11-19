@@ -482,7 +482,7 @@ def test_connection_online_outputs(tmp_path_factory) -> None:
         ["connection", WE, "existing", b64(0.0, "float")],
         ["connection", WE, "invest_method", b64("invest_no_limit", "str")],
         ["connection", WE, "invest_cost", b64(1.0, "float")],
-        ["connection", WE, "lifetime", b64(20.0, "float")],
+        ["connection", WE, "lifetime_technical", b64(20.0, "float")],
         ["connection", WE, "discount_rate", b64(0.05, "float")],
         ["node", "east", "inflow", _time_map(lambda i: 0.0 if i <= 24 else -300.0)]]
     url, scen = make_db(tmp_path_factory, alt="oc_out", values=vals, base_chain=UNI, entities=_TWO_PERIODS_ENTS)

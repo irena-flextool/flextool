@@ -29,15 +29,19 @@ if TYPE_CHECKING:
     from flextool.engine.solve._handoff import SolveHandoff
 
 
+def _cohort_carrier_columns() -> list[str]:
+    from flextool.engine.preprocess.params._cohort_handoff import realized_cohort_schema
+    return list(realized_cohort_schema())
+
+
 # Schemas for each handoff carrier's empty-frame fallback.  Column names
 # match what consumers iter_rows(named=True) keys; Utf8 dtype matches
 # the canonical CSV-roundtrip shape (consumers cast to float on read).
 _HANDOFF_EMPTY_SCHEMAS: dict[str, tuple[str, ...]] = {
-    K.HANDOFF_REALIZED_INVEST:    ("entity", "period", "value"),
-    K.HANDOFF_REALIZED_EXISTING:  ("entity", "period", "value"),
     K.HANDOFF_REALIZED_COMMISSION: ("entity", "period", "commission_period", "value"),
     K.HANDOFF_DIVEST_CUMULATIVE:  ("entity", "value"),
-    K.HANDOFF_REALIZED_DIVEST:    ("entity", "period", "value"),
+    K.HANDOFF_REALIZED_COHORT:    tuple(_cohort_carrier_columns()),
+    K.HANDOFF_REALIZED_RETIRE:    ("entity", "cohort", "period", "value"),
     K.HANDOFF_ROLL_END_STATE:     ("node", "value"),
     K.HANDOFF_UPWARD_ROLL_END_STATE: ("node", "value"),
     K.HANDOFF_ROLL_END_ONLINE:    ("process", "value"),
@@ -78,19 +82,17 @@ ROLL_FORWARD_FIELDS: frozenset = frozenset((
     "cum_sim_hours",
 ))
 PIN_FIELDS: frozenset = frozenset((
-    "realized_invest", "realized_existing", "realized_commission", "divest_cumulative", "realized_divest",
-    "fix_online", "fix_reserve", "fix_storage_quantity", "fix_storage_price",
-    "fix_storage_usage",
+    "realized_commission", "divest_cumulative", "realized_cohort", "realized_retire",
+    "fix_online", "fix_reserve", "fix_storage_quantity", "fix_storage_price", "fix_storage_usage",
 ))
 
 
 # SolveHandoff field → its ``handoff/<field>`` Provider key.
 _FIELD_TO_KEY: tuple[tuple[str, str], ...] = (
-    ("realized_invest",     K.HANDOFF_REALIZED_INVEST),
-    ("realized_existing",   K.HANDOFF_REALIZED_EXISTING),
     ("realized_commission", K.HANDOFF_REALIZED_COMMISSION),
     ("divest_cumulative",   K.HANDOFF_DIVEST_CUMULATIVE),
-    ("realized_divest",     K.HANDOFF_REALIZED_DIVEST),
+    ("realized_cohort",     K.HANDOFF_REALIZED_COHORT),
+    ("realized_retire",     K.HANDOFF_REALIZED_RETIRE),
     ("roll_end_state",      K.HANDOFF_ROLL_END_STATE),
     ("upward_roll_end_state", K.HANDOFF_UPWARD_ROLL_END_STATE),
     ("roll_end_online",     K.HANDOFF_ROLL_END_ONLINE),
@@ -164,10 +166,9 @@ def translate_produced_handoff_to_provider(handoff: "SolveHandoff", provider) ->
 # the override slot before falling back to the natural handoff carrier.
 # Only the existing handoff carriers are overridable.
 _HANDOFF_TO_OVERRIDE: dict[str, str] = {
-    K.HANDOFF_REALIZED_INVEST:      K.OVERRIDE_REALIZED_INVEST,
-    K.HANDOFF_REALIZED_EXISTING:    K.OVERRIDE_REALIZED_EXISTING,
     K.HANDOFF_DIVEST_CUMULATIVE:    K.OVERRIDE_DIVEST_CUMULATIVE,
-    K.HANDOFF_REALIZED_DIVEST:      K.OVERRIDE_REALIZED_DIVEST,
+    K.HANDOFF_REALIZED_COHORT:      K.OVERRIDE_REALIZED_COHORT,
+    K.HANDOFF_REALIZED_RETIRE:      K.OVERRIDE_REALIZED_RETIRE,
     K.HANDOFF_ROLL_END_STATE:       K.OVERRIDE_ROLL_END_STATE,
     K.HANDOFF_UPWARD_ROLL_END_STATE: K.OVERRIDE_UPWARD_ROLL_END_STATE,
     K.HANDOFF_ROLL_END_ONLINE:      K.OVERRIDE_ROLL_END_ONLINE,
@@ -180,6 +181,15 @@ _HANDOFF_TO_OVERRIDE: dict[str, str] = {
     K.HANDOFF_FIX_STORAGE_QUANTITY: K.OVERRIDE_FIX_STORAGE_QUANTITY,
     K.HANDOFF_FIX_STORAGE_PRICE:    K.OVERRIDE_FIX_STORAGE_PRICE,
     K.HANDOFF_FIX_STORAGE_USAGE:    K.OVERRIDE_FIX_STORAGE_USAGE,
+}
+
+
+#: The retired override keys of the realized capacity, and the key that replaces them: an override names each
+#: realized investment as a cohort (``realized_cohort``) and each retirement per cohort (``realized_retire``).
+_RETIRED_OVERRIDE_KEYS: dict[str, str] = {
+    "handoff/realized_invest": K.HANDOFF_REALIZED_COHORT,
+    "handoff/realized_existing": K.HANDOFF_REALIZED_COHORT,
+    "handoff/realized_divest": K.HANDOFF_REALIZED_RETIRE,
 }
 
 
@@ -201,7 +211,9 @@ def translate_overrides_to_provider(
     Raises
     ------
     ValueError
-        If *overrides* contains a key that is not one of the whitelisted
+        If *overrides* contains a retired key (``handoff/realized_invest`` /
+        ``handoff/realized_existing`` / ``handoff/realized_divest``; the message names
+        the key that replaces it), or a key that is not one of the whitelisted
         ``K.HANDOFF_*`` constants.  Arbitrary Provider-key writes through
         this translator are rejected so the override surface stays
         explicit.
@@ -209,6 +221,13 @@ def translate_overrides_to_provider(
     if not overrides:
         return
     for handoff_key, frame in overrides.items():
+        if handoff_key in _RETIRED_OVERRIDE_KEYS:
+            raise ValueError(
+                f"translate_overrides_to_provider: the override key {handoff_key!r} is retired; give the realized "
+                f"capacity as {_RETIRED_OVERRIDE_KEYS[handoff_key]!r} (one row per investment cohort, "
+                f"columns {list(_HANDOFF_EMPTY_SCHEMAS[K.HANDOFF_REALIZED_COHORT])}; retirements per cohort in "
+                f"{K.HANDOFF_REALIZED_RETIRE!r}, columns {list(_HANDOFF_EMPTY_SCHEMAS[K.HANDOFF_REALIZED_RETIRE])})."
+            )
         override_key = _HANDOFF_TO_OVERRIDE.get(handoff_key)
         if override_key is None:
             raise ValueError(

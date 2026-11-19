@@ -6,7 +6,7 @@
 
 * When that cannot hold (0 >= 600, 0 = 3, 0 <= -1, or one period of a period-map constant at 5 with >=), the
   build stops with a configuration error naming the constraint, the solve and the period.
-* When it always holds (0 >= 0, 0 <= 5), the constraint gets no row and one warning per run names it.
+* When it always holds (0 >= 0, 0 <= 5), the constraint gets no row and one warning (W-0004) per run names it.
 * The outcome does not depend on other constraints: ``c_other`` (``coal_plant`` invested coefficient, a variable
   in every period) is added beside it in the parametrised twin.
 
@@ -14,8 +14,12 @@ Built from ``tests/fixtures/tests.json`` (never a checked-in ``.sqlite``).
 """
 from __future__ import annotations
 
+import logging
+
 import polars as pl
 import pytest
+
+from flextool import run_warnings
 
 from flextool.engine.input._solve_state import FlexToolConfigError
 from tests.engine._unit_db import b64, build, make_db, run
@@ -89,17 +93,24 @@ def test_vanished_constraint_with_a_period_map_constant_names_the_failing_period
 
 @pytest.mark.parametrize("other", [False, True], ids=["alone", "beside_other_constraint"])
 @pytest.mark.parametrize("sense, constant", [("greater_than", 0.0), ("less_than", 5.0)])
-def test_vanished_constraint_that_always_holds_warns_once_and_has_no_row(tmp_path_factory, capsys, other, sense,
+def test_vanished_constraint_that_always_holds_warns_once_and_has_no_row(tmp_path_factory, caplog, other, sense,
                                                                          constant):
     entities, values = _values(sense, b64(constant, "float"), other=other)
     url, scen = make_db(tmp_path_factory, alt=f"uc_idle_{sense}", values=values, base_chain=CHAIN,
                         entities=entities)
-    capsys.readouterr()
+    caplog.set_level(logging.DEBUG, logger=run_warnings.LOGGER_NAME)
     steps = run(tmp_path_factory, url, scen)
-    lines = [ln for ln in capsys.readouterr().out.splitlines() if "user constraint 'c_chk'" in ln]
+    records = [r for r in caplog.records if r.name == run_warnings.LOGGER_NAME]
+    lines = [r.getMessage() for r in records if r.levelno == logging.WARNING and "W-0004" in r.getMessage()]
     assert len(steps) > 1
+    # One coded line in the run (each constraint once per run, however many solves leave it without variables).
     assert len(lines) == 1, lines
-    assert "always holds" in lines[0], lines[0]
+    assert lines[0].startswith("Warning: user constraint has no variable in solve '"), lines
+    assert lines[0].endswith("[W-0004]"), lines
+    # The fixture's other constraints are idle too: the line names the first, the debug log every one.
+    debug = [r.getMessage() for r in records if r.levelno == logging.DEBUG]
+    assert any(m.startswith("W-0004 all cases") and "c_chk" in m.split(": ", 1)[1].split("; ") for m in debug), debug
+    assert sum(m.startswith("W-0004 c_chk: period ") for m in debug) == 1, debug
     for step in steps.values():
         pb = build(step.flex_data)
         assert _rows_of(pb, "c_chk") == 0

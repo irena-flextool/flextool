@@ -27,7 +27,7 @@ from polar_high import Param, Sum, Where
 
 from flextool.engine.input._axis_enums import rename_to_axis
 from flextool.engine.input._param_shapes import promote_param_to_dt
-from flextool.engine.model import _coarse_flows
+from flextool.engine.model import _coarse_flows, _extend, _retire_built
 from flextool.engine.model._common import (
     _availability_factor, _capped_arcs, _coef_factor, _drop_uncapped, _entity_rows, _has_rows, _indirect_input_cap,
     _indirect_sum_arcs, _utf8_keys, _var_view,
@@ -112,23 +112,37 @@ def add_constraints(b: "_Build") -> None:
         rows = online_rows(b, kind)
 
         # Units invested before / divested before d, restricted to this class:
-        #   invest_term = −Σ_{(p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′]
-        #   divest_term = +Σ_{(p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′]
+        #   invest_term = −invested[p,d]
+        #   divest_term = +retired[p,d]
         # They sit on the LHS of the rows whose capacity is existing + invested − divested.
         invest_term = None
         divest_term = None
         if b.v_invest_p is not None:
             v_inv_at_uc = _var_view(b.v_invest_p, f"__at_invest_uc{sfx}", {"d": "d_invest"}, to_axis=True)
-            edd_inv_p_uc = _entity_rows(d.edd_invest_set, "e", online_set, "p")
+            edd_inv_p_uc = _entity_rows(b.cap.alive, "e", online_set, "p")
             if edd_inv_p_uc.height > 0:
                 invest_term = -Sum(Where(v_inv_at_uc, edd_inv_p_uc), over=("d_invest",))
         if b.v_divest_p is not None:
             v_div_at_uc = _var_view(b.v_divest_p, f"__at_divest_uc{sfx}", {"d": "d_divest"}, to_axis=True)
-            # online_set and edd_divest_active carry different p vocabularies: cast before the join.
-            p_on = online_set.select(pl.col("p").cast(d.edd_divest_active.schema["p"], strict=False)).unique()
-            edd_div_p_uc = d.edd_divest_active.join(p_on, on="p", how="semi")
+            # online_set and the retirements carry different p vocabularies: cast before the join.
+            retired_p = b.cap.retired_frame("p")
+            p_on = online_set.select(pl.col("p").cast(retired_p.schema["p"], strict=False)).unique()
+            edd_div_p_uc = retired_p.join(p_on, on="p", how="semi")
             if edd_div_p_uc.height > 0:
                 divest_term = Sum(Where(v_div_at_uc, edd_div_p_uc), over=("d_divest",))
+        built = _retire_built.retired(b, "p")
+        if built is not None:
+            # The model-built capacity retired so far (_retire_built), restricted to this class.
+            built_rows = _retire_built.retired_frame(b, "p")
+            p_on = online_set.select(pl.col("p").cast(built_rows.schema["p"], strict=False)).unique()
+            built_rows = built_rows.join(p_on, on="p", how="semi")
+            if built_rows.height > 0:
+                built_term = Where(built, built_rows)
+                divest_term = built_term if divest_term is None else divest_term + built_term
+        ext_term = _extend.capacity_term(b, "p", online_set)
+        if ext_term is not None:
+            # The extended capacity in service (_extend), restricted to this class: capacity, not investment.
+            divest_term = -ext_term if divest_term is None else divest_term - ext_term
 
         def _lhs_with_invdiv(var, key):
             lhs: dict = {key: var}
@@ -143,11 +157,11 @@ def add_constraints(b: "_Build") -> None:
         # v_online[p,d,t] − Σ v_invest_p[p,d′] + Σ v_divest_p[p,d′]  ≤ existing_count[p,d]
         #   ∀ (p,d,t) ∈ p_idx
         # Units online cannot exceed the units built.
-        # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
-        #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+        # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+        # existing capacity counting until its end of life (none for reinvest_automatic).
         m.add_cstr(f"maxOnline{sfx}",   over=rows, sense="<=",
                    lhs_terms=_lhs_with_invdiv(v_online, "online"),
-                   rhs_terms={"max_units": d.p_process_existing_count})
+                   rhs_terms={"max_units": b.cap.existing_count_p})
 
         # The online predecessor v_online_prev of every (p,d,t) ∈ p_idx, one of three disjoint pieces:
         # v_online_prev[p,d,t] =
@@ -243,8 +257,8 @@ def add_constraints(b: "_Build") -> None:
         # previous period / roll must still be able to "shut down" even if this step's capacity is lower);
         # sd ≤ v_online_prev follows there from online_change + maxStartup instead (su ≤ on_t ⇒
         # sd = su − on_t + on_prev ≤ on_prev).
-        # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
-        #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+        # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+        # existing capacity counting until its end of life (none for reinvest_automatic).
         exclude_shutdown = None
         if link_native is not None:
             cross_period_link = link_native.filter(pl.col("d") != pl.col("d_previous")).select("p", "d", "t")
@@ -261,7 +275,7 @@ def add_constraints(b: "_Build") -> None:
             sd_lhs["online"] = v_online
             m.add_cstr(f"maxShutdown{sfx}", over=max_shutdown_over, sense="<=",
                        lhs_terms=sd_lhs,
-                       rhs_terms={"max_units": d.p_process_existing_count})
+                       rhs_terms={"max_units": b.cap.existing_count_p})
 
         # ─── EQ. ─── maxFlow_online_{linear,integer} ─────────────────────────
         # ─────────────────────────────────────────────────────────────────────
@@ -521,8 +535,8 @@ def add_constraints(b: "_Build") -> None:
         # downtime_lookback: as uptime_lookback with min_downtime[p] (a coarse process as in minimum_uptime; a row
         #   whose look-back holds only its own step and no carry is implied by maxShutdown / online_change).
         # carry_dn: as carry_up with shutdown[p,h] and min_downtime[p] (d.downtime_carry, 0-filled).
-        # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
-        #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+        # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+        # existing capacity counting until its end of life (none for reinvest_automatic).
         if (d.pdt_downtime_set is not None and d.pdt_downtime_set.height > 0
                 and d.downtime_lookback is not None and d.downtime_lookback.height > 0):
             dn_idx = d.pdt_downtime_set.join(online_set, on="p", how="inner")
@@ -549,7 +563,7 @@ def add_constraints(b: "_Build") -> None:
                     m.add_cstr(f"minimum_downtime{sfx}",
                                over=dn_idx, sense="<=",
                                lhs_terms=lhs_dn,
-                               rhs_terms={"existing":     d.p_process_existing_count})
+                               rhs_terms={"existing":     b.cap.existing_count_p})
 
     # ─── EQ. ─── online_fix_eq_{linear,integer} ──────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────

@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Iterable
 import polars as pl
 
 from flextool.engine.input._solve_state import FlexToolConfigError
-from flextool.engine.preprocess.params._coarse import _warn_once, coarse_membership_warnings
+from flextool.engine.preprocess.params._coarse import coarse_membership_warnings, warn_coarse_membership
 from flextool.engine.preprocess._provider_io import _emit
 
 
@@ -1129,9 +1129,8 @@ def emit_block_data_for_solve(
                 process_nodes[row[0]].add(row[1])
     solve_step = block_assignments.block_step_duration[DEFAULT_BLOCK]
     coarse = {g: float(st) for g, st in resolution_groups.items() if float(st) > solve_step + 1e-9}
-    for msg in coarse_membership_warnings(group_unit + group_connection, process_nodes,
-                                          block_assignments.node_block, coarse):
-        _warn_once(msg)
+    warn_coarse_membership(coarse_membership_warnings(group_unit + group_connection, process_nodes,
+                                                      block_assignments.node_block, coarse))
 
     block_timelines = _build_block_timelines(
         solve=solve,

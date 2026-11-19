@@ -173,10 +173,11 @@ def test_sibling_capacity_is_fixed_from_invest(chain) -> None:
     assert "peaker" in set(stoch.flex_data.pd_invest_set[pcol].to_list())
 
     assert stoch.handoff is not None and not stoch.handoff.is_empty()
-    ri = stoch.handoff.realized_invest
+    ri = stoch.handoff.realized_cohort
     assert ri is not None and ri.height > 0
-    ent_col, val_col = ri.columns[0], ri.columns[-1]
-    committed = {r[ent_col]: float(r[val_col]) for r in ri.iter_rows(named=True)}
+    # The investment rows carry the committed size; the generation rows of a reinvest_automatic chain carry none.
+    invest_rows = ri.filter(pl.col("kind") == "invest")
+    committed = {r["entity"]: float(r["size"]) for r in invest_rows.iter_rows(named=True)}
     assert committed.get("peaker") == pytest.approx(COMMITTED_PEAKER_MW)
 
     # sibling builds no invest set / v_invest ...

@@ -58,7 +58,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
-from flextool import run_record
+from flextool import run_record, run_warnings
 from flextool.engine.solve._acceptance import (
     classify_acceptance,
     highs_objective_bound_warning,
@@ -66,6 +66,7 @@ from flextool.engine.solve._acceptance import (
 from flextool.run_options import RunOptions
 from flextool._thread_budget import highs_thread_options
 from flextool.engine.solve._handoff import SolveHandoff
+from flextool.engine.solve._solver_outcome import note_solver_outcome
 from flextool.engine.solve import _objective_options
 from flextool.engine.solve._objective_options import (
     check_benders_options as _check_benders_objective_options,
@@ -163,6 +164,40 @@ def _format_solver_args_line(
     body = ", ".join(f"{k}={translated.get(k, effective_options[k])}" for k in order)
     label = f"Solver args ({solver})" if solver else "Solver args"
     return f"{label}: {body}"
+
+
+#: The last ``Solver args`` line printed in this process's current run (:func:`_print_solver_args`).
+_SOLVER_ARGS_PRINTED: dict[str, str | None] = {"line": None}
+
+
+def _reset_solver_args_echo() -> None:
+    """A new run prints its first ``Solver args`` line again."""
+    _SOLVER_ARGS_PRINTED["line"] = None
+
+
+def _print_solver_args(line: str | None) -> None:
+    """Right before a solver runs: print the coded warnings gathered so far for the sub-solve
+    (:func:`flextool.run_warnings.flush`, so they precede the solver's output), then the ``Solver args`` line —
+    once per run, and again only when it changes (the rolls and solves of a run mostly share their options).
+    The line stays whole (it may pass 100 characters: the GUI wraps it), so it can be copied as is."""
+    run_warnings.flush()
+    if not line or line == _SOLVER_ARGS_PRINTED["line"]:
+        return
+    _SOLVER_ARGS_PRINTED["line"] = line
+    print(line, flush=True)
+
+
+def _log_cold_rebuild(logger: logging.Logger, logged: set, solve: str, reason: str) -> None:
+    """The warm LP reuse of a roll fell back to a cold rebuild (*reason*: the first FlexData field that differs).
+    The normal outcome for every roll of a rolling solve (``dt`` shifts), so one INFO line per complete solve and
+    reason; the other rolls go to the debug log."""
+    base = run_warnings.complete_solve(solve)
+    key = (base, reason)
+    if key in logged:
+        logger.debug("warm reuse fell back to a cold rebuild for %s: %s", solve, reason)
+        return
+    logged.add(key)
+    logger.info("No warm LP reuse in solve '%s': %s", base, reason)
 
 
 def _highs_echo_translations(
@@ -1104,7 +1139,7 @@ def _autoscale_unscale_post_solve(
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     import polars as pl
     from polar_high import Problem, Solution
@@ -1254,10 +1289,11 @@ class _MemoryRecorder:
         return (anon_kb + swap_kb) / 1024.0
 
     @staticmethod
-    def _read_sys_swap_used_mb() -> float:
+    def _read_sys_swap_used_mb() -> float | None:
         """System-level used swap (MB) = ``SwapTotal - SwapFree`` from
         ``/proc/meminfo``.  Returns 0.0 when there's no swap configured
-        (``SwapTotal == 0``) or ``/proc`` isn't available.
+        (``SwapTotal == 0``), ``None`` when ``/proc/meminfo`` isn't
+        available (Windows, macOS: the cell shows ``-``, not a fake 0).
         """
         total_kb = 0.0
         free_kb = 0.0
@@ -1275,13 +1311,13 @@ class _MemoryRecorder:
                     if total_kb and free_kb:
                         break
         except OSError:
-            pass
+            return None
         if total_kb <= 0:
             return 0.0
         return max(0.0, (total_kb - free_kb) / 1024.0)
 
     @staticmethod
-    def _read_sys_used_mb() -> float:
+    def _read_sys_used_mb() -> float | None:
         """System-level used memory (MB), matching what most monitors
         ("htop", KSysGuard, GNOME) show as "Used".
 
@@ -1299,7 +1335,8 @@ class _MemoryRecorder:
         approaches zero, regardless of which process is consuming the
         pages).
 
-        Returns 0.0 if /proc isn't available.
+        Returns ``None`` if /proc/meminfo isn't available (the cell then
+        shows ``-``).
         """
         total_kb = 0.0
         avail_kb = 0.0
@@ -1317,82 +1354,130 @@ class _MemoryRecorder:
                     if total_kb and avail_kb:
                         break
         except OSError:
-            pass
+            return None
         if total_kb <= 0:
-            return 0.0
+            return None
         return (total_kb - avail_kb) / 1024.0
 
-    # Fixed widths used to align the mem output into a table.
-    # Label column fits the longest whitelisted label
-    # ("Matrix built by polar-high", 26 chars).
-    _LABEL_W = 28      # label column (left-aligned)
-    # Each data cell renders "<absolute> (<+/-delta>)" right-aligned
-    # within these widths.  Sized for normal use; cells widen
-    # naturally when values overflow (right-align preserves the gutter).
-    _TIME_CELL_W = 17  # fits e.g. "9999.9s (+999.9)"
-    _MEM_CELL_W = 19   # fits e.g. "-100.00 GB (+99.99)"
+    # Fixed widths of the phase-progress table.  A row reads
+    #   "<label> <time> | <RSS cell> | <system cell> | <swap cell>"
+    # with a single space before each "|" and 17 characters between two
+    # bars (a 16-wide right-aligned cell plus the space before the next
+    # bar), so the bars sit in the same columns on every row:
+    #   Matrix built by polar-high 10000s (+10000) |     544 MB (-5) | ...
+    # The label+time part is ``_LABEL_W`` + 1 + ``_TIME_CELL_W`` wide and
+    # stretches only when a label is longer than ``_LABEL_W`` (one space
+    # is always kept before the time) or a time passes 99999 s.
+    _LABEL_W = 26      # the longest whitelisted label, "Matrix built by polar-high"
+    _TIME_CELL_W = 15  # fits "99999s (+99999)"
+    _MEM_CELL_W = 16   # fits "16.9 GB (-0.01)" plus the space after the bar
+
+    _SIZE_UNITS: tuple[str, ...] = ("kB", "MB", "GB", "TB")
 
     @staticmethod
-    def _pick_size_unit(mb: float) -> tuple[float, str]:
-        """Pick GB vs MB display unit for an absolute MB value.
-        Returns ``(divisor, label)`` — e.g. ``(1024.0, "GB")``.
+    def _fmt_sig3(value: float) -> str:
+        """``value`` (>= 0) to 3 significant figures in at most 4 digits.
+
+        Below 1000 the value keeps at most two decimals so it never
+        passes 4 characters (``0.12``, ``9.1``, ``16.9``, ``544``);
+        trailing zeros are dropped (``9.10`` -> ``9.1``, ``16.0`` ->
+        ``16``).  From 1000 up it is an integer rounded to 3 significant
+        figures (``1230``, ``10000``).
         """
-        if abs(mb) >= 1024.0:
-            return 1024.0, "GB"
-        return 1.0, "MB"
+        if value <= 0 or not math.isfinite(value):
+            return "0"
+        exp = math.floor(math.log10(value))
+        rounded = round(value, 2 - exp)
+        if rounded >= 1000:
+            return f"{rounded:.0f}"
+        exp = math.floor(math.log10(rounded)) if rounded > 0 else 0
+        decimals = min(2, max(0, 2 - exp))
+        text = f"{rounded:.{decimals}f}"
+        if "." in text:
+            text = text.rstrip("0").rstrip(".")
+        return text or "0"
+
+    @classmethod
+    def _fmt_signed_sig3(cls, value: float) -> str:
+        """``value`` with an explicit sign (``+12``, ``-0.01``); ``+0``
+        when it rounds to zero."""
+        text = cls._fmt_sig3(abs(value))
+        if text == "0":
+            return "+0"
+        return ("+" if value >= 0 else "-") + text
+
+    @classmethod
+    def _pick_size_unit(cls, mb: float) -> tuple[float, str]:
+        """Pick the kB/MB/GB/TB unit that keeps ``mb`` in 0-999 once
+        rounded to 3 significant figures.  Returns ``(divisor_in_mb,
+        label)`` — e.g. ``(1024.0, "GB")``."""
+        if mb == 0:
+            return 1.0, "MB"       # an empty swap reads "0 MB", not "0 kB"
+        div = 1.0 / 1024.0
+        for label in cls._SIZE_UNITS[:-1]:
+            if float(cls._fmt_sig3(abs(mb) / div)) < 1000:
+                return div, label
+            div *= 1024.0
+        return div, cls._SIZE_UNITS[-1]
 
     @classmethod
     def _fmt_mem_cell(cls, mb: float | None, delta_mb: float | None) -> str:
-        """Render a memory cell as ``"<absolute> (<±delta>)"`` right-
-        aligned within ``_MEM_CELL_W``.  Both numbers are rendered in
-        the unit chosen for the absolute, so the cell reads as a single
-        consistent magnitude (e.g. ``"5.18 GB (+0.21)"`` — both GB).
-        When ``mb`` is None, a single dash fills the cell.
+        """Render a memory cell as ``"<absolute> <unit> (<±delta>)"``
+        right-aligned within ``_MEM_CELL_W``.  The delta is in the unit
+        of the absolute, so the cell reads as one magnitude (e.g.
+        ``"16.9 GB (-0.01)"``); a negligible delta reads ``+0``.  When
+        ``mb`` is None, a single dash fills the cell.
         """
         if mb is None:
             return f"{'-':>{cls._MEM_CELL_W}}"
         div, label = cls._pick_size_unit(mb)
-        # Two decimals when GB, integer when MB — matches the example.
-        if label == "GB":
-            val = f"{mb / div:.2f} {label}"
-        else:
-            val = f"{mb / div:.0f} {label}"
+        val = f"{cls._fmt_sig3(mb / div)} {label}"
         if delta_mb is None:
             cell = f"{val} (-)"
+        elif float(cls._fmt_sig3(abs(delta_mb) / div)) >= 1000:
+            # A delta far larger than the absolute (swap 2 GB -> 0.5 MB) would not fit in the absolute's unit:
+            # it gets its own (``512 kB (-2 GB)``), so the cell keeps its width.
+            ddiv, dlabel = cls._pick_size_unit(delta_mb)
+            cell = f"{val} ({cls._fmt_signed_sig3(delta_mb / ddiv)} {dlabel})"
+            if len(cell) >= cls._MEM_CELL_W:      # still too wide: the delta as a whole number of its unit
+                cell = f"{val} ({'+' if delta_mb >= 0 else '-'}{max(1, round(abs(delta_mb) / ddiv))} {dlabel})"
         else:
-            if abs(delta_mb) < (0.005 if label == "GB" else 0.5):
-                delta_str = "+0"
-            else:
-                sign = "+" if delta_mb >= 0 else "-"
-                a = abs(delta_mb) / div
-                fmt = ".2f" if label == "GB" else ".0f"
-                delta_str = f"{sign}{a:{fmt}}"
-            cell = f"{val} ({delta_str})"
+            cell = f"{val} ({cls._fmt_signed_sig3(delta_mb / div)})"
         return f"{cell:>{cls._MEM_CELL_W}}"
 
     @classmethod
     def _fmt_time_cell(cls, t_elapsed: float, t_section: float | None) -> str:
-        """Render the time cell as ``"<elapsed>s (+<section>)"`` right-
-        aligned within ``_TIME_CELL_W``.  First-row ``t_section is None``
-        renders ``"<elapsed>s (-)"``.
+        """Render the time cell as ``"<elapsed>s (+<section>)"`` (seconds,
+        3 significant figures) right-aligned within ``_TIME_CELL_W``.
+        First-row ``t_section is None`` renders ``"<elapsed>s (-)"``.
         """
+        elapsed = f"{cls._fmt_sig3(t_elapsed)}s"
         if t_section is None:
-            cell = f"{t_elapsed:.1f}s (-)"
+            cell = f"{elapsed} (-)"
         else:
-            sign = "+" if t_section >= 0 else "-"
-            cell = f"{t_elapsed:.1f}s ({sign}{abs(t_section):.1f})"
+            cell = f"{elapsed} ({cls._fmt_signed_sig3(t_section)})"
         return f"{cell:>{cls._TIME_CELL_W}}"
+
+    @classmethod
+    def _fmt_row(cls, label: str, time_cell: str, mem_cells: Sequence[str]) -> str:
+        """Join a label, a time cell and memory cells into one table row.
+
+        The label+time part keeps its fixed width (label left, time
+        right) unless the two do not fit with one space between them.
+        """
+        width = cls._LABEL_W + 1 + cls._TIME_CELL_W
+        lead = f"{label} {time_cell.lstrip()}"
+        if len(lead) < width:
+            lead = f"{label}{time_cell.lstrip():>{width - len(label)}}"
+        return lead + "".join(f" |{cell}" for cell in mem_cells)
 
     def _emit_header(self) -> None:
         """Print the column-header line for the phase-progress table."""
-        blank_label = " " * self._LABEL_W
-        header = (
-            f"{blank_label}  "
-            f"{'time':^{self._TIME_CELL_W}}  "
-            f"|  {'RSS memory':^{self._MEM_CELL_W}}  "
-            f"|  {'system memory':^{self._MEM_CELL_W}}  "
-            f"|  {'system swap':^{self._MEM_CELL_W}}"
-        )
+        header = self._fmt_row(
+            "", f"{'time':>{self._TIME_CELL_W}}",
+            [f"{name:>{self._MEM_CELL_W}}" for name in
+             ("RSS memory", "system memory", "system swap")],
+        ).rstrip()
         try:
             print(header, flush=True)
         except OSError:
@@ -1435,8 +1520,8 @@ class _MemoryRecorder:
         # user wants to see in the compact mode.
         t_section = t_elapsed - (self._t_prev - self.t0)
         delta_rss = rss_mb - self._rss_prev_mb
-        delta_sys = sys_mb - self._sys_prev_mb
-        delta_swap = swap_mb - self._swap_prev_mb
+        delta_sys = None if sys_mb is None else sys_mb - self._sys_prev_mb
+        delta_swap = None if swap_mb is None else swap_mb - self._swap_prev_mb
         # CSV row — only when full diagnostics is enabled and a path was
         # configured.  Always written for every checkpoint (independent
         # of the log-line whitelist) so the CSV remains a complete
@@ -1483,7 +1568,6 @@ class _MemoryRecorder:
         )
         if emit:
             display = user_label or label
-            label_col = f"{display:<{self._LABEL_W}}"
             is_first = self._t_prev == self.t0
             # Emit the column header once, immediately before the first
             # data line.  Inline labels are dropped from data lines
@@ -1511,13 +1595,8 @@ class _MemoryRecorder:
             rss_cell = self._fmt_mem_cell(rss_mb, delta_rss)
             sys_cell = self._fmt_mem_cell(sys_mb, delta_sys)
             swap_cell = self._fmt_mem_cell(swap_mb, delta_swap)
-            line = (
-                f"{label_col}  "
-                f"{time_cell}  "
-                f"|  {rss_cell}  "
-                f"|  {sys_cell}  "
-                f"|  {swap_cell}"
-            )
+            line = self._fmt_row(
+                display, time_cell, (rss_cell, sys_cell, swap_cell))
             try:
                 print(line, flush=True)
             except OSError:
@@ -1527,8 +1606,8 @@ class _MemoryRecorder:
             # activity since the last visible checkpoint.
             self._t_prev = time.perf_counter()
             self._rss_prev_mb = rss_mb
-            self._sys_prev_mb = sys_mb
-            self._swap_prev_mb = swap_mb
+            self._sys_prev_mb = sys_mb or 0.0
+            self._swap_prev_mb = swap_mb or 0.0
             if peak_mb is not None:
                 self._peak_prev_mb = peak_mb
 
@@ -2363,7 +2442,7 @@ def _benders_consume_guard_message(
     """Loud guard for the cross-scheme handoff (v60/v62, narrowed for TIER 1).
 
     A Benders *investment* solve now deposits a real ``SolveHandoff``
-    (``realized_invest`` / ``realized_existing`` / ``divest_cumulative``)
+    (``realized_cohort`` / ``realized_retire`` / ``divest_cumulative``)
     so a downstream rolling-dispatch solve can consume its invested
     capacity — that path is SUPPORTED and must NOT fire the guard.
 
@@ -2371,7 +2450,7 @@ def _benders_consume_guard_message(
     Benders predecessor that deposited **no usable investment handoff**
     — i.e. the predecessor is in *benders_solve_names* but NOT in
     *benders_invest_handoff_names* (its handoff carries no
-    ``realized_invest`` / ``divest_cumulative`` to hand forward, so the
+    ``realized_cohort`` / ``divest_cumulative`` to hand forward, so the
     downstream solve would silently load nothing investy from it).
 
     Returns ``None`` when the situation is safe:
@@ -2390,7 +2469,7 @@ def _benders_consume_guard_message(
     return (
         f"Solve '{base_solve_name}' follows '{prev_captured}', which ran "
         f"under decomposition=benders but produced NO invested/divested "
-        f"capacity to hand forward (its handoff carries no realized_invest "
+        f"capacity to hand forward (its handoff carries no realized_cohort "
         f"/ divest_cumulative). Consuming it would silently load nothing "
         f"from that solve. Make the downstream solve benders too, order "
         f"the chain so the Benders solve is terminal, or ensure the "
@@ -2750,6 +2829,8 @@ def _drive_cascade(
             "cascade_spinedb_reader_constructed", _drive_logger,
             user_label="Inputs prepared",
         )
+    # The run's existing cohorts are built from this reader once the run calendar is known (``_run_model``).
+    runner.state.input_source = cascade_db_reader
     # The solves of a 2-D period map are solves of the reader too (before any reader-side lookup).
     from flextool.engine.input._solve_config import register_solve_copies
     register_solve_copies(runner.state.solve, cascade_db_reader)
@@ -2922,7 +3003,7 @@ def _drive_cascade(
             self._benders_solve_names: set[str] = set()
             # TIER 1 — complete-solve names whose Benders solve deposited a
             # USABLE investment handoff (non-empty
-            # ``result.invest_solution_vars`` → ``realized_invest`` /
+            # ``result.invest_solution_vars`` → ``realized_cohort`` /
             # ``divest_cumulative`` carriers).  A downstream solve may
             # consume these; the consume-side guard fires only for Benders
             # predecessors NOT in this set.
@@ -3208,8 +3289,10 @@ def _drive_cascade(
             # dispatch solve consumes this Benders solve's invested
             # capacity.  ``result.invest_solution_vars`` is a dict keyed by
             # ``v_invest_p`` / ``v_invest_n`` / ``v_divest_p`` /
-            # ``v_divest_n`` to long-form (entity, d, value) frames whose
-            # columns match ``polar_high.Solution.value(name)`` exactly;
+            # ``v_divest_n``, the built retirements ``v_divest_built_{p,n}``
+            # (per cohort) / ``v_divested_built_{p,n}`` and the life extensions
+            # ``v_extend_{p,n}`` (per cohort) / ``v_extended_{p,n}`` to long-form frames
+            # whose columns match ``polar_high.Solution.value(name)`` exactly;
             # it is ``{}`` when the model has no investment.
             # ``--csv-dump``: dump the solve's undecomposed FlexData (the master and the regions are derived from it).
             self._dump_solve_inputs(data, complete_solve_name)
@@ -3260,6 +3343,9 @@ def _drive_cascade(
                         self.state, "current_provider", None,
                     ),
                     scale_the_objective=obj_scale,
+                    # The undecomposed solve's cohort table: the realized
+                    # investments are carried as its cohorts.
+                    cohort=getattr(data, "cohort", None),
                 )
                 # Deposit so the next solve's load picks it up via the
                 # ``last_captured_solve`` translation in _run_model
@@ -3310,6 +3396,13 @@ def _drive_cascade(
                     reset_global_axis_enums(token)
 
         def run(self, complete_solve_name: str) -> int:
+            """One sub-solve (a roll, or a whole solve), with its coded warnings gathered: each code prints one
+            line for the sub-solve, before the solver runs (:func:`_print_solver_args`) or when it ends; the
+            solve-scoped codes (``solve=``) print once per complete solve."""
+            with run_warnings.collecting():
+                return self._run_one(complete_solve_name)
+
+        def _run_one(self, complete_solve_name: str) -> int:
             _phase_prof("run_enter")
             # Slice D Guard 1 (authoritative): validate the RAW authored
             # stochastic_invest_method for any solve that RUNS — including
@@ -3792,10 +3885,9 @@ def _drive_cascade(
                         # The normal outcome for every roll (``dt`` shifts),
                         # so INFO, not WARNING.  The message names the first
                         # differing FlexData field.
-                        state.logger.info(
-                            "warm reuse fell back to COLD REBUILD for %s "
-                            "(re-runs pre-solve autoscale traversal): %s",
-                            complete_solve_name, _warm_exc,
+                        _log_cold_rebuild(
+                            state.logger, self.__dict__.setdefault("_cold_rebuild_logged", set()),
+                            complete_solve_name, str(_warm_exc),
                         )
                 if not warm_used:
                     # Drop the previous WarmProblem BEFORE the new build on
@@ -4079,7 +4171,9 @@ def _drive_cascade(
                 # under ``keep_solver=True``.  No extra kwarg required.
                 # Blank line so HiGHS' "Running HiGHS …" banner (and the
                 # grey solver-output block in the GUI) separates from the
-                # scaling/LP-build rows above it.
+                # scaling/LP-build rows above it.  The sub-solve's coded
+                # warnings gathered so far print before it.
+                run_warnings.flush()
                 print("", flush=True)
                 # Echo the effective solver options right before HiGHS'
                 # own banner: the full merged, post-precedence set the
@@ -4099,8 +4193,7 @@ def _drive_cascade(
                         self._warm_problem.problem, _eff_touched, complete_solve_name,
                     ),
                 )
-                if _sa_line:
-                    print(_sa_line, flush=True)
+                _print_solver_args(_sa_line)
                 _t_solve_start = (
                     time.perf_counter() if _phase_timing else 0.0
                 )
@@ -4557,7 +4650,9 @@ def _drive_cascade(
                 _ranges_for_l1 = _autoscale_ranges_post or _autoscale_ranges_pre
                 # Blank line so HiGHS' "Running HiGHS …" banner (and the
                 # grey solver-output block in the GUI) separates from the
-                # scaling/LP-build rows above it.
+                # scaling/LP-build rows above it.  The sub-solve's coded
+                # warnings gathered so far print before it.
+                run_warnings.flush()
                 print("", flush=True)
                 # Echo the effective solver options right before HiGHS'
                 # own banner: the full merged, post-precedence set the
@@ -4574,8 +4669,7 @@ def _drive_cascade(
                 # their native names (``Solver args (gurobi): ...``), from the
                 # same resolved list ``run_one_solve`` hands to the CLI
                 # (``_sa_line`` is computed above, before the scaling guard).
-                if _sa_line:
-                    print(_sa_line, flush=True)
+                _print_solver_args(_sa_line)
                 _phase_prof("solve_start")
                 if _horizon_on:
                     # Before the solve: it releases ``pb._cstrs``.
@@ -4780,6 +4874,17 @@ def _drive_cascade(
                 )
             elif _acc.near_optimal:
                 self.state.logger.info(_acc.message)
+            # One ``Note:`` on what a not-clean HiGHS outcome means for the
+            # results (W-0540..W-0542), once per complete solve.  Diagnostic
+            # only: a failure in it must not fail a run that has solved.
+            try:
+                note_solver_outcome(
+                    sol, _acc, solve_name=complete_solve_name, solver=_active_solver_cfg.name,
+                    noted=self.state.__dict__.setdefault("_solver_outcome_noted", set()),
+                )
+            except Exception:  # noqa: BLE001
+                logging.getLogger(__name__).debug(
+                    "the solver-outcome note of %s failed", complete_solve_name, exc_info=True)
             if _active_solver_cfg.name == "highs" and _acc.model_status == "kOptimal":
                 # A HiGHS MIP treats ``objective_bound`` as a cutoff and calls
                 # the best solution within it optimal.  Every roll of a solve
@@ -4968,9 +5073,11 @@ def _drive_cascade(
             # end-of-cascade.  End-of-cascade writers
             # (``_entity_all_capacity`` and friends) need EACH sub-
             # solve's own ``v_invest_p`` / ``v_invest_n`` /
-            # ``v_divest_p`` / ``v_divest_n``; snapshot those four
-            # long-form polars frames here so they survive the
-            # between-solve release.  Cost: 4 small DataFrames per
+            # ``v_divest_p`` / ``v_divest_n`` and the built capacity
+            # retired so far ``v_divested_built_p`` / ``v_divested_built_n`` and
+            # the extended capacity ``v_extended_p`` / ``v_extended_n``;
+            # snapshot those long-form polars frames here so they survive
+            # the between-solve release.  Cost: 6 small DataFrames per
             # sub-solve (typically a few hundred rows each).  See
             # :class:`SnapshotSolution` for the wrapper consumers read.
             captured_vars: "dict[str, pl.DataFrame]" = {}
@@ -4979,6 +5086,8 @@ def _drive_cascade(
                 for _vname in (
                     "v_invest_p", "v_invest_n",
                     "v_divest_p", "v_divest_n",
+                    "v_divested_built_p", "v_divested_built_n",
+                    "v_extended_p", "v_extended_n",
                 ):
                     if _vname in sol._vars:
                         try:
@@ -5420,6 +5529,7 @@ def run_chain_from_db(
     # Behaviour-change notices fire only for an upgraded database's markers; each entity once per run.
     from flextool.engine import _behaviour_changes
     _behaviour_changes.start_run(_behaviour_changes.read_markers_from_url(db_url))
+    _reset_solver_args_echo()
 
     if work_folder is None:
         work_folder = Path(tempfile.mkdtemp(prefix="flextool_run_chain_"))

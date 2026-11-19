@@ -16,11 +16,11 @@ input, built from JSON.
 """
 from __future__ import annotations
 
-import logging
 
 import polars as pl
 import pytest
 
+from tests._support.coded_warnings import capture_coded
 from tests.engine._unit_db import (
     CHP, CHP_CHAIN, COAL, GAS, GAS_ENTITIES, b64, build, cstr_over, flow,
     gas, make_db, no_ratio_constraint, online, run, solve, time_map, uc,
@@ -131,25 +131,24 @@ def test_invalid_shares_are_errors(tmp_path_factory, alt, values,
         run(tmp_path_factory, url, scen)
 
 
-def test_share_on_zero_coefficient_input_warns(tmp_path_factory,
-                                               caplog) -> None:
+def test_share_on_zero_coefficient_input_warns(tmp_path_factory) -> None:
     """A share on an input with ``conversion_flow_coeff = 0`` has no
     effect: a warning, and no minInputShare row."""
-    caplog.set_level(logging.WARNING)
-    step = _solve(tmp_path_factory, "ism_conv0",
-                  [_share(GAS, 0.3),
-                   ["unit__inputNode", [CHP, GAS], "conversion_flow_coeff",
-                    b64(0.0, "float")]])
-    assert any("no effect" in r.getMessage() and GAS in r.getMessage()
-               for r in caplog.records)
+    with capture_coded() as got:
+        step = _solve(tmp_path_factory, "ism_conv0",
+                      [_share(GAS, 0.3),
+                       ["unit__inputNode", [CHP, GAS], "conversion_flow_coeff",
+                        b64(0.0, "float")]])
+    assert got.detail("W-0213", f"{CHP}, {GAS}") == "conversion_flow_coeff = 0"
     assert cstr_over(build(step.flex_data), "minInputShare") is None
 
 
-def test_share_on_single_input_unit_warns(tmp_path_factory, caplog) -> None:
-    caplog.set_level(logging.WARNING)
-    solve(tmp_path_factory, alt="ism_single", base_chain=CHP_CHAIN,
-          values=no_ratio_constraint() + [_share(COAL, 0.5)])
-    assert any("single input" in r.getMessage() for r in caplog.records)
+def test_share_on_single_input_unit_warns(tmp_path_factory) -> None:
+    with capture_coded() as got:
+        solve(tmp_path_factory, alt="ism_single", base_chain=CHP_CHAIN,
+              values=no_ratio_constraint() + [_share(COAL, 0.5)])
+    assert any(call.code == "W-0213" and "the unit has a single input" in call.details.values()
+               for call in got.calls)
 
 
 def test_build_guard_rejects_bad_shares(tmp_path_factory) -> None:
@@ -172,11 +171,9 @@ def test_build_guard_rejects_bad_shares(tmp_path_factory) -> None:
 
 
 # ── rolling: warm path, validation once ─────────────────────────────────
-def test_rolling_warm_matches_cold_and_validates_once(tmp_path_factory,
-                                                      caplog) -> None:
+def test_rolling_warm_matches_cold_and_validates_once(tmp_path_factory) -> None:
     from flextool.engine import run_chain_from_db
 
-    caplog.set_level(logging.WARNING)
     rolling = [
         ["solve", "y2020_2day_dispatch", "solve_mode",
          b64("rolling_window", "str")],
@@ -191,11 +188,11 @@ def test_rolling_warm_matches_cold_and_validates_once(tmp_path_factory,
                         + _demands() + [_share(GAS, 0.3),
                                         _share(COAL, 1.5, "input_share_max")]
                         + uc(CHP, 0.4) + rolling)
-    warm = run_chain_from_db(url, scen, keep_solutions=True, warm=True,
-                             work_folder=tmp_path_factory.mktemp("ism_rw"))
-    n_warn = sum("input_share_max 1.5 is above 1" in r.getMessage()
-                 for r in caplog.records)
-    assert n_warn == 1
+    with capture_coded() as got:
+        warm = run_chain_from_db(url, scen, keep_solutions=True, warm=True,
+                                 work_folder=tmp_path_factory.mktemp("ism_rw"))
+    assert [call.details for call in got.calls if call.code == "W-0212"] == [
+        {f"{CHP}, {COAL}": "input_share_max 1.5"}]
     cold = run_chain_from_db(url, scen, keep_solutions=True, warm=False,
                              work_folder=tmp_path_factory.mktemp("ism_rc"))
     assert len(warm) > 1

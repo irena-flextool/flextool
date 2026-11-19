@@ -65,6 +65,15 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "timeset",
+          "timestep",
+          "block_duration"
+        ]
       }
     },
     "solve_sequence": {
@@ -251,6 +260,29 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "solve",
+          "solve_mode",
+          "contains_solves",
+          "solver",
+          "highs_presolve",
+          "highs_method",
+          "highs_parallel",
+          "solver_precommand",
+          "solver_argument_1",
+          "solver_argument_2",
+          "solver_argument_3",
+          "solver_argument_4",
+          "solver_argument_5",
+          "solver_argument_6",
+          "solver_argument_7",
+          "solver_argument_8",
+          "solver_argument_9"
+        ]
       }
     },
     "node_c": {
@@ -337,6 +369,48 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "node",
+          "has_balance",
+          "Entity Alternative",
+          "inflow_method",
+          "has_storage",
+          "node_type",
+          "invest_method",
+          "lifetime_method",
+          "storage_nested_fix_method",
+          "storage_binding_method",
+          "storage_start_end_method",
+          "storage_solve_horizon_method",
+          "inflow",
+          "annual_flow",
+          "peak_inflow",
+          "penalty_down",
+          "penalty_up",
+          "existing",
+          "invest_max_total",
+          "invest_min_total",
+          "retire_max_total",
+          "retire_min_total",
+          "cumulative_max_capacity",
+          "cumulative_min_capacity",
+          "invest_cost",
+          "salvage_value",
+          "interest_rate",
+          "fixed_cost",
+          "lifetime",
+          "self_discharge_loss",
+          "storage_state_start",
+          "storage_state_end",
+          "storage_state_reference_value",
+          "storage_state_reference_price",
+          "virtual_unitsize",
+          "availability"
+        ]
       }
     },
     "node_p": {
@@ -415,6 +489,31 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "node",
+          "period",
+          "annual_flow",
+          "peak_inflow",
+          "penalty_down",
+          "penalty_up",
+          "existing",
+          "invest_forced",
+          "invest_max_period",
+          "invest_min_period",
+          "retire_max_period",
+          "retire_min_period",
+          "cumulative_max_capacity",
+          "cumulative_min_capacity",
+          "invest_cost",
+          "salvage_value",
+          "interest_rate",
+          "lifetime",
+          "fixed_cost"
+        ]
       }
     },
     "node_t": {
@@ -517,6 +616,14 @@
             }
           ]
         }
+      },
+      "layout": {
+        "label_column": 1,
+        "rows": [
+          "alternative",
+          "parameter",
+          "node"
+        ]
       }
     },
     "commodity_c": {
@@ -565,6 +672,15 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "commodity",
+          "co2_content",
+          "price"
+        ]
       }
     },
     "connection_c": {
@@ -693,6 +809,38 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "connection",
+          "left_node",
+          "right_node",
+          "Entity Alternative",
+          "transfer_method",
+          "startup_method",
+          "invest_method",
+          "lifetime_method",
+          "is_DC",
+          "startup_cost",
+          "existing",
+          "invest_max_total",
+          "invest_min_total",
+          "retire_max_total",
+          "retire_min_total",
+          "cumulative_max_capacity",
+          "cumulative_min_capacity",
+          "invest_cost",
+          "salvage_value",
+          "interest_rate",
+          "lifetime",
+          "fixed_cost",
+          "other_operational_cost",
+          "efficiency",
+          "virtual_unitsize",
+          "availability"
+        ]
       }
     },
     "connection_p": {
@@ -764,6 +912,27 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "connection",
+          "period",
+          "existing",
+          "invest_max_period",
+          "invest_min_period",
+          "retire_max_period",
+          "retire_min_period",
+          "cumulative_max_capacity",
+          "cumulative_min_capacity",
+          "invest_cost",
+          "salvage_value",
+          "interest_rate",
+          "lifetime",
+          "fixed_cost",
+          "other_operational_cost"
+        ]
       }
     },
     "connection_t": {
@@ -837,6 +1006,14 @@
             }
           ]
         }
+      },
+      "layout": {
+        "label_column": 1,
+        "rows": [
+          "alternative",
+          "parameter",
+          "connection"
+        ]
       }
     },
     "profile_t": {
@@ -950,6 +1127,13 @@
             }
           ]
         }
+      },
+      "layout": {
+        "label_column": 1,
+        "rows": [
+          "alternative",
+          "profile"
+        ]
       }
     },
     "unit_c": {
@@ -1030,6 +1214,39 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "unit",
+          "Entity Alternative",
+          "conversion_method",
+          "startup_method",
+          "minimum_time_method",
+          "invest_method",
+          "lifetime_method",
+          "existing",
+          "invest_max_total",
+          "invest_min_total",
+          "retire_max_total",
+          "retire_min_total",
+          "cumulative_max_capacity",
+          "cumulative_min_capacity",
+          "invest_cost",
+          "salvage_value",
+          "interest_rate",
+          "lifetime",
+          "fixed_cost",
+          "startup_cost",
+          "efficiency",
+          "efficiency_at_min_load",
+          "min_load",
+          "min_downtime",
+          "min_uptime",
+          "virtual_unitsize",
+          "availability"
+        ]
       }
     },
     "unit_p": {
@@ -1104,6 +1321,27 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "unit",
+          "period",
+          "existing",
+          "invest_max_period",
+          "invest_min_period",
+          "retire_max_period",
+          "retire_min_period",
+          "cumulative_max_capacity",
+          "cumulative_min_capacity",
+          "invest_cost",
+          "salvage_value",
+          "interest_rate",
+          "lifetime",
+          "fixed_cost",
+          "startup_cost"
+        ]
       }
     },
     "unit_t": {
@@ -1177,6 +1415,14 @@
             }
           ]
         }
+      },
+      "layout": {
+        "label_column": 1,
+        "rows": [
+          "alternative",
+          "parameter",
+          "unit"
+        ]
       }
     },
     "constraint_sense_c": {
@@ -1232,6 +1478,16 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "constraint",
+          "Entity Alternative",
+          "sense",
+          "constant"
+        ]
       }
     },
     "group_c": {
@@ -1303,6 +1559,38 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "group",
+          "output_results",
+          "output_node_flows",
+          "output_aggregate_flows",
+          "has_capacity_margin",
+          "capacity_margin",
+          "penalty_capacity_margin",
+          "has_inertia",
+          "inertia_limit",
+          "penalty_inertia",
+          "has_non_synchronous",
+          "non_synchronous_limit",
+          "penalty_non_synchronous",
+          "co2_method",
+          "co2_price",
+          "co2_max_total",
+          "invest_method",
+          "invest_max_total",
+          "invest_min_total",
+          "invest_max_cumulative",
+          "invest_min_cumulative",
+          "max_cumulative_flow",
+          "min_cumulative_flow",
+          "max_instant_flow",
+          "min_instant_flow",
+          "share_loss_of_load"
+        ]
       }
     },
     "group_connection": {
@@ -1350,6 +1638,13 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 0,
+        "columns": [
+          "group",
+          "connection"
+        ]
       }
     },
     "group_connection_node": {
@@ -1416,6 +1711,14 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 0,
+        "columns": [
+          "group",
+          "connection",
+          "node"
+        ]
       }
     },
     "group_node": {
@@ -1472,6 +1775,13 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 0,
+        "columns": [
+          "group",
+          "node"
+        ]
       }
     },
     "group_unit": {
@@ -1528,6 +1838,13 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 0,
+        "columns": [
+          "group",
+          "unit"
+        ]
       }
     },
     "group_unit_node": {
@@ -1594,6 +1911,14 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 0,
+        "columns": [
+          "group",
+          "unit",
+          "node"
+        ]
       }
     },
     "reserve_connection_node_c": {
@@ -1693,6 +2018,21 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "reserve",
+          "upDown",
+          "connection",
+          "node",
+          "Entity Alternative",
+          "increase_reserve_ratio",
+          "large_failure_ratio",
+          "max_share",
+          "reliability"
+        ]
       }
     },
     "reserve_group_c": {
@@ -1783,6 +2123,19 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "reserve",
+          "upDown",
+          "group",
+          "reserve_method",
+          "reservation",
+          "penalty_reserve",
+          "increase_reserve_ratio"
+        ]
       }
     },
     "reserve_group_t": {
@@ -1964,6 +2317,16 @@
             }
           ]
         }
+      },
+      "layout": {
+        "label_column": 1,
+        "rows": [
+          "alternative",
+          "reserve",
+          "upDown",
+          "group",
+          "parameter"
+        ]
       }
     },
     "reserve_unit_node_c": {
@@ -2068,6 +2431,20 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "reserve",
+          "upDown",
+          "unit",
+          "node",
+          "Entity Alternative",
+          "large_failure_ratio",
+          "max_share",
+          "reliability"
+        ]
       }
     },
     "commodity_p": {
@@ -2130,6 +2507,15 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "commodity",
+          "period",
+          "price"
+        ]
       }
     },
     "commodity_node": {
@@ -2186,6 +2572,13 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 0,
+        "columns": [
+          "commodity",
+          "node"
+        ]
       }
     },
     "solve_period": {
@@ -2458,6 +2851,20 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "solve",
+          "period",
+          "period_timeset",
+          "years_represented",
+          "realize_dispatch",
+          "can_invest",
+          "realized_invest_periods",
+          "fix_storage_periods"
+        ]
       }
     },
     "group_p": {
@@ -2530,6 +2937,25 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "group",
+          "period",
+          "capacity_margin",
+          "inertia_limit",
+          "non_synchronous_limit",
+          "co2_price",
+          "co2_max_period",
+          "invest_max_period",
+          "invest_min_period",
+          "max_cumulative_flow",
+          "min_cumulative_flow",
+          "max_instant_flow",
+          "min_instant_flow"
+        ]
       }
     },
     "unit_node_c": {
@@ -2665,6 +3091,23 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "unit",
+          "node",
+          "input_output",
+          "coefficient",
+          "other_operational_cost",
+          "is_non_synchronous",
+          "inertia_constant",
+          "ramp_method",
+          "ramp_cost",
+          "ramp_speed_down",
+          "ramp_speed_up"
+        ]
       }
     },
     "unit_node_p": {
@@ -2819,6 +3262,17 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "unit",
+          "node",
+          "period",
+          "input_output",
+          "other_operational_cost"
+        ]
       }
     },
     "unit_node_t": {
@@ -2984,6 +3438,16 @@
             }
           ]
         }
+      },
+      "layout": {
+        "label_column": 1,
+        "rows": [
+          "alternative",
+          "parameter",
+          "unit",
+          "node",
+          "input_output"
+        ]
       }
     },
     "unit_node_constraint_c": {
@@ -3135,6 +3599,17 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "unit",
+          "node",
+          "input_output",
+          "constraint",
+          "constraint_flow_coefficient"
+        ]
       }
     },
     "version": {
@@ -3263,6 +3738,15 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "node",
+          "profile",
+          "profile_method"
+        ]
       }
     },
     "connection_profile_c": {
@@ -3336,6 +3820,15 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "connection",
+          "profile",
+          "profile_method"
+        ]
       }
     },
     "unit_node_profile_c": {
@@ -3416,6 +3909,16 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "unit",
+          "node",
+          "profile",
+          "profile_method"
+        ]
       }
     },
     "scenario": {
@@ -3553,6 +4056,16 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "connection",
+          "node",
+          "constraint",
+          "constraint_flow_coefficient"
+        ]
       }
     },
     "node_constraint_c": {
@@ -3616,6 +4129,16 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "node",
+          "constraint",
+          "constraint_state_coefficient",
+          "constraint_capacity_coefficient"
+        ]
       }
     },
     "unit_constraint_c": {
@@ -3678,6 +4201,15 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "unit",
+          "constraint",
+          "constraint_capacity_coefficient"
+        ]
       }
     },
     "connection_constraint_c": {
@@ -3740,6 +4272,15 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "connection",
+          "constraint",
+          "constraint_capacity_coefficient"
+        ]
       }
     },
     "rolling_parameters": {
@@ -3801,6 +4342,16 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "solve",
+          "rolling_solve_jump",
+          "rolling_solve_horizon",
+          "rolling_duration"
+        ]
       }
     },
     "optional_outputs": {
@@ -3848,6 +4399,15 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "output",
+          "value",
+          "description"
+        ]
       }
     },
     "timeline": {
@@ -3909,6 +4469,15 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "timeline",
+          "timestep_name",
+          "timestep_duration"
+        ]
       }
     },
     "timeset_timeline": {
@@ -3960,6 +4529,15 @@
             }
           ]
         }
+      },
+      "layout": {
+        "header_row": 1,
+        "columns": [
+          "alternative",
+          "timeset",
+          "timeline",
+          "new_stepduration"
+        ]
       }
     },
     "Checklist": {

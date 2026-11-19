@@ -266,7 +266,7 @@ def _invest_retire_values(cls: str, ent: str, scale: float) -> list:
         [cls, ent, "retire_max_total", 40 * scale],
         [cls, ent, "retire_min_total", 1 * scale],
         # without a salvage value the entity gets no divest variable
-        [cls, ent, "salvage_value", 100.0],
+        [cls, ent, "net_salvage_value", 100.0],
     ]
 
 
@@ -361,9 +361,9 @@ def _patch_stoch_invest_storage(data: dict) -> dict:
                 # which is what the fixture already got implicitly before this fix -- keeps
                 # maxDivest_entity_total_path[base,*] byte-identical).
                 ["unit", "base", "retire_max_total", 0.0],
-                ["node", "store", "salvage_value", 0.5],
+                ["node", "store", "net_salvage_value", 0.5],
                 ["node", "store", "discount_rate", 0.05],
-                ["node", "store", "lifetime", 1.0],
+                ["node", "store", "lifetime_technical", 1.0],
                 ["node", "store", "penalty_up", 10000.0],
                 ["node", "store", "penalty_down", 10000.0],
                 ["connection", "store_conn", "existing", 50.0],
@@ -397,8 +397,51 @@ def _patch_multi_year_reinvest_choice(data: dict) -> dict:
     and stayed 700 in every solve."""
     return _overlay(
         data, name="multi_year_reinvest_choice", base="multi_year",
-        values=[["unit", "coal_plant", "lifetime", 5.0],
+        values=[["unit", "coal_plant", "lifetime_technical", 5.0],
                 ["unit", "coal_plant", "lifetime_method", "reinvest_choice"]])
+
+
+def _patch_model_discount_settings(data: dict) -> dict:
+    """The model's discount settings away from their defaults on ``multi_year_reinvest_choice`` (a chain that
+    invests and reinvests): ``social_discount_rate`` 0.03, ``discount_offset_investment`` 1 and
+    ``discount_offset_operations`` 0.25, so the discount factors of investments and of operations both move (at a
+    rate equal to the investors' discount_rate 0.05 the offset of the investment payments would cancel out)."""
+    data = _patch_multi_year_reinvest_choice(data)
+    return _overlay(
+        data, name="model_discount_settings", base="multi_year_reinvest_choice",
+        values=[["model", "flexTool", "social_discount_rate", 0.03],
+                ["model", "flexTool", "discount_offset_investment", 1.0],
+                ["model", "flexTool", "discount_offset_operations", 0.25]])
+
+
+def _patch_life_extension_chain(data: dict) -> dict:
+    """Life extension on ``multi_year_reinvest_choice``: coal_plant (existing 500 MW and the chain's investments,
+    lifetime 5, ``reinvest_choice``) may extend a cohort reaching its end of life (``life_extension_cost`` 200,
+    ``life_extension_years`` 10), so the chain prices, takes and carries extensions between its solves."""
+    data = _patch_multi_year_reinvest_choice(data)
+    return _overlay(
+        data, name="life_extension_chain", base="multi_year_reinvest_choice",
+        values=[["unit", "coal_plant", "life_extension_cost", 200.0],
+                ["unit", "coal_plant", "life_extension_years", 10.0]])
+
+
+def _patch_retire_built_chain(data: dict) -> dict:
+    """Retirement of model-built capacity on ``multi_year_reinvest_choice``: coal_plant's ``invest_method``
+    ``invest_retire_period_total`` (its invest limits kept; ``retire_max_period`` 200 MW, ``retire_max_total``
+    500 MW) with a ``net_salvage_value`` of 100 and ``lifetime_technical`` 10, so the chain's built cohorts
+    (``reinvest_choice``) get retirement columns and a settlement and the existing capacity a salvage.
+    ``retire_min_period`` 50 MW in p2035, when only built capacity is in service, retires a built cohort early,
+    and the retirement is carried to the last solve."""
+    data = _patch_multi_year_reinvest_choice(data)
+    return _overlay(
+        data, name="retire_built_chain", base="multi_year_reinvest_choice",
+        values=[["unit", "coal_plant", "invest_method", "invest_retire_period_total"],
+                ["unit", "coal_plant", "lifetime_technical", 10.0],
+                ["unit", "coal_plant", "retire_max_period", _per(200.0)],
+                ["unit", "coal_plant", "retire_max_total", 500.0],
+                ["unit", "coal_plant", "retire_min_period",
+                 _pmap({"p2020": 0.0, "p2025": 0.0, "p2030": 0.0, "p2035": 50.0})],
+                ["unit", "coal_plant", "net_salvage_value", 100.0]])
 
 
 def _patch_invest_total_no_var(data: dict) -> dict:
@@ -417,7 +460,7 @@ def _patch_invest_total_no_var(data: dict) -> dict:
         entities=[["unit", "x_unit"], ["unit__outputNode", ["x_unit", "west"]]],
         values=[["unit", "wind_plant", "invest_method", "invest_no_limit"],
                 ["unit", "wind_plant", "invest_cost", 1000.0],
-                ["unit", "wind_plant", "lifetime", 20.0],
+                ["unit", "wind_plant", "lifetime_technical", 20.0],
                 ["connection", "battery_inverter", "invest_method", "invest_no_limit"],
                 ["unit", "x_unit", "invest_method", "invest_total"],
                 ["unit", "x_unit", "invest_max_total", 10.0],
@@ -1668,7 +1711,7 @@ def _patch_conn_exact_invest(data: dict) -> dict:
     return _overlay(data, name="conn_exact_invest", base=_LL, values=[
         ["connection", "ll", "transfer_method", "exact"], ["connection", "ll", "efficiency", 0.95],
         ["connection", "ll", "existing", 0.0], ["connection", "ll", "invest_method", "invest_no_limit"],
-        ["connection", "ll", "invest_cost", 1.0], ["connection", "ll", "lifetime", 20.0],
+        ["connection", "ll", "invest_cost", 1.0], ["connection", "ll", "lifetime_technical", 20.0],
         ["connection", "ll", "discount_rate", 0.05],
         ["node", "lw", "penalty_up", 1000.0], ["node", "lw", "penalty_down", 1000.0],
         ["node", "le", "penalty_up", 1000.0], ["node", "le", "penalty_down", 1000.0],
@@ -2015,6 +2058,9 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "cumulative_capacity": _patch_cumulative_capacity,
     "stoch_invest_storage": _patch_stoch_invest_storage,
     "multi_year_reinvest_choice": _patch_multi_year_reinvest_choice,
+    "model_discount_settings": _patch_model_discount_settings,
+    "life_extension_chain": _patch_life_extension_chain,
+    "retire_built_chain": _patch_retire_built_chain,
     "invest_total_no_var": _patch_invest_total_no_var,
     "reserve_floors": _patch_reserve_floors,
     "chp_floor_linear": _patch_chp_floor_linear,
@@ -2235,6 +2281,9 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("cumulative_capacity", _T),
     ("stoch_invest_storage", _F + "stoch_two_period_hedge.json"),
     ("multi_year_reinvest_choice", _T),
+    ("model_discount_settings", _T),
+    ("life_extension_chain", _T),
+    ("retire_built_chain", _T),
     ("invest_total_no_var", _T),
     ("reserve_floors", _T),
     ("chp_floor_linear", _T),
@@ -3075,20 +3124,12 @@ DYNAMIC_CSTR_NAMES: dict[str, tuple[str, ...]] = {
           for tail in ("InvestGroup_entity_cumulative",
                        "Cumulative_flow_solve", "Cumulative_flow_period",
                        "Instant_flow")),
-        "fix_v_invest_no_investment_eq_p", "fix_v_invest_no_investment_eq_n",
     ),
 }
 
 # Families no production build can emit, with the reason.  ``coverage``
 # reports them separately and does not count them as gaps.
-UNREACHABLE: dict[str, str] = {
-    name: ("ed_invest_set (the v_invest_* domain) already anti-joins "
-           "ed_invest_forbidden_no_investment (_derived."
-           "ed_invest_set_from_source), so the row domain "
-           "forbidden ∩ v_invest is always empty")
-    for name in ("fix_v_invest_no_investment_eq_p",
-                 "fix_v_invest_no_investment_eq_n")
-}
+UNREACHABLE: dict[str, str] = {}
 
 def constraint_universe() -> dict[str, str]:
     """family name -> source file, for every add_cstr in COVERAGE_SOURCES."""

@@ -34,7 +34,7 @@ DOCS = REPO / "docs"
 
 def test_pages_render_and_are_written_utf8_lf(tmp_path: Path) -> None:
     written = write_pages(tmp_path, DOCS, private_names=tmp_path / "absent.txt")
-    assert sorted(p.name for p in written) == sorted(scope.WEB_PAGES)
+    assert sorted(p.relative_to(tmp_path).as_posix() for p in written) == sorted(scope.WEB_PAGES)
     for path in written:
         raw = path.read_bytes()
         assert b"\r" not in raw

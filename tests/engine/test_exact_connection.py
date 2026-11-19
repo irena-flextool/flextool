@@ -96,7 +96,7 @@ def _invest(existing: float, extra: list) -> list:
             ["connection", "ll", "invest_method", b64("invest_total", "str")],
             ["connection", "ll", "invest_max_total", b64(100.0, "float")],
             ["connection", "ll", "invest_cost", b64(1.0, "float")],
-            ["connection", "ll", "lifetime", b64(20.0, "float")],
+            ["connection", "ll", "lifetime_technical", b64(20.0, "float")],
             ["connection", "ll", "discount_rate", b64(0.05, "float")],
             ["solve", "lossless_2way_solve", "invest_periods", b64({"value_type": "str", "data": ["p2020"]}, "array")],
             ["solve", "lossless_2way_solve", "realized_invest_periods",

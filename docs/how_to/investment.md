@@ -26,17 +26,24 @@ First, the investment parameters need to be included both for the *battery_inver
     - `retire_min_period`
  
 - `invest_cost` - overnight investment cost new capacity [currency/kW] for the *battery_inverter* and [currency/kWh] for the *battery*. Other one can be left empty or zero, since they will be tied together in the next phase. Here we will assume a fixed relation between kW and kWh for this battery technology, but for example flow batteries could have separate investments for storage and charging capacities.
-- `discount_rate` - discount rate (WACC) [e.g. 0.05 means 5%] for the technology that reflects the financing cost and risk. Should be nominal when model `inflation_rate` > 0, real when `inflation_rate` = 0.
-- `lifetime` - technical lifetime of the technology to calculate investment annuity (together with the discount rate)
+- `discount_rate` - discount rate (WACC) [e.g. 0.05 means 5%] for the technology that reflects the financing cost and risk. In the same terms as the cost inputs (real or nominal); not the model's `social_discount_rate`, which weighs costs over time.
+- `lifetime_technical` - technical lifetime of the technology: how long new capacity operates [years]
+- `payback_time` - years over which the investment cost is annualized (together with the discount rate). Without it,
+  the investment is paid back over `lifetime_technical`. It sets only the size of the yearly investment cost: with
+  `lifetime_method` *reinvest_choice* or *no_reinvestment* the annuity's present value is spread evenly over
+  `lifetime_technical`, so with a `discount_rate` equal to the model `social_discount_rate` it changes nothing (for a
+  whole number of years); with a `discount_rate` above it a shorter payback time is cheaper, below it dearer (see
+  [the discount rate](../advanced_concepts.md#the-discount-rate-per-technology)).
 
 Additional parameters:
 
-- `lifetime_method`: Model can either be forced to reinvest when the lifetime ends (`reinvest_automatic`), have a choice (`reinvest_choice`), or be restricted to a one-shot build that retires after its lifetime without rebuild (`no_investment` — for physical one-off additions like plant refurbishments).
+- `lifetime_method`: at the end of the technical lifetime the plant is replaced automatically (`reinvest_automatic`, the default), the model chooses how much new capacity to build (`reinvest_choice`), or nothing is rebuilt (`no_reinvestment`, investment only during the first technical lifetime from the model start — for one-off additions like plant refurbishments).
+- `age_at_model_start` (or `build_year` with the `model` parameter `start_year`) and `end_of_life_method`: the age of the existing capacity, and how an end of life inside a period is rounded to a period start (`closest_seam` by default; `previous_seam` for capacity-adequacy studies). See [lifetime, age and end of life](../reference/units.md#lifetime-age-and-end-of-life).
 - `construction_lead_time` [years]: time from the investment decision until the capacity starts to operate. The start is rounded to the start of a period by `construction_lead_time_method` (below), on the periods of the whole model (all its solves). Constant or period (a map may set a different lead time per decision period). Default 0. Applies to `unit`, `connection` and `node` investments, deterministic and stochastic alike.
   - **Terms.** The *investment decision* is taken in a period of the solve's `invest_periods`. The capacity is *in construction* from the decision period until it *comes online* at the *start of operation*; from then on it is in service. Without a lead time, the capacity comes online in the decision period.
   - **Results.** In the capacity results (`unit_capacity__d`, `connection_capacity__d`, `node_capacity__d`) *invested* is the capacity that comes online in the period and *in_construction* the capacity decided but not yet operating (empty without a lead time); *total* is the capacity in service and does not include capacity in construction. Over combined solves (a chain of solves, invest then dispatch) every realized investment is counted once, in the period it comes online.
   - **Limits.** `invest_max_period` / `invest_min_period` (also of groups) count the capacity coming online in the period; the investment is decided earlier. `invest_max_total` / `invest_min_total` count every investment decision.
-  - **Costs.** `invest_cost` is the overnight cost: construction time costs with their interest must be included in it. The annuity and the `fixed_cost` of new capacity are paid only over the years it operates within the model horizon, and the `invest_cost` (and `lifetime`, `discount_rate`) of the period it comes online is used. The `lifetime` starts when the capacity comes online.
+  - **Costs.** `invest_cost` is the overnight cost: construction time costs with their interest must be included in it. With `lifetime_method` *reinvest_choice* or *no_reinvestment* new capacity pays the level yearly cost of a plant of its `lifetime_technical` (the annuity over `payback_time`, its present value spread evenly over the lifetime) for each year it is in service, from the year it starts to operate to its end of life as `end_of_life_method` rounds it (a 12-year plant whose life is rounded to 10 years pays the yearly cost of the 12-year plant for 10 years); with *reinvest_automatic* the plant is replaced at its end of life by a plant at the values of the period the replacement comes online, each paying its own level yearly cost for its years in service (with constant values, no `net_salvage_value` and a `payback_time` equal to the `lifetime_technical`: the annuity every year). Its `fixed_cost` is paid over the years it operates, the `fixed_cost` of each of those periods (as for existing capacity), both only within the model horizon. The `invest_cost`, `payback_time`, `discount_rate` and `lifetime_technical` of the period it comes online are used: a period map describes the plant as constructed in that period. The `lifetime_technical` starts when the capacity comes online; without `payback_time` the annuity is over this lifetime too.
   - **Horizon.** An investment whose rounded start of operation is after the end of the solve (including its look-ahead periods) or after the model horizon is not offered, with a warning naming the entity, the lead time and the solve. A chain of myopic solves whose horizon is not longer than the lead time therefore never invests in that technology: use a longer solve horizon or `construction_lead_time_method = immediate`.
 - `construction_lead_time_method`: how the start of operation (decision year plus `construction_lead_time`) is rounded to the start of a period:
   - `immediate` — no lead time; the capacity operates from the decision period. This is also the effective default when no lead time is set.
@@ -46,7 +53,7 @@ Additional parameters:
 
     **Construction lead time and stochastics compose automatically.** Under recourse (`stochastic_invest_method = recourse`) with an invest non-anticipativity window (`shared_invest_periods`, see the stochastics how-to), a long-lead technology that must be online *after* the branch reveal has to be *ordered* before it — in a pre-reveal, tied period — so its investment is a single shared here-and-now decision, while a short-lead technology can be ordered at/after the reveal and react per scenario. This staging is emergent (no extra parameter): set the window to the pre-reveal periods and the lead time stages the technologies for you. Note the two knobs stay orthogonal — the window is the *information* boundary (which order periods are shared), the lead time is the *physics* (how early you must order); you need both, set consistently, for staging.
 
-- `salvage_value`: Sets the extra value that can be gained for retiring [CUR/kW]. Only capacity that existed before the model run (`existing`) can be retired, until its end of life; the retirement saves its fixed cost over the periods it counts in and earns the salvage value as an annuity over `lifetime` (see [retirements](../reference/units.md#retirements)).
+- `net_salvage_value`: the value received when capacity stops operating [CUR/kW]: scrap value minus decommissioning cost (an income when positive, a cost when decommissioning costs more). Existing capacity can be retired with an `invest_method` that allows retirement (*retire_…*, *invest_retire_…*, *cumulative_limits*), and with *invest_retire_…* or *cumulative_limits* also the capacity the model builds. A retirement happens at the start of a period: the investment is sunk (a built plant pays the rest of its loan then), the full net salvage value of that period is received, and the fixed costs stop. Capacity kept to its end of life gets its salvage value as a level yearly credit in its yearly price. A period map can express a resale value that falls with age or time. See [retirements](../reference/units.md#retirements) and the example below.
 - `fixed_cost`: Annual cost for capacity [CUR/kW]
 
 In many cases some of the investment decisions are tied to each other. Here the battery capacity and the connection capacity of the *battery_inverter* will be tied as they are simultaneously limited by the choice of the battery technology to be invested in.
@@ -106,11 +113,75 @@ Finally, FlexTool can mix several types of constraint coefficients: `constraint_
 
 ![Add battery investments](../img/concept/battery_invest.png)
 
+## How to decide on an aged plant: retire, extend or keep
+
+An existing plant that is getting old can be kept to the end of its life, kept longer with a life extension, or
+retired early. FlexTool weighs the three against new capacity with one principle: **each plant pays a level yearly
+price for each year it serves, computed from its real lifetime, and only the modelled years count.** A new plant
+with a 40-year life built ten years before the end of the horizon pays ten of its forty yearly prices; the other
+thirty years are neither paid nor served inside the model, so leaving out both sides keeps the comparison fair.
+
+**The case.** The numbers below come from runs of the small test model of the FlexTool repository
+(`tests/fixtures/tests.json`, built into a database): the node *west* with growing demand, *wind_plant* (1000 MW)
+and *coal_plant*, and the solve *y2020_2035_5week* with the periods p2020, p2025, p2030 and p2035 of 5 years each
+(a 20-year horizon). One added alternative gives *coal_plant*:
+
+| Parameter | Value |
+|-----------|-------|
+| `existing` | 500 MW |
+| `lifetime_technical`, `age_at_model_start` | 40, 30 years: 10 years left, the life ends at the start of p2030 |
+| `lifetime_method`, `invest_method` | *reinvest_choice*, *invest_retire_no_limit* |
+| `invest_cost`, `net_salvage_value` | 400 and 20 CUR/kW |
+| `life_extension_years` | 10 |
+| `life_extension_cost` | 150 or 60 CUR/kW (below) |
+| `fixed_cost`, `discount_rate`, model `social_discount_rate` | 0 |
+
+Both rates are 0 so that the arithmetic stays visible; with rates above 0 the same comparison holds in present
+values.
+
+**The yearly prices, per kW.** A new plant pays (400 − 20) / 40 = 9.5 a year: its investment less its salvage
+value, over its 40-year life. The extension is a plant of its own: its cost plus the salvage value it gives up
+(20, which stays in the plant), less the salvage value received at its extended end of life (20), over 10 years:
+E / 10 a year. The existing plant's investment is sunk; it receives its salvage value of 20 as a credit over its
+10 remaining years.
+
+| Option for the 500 MW, per kW over the horizon | Cost |
+|------------------------------------------------|------|
+| Keep to p2030, then new capacity for the last 10 years | 10 × 9.5 − 20 = 75 |
+| Keep to p2030, then extend for 10 years | E − 20 + 20 − 20 = E − 20 |
+| Retire at the start of p2020, new capacity for 20 years | 20 × 9.5 − (salvage value in p2020) |
+
+So extending pays when E < 95, and retiring at once pays when the plant can be sold for more than 115 at the
+start of p2020.
+
+**The runs.**
+
+1. *Keep.* `life_extension_cost` 150, `net_salvage_value` 20: the plant runs to its end of life
+   (`unit_retirement__d`: 500 MW *end_of_life* in p2030) and the model builds new capacity from p2030. The
+   objective is 3169.28 M CUR.
+2. *Extend.* `life_extension_cost` 60: the 500 MW are extended at p2030 (500 MW *extended*; the cohort
+   `extend:p2030:existing:p2020` in `unit_cohort_capacity__d`) and the model builds 500 MW less new capacity
+   there. The objective is 3151.78 M CUR, 17.50 M lower: 500 MW × (95 − 60) CUR/kW. In `summary_solve.csv` the
+   extension shows as *Extension* 30 M (500 MW × 60), *Salvage extended* 10 M (the salvage value the extension
+   gives up) and, inside *Salvage end of life*, −10 M at the extended end of life.
+3. *Retire.* `life_extension_cost` 150 and a `net_salvage_value` period map that falls with age, {p2020: 120,
+   p2025: 60, p2030: 20, p2035: 20} (a resale value): the 500 MW are retired at the start of p2020 (500 MW
+   *economic*) and replaced by new capacity. The objective is 3164.20 M CUR, 5.07 M lower than *keep*: 500 MW ×
+   (75 − 70) = 2.5 M from the swap, and 2.6 M because the old plant was larger than the system needed in p2020
+   (the model builds 444.6 MW there and the rest in p2025). *Salvage economic* is −60 M (500 MW × 120); the
+   credits the existing plant no longer receives come back as +10 M.
+
+Two effects of the finite horizon and of the rates are worth knowing; they are economics of the inputs, not
+errors (see [retirements](../reference/units.md#retirements)). Near the end of the horizon a retirement collects
+the whole salvage value, while a kept plant would receive it only after the horizon, so a retirement or a swap
+for an identical plant can pay there. With a `discount_rate` different from the `social_discount_rate` the timing
+of the investor's payments changes the cost, which can also make a retirement pay.
+
 ## How to create a multi-year model
 
-A multi-year model is constructed from multiple periods, each presenting one year. In the example case, each year is otherwise the same, but the demand is increasing in the *west* `node`. This means that all periods can use the same timeset *5weeks* from the same timeline *y2020*, but one can also make separate timelines for each year, if data is available for this. The `inflow` time series are scaled to match the value in `annual_flow` that is mapped for each period. The model is using the `inflow_method` *scale_to_annual* in order to achieve this (default is *use_original* that would not perform scaling). There should also be an `inflation_rate` parameter set for the `model` entity *flexTool* if something else than the model default of 0 is to be used (set to expected inflation when inputs are in nominal terms).
+A multi-year model is constructed from multiple periods, each presenting one year. In the example case, each year is otherwise the same, but the demand is increasing in the *west* `node`. This means that all periods can use the same timeset *5weeks* from the same timeline *y2020*, but one can also make separate timelines for each year, if data is available for this. The `inflow` time series are scaled to match the value in `annual_flow` that is mapped for each period. The model is using the `inflow_method` *scale_to_annual* in order to achieve this (default is *use_original* that would not perform scaling). There should also be a `social_discount_rate` parameter set for the `model` entity *flexTool* if later costs should weigh less than now (the model default 0 is no time preference; with nominal inputs use the combined rate of inflation and time preference).
 
-**Discounting later years.** Only `inflation_rate` discounts the costs of later periods; with the default 0, a cost in the last period weighs the same as in the first. In a model in real terms, set `inflation_rate` to the social discount rate to get present values. See [Discounting between milestone years](../advanced_concepts.md#discounting-between-milestone-years).
+**Discounting later years.** Only `social_discount_rate` discounts the costs of later periods; with the default 0, a cost in the last period weighs the same as in the first. Set `social_discount_rate` (in the same real or nominal terms as the cost inputs) to get present values. See [Discounting between milestone years](../advanced_concepts.md#discounting-between-milestone-years).
 
 ![Multi-year inflow](../img/concept/multi_year_inflow.png)
 
@@ -183,8 +254,8 @@ In the examples.sqlite, the solve entities can carry solver options in the `solv
 |---|---|---|---|---|
 | *csp_without* | – | – | 7200 | 65.700 |
 | *csp_existing* | 7900 / 500 | 3160 | 4040 | 36.865 |
-| *csp_fixed_design* | 7900 / 500 | 3160 | 4040 | 50.809 |
-| *csp_optimised_design* | 12 000 / 2000 | 4800 | 2400 | 43.353 |
+| *csp_fixed_design* | 7900 / 500 | 3160 | 4040 | 49.897 |
+| *csp_optimised_design* | 12 000 / 2000 | 4800 | 2400 | 41.949 |
 | *csp_gas_backup* | 7900 / 500, boiler 4100 | 4800 | 2400 | 31.877 |
 
 **Only totals are unique.** The field's heat is free and coal costs the same in every hour, so the model does not care when the turbine runs. The totals, the capacities and the costs are unique; the hourly dispatch and the storage state are not. Compare scenarios with period results (`unit__outputNode__d`, `unit_capacity__d`, `node_capacity__d`, the costs), not with hourly ones.
@@ -201,7 +272,7 @@ In the examples.sqlite, the solve entities can carry solver options in the `solv
 **(examples.sqlite scenario: csp_fixed_design)**
 ***init - west - coal - csp_system - csp_plant - csp_invest_common - csp_fixed_design***
 
-**Investment data.** *csp_invest_common* sets `invest_periods` [*p2020*] on the solve *y2020_2day_dispatch*, and on each of the three entities `existing` 0, `invest_method` *invest_total*, `lifetime` 25 and `discount_rate` 0.07:
+**Investment data.** *csp_invest_common* sets `invest_periods` [*p2020*] on the solve *y2020_2day_dispatch*, and on each of the three entities `existing` 0, `invest_method` *invest_total*, `lifetime_technical` 25 (no `payback_time`: the investment pays back over the 25 years) and `discount_rate` 0.07:
 
 | Entity | `invest_max_total` | `invest_cost` |
 |---|---|---|
@@ -224,16 +295,16 @@ In the examples.sqlite, the solve entities can carry solver options in the `solv
 
 **Use the design efficiency.** η_d in the coefficients is a constant, the turbine's efficiency at its design point, even when the turbine's `efficiency` is a time series (for example lower on hot days with dry cooling). For a solar multiple in a range instead of a fixed value, use two rows: *greater_than* with SM_min and *less_than* with SM_max.
 
-**The results.** The plant pays: it saves 288 350 CUR per MW_e and year of coal, against 139 442 CUR of annuities, so the turbine is built to its bound of 100 MW_e. The ties then give a field of 500 MW_th and a tank of 2500 MWh_th, the plant of *csp_existing*, with the same dispatch. The annuities are (100 × 500 + 500 × 150 + 2500 × 15) × 1000 × 0.0858 (7 % over 25 years) = 13.944 M CUR, so the objective is 36.865 + 13.944 = 50.809 M CUR.
+**The results.** The plant pays: it saves 288 350 CUR per MW_e and year of coal, against 130 320 CUR of annuities, so the turbine is built to its bound of 100 MW_e. The ties then give a field of 500 MW_th and a tank of 2500 MWh_th, the plant of *csp_existing*, with the same dispatch. The annuities are (100 × 500 + 500 × 150 + 2500 × 15) × 1000 × 0.0858 / 1.07 = 162.5 M × 0.0802 (7 % over 25 years, paid at the start of each year) = 13.032 M CUR, so the objective is 36.865 + 13.032 = 49.897 M CUR.
 
 ### Optimised design
 
 **(examples.sqlite scenario: csp_optimised_design)**
 ***init - west - coal - csp_system - csp_plant - csp_invest_common***
 
-**What it does.** Without the ties the model chooses the three capacities within their bounds. It can still build the fixed design, so its objective can only be lower or the same: 43.353 against 50.809 M CUR. Here it builds the turbine and the tank to their bounds (100 MW_e and 5000 MWh_th) and a field of 833 MW_th: a solar multiple of 3.3 and 20 storage hours, with the turbine running in every hour.
+**What it does.** Without the ties the model chooses the three capacities within their bounds. It can still build the fixed design, so its objective can only be lower or the same: 41.949 against 49.897 M CUR. Here it builds the turbine and the tank to their bounds (100 MW_e and 5000 MWh_th) and a field of 833 MW_th: a solar multiple of 3.3 and 20 storage hours, with the turbine running in every hour.
 
-**Which bound decides what.** Two bounds bind. Each extra MW_e of turbine still pays: it saves 438 000 CUR of coal a year against about 285 000 CUR of turbine and field annuities. A tank MWh_th is cheaper than the field it replaces, so the tank also runs to its bound. The field of 833 MW_th is then set by the tank bound: a smaller tank needs a larger field to carry the cloudy day.
+**Which bound decides what.** Two bounds bind. Each extra MW_e of turbine still pays: it saves 438 000 CUR of coal a year against about 266 000 CUR of turbine and field annuities. A tank MWh_th is cheaper than the field it replaces, so the tank also runs to its bound. The field of 833 MW_th is then set by the tank bound: a smaller tank needs a larger field to carry the cloudy day.
 
 **Without the bounds.** With the tank bound lifted, the costs alone would choose a field of 714 MW_th and a tank of 5571 MWh_th (solar multiple 2.86, 22.3 h). With the turbine bound lifted, free heat against the flat 50 CUR/MWh of coal makes every MW_e pay until the plant meets the whole demand.
 
@@ -273,8 +344,8 @@ In the examples.sqlite, the solve entities can carry solver options in the `solv
 | Turbine output | `unit__outputNode__d` (*csp_turbine*, *west*) | 576 700 MWh_e/a (3160 × 182.5) |
 | Capacity factor | `unit_cf__outputNode__d` (*csp_turbine*, *west*) | 3160 / (100 × 48) = 65.8 % |
 | Tank cycles | the decreases of `node_state__dt` (*csp_heat*) summed, divided by the tank capacity | at least 1 in the 48 h (the 2500 MWh_th stored on the clear day: day 1 must store ≥ 2500 MWh_th because the turbine can take only 3000 of the 5500 used) |
-| Plant cost | the *investment* columns of `cost_unit_annualized__d` (*csp_field*, *csp_turbine*) and *storage investment* of `cost_node_annualized__d` (*csp_heat*) | 6.4355 + 4.2905 + 3.2179 = 13.944 M CUR/a |
-| Levelised cost | plant cost / turbine output | 13.944 M / 576 700 = 24.2 CUR/MWh |
+| Plant cost | the *investment* columns of `cost_unit_annualized__d` (*csp_field*, *csp_turbine*) and *storage investment* of `cost_node_annualized__d` (*csp_heat*) | 6.0148 + 4.0098 + 3.0074 = 13.032 M CUR/a |
+| Levelised cost | plant cost / turbine output | 13.032 M / 576 700 = 22.6 CUR/MWh |
 | Average price received | Σ turbine flow × `node_prices__dt` (*west*) / Σ turbine flow | 50 CUR/MWh (coal sets the price in every hour) |
 
 **Not unique.** The tank cycles depend on the hourly timing, which is free in this example, so they are not unique. The levelised cost is the plant's own cost, not its value to the system: show the average price received next to it.

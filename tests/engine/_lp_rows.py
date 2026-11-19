@@ -36,3 +36,23 @@ def step_of(row: str) -> tuple[str, str]:
     """``(d, t)`` — the last two indices of a row or column name."""
     inner = row[row.index("[") + 1:-1].split(",")
     return inner[-2], inner[-1]
+
+
+def expand_divested_built(pb, terms: dict[str, float]) -> dict[str, float]:
+    """``terms`` with each ``v_divested_built_{p,n}[e,d]`` (the model-built capacity retired so far that counts in
+    d, one aggregate column) replaced by what its defining row ``divestedBuilt_{p,n}[e,d]`` sets it to, the
+    retirement columns ``v_divest_built_{p,n}[e,c,d′]`` it sums: two rows that differ only in using the aggregate or
+    its parts are the same constraint."""
+    out: dict[str, float] = {}
+    for col, value in terms.items():
+        if not col.startswith("v_divested_built_"):
+            out[col] = out.get(col, 0.0) + value
+            continue
+        axis = col[len("v_divested_built_")]
+        key = col[col.index("["):]
+        (row,) = row_terms(pb, f"divestedBuilt_{axis}", key[1:-1]).values()
+        own = row[col]
+        for part, coefficient in row.items():
+            if part != col:
+                out[part] = out.get(part, 0.0) - value * coefficient / own
+    return out

@@ -159,13 +159,11 @@ def test_lifetime_no_investment_filters_ed_invest_set(scenario_run):
 
     Regression for ``multi_year_wind_no_investment``: ``wind_plant``
     has ``lifetime=10`` and ``no_investment``; with periods at years
-    [0, 5, 10, 15] we need ed_invest to drop ``(wind_plant, p2030)``
-    and ``(wind_plant, p2035)`` (they move to
-    ``ed_invest_forbidden_no_investment``).
+    [0, 5, 10, 15] (end of life 0 + 10 = 10) we need ed_invest to drop
+    ``(wind_plant, p2030)`` and ``(wind_plant, p2035)`` (yr 10, 15 ≥ 10).
     """
     _, data, cascade = _rebuild(scenario_run, "multi_year_wind_no_investment")
-    for field in ("ed_invest_set", "ed_invest_forbidden_no_investment"):
-        _assert_rebuild_equal(data, cascade, field, "multi_year_wind_no_investment")
+    _assert_rebuild_equal(data, cascade, "ed_invest_set", "multi_year_wind_no_investment")
     db_set = data.ed_invest_set.sort("e", "d")
     # Specifically, wind_plant must NOT appear at p2030 / p2035.
     forbidden_rows = db_set.filter(
@@ -174,12 +172,6 @@ def test_lifetime_no_investment_filters_ed_invest_set(scenario_run):
     assert forbidden_rows.height == 0, (
         f"wind_plant unexpectedly present in ed_invest at expired "
         f"periods: {forbidden_rows}")
-    # ed_invest_forbidden_no_investment should hold those rows.
-    forb = data.ed_invest_forbidden_no_investment
-    assert forb is not None and forb.height == 2
-    forb_set = set(forb.iter_rows())
-    assert ("wind_plant", "p2030") in forb_set
-    assert ("wind_plant", "p2035") in forb_set
 
 
 def test_lifetime_choice_truncates_p_entity_all_existing(scenario_run):
@@ -405,7 +397,7 @@ RESOLVED_DEFAULTS = [
     ("connection", "virtual_unitsize", None),
     ("unit", "min_load", None),
     ("node", "self_discharge_loss", None),
-    ("model", "inflation_rate", None),
+    ("model", "social_discount_rate", None),
     ("reserve__upDown__group", "reservation", None),
 ]
 

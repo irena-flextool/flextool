@@ -8,7 +8,7 @@ Two preprocessing families called per-solve (not per-write-input):
   the small storage-fix / online sets.
 * ``invest_divest_sets.write_invest_divest_sets`` +
   ``write_ed_invest_forbidden_no_investment`` — the
-  ed_invest / ed_divest / edd_history family + the gd_* group
+  ed_invest / ed_divest / edd_invest family + the gd_* group
   projections + the no-investment-lifetime gate.
 
 Style mirrors :mod:`._leaf_sets` / :mod:`._mid_sets`:
@@ -16,8 +16,8 @@ eager polars CSV reads, expression chains, ``unique(maintain_order=True)``
 for legacy-bit-identical row order, missing files treated as empty
 frames.
 
-Output bytes are CSV-identical to the legacy emitter — verified by
-``tests/engine/test_writer_port_phase1.py`` parity tests.
+Output bytes are CSV-identical to the legacy emitter; a change that
+moves the LP shows in ``tools/lp_snapshot.py``.
 """
 from __future__ import annotations
 
@@ -25,10 +25,16 @@ from pathlib import Path
 
 import polars as pl
 
+from flextool.engine.input._axis_enums import rename_to_axis
+from flextool.engine.input._lifetime_roles import NO_REINVESTMENT
 from flextool.engine.preprocess import _provider_keys as K
 from flextool.engine.preprocess._provider_io import _emit
 from flextool.engine.preprocess.params._branch import fan_period_labels
-from flextool.engine.preprocess.params._derived import _expand_invest_branch_periods, run_start_period
+from flextool.engine.preprocess.params._cohorts import eol_methods_of
+from flextool.engine.preprocess.params._derived import _expand_invest_branch_periods
+from flextool.engine.preprocess.params._run_calendar import (
+    RUN_EXISTING_COHORT_KEY,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -574,43 +580,50 @@ def emit_per_solve_sets(
 # ---------------------------------------------------------------------------
 
 
-def _read_keyed_value_kv(path: Path,
-                         *, provider: "object | None" = None) -> dict[str, float]:
-    """Read a (key, value) CSV into a dict (float values, blanks skipped)."""
-    df = _read_csv(path, ["key", "value"], provider=provider)
-    out: dict[str, float] = {}
-    for k, v in zip(df["key"].to_list(), df["value"].to_list()):
-        if not k or v is None or v == "":
-            continue
-        try:
-            out[k] = float(v)
-        except ValueError:
-            continue
-    return out
+def _invest_window(source, solve_data_dir: Path, provider, ed_invest_pairs: list[tuple[str, str]],
+                   period_in_use: list[str], entity_set: list[str], lm_for_e: dict[str, set[str]],
+                   period_with_history: list[str]) -> list[tuple[str, str, str]]:
+    """``[(e, d_invest, d)]``: :func:`._cohorts.invest_alive` of the investment cohorts of ``ed_invest_pairs``
+    (:func:`._cohorts.invest_cohorts`, with the start of operation of the decisions with a construction lead time),
+    ordered by lifetime_method (reinvest_choice, reinvest_automatic, no_reinvestment), then entity (``entity_set``),
+    decision (``period_with_history``) and period (``period_in_use``)."""
+    from flextool.engine.preprocess.params._cohorts import as_names, invest_alive, invest_cohorts
+    from flextool.engine.preprocess.params._derived import _build_commission_lf, _read_active_solve
+    if not ed_invest_pairs or not period_in_use:
+        return []
+    if source is None or not provider.has(RUN_EXISTING_COHORT_KEY):
+        raise ValueError("The investment window of a solve needs the run's input database and its existing cohorts "
+                         f"({RUN_EXISTING_COHORT_KEY}), which the run puts on every sub-solve's Provider.")
+    workdir = solve_data_dir.parent
+    active = _read_active_solve(workdir, provider=provider)
+    ed_invest = pl.DataFrame(ed_invest_pairs, schema={"e": pl.Utf8, "d": pl.Utf8}, orient="row")
+    ed_invest = ed_invest.pipe(rename_to_axis, {"e": "e", "d": "d"})
+    commission_lf = _build_commission_lf(source, active, ed_invest.lazy(), list(period_in_use), workdir,
+                                         provider=provider)
+    _rows, alive = invest_cohorts(source, active, ed_invest, list(period_in_use), workdir, provider=provider,
+                                  commission_lf=commission_lf,
+                                  eol_methods=eol_methods_of(provider.get(RUN_EXISTING_COHORT_KEY)))
+    edd = as_names(invest_alive(alive), ["e", "d_invest", "d"])
+    method_rank = {m: i for i, m in enumerate(("reinvest_choice", "reinvest_automatic", NO_REINVESTMENT))}
+    entity_rank = {e: i for i, e in enumerate(entity_set)}
+    decision_rank = {d: i for i, d in enumerate(period_with_history)}
+    period_rank = {d: i for i, d in enumerate(period_in_use)}
 
+    def key(row: tuple[str, str, str]) -> tuple[int, int, int, int]:
+        e, d_inv, d = row
+        rank = min((method_rank[m] for m in lm_for_e.get(e, ()) if m in method_rank), default=len(method_rank))
+        return rank, entity_rank.get(e, len(entity_rank)), decision_rank.get(d_inv, -1), period_rank.get(d, -1)
 
-def _read_pdv(path: Path,
-              *, provider: "object | None" = None) -> dict[tuple[str, str], float]:
-    """Read a 3-col (entity, period, value) CSV into a dict."""
-    df = _read_csv(path, ["entity", "period", "value"], provider=provider)
-    out: dict[tuple[str, str], float] = {}
-    for e, d, v in zip(df["entity"].to_list(),
-                       df["period"].to_list(),
-                       df["value"].to_list()):
-        if not e or not d:
-            continue
-        try:
-            out[(e, d)] = float(v)
-        except (ValueError, TypeError):
-            continue
-    return out
+    return sorted(dict.fromkeys(edd.select("e", "d_invest", "d").iter_rows()), key=key)
 
 
 def emit_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
-                             *, provider) -> None:
-    """Emit ``invest_divest_sets`` to the Provider.
-    Emits the same 15 frames under ``solve_data/<basename>`` keys via
-    :func:`_emit` (dual-key registration).
+                             *, provider, source=None) -> None:
+    """Emit the investment and retirement sets to the Provider (``ed_invest`` / ``ed_divest`` and their per-period,
+    cumulative and process / node subsets, ``edd_invest``, the ``gd_*`` group sets) under ``solve_data/<basename>``
+    keys via :func:`_emit` (dual-key registration).  ``source`` is the run's input-database reader
+    (``RunnerState.input_source``): the investment window (:func:`_invest_window`) reads the lifetimes and lead
+    times from it.
     """
     entityInvest = _read_singles(solve_data_dir / "entityInvest.csv", provider=provider)
     entityDivest = _read_singles(solve_data_dir / "entityDivest.csv", provider=provider)
@@ -635,9 +648,6 @@ def emit_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
     lm_for_e: dict[str, set[str]] = {}
     for e, m in elm:
         lm_for_e.setdefault(e, set()).add(m)
-
-    p_years_d = _read_keyed_value_kv(solve_data_dir / "p_years_d.csv", provider=provider)
-    edEntity_lifetime = _read_pdv(solve_data_dir / "edEntity_lifetime.csv", provider=provider)
 
     group_invest = _read_singles(solve_data_dir / "group_invest.csv", provider=provider)
     group_divest = _read_singles(solve_data_dir / "group_divest.csv", provider=provider)
@@ -702,51 +712,15 @@ def emit_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
     _emit_tuples(provider, "solve_data/nd_divest.csv", ("node", "period"),
                  [(e, d) for e, d in ed_divest_pairs if e in node_set])
 
-    edd_choice: list[tuple[str, str, str]] = []
-    edd_auto: list[tuple[str, str, str]] = []
-    edd_noinv: list[tuple[str, str, str]] = []
-    for e in entity_set:
-        e_lm = lm_for_e.get(e, set())
-        is_choice = "reinvest_choice" in e_lm
-        is_auto = "reinvest_automatic" in e_lm
-        is_noinv = "no_investment" in e_lm
-        if not (is_choice or is_auto or is_noinv):
-            continue
-        for d_h in period_with_history:
-            life = edEntity_lifetime.get((e, d_h), 0.0)
-            pdy_dh = p_years_d.get(d_h, 0.0)
-            for d in period_in_use:
-                pdy_d = p_years_d.get(d, 0.0)
-                if is_choice and pdy_d >= pdy_dh and pdy_d < pdy_dh + life:
-                    edd_choice.append((e, d_h, d))
-                if is_auto and pdy_d >= pdy_dh:
-                    edd_auto.append((e, d_h, d))
-                if is_noinv and pdy_d >= pdy_dh and pdy_d < pdy_dh + life:
-                    edd_noinv.append((e, d_h, d))
-    _emit_tuples(provider, "solve_data/edd_history_choice.csv",
-                 ("entity", "period_history", "period"), edd_choice)
-    _emit_tuples(provider, "solve_data/edd_history_automatic.csv",
-                 ("entity", "period_history", "period"), edd_auto)
-    _emit_tuples(provider, "solve_data/edd_history_no_investment.csv",
-                 ("entity", "period_history", "period"), edd_noinv)
-
-    edd_seen: dict[tuple[str, str, str], None] = {}
-    for r in edd_choice + edd_auto + edd_noinv:
-        if r not in edd_seen:
-            edd_seen[r] = None
-    edd_history = list(edd_seen.keys())
-    _emit_tuples(provider, "solve_data/edd_history.csv",
-                 ("entity", "period_history", "period"), edd_history)
-    invest_set = frozenset(entityInvest)
-    edd_history_invest = [r for r in edd_history if r[0] in invest_set]
-    _emit_tuples(provider, "solve_data/edd_history_invest.csv",
-                 ("entity", "period_history", "period"), edd_history_invest)
-    edd_invest = [
-        (e, d_inv, d) for (e, d_inv, d) in edd_history_invest
-        if (e, d_inv) in ed_invest_set
-    ]
-    _emit_tuples(provider, "solve_data/edd_invest.csv",
-                 ("entity", "period_history", "period"), edd_invest)
+    # edd_invest [entity, period_history, period]: the periods of period_in_use each investment decision (e, d_inv)
+    # of ed_invest is in service in, the cohort table's own window (_cohorts.invest_cohorts: the start of operation
+    # after a construction lead time, the lifetime of the plant as constructed in that period, the end of life
+    # rounded by the entity's end_of_life_method; _cohorts.invest_alive), read from the run's input database
+    # (``source``).  Grouped by lifetime_method (reinvest_choice, reinvest_automatic, no_reinvestment), then entity,
+    # decision and period.
+    _emit_tuples(provider, "solve_data/edd_invest.csv", ("entity", "period_history", "period"),
+                 _invest_window(source, solve_data_dir, provider, ed_invest_pairs, period_in_use, entity_set,
+                                lm_for_e, period_with_history))
     _ = ed_divest_set
 
     gd_invest_pairs: list[tuple[str, str]] = []
@@ -812,41 +786,22 @@ def emit_ed_invest_forbidden_no_investment(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Emit ``ed_invest_forbidden_no_investment`` to the Provider."""
+    """Emit ``ed_invest_forbidden_no_investment`` to the Provider: the investment options ``(e, d)`` of
+    ``ed_invest`` a ``no_reinvestment`` entity may no longer take, :func:`._cohorts.no_reinvestment_closed` of the
+    run's existing cohorts on the solve's run years (the gate the database path applies to ``ed_invest_set``)."""
+    from flextool.engine.preprocess.emit._chain_params import solve_run_years
+    from flextool.engine.preprocess.params._cohorts import cohort_frame_from_utf8, no_reinvestment_closed
     del input_dir  # legacy signature parity; no input/ reads here.
     ed_invest_pairs = _read_pairs(solve_data_dir / "ed_invest.csv", provider=provider)
-    elm = _read_pairs(solve_data_dir / "entity__lifetime_method.csv", provider=provider)
-    no_invest_set = frozenset(e for e, m in elm if m == "no_investment")
-
-    p_years_d: dict[str, float] = {}
-    pyd_df = _read_csv(solve_data_dir / "p_years_d.csv",
-                       ["period", "value"], provider=provider)
-    for d, v in zip(pyd_df["period"].to_list(), pyd_df["value"].to_list()):
-        if not d:
-            continue
-        try:
-            p_years_d[d] = float(v)
-        except (ValueError, TypeError):
-            continue
-
-    ed_lifetime = _read_pdv(solve_data_dir / "edEntity_lifetime.csv", provider=provider)
-    # The end of life counts from the start of the run (``p_years_d`` covers the period history).
-    d0 = run_start_period(p_years_d)
-
-    def _life_sum(e: str) -> float:
-        return 0.0 if d0 is None else p_years_d.get(d0, 0.0) + ed_lifetime.get((e, d0), 0.0)
-
-    cached_sum: dict[str, float] = {}
     rows: list[tuple[str, str]] = []
-    for e, d in ed_invest_pairs:
-        if e not in no_invest_set:
-            continue
-        s = cached_sum.get(e)
-        if s is None:
-            s = _life_sum(e)
-            cached_sum[e] = s
-        if p_years_d.get(d, 0.0) >= s:
-            rows.append((e, d))
+    if ed_invest_pairs:
+        if not provider.has(RUN_EXISTING_COHORT_KEY):
+            raise ValueError("The no_reinvestment gate of a solve needs the run's existing cohorts "
+                             f"({RUN_EXISTING_COHORT_KEY}), which the run puts on every sub-solve's Provider.")
+        closed = no_reinvestment_closed(cohort_frame_from_utf8(provider.get(RUN_EXISTING_COHORT_KEY)),
+                                        solve_run_years(provider, solve_data_dir),
+                                        list(dict.fromkeys(d for _e, d in ed_invest_pairs)))
+        rows = [(e, d) for e, d in ed_invest_pairs if (e, d) in closed]
     _emit_tuples(provider,
                  "solve_data/ed_invest_forbidden_no_investment.csv",
                  ("entity", "period"), rows)

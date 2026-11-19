@@ -1,11 +1,11 @@
-"""``invest_cost`` / ``salvage_value`` shapes in the investment sets and annuities.
+"""``invest_cost`` / ``net_salvage_value`` shapes in the investment sets and annuities.
 
-``unit/node/connection.invest_cost`` and ``.salvage_value`` are "constant or period"
+``unit/node/connection.invest_cost`` and ``.net_salvage_value`` are "constant or period"
 (docs/reference/) and are read through the shape resolver (CLAUDE.md invariant #2).
 Whether an ``(entity, period)`` pair gets an invest / divest variable does not depend on
 the cost (#218: every investment period of an ``invest_method`` that allows it); the cost
-sets the annuity coefficient of the variable (``ed_entity_annual_discounted`` /
-``ed_entity_annual_divest_discounted``):
+sets the cost coefficient of the variable (``ed_entity_annual_discounted`` / the salvage term
+``ed_divest_salvage``):
 
 * a period map on one entity class next to a constant on another (or within one class)
   must not crash (it raised a polars schema mismatch in ``pl.concat``);
@@ -89,8 +89,9 @@ def _periods_of(pairs: set[tuple[str, str]], entity: str) -> set[str]:
 
 
 def _annuity(step, divest: bool = False) -> dict[tuple[str, str], float]:
-    """``{(entity, period): annuity coefficient}`` of the investment (retirement) variables; a missing row is 0."""
-    param = (step.flex_data.ed_entity_annual_divest_discounted if divest
+    """``{(entity, period): cost coefficient}`` of the investment (the retirement salvage) variables; a missing row is
+    0."""
+    param = (step.flex_data.ed_divest_salvage if divest
              else step.flex_data.ed_entity_annual_discounted)
     if param is None:
         return {}
@@ -166,28 +167,32 @@ def test_invest_cost_zero_in_one_period(tmp_path_factory, index_name):
     assert all(annuity.get(("coal_plant", d), 0.0) > 0.0 for d in ("p2020", "p2030", "p2035")), annuity
 
 
-# ── salvage_value (divest path): mixed shapes, per-period zero ──────────────
+# ── net_salvage_value (divest path): mixed shapes, per-period zero ──────────────
 
 
-def test_salvage_value_mixed_shapes(tmp_path_factory):
+def test_net_salvage_value_mixed_shapes(tmp_path_factory):
     values = [
         ["unit", "coal_plant", "invest_method", "invest_retire_total"],
-        ["unit", "coal_plant", "salvage_value",
+        ["unit", "coal_plant", "net_salvage_value",
          _pmap({"p2020": 10.0, "p2025": 0.0, "p2030": 10.0, "p2035": 10.0})],
         ["unit", "wind_plant", "invest_method", "invest_retire_total"],
-        ["unit", "wind_plant", "salvage_value", 5.0],
-        # A retirement with a salvage_value needs a lifetime (validate_basic_sanity).
-        ["unit", "wind_plant", "lifetime", 20.0],
+        ["unit", "wind_plant", "net_salvage_value", 5.0],
+        # A retirement with a net_salvage_value needs a lifetime (validate_basic_sanity).
+        ["unit", "wind_plant", "lifetime_technical", 20.0],
     ]
     step = _single(_solve(tmp_path_factory, "tests.json", _overlay(values)))
     divest = _pairs(step.flex_data.ed_divest_set)
     # Both have existing capacity in every period, so every period is retirable whatever the salvage value.
     assert _periods_of(divest, "coal_plant") == set(PERIODS)
     assert _periods_of(divest, "wind_plant") == set(PERIODS)
-    # The salvage annuity keeps the map's per-period values and the constant's broadcast.
+    # The salvage received in the retirement period keeps the map's per-period values and the constant's broadcast.
+    # coal_plant (reinvest_automatic, lifetime 30 past the horizon) also gives back its existing plant's level
+    # salvage credits, the same take-back T in every period of the single solve: its coefficient in p2025, where no
+    # salvage is received, is T alone (below 0), and every other period's exceeds T by the salvage received there.
     annuity = _annuity(step, divest=True)
-    assert annuity.get(("coal_plant", "p2025"), 0.0) == 0.0
-    assert all(annuity.get(("coal_plant", d), 0.0) != 0.0 for d in ("p2020", "p2030", "p2035")), annuity
+    take_back = annuity.get(("coal_plant", "p2025"), 0.0)
+    assert take_back < 0.0
+    assert all(annuity.get(("coal_plant", d), 0.0) - take_back > 0.0 for d in ("p2020", "p2030", "p2035")), annuity
     assert all(annuity.get(("wind_plant", d), 0.0) != 0.0 for d in PERIODS), annuity
 
 
@@ -250,8 +255,11 @@ def test_recourse_branch_native_zero_wins_over_anchor(tmp_path_factory):
     steps = _solve(tmp_path_factory, "stoch_two_period_hedge.json",
                    _stoch_store({"p2035": 1.0, "p2040": 1.0, "p2040_high": 0.0}))
     step = _single(steps)
-    # The branch with its own 0 is still offered (#218), at annuity 0; the others inherit the anchor's cost.
+    # The branch with its own 0 is still offered (#218), at annuity 0; the others inherit the anchor's cost.  The
+    # storage (reinvest_automatic, lifetime 1, net_salvage_value 0.5, discount_rate 5 %, offset 0) has its salvage
+    # credit netted into each plant's price: 0.5·1000·1.05^−1·ann(5 %, 1)·1.05^−1 = 476.19 a year, so the plant of
+    # p2040_high (one year in service, factor 1) costs 0 − 476.19.
     assert _periods_of(_pairs(step.flex_data.ed_invest_set), "store") == STOCH_PERIODS
     annuity = _annuity(step)
-    assert annuity.get(("store", "p2040_high"), 0.0) == 0.0
+    assert annuity.get(("store", "p2040_high"), 0.0) == pytest.approx(-500.0 / 1.05, rel=1e-12)
     assert all(annuity.get(("store", d), 0.0) > 0.0 for d in STOCH_PERIODS - {"p2040_high"}), annuity

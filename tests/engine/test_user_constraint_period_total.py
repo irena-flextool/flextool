@@ -249,7 +249,7 @@ def _invest(existing: float) -> list:
     return _values(gas_existing=existing, terms={GAS_FLOW: 1.0, GAS_CAP: -0.3}, extra=[
         ["unit", "gas", "invest_method", _s("invest_no_limit")],
         ["unit", "gas", "fixed_cost", _f(60.0)],
-        ["unit", "gas", "lifetime", _f(30.0)],
+        ["unit", "gas", "lifetime_technical", _f(30.0)],
         ["solve", SOLVE, "invest_periods",
          b64({"value_type": "str", "data": ["p2020"], "index_name": "period"}, "array")]])
 

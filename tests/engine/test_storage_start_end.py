@@ -447,19 +447,33 @@ def _rp_sequence(tmp_path_factory, alt: str, second_rp: bool) -> list:
     return steps
 
 
-def test_representative_period_node_takes_no_carry_term_nor_pin(tmp_path_factory):
-    """rp → rp: in y2025 the battery is a representative-period node again.  Its state at y2020's last realised step
-    (a state inside a representative block, not a chronological level) is handed over: it marks the node as
-    continuing, and a later solve that downgrades the node starts from it (``…_downgraded_later_continues``).  But
-    the rp LP takes no carry term for it, and since a state was realised before y2025, fix_start does not re-pin it
-    either: each block starts from v_state_rp_start, free.  Before, y2025 was re-pinned
-    (storage_state_start_binding at its first step)."""
+def _chain_end(step, node: str = "battery") -> float:
+    """The level (MWh) of ``node``'s base-period chain at the end of the solve's last realised period."""
+    d = str(step.handoff.roll_end_step["period"][0])
+    v = utf8(step.solution.value("v_state_inter")).filter((pl.col("n") == node) & (pl.col("d") == d)).sort("b")
+    return float(v["value"][-1]) * _su(step.flex_data, node)
+
+
+def test_representative_period_node_continues_its_chain_from_the_carry(tmp_path_factory):
+    """rp → rp: y2020 hands over the battery's chain level at the end of its realised period (v_state_inter, the
+    chronological level; not the state at its last realised step, which lies inside a representative block), and
+    y2025's base-period chain starts from it (rp_inter_period_start_carry, owner decision).  The block-internal
+    states keep their free offsets (no carry term in the block balance) and fix_start does not re-pin the node; the
+    carried start is not a decision, so no matching end applies to it.  The first rp solve pins the start of its
+    chain at fix_start (rp_inter_period_start_fix).  Before, y2025's chain started free and ended at least there."""
     steps = _rp_sequence(tmp_path_factory, "sse_rp_rp", second_rp=True)
     fd = steps[1].flex_data
     assert "battery" in utf8(fd.nodeState_rp)["n"].to_list()
-    assert _carry(fd) is not None
+    carry = _carry(fd)
+    assert carry == pytest.approx(_chain_end(steps[0]), abs=1e-9)
     pb = build(fd)
-    assert _bare(build(steps[0].flex_data), "battery"), "the first rp solve keeps its fix_start pin"
+    first = build(steps[0].flex_data)
+    assert row_terms(first, "rp_inter_period_start_fix", "battery,"), "the first rp solve pins its chain start"
+    assert not _bare(first, "battery")
+    assert not row_terms(pb, "rp_inter_period_start_fix", "battery,")
+    assert not row_terms(pb, "rp_inter_period_end_match", "battery,")
+    bounds = row_bounds(pb, "rp_inter_period_start_carry", "battery,")
+    assert bounds and all(lo == pytest.approx(carry) and hi == pytest.approx(carry) for lo, hi in bounds.values())
     assert not _bare(pb, "battery") and not row_terms(pb, PIN, "battery,")
     rows, bounds = row_terms(pb, "nodeBalance_eq", "battery,"), row_bounds(pb, "nodeBalance_eq", "battery,")
     firsts = utf8(fd.rp_block_first).select("d", "t").unique().rows()
@@ -471,14 +485,18 @@ def test_representative_period_node_takes_no_carry_term_nor_pin(tmp_path_factory
 
 
 def test_representative_period_node_downgraded_later_continues(tmp_path_factory):
-    """rp → chronological: in y2025 the battery is downgraded to bind_forward_only and continues from the state y2020
-    realised at its last realised step (the end of its last representative block, the best chronological level
-    available).  Before, y2025 was re-pinned to fix_start."""
+    """rp → chronological: in y2025 the battery is downgraded to bind_forward_only and continues from the level
+    y2020's chain reached at the end of its realised period (v_state_inter; before: the state at its last realised
+    step, inside a representative block).  Before that, y2025 was re-pinned to fix_start."""
     steps = _rp_sequence(tmp_path_factory, "sse_rp_chrono", second_rp=False)
     fd = steps[1].flex_data
     assert fd.nodeState_rp is None or "battery" not in utf8(fd.nodeState_rp)["n"].to_list()
     assert "battery" in utf8(fd.storage_bind_forward_only)["n"].to_list()
-    _assert_continues(steps[1], steps[0])
+    want = _chain_end(steps[0])
+    assert _carry(fd) == pytest.approx(want, abs=1e-9)
+    terms, (lo, hi), (d, t) = _first_row(steps[1])
+    assert terms[f"v_state[battery,{d},{t}]"] == pytest.approx(-_su(fd))
+    assert lo == pytest.approx(-want, abs=1e-9) and hi == pytest.approx(lo)
 
 
 def test_self_discharge_output_of_a_continuing_solve(tmp_path_factory):
@@ -808,7 +826,14 @@ def test_reference_value_yields_to_a_nested_fix(tmp_path_factory, method):
         # not use the battery still caps the roll's usage (at 0, item 150).
         fam = FIX_Q if method == "fix_quantity" else FIX_U
         fixed = {r.split("[", 1)[1][:-1] for r in row_terms(pb, fam, "battery,")}
-        assert fixed == ends and not refs, (name, refs, fixed)
+        if method == "fix_usage":
+            # A roll crossing into the next period also caps the period it starts in, at that period's last step
+            # in the roll (the cumulative cap of every period the roll holds, review M3).
+            every = {f"battery,{d},{t}" for d, t in utf8(fd.nodeState_last_dt).filter(pl.col("n") == "battery")
+                     .select("d", "t").iter_rows()}
+            assert ends <= fixed <= every and not refs, (name, refs, fixed)
+        else:
+            assert fixed == ends and not refs, (name, refs, fixed)
         fixed_rolls += 1
         if method == "fix_usage":
             zero_caps += sum(hi == 0.0 for _lo, hi in row_bounds(pb, FIX_U, "battery,").values())
@@ -1463,3 +1488,18 @@ def test_rolling_blocks_forecast_takes_the_start_or_the_carry_once(tmp_path_fact
     assert hours(steps[0].flex_data, "period1_mid") == 96.0
     for s in steps:
         assert _assert_one_start_or_carry(s, "nodeBalanceBlock_eq", 0.3, hours) > 0
+
+
+def test_sequence_free_start_returns_at_the_model_end(tmp_path_factory):
+    """A 4-solve sequence, battery bind_forward_only with a free start (fix_nothing): the last solve continues from a
+    carry and reaches the end of the model, so it ends the battery at least at the level the first solve started it
+    from (storage_state_roll_match, capped at the capacity; the matching end over a sequence, logic doc §4.1).  y2025
+    does not reach the end of the model and keeps its horizon method (a carried start is not a decision)."""
+    values = [["node", "battery", "storage_binding_method", _s("bind_forward_only")],
+              ["node", "battery", "storage_start_end_method", _s("fix_nothing")],
+              ["node", "battery", "storage_solve_horizon_method", _s("free")], NO_LOSS]
+    steps = list(_shared(tmp_path_factory, alt="sse_seq_match", base_chain=SEQ, values=values).values())
+    start = float(utf8(steps[0].handoff.cycle_start_state).filter(pl.col("node") == "battery")["value"][0])
+    assert not row_terms(build(steps[1].flex_data), "storage_state_roll_match", "battery,")
+    rows = row_bounds(build(steps[-1].flex_data), "storage_state_roll_match", "battery,")
+    assert rows and all(lo == pytest.approx(start) and hi == float("inf") for lo, hi in rows.values())

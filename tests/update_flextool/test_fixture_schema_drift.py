@@ -77,8 +77,8 @@ def test_drift_is_named_per_field() -> None:
                   == "reinvest_choice")
     del data["parameter_value_lists"][choice]
     assert section_diffs(data, "packed") == [
-        "parameter_value_lists: lifetime_methods: fixture=['reinvest_automatic', 'no_investment'] "
-        "schema=['reinvest_automatic', 'reinvest_choice', 'no_investment']",
+        "parameter_value_lists: lifetime_methods: fixture=['reinvest_automatic', 'no_reinvestment'] "
+        "schema=['reinvest_automatic', 'reinvest_choice', 'no_reinvestment']",
         "parameter_definitions: unit/lifetime_method: default: fixture='<no default>' schema='reinvest_automatic'",
     ]
 

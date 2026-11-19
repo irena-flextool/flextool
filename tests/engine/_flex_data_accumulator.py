@@ -103,7 +103,6 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "process_source_delayed.csv",
     "process_source_undelayed.csv",
     "process__source__sink__profile__profile_method_connection.csv",
-    "ed_history_realized_first.csv",
     "process_source_sink_coeff_zero.csv",
     "process_source_sink_delayed.csv",
     "process_source_sink_undelayed.csv",
@@ -138,12 +137,11 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "nodeGroupDispatch__group_aggregate_Connection.csv",
     "nodeGroupDispatch__group_aggregate_Unit_to_group.csv",
     "nodeGroupDispatch__group_aggregate_Group_to_unit.csv",
-    # _chain_params — Phase E-b lifted streamed writers
+    # _chain_params — the existing capacity from the cohorts
     "p_entity_pre_existing.csv",
-    # — 2-CSV existing chain (count/integer_count/later_solves emits
-    #   pruned — dead)
     "p_entity_all_existing.csv",
     "p_entity_previously_invested_capacity.csv",
+    "p_entity_retired_carried.csv",
     # — 2-CSV capacity max chain (max_capacity/invest_cumulative_max pruned — dead)
     "p_entity_max_units.csv",
     "p_entity_dispatch_capacity_max.csv",
@@ -199,7 +197,6 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     # _dispatchers — Phase E-b lifted entity_period_calc_params
     "pdProcess.csv",
     "pdNode.csv",
-    "edEntity_lifetime.csv",
     "ed_fixed_cost.csv",
     "p_entity_unitsize.csv",
     # _dispatchers — Phase E-b lifted process_arc_unions monolith
@@ -210,13 +207,6 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "process_source_sink.csv",
     "process_source_sink_alwaysProcess.csv",
     "process__source__sink__profile__profile_method_direct.csv",
-    # _entity_annual — Phase E-b lifted (6-CSV monolith)
-    "ed_entity_annual.csv",
-    "ed_entity_annual_discounted.csv",
-    "ed_entity_annual_divest.csv",
-    "ed_entity_annual_divest_discounted.csv",
-    "ed_lifetime_fixed_cost.csv",
-    "ed_lifetime_fixed_cost_divest.csv",
     # _inflow_scaling — only the 6 CONSUMED outputs are emitted; the 9
     # internal middle parameters (orig_flow_sum, period_share_of_annual_flow,
     # new_peak_sign, old_peak_max, old_peak_min, old_peak_sign,
@@ -263,7 +253,6 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "branch_time_start.csv",
     "p_entity_invested.csv",
     "p_entity_divested.csv",
-    "p_entity_period_existing_capacity.csv",
     # NB ladder_cum_realized_mwh.csv, ladder_cum_sim_hours.csv, and
     # co2_cum_realized_tonnes.csv used to live here as header-only
     # empty seeds emitted by ``emit_empty_cumulative_files``.  Phase 1b
@@ -346,11 +335,6 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "nd_invest.csv",
     "pd_divest.csv",
     "nd_divest.csv",
-    "edd_history_choice.csv",
-    "edd_history_automatic.csv",
-    "edd_history_no_investment.csv",
-    "edd_history.csv",
-    "edd_history_invest.csv",
     "edd_invest.csv",
     "gd_invest.csv",
     "gd_divest.csv",

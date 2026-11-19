@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 from spinedb_api import DatabaseMapping
 
+from tests._support.coded_warnings import capture_coded
 from flextool.input_derivation._validators import (
     validate_connection_node_memberships,
 )
@@ -58,13 +59,13 @@ def _build_db(tmp_path: Path,
     return url
 
 
-def _run_validation(url: str, caplog) -> list[logging.LogRecord]:
+def _run_validation(url: str, caplog) -> list[str]:
+    """The connections W-0219 names."""
     logger = logging.getLogger("test_connection_node_warnings")
-    caplog.set_level(logging.WARNING, logger=logger.name)
-    with DatabaseMapping(url) as db:
+    with capture_coded() as got, DatabaseMapping(url) as db:
         db.fetch_all("entity")
         validate_connection_node_memberships(db, logger)
-    return [r for r in caplog.records if r.name == logger.name]
+    return got.names("W-0219")
 
 
 def test_connection_without_endpoints_warns(
@@ -77,12 +78,8 @@ def test_connection_without_endpoints_warns(
         connections=["L1", "L2"],
         cnn_rows=[("L2", "N1", "N2")],
     )
-    records = _run_validation(url, caplog)
-    msgs = [r.getMessage() for r in records]
-    assert any("L1" in m and "connection__node__node" in m
-               for m in msgs), msgs
     # The well-formed connection must NOT warn.
-    assert not any("L2" in m for m in msgs), msgs
+    assert _run_validation(url, caplog) == ["L1"]
 
 
 def test_all_connections_wired_is_silent(
@@ -93,5 +90,4 @@ def test_all_connections_wired_is_silent(
         connections=["L2", "L3"],
         cnn_rows=[("L2", "N1", "N2"), ("L3", "N2", "N3")],
     )
-    records = _run_validation(url, caplog)
-    assert records == [], [r.getMessage() for r in records]
+    assert _run_validation(url, caplog) == []

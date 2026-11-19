@@ -45,7 +45,8 @@ def test_template_at_mwh_is_the_default_unit() -> None:
     assert set(templated) == {
         "RATE", "RAMP", "RAMP_ROOM", "AVERAGE_MW", "ENERGY_ANNUAL", "PREENERGY_ANNUAL", "ENERGY_PERIOD", "ENERGY_PERSTEP",
         "ENERGY_HORIZON", "STORAGE_STATE", "CAPACITY_MWH", "CAPACITY_MW", "PRICE_ENERGY",
-        "INVEST_COST_DISCOUNTED", "DUAL_INVEST_KW", "DUAL_INVEST_KWH"}
+        "INVEST_COST_DISCOUNTED", "DUAL_INVEST_KW", "DUAL_INVEST_KWH", "COHORT_CAPACITY_MW", "COHORT_CAPACITY_MWH",
+        "RETIRED_CAPACITY_MW", "RETIRED_CAPACITY_MWH"}
     for name, tf in templated.items():
         assert uom.fill(tf.template, "MWh") == tf.unit, name
     # The annuity of a storage node is per its amount unit (critique M2, also in a default run: CUR/MWh).

@@ -359,9 +359,27 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     ("unit",       "invest_cost"):   {Shape.SCALAR, Shape.MAP_PERIOD},
     ("node",       "invest_cost"):   {Shape.SCALAR, Shape.MAP_PERIOD},
     ("connection", "invest_cost"):   {Shape.SCALAR, Shape.MAP_PERIOD},
-    ("unit",       "salvage_value"): {Shape.SCALAR, Shape.MAP_PERIOD},
-    ("node",       "salvage_value"): {Shape.SCALAR, Shape.MAP_PERIOD},
-    ("connection", "salvage_value"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("unit",       "net_salvage_value"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("node",       "net_salvage_value"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("connection", "net_salvage_value"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    # Technical lifetime, payback time and interest rate: constant or 1d_map(period); read through
+    # _e_period_param_union (``_period_values``: the annuities, the investment and retirement windows, the end of
+    # life of existing capacity), so an unnamed ``x`` map is a period map and any other index is an error.
+    ("unit",       "lifetime_technical"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("node",       "lifetime_technical"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("connection", "lifetime_technical"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("unit",       "payback_time"):  {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("node",       "payback_time"):  {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("connection", "payback_time"):  {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("unit",       "life_extension_cost"):  {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("node",       "life_extension_cost"):  {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("connection", "life_extension_cost"):  {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("unit",       "life_extension_years"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("node",       "life_extension_years"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("connection", "life_extension_years"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("unit",       "discount_rate"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("node",       "discount_rate"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    ("connection", "discount_rate"): {Shape.SCALAR, Shape.MAP_PERIOD},
     # ─── node: (period, time) Params ─────────────────────────────────────
     # NODE_TIME_PARAM ⊇ {availability, storage_state_reference_value, self_discharge_loss}.
     # Cascade: pbt → pt → pd → p (write_pdtNode, time_first_priority=True).
@@ -503,6 +521,21 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     ("node",       "invest_method"): {Shape.SCALAR_STR},
     ("unit",       "invest_method"): {Shape.SCALAR_STR},
     ("connection", "invest_method"): {Shape.SCALAR_STR},
+    # ─── age of existing capacity and the rounding of an end of life ─────
+    # ``{node, unit, connection}.age_at_model_start`` / ``build_year`` and ``model.start_year`` are constants
+    # (schema type ``float`` only); ``end_of_life_method`` a choice of the ``end_of_life_methods`` list.  Read by
+    # ``preprocess/params/_cohorts.py`` (``existing_ages`` / ``end_of_life_methods``) once per run: a map is an
+    # authoring error the resolver refuses.
+    ("node",       "age_at_model_start"): {Shape.SCALAR},
+    ("unit",       "age_at_model_start"): {Shape.SCALAR},
+    ("connection", "age_at_model_start"): {Shape.SCALAR},
+    ("node",       "build_year"): {Shape.SCALAR},
+    ("unit",       "build_year"): {Shape.SCALAR},
+    ("connection", "build_year"): {Shape.SCALAR},
+    ("model",      "start_year"): {Shape.SCALAR},
+    ("node",       "end_of_life_method"): {Shape.SCALAR_STR},
+    ("unit",       "end_of_life_method"): {Shape.SCALAR_STR},
+    ("connection", "end_of_life_method"): {Shape.SCALAR_STR},
     # ─── timeset: per-timestep weight map ────────────────────────────────
     # ``timeset.timeset_weights`` — a 1-D Map timestep -> weight (schema: map rank 1).  The index is
     # ``time`` (or ``t``), or Spine's silent ``x`` (unique at depth 1, so it resolves to ``time``); any
@@ -2085,13 +2118,14 @@ def _shape_read_notice(source: "InputSource", entity_class: str, parameter_name:
             groups.setdefault(words, []).append(_entity_text(tuple(row[c] for c in ent_cols)))
     if not groups:
         return
+    from flextool import run_warnings
     read = []
     for words, names in groups.items():
         more = f" and {len(names) - 3} more" if len(names) > 3 else ""
         read.append(f"{', '.join(repr(n) for n in names[:3])}{more} over {words}")
-    _behaviour_changes.warn_once(
-        key, f"Note: {entity_class} '{parameter_name}' has maps without index names; read {'; '.join(read)} from "
-             "their depth and keys. Name the index levels to make this explicit.")
+    if _behaviour_changes.mark_once(key):
+        name = f"{entity_class}.{parameter_name}"
+        run_warnings.note("W-0515", [name], details={name: "read " + "; ".join(read)})
 
 
 def resolve_param_shape(
@@ -3552,17 +3586,12 @@ def check_limit_values(out: "Param | None", entity_keys: "tuple[str, ...]", *, e
     huge = _limit_rows(out, entity_keys, value.is_finite() & (value.abs() >= HUGE_LIMIT_VALUE))
     if not huge:
         return
-    from flextool.engine import _behaviour_changes
+    from flextool import run_warnings
 
-    use = "inf" if side == "upper" else "-inf"
-    for k, at in sorted(huge.items()):
-        shown = ", ".join(at[:_LIMIT_VALUES_SHOWN]) + (f" and {len(at) - _LIMIT_VALUES_SHOWN} more"
-                                                         if len(at) > _LIMIT_VALUES_SHOWN else "")
-        _behaviour_changes.warn_once(
-            ("huge_limit_value", entity_class, parameter_name, k),
-            f"Warning: {entity_class} '{k}', parameter '{parameter_name}' has a very large value: {shown}. It is "
-            f"used as a limit, and a number this large makes the solve numerically unstable. If no limit is meant "
-            f"in a period, give {use} there.")
+    found = {(f"{entity_class} {k}", parameter_name): ", ".join(at[:_LIMIT_VALUES_SHOWN]) + (
+             f" and {len(at) - _LIMIT_VALUES_SHOWN} more" if len(at) > _LIMIT_VALUES_SHOWN else "")
+             for k, at in sorted(huge.items())}
+    run_warnings.warn_grouped("W-0514", list(found), per_run=True, details=found)
 
 
 def drop_no_limit_rows(out: "Param | None", side: str) -> "Param | None":

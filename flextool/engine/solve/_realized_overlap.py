@@ -11,8 +11,8 @@ Two kinds of overlap can occur between the solves of one model run
   realized slice disjoint, so the multi-solve output union stays a clean
   concat.  :func:`resolve_realized_dispatch_overlap` does the resolution
   and reports what it dropped; :func:`warn_realized_dispatch_overlaps`
-  turns that report into one aggregated warning line per
-  ``(earlier solve, later solve, period)``.
+  turns that report into one coded warning line (W-0500) per pair of
+  complete solves (the periods and time steps counted).
 
 * **Investment overlap.**  Two solves both list the same period in
   ``realized_invest_periods``.  Investments for a period should be
@@ -144,13 +144,28 @@ def resolve_realized_dispatch_overlap(
     return out
 
 
+def _plural(n: int, noun: str) -> str:
+    return f"{n} {noun}{'' if n == 1 else 's'}"
+
+
+def _pairs(records, key) -> "dict[tuple[str, str], list]":
+    """``{(earlier, later): [record, ...]}`` with the rolls ``<solve>_roll_<k>`` of a rolling solve counted as
+    ``<solve>`` (one line per pair of complete solves, whatever levels and rolls the overlaps came from).  Two
+    rolls of one solve give the pair ``(solve, solve)``."""
+    out: dict[tuple[str, str], list] = {}
+    for record in records:
+        out.setdefault(key(record), []).append(record)
+    return out
+
+
 def warn_realized_dispatch_overlaps(
     overlaps: Iterable[DispatchOverlap],
     *,
     silent_pairs: Collection[tuple[str, str]] = (),
     logger: logging.Logger | None = None,
 ) -> int:
-    """Log one warning line per ``(earlier, later, period)`` overlap.
+    """One coded warning line (W-0500) per pair of complete solves whose realized dispatch overlaps, with the
+    number of periods and time steps; each ``(earlier, later, period)`` overlap goes to the debug log.
 
     Args:
         overlaps: output of :func:`resolve_realized_dispatch_overlap`.
@@ -158,30 +173,41 @@ def warn_realized_dispatch_overlaps(
             itself created on purpose and that must not warn — the
             auto-spawned ``<solve>__realized_dispatch`` sibling (and its
             rolls) re-realizes its parent's window by design.
-        logger: defaults to this module's logger (see module docstring for
-            why not ``state.logger``).
+        logger: the logger of the per-overlap debug lines (defaults to this module's logger; see the module
+            docstring for why not ``state.logger``).
 
     Returns:
         The number of warning lines emitted.
     """
+    from flextool import run_warnings
     log = logger if logger is not None else _MODULE_LOGGER
     silent = set(silent_pairs)
+    kept = [ov for ov in overlaps if (ov.earlier_solve, ov.later_solve) not in silent]
+    pairs = _pairs(kept, lambda ov: (_complete(ov.earlier_solve), _complete(ov.later_solve)))
     n = 0
-    for ov in overlaps:
-        if (ov.earlier_solve, ov.later_solve) in silent:
+    for (earlier, later), records in pairs.items():
+        for ov in records:
+            log.debug("Solves '%s' and '%s' both realize dispatch in period '%s' (%d time steps); the later "
+                      "solve's realization was kept.", ov.earlier_solve, ov.later_solve, ov.period,
+                      ov.timesteps_dropped)
+        periods = len(dict.fromkeys(ov.period for ov in records))
+        steps = sum(ov.timesteps_dropped for ov in records)
+        if earlier == later:   # two rolls of one rolling solve (a rolling_jump / horizon mix-up)
+            run_warnings.warn_grouped("W-0506", steps=steps, periods=_plural(periods, "period"), solve=earlier,
+                                      details=", ".join(f"{ov.earlier_solve} / {ov.later_solve} {ov.period}: "
+                                                        f"{ov.timesteps_dropped}" for ov in records))
+            n += 1
             continue
-        log.warning(
-            "Solves '%s' and '%s' both realize dispatch in period '%s' "
-            "(%d overlapping timestep%s). The later solve's realization was "
-            "kept for those timesteps and the earlier solve's results for "
-            "them are not reported. This is expected when, for example, a "
-            "dispatch solve is nested inside an investment solve; otherwise "
-            "check the realized_periods of these solves.",
-            ov.earlier_solve, ov.later_solve, ov.period,
-            ov.timesteps_dropped, "" if ov.timesteps_dropped == 1 else "s",
-        )
+        run_warnings.warn_grouped("W-0500", [(earlier, later)], steps=steps, periods=_plural(periods, "period"),
+                                  details={(earlier, later): ", ".join(f"{ov.period}: {ov.timesteps_dropped}"
+                                                                       for ov in records)})
         n += 1
     return n
+
+
+def _complete(solve: str) -> str:
+    from flextool.run_warnings import complete_solve
+    return complete_solve(solve) or ""
 
 
 # ---------------------------------------------------------------------------
@@ -259,25 +285,22 @@ def warn_realized_invest_overlaps(
     *,
     logger: logging.Logger | None = None,
 ) -> int:
-    """Log one warning line per investment-overlap record.
+    """One coded warning line (W-0501) per pair of solves that both realize the investments of some periods.
 
     Returns:
         The number of warning lines emitted.
     """
+    from flextool import run_warnings
     log = logger if logger is not None else _MODULE_LOGGER
     n = 0
-    for ov in overlaps:
-        log.warning(
-            "Solves '%s' and '%s' both list period '%s' in "
-            "realized_invest_periods. Investments for a period should be "
-            "realized by only one solve. If the later solve can also invest "
-            "in that period, it treats the earlier solve's investment as "
-            "existing capacity and may invest more on top of it; the "
-            "reported invested capacity and investment cost for the period "
-            "then come from the later solve only, although total capacity "
-            "includes both. Remove '%s' from the realized_invest_periods of "
-            "one of these solves.",
-            ov.earlier_solve, ov.later_solve, ov.period, ov.period,
-        )
+    for (earlier, later), records in _pairs(overlaps, lambda ov: (ov.earlier_solve, ov.later_solve)).items():
+        if earlier == later:
+            continue
+        periods = list(dict.fromkeys(ov.period for ov in records))
+        log.debug("Solves '%s' and '%s' both list %s in realized_invest_periods.", earlier, later,
+                  ", ".join(periods))
+        shown = f"period '{periods[0]}'" if len(periods) == 1 else _plural(len(periods), "period")
+        run_warnings.warn_grouped("W-0501", [(earlier, later)], periods=shown,
+                                  details={(earlier, later): ", ".join(periods)})
         n += 1
     return n

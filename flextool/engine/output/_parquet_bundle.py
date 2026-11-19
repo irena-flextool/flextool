@@ -172,8 +172,26 @@ for _spec in (
     _v("vq_capacity_margin", ("group",), has_time=False),
     _v("v_invest",          ("entity",), has_time=False),
     _v("v_divest",          ("entity",), has_time=False),
+    _v("v_divest_built",    ("entity",), has_time=False,
+       note="units of model-built capacity retired in the period (Σ over cohorts); only with retirable built capacity."),
+    _v("v_divested_built",  ("entity",), has_time=False,
+       note="units of model-built capacity retired so far, counting in the period; only with retirable built capacity."),
+    _v("v_divest_built_lines", ("entity", "line", "period_report"), has_time=False,
+       note="objective term of the retirements of model-built capacity by cost line and report period, CUR "
+            "(discounted)."),
+    _v("v_extend",          ("entity",), has_time=False,
+       note="units kept in service beyond their end of life, decided in the period (Σ over cohorts); only with a "
+            "life extension."),
+    _v("v_extended",        ("entity",), has_time=False,
+       note="extended units in service in the period; only with a life extension."),
+    _v("v_extend_lines",    ("entity", "line", "period_report"), has_time=False,
+       note="objective term of the life extensions decided in the period by cost line and report period, CUR "
+            "(discounted)."),
     _v("v_invest_fan",      ("entity",), has_time=False,
        note="branch-weighted investment of a stochastic fan's branch periods at its label; only with recourse."),
+    _v("v_divest_fan",      ("entity",), has_time=False,
+       note="branch-weighted retirement of existing capacity of a stochastic fan's branch periods at its label; only "
+            "with recourse."),
     _v("v_trade",           ("commodity", "node", "tier"), has_time=False,
        note="commodity-ladder trade; only emitted when commodity ladder active."),
     _v("v_dual_node_balance", ("node",)),
@@ -301,6 +319,12 @@ for _key, _producer, _note in (
     ("unit_capacity_ed_p",        "out_capacity.unit_capacity",       "Per-(unit, period) capacity decomposition."),
     ("connection_capacity_ed_p",  "out_capacity.connection_capacity", "Per-(connection, period) capacity decomposition."),
     ("node_capacity_ed_p",        "out_capacity.node_capacity",       "Per-(node, period) capacity decomposition; only for nodeState nodes."),
+    ("unit_cohort_capacity_ed_p", "out_capacity.cohort_capacity",     "Per-(unit, cohort, period) capacity in service; only with a cohort table."),
+    ("connection_cohort_capacity_ed_p", "out_capacity.cohort_capacity", "Per-(connection, cohort, period) capacity in service."),
+    ("node_cohort_capacity_ed_p", "out_capacity.cohort_capacity",     "Per-(node, cohort, period) storage capacity in service."),
+    ("unit_retirement_ed_p",      "out_capacity.cohort_capacity",     "Per-(unit, period) capacity leaving service, by cause."),
+    ("connection_retirement_ed_p", "out_capacity.cohort_capacity",    "Per-(connection, period) capacity leaving service, by cause."),
+    ("node_retirement_ed_p",      "out_capacity.cohort_capacity",     "Per-(node, period) storage capacity leaving service, by cause."),
 ):
     REGISTRY[_key] = _proc(
         _key, note=_note, producer=f"flextool.process_outputs.{_producer}",
@@ -313,6 +337,7 @@ for _key, _producer, _note in (
     ("node_d_ep",                  "out_node.node_summary",            "Per-period aggregated node balance."),
     ("node_state_dt_e",            "out_node.node_additional_results", "Per-(period,time) node state."),
     ("node_inflow__dt",            "out_node.node_additional_results", "Per-(period,time) node inflow."),
+    ("node_storage_usage_dt_e",    "out_node.node_storage_usage",      "Per-(period,time) net use of the fix_usage storage nodes."),
     ("node_prices_dt_e",           "out_node.node_additional_results", "Per-(period,time) node price (dual_node_balance)."),
     ("node_slack_up_dt_e",         "out_ancillary.slack_variables",    "Per-(period,time) node up-slack."),
     ("node_slack_down_dt_e",       "out_ancillary.slack_variables",    "Per-(period,time) node down-slack."),
@@ -664,7 +689,7 @@ def _is_per_roll_slice_intermediate(name: str) -> bool:
 
 
 def _warn_coverage_gaps(work_folder: Path, files: list[dict]) -> None:
-    """Log warnings for:
+    """Log (at DEBUG) the bundle REGISTRY coverage gaps:
        1. files in ``output_raw/`` with no matching REGISTRY entry,
        2. unconditional REGISTRY entries whose file is missing.
 
@@ -674,6 +699,8 @@ def _warn_coverage_gaps(work_folder: Path, files: list[dict]) -> None:
     doesn't see.
     """
     raw_dir = work_folder / "output_raw"
+    unregistered: list[str] = []
+    missing: list[str] = []
     if raw_dir.is_dir():
         registered = _registry_filenames("raw")
         for entry in os.listdir(raw_dir):
@@ -693,10 +720,7 @@ def _warn_coverage_gaps(work_folder: Path, files: list[dict]) -> None:
             # unregistered — don't warn.  See ``_is_per_roll_slice_intermediate``.
             if _is_per_roll_slice_intermediate(entry):
                 continue
-            _logger.warning(
-                "manifest: file in output_raw/ with no REGISTRY entry: %s",
-                entry,
-            )
+            unregistered.append(entry)
 
     note_conditional = ("only when", "only with", "only for", "only emitted",
                         "conditional")
@@ -714,10 +738,13 @@ def _warn_coverage_gaps(work_folder: Path, files: list[dict]) -> None:
         subdirs = CATEGORY_DIRS.get(record["category"], (record["category"],))
         if not any((work_folder / sub).is_dir() for sub in subdirs):
             continue
-        _logger.warning(
-            "manifest: registered file missing on disk: %s "
-            "(REGISTRY key %r)", record["path"], record["key"],
-        )
+        missing.append(f"{record['path']} (REGISTRY key {record['key']!r})")
+    # Developer checks of the bundle's REGISTRY, not of the model: DEBUG only (a
+    # warning here reached every run's "Other warnings (no code)" tally).
+    for what, items in (("file(s) in output_raw/ with no REGISTRY entry", unregistered),
+                        ("registered file(s) missing on disk", missing)):
+        if items:
+            _logger.debug("manifest: %d %s: %s", len(items), what, "; ".join(items))
 
 
 def write_manifest(work_folder: Path | str) -> Path:

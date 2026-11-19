@@ -140,8 +140,6 @@ def gap_runs(tmp_path_factory):
         steps = _run(tmp_path_factory, name, _values(blocks))
         assert len(steps) == 1, steps
         out[name] = steps[0]
-    out["gap_rolling"] = _run(tmp_path_factory, "gap_rolling",
-                              _values([("t0001", 24.0), ("t0049", 24.0)]) + ROLLING)
     return out
 
 
@@ -183,23 +181,14 @@ def test_a_gap_model_commits_as_its_blocks_solved_alone(gap_runs):
     assert fd.dt_online_wrap.rows() == [("p2020", "t0001", "p2020", "t0024"), ("p2020", "t0049", "p2020", "t0072")]
 
 
-@pytest.mark.solver
-def test_a_roll_after_a_gap_takes_no_carry(gap_runs):
-    """The gap model rolled one block per roll (horizon = jump = 24 h): the second roll starts after the gap, so
-    it does not continue the first roll's commitment (no ``dt_online_carry``; before, the carry fell back onto its
-    first step), and the rolled commitment equals the blocks solved alone.  Hand derivation as above: roll 1 ends
-    offline at t0024, but roll 2's first step t0049 wraps to t0072 (online), a shut-down there; the carried
-    offline state would have given no shut-down at t0049."""
-    first, second = gap_runs["gap_rolling"]
-    assert first.flex_data.p_roll_continue_online is None
-    assert second.flex_data.p_roll_continue_online is not None      # the first roll handed its commitment on
-    assert second.flex_data.dt_online_carry is None                 # ... and the gap stops it
-    assert second.flex_data.dt_online_wrap.rows() == [("p2020", "t0049", "p2020", "t0072")]
-    one, two = gap_runs["gap_block_one"], gap_runs["gap_block_two"]
-    for var in ("v_online", "v_startup", "v_shutdown"):
-        assert _rolled([first, second], var).equals(pl.concat([_uc(one, var), _uc(two, var)]).sort("d", "t")), var
-    sd = _rolled([first, second], "v_shutdown").filter(pl.col("value") > 0.5)
-    assert sd.select("t").to_series().to_list() == ["t0013", "t0049"]
+def test_rolling_over_a_gap_is_an_error(tmp_path_factory):
+    """The gap model rolled one block per roll: a rolling solve over a period with two timeblocks is a configuration
+    error (owner decision, Phase 5: rolling solves need a continuous timeline).  Before, the second roll started after
+    the gap and took no commitment carry; that case can no longer be set up."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    with pytest.raises(FlexToolConfigError, match="runs over a timeline with gaps"):
+        _run(tmp_path_factory, "gap_rolling", _values([("t0001", 24.0), ("t0049", 24.0)]) + ROLLING)
 
 
 @pytest.fixture(scope="module")

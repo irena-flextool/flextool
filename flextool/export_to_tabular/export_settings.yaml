@@ -103,11 +103,11 @@ split_params:
       params: ["stochastic_branches"]
   model:
     model:
-      params: ["inflation_rate",
-               "inflation_offset_investment", "inflation_offset_operations",
+      params: ["social_discount_rate",
+               "discount_offset_investment", "discount_offset_operations",
                "max_flow_for_unconstrained_variables",
                "small_number_threshold",
-               "output_horizon"]
+               "output_horizon", "start_year"]
     model_solve_sequence:
       params: ["solves"]
     model_periods_available:
@@ -330,12 +330,15 @@ period_only_params:
     - invest_forced
     - invest_max_period
     - invest_min_period
-    - lifetime
+    - lifetime_technical
+    - payback_time
     - construction_lead_time
     - peak_inflow
     - retire_max_period
     - retire_min_period
-    - salvage_value
+    - net_salvage_value
+    - life_extension_cost
+    - life_extension_years
     - storage_state_reference_price
     - storage_state_reference_value
   unit:
@@ -352,11 +355,14 @@ period_only_params:
     - invest_cost
     - invest_max_period
     - invest_min_period
-    - lifetime
+    - lifetime_technical
+    - payback_time
     - construction_lead_time
     - retire_max_period
     - retire_min_period
-    - salvage_value
+    - net_salvage_value
+    - life_extension_cost
+    - life_extension_years
     - startup_cost
   connection:
     - constraint_invested_capacity_coeff
@@ -372,11 +378,14 @@ period_only_params:
     - invest_cost
     - invest_max_period
     - invest_min_period
-    - lifetime
+    - lifetime_technical
+    - payback_time
     - construction_lead_time
     - retire_max_period
     - retire_min_period
-    - salvage_value
+    - net_salvage_value
+    - life_extension_cost
+    - life_extension_years
     - startup_cost
   group:
     - co2_max_period

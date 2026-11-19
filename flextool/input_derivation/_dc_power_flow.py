@@ -29,6 +29,8 @@ import logging
 
 import polars as pl
 
+from flextool import run_warnings
+
 from flextool.engine.input._solve_state import FlexToolConfigError
 
 
@@ -188,11 +190,7 @@ def derive_dc_power_flow(
             if ref_node in nodes_in_group:
                 reference_nodes.append(ref_node)
             else:
-                logger.warning(
-                    "DC power flow: reference_node '%s' for group '%s' is not a member node. "
-                    "Falling back to automatic selection.",
-                    ref_node, group_name,
-                )
+                run_warnings.warn("W-0402", (group_name, ref_node))
                 ref_node = None
 
         if ref_node is None:
@@ -259,11 +257,8 @@ def derive_dc_power_flow(
                         best_cap = cap
                         best_node = node
                 reference_nodes.append(best_node)
-                logger.info(
-                    "DC power flow: auto-selected reference node '%s' (existing capacity=%.1f) "
-                    "for connected component in group '%s'.",
-                    best_node, best_cap, group_name,
-                )
+                run_warnings.note("W-0403", [(group_name, best_node)],
+                                  details={(group_name, best_node): f"existing capacity {best_cap:.1f}"})
 
         # --- Susceptance computation ---
         base_mva = 100.0
@@ -296,15 +291,9 @@ def derive_dc_power_flow(
                 if reactance != 0.0:
                     susceptance_map[conn_name] = base_mva / reactance
                 else:
-                    logger.warning(
-                        "DC power flow: connection '%s' has zero reactance — skipping susceptance computation.",
-                        conn_name,
-                    )
+                    run_warnings.warn("W-0404", conn_name, details={conn_name: "reactance 0"})
             else:
-                logger.warning(
-                    "DC power flow: connection '%s' in group '%s' has no reactance parameter set.",
-                    conn_name, group_name,
-                )
+                run_warnings.warn("W-0404", conn_name, details={conn_name: f"no reactance (group '{group_name}')"})
 
         # --- Candidate pre-capacity warning ---
         precapacity = 0.1
@@ -336,13 +325,8 @@ def derive_dc_power_flow(
         for conn_name in group_dc_connections:
             existing = conn_existing.get(conn_name, 0.0)
             if existing == 0.0:
-                logger.warning(
-                    "DC power flow: connection '%s' in group '%s' has zero existing capacity. "
-                    "For DC power flow to work without big-M constraints, set a small existing "
-                    "capacity (e.g. %.3f MW). The candidate_precapacity_to_avoid_big_m "
-                    "parameter is %.3f MW.",
-                    conn_name, group_name, precapacity, precapacity,
-                )
+                run_warnings.warn("W-0405", conn_name, details={
+                    conn_name: f"group '{group_name}', candidate_precapacity_to_avoid_big_m {precapacity:.3f} MW"})
 
     # --- Build canonical frames and place them on the Provider ---
     # node_dc_power_flow — single-column ``node``, sorted (matches the

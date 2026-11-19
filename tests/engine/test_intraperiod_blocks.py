@@ -7,7 +7,8 @@ A ``bind_intraperiod_blocks`` node (``nodeStateBlock``) is balanced once per tim
 Now: a nested anchor sub-solve gets its blocks and the model refuses a block node without blocks.  In a rolling
 solve (owner decisions Q-c15c-A option B and Q-c15e-A option (b)) the blocks of a roll are also cut at its realized
 end; a period the roll holds whole loops as in a solve that is not rolling, and in a period the roll holds only in
-part the blocks chain forward and the storage level is carried from roll to roll.
+part the blocks chain forward, the storage level is carried from roll to roll and the roll(s) holding the
+period's end close it at the level it started from.
 
 Fixtures: ``tests/fixtures/tests.json`` (``5weeks`` = five 4-step blocks; ``bind_battery_intraperiod_blocks`` on the
 battery) with override alternatives, built from JSON under the pytest tmp dir.
@@ -120,20 +121,28 @@ def test_rolling_blocks_cut_at_realized_end(tmp_path_factory) -> None:
 
 @pytest.mark.parametrize("loss", [0.0, 0.01])
 def test_rolling_blocks_carry(tmp_path_factory, loss) -> None:
-    """The level is carried from roll to roll and each block decays by its own 24 h (a = e^{−24λ}, g = (1 − a)/(24λ),
-    λ = ln(1 + loss)): the realized blocks hold 10·g, 10·g·a, 10·g·a² MWh (loss 0.01: 8.8956, 7.0059, 5.5176; loss 0:
-    10 everywhere) — the trajectory of one forward chain.  Roll 1's first block row holds −su on its own state, the
-    carried level (the state at roll 0's realized end) in its bounds and no state of a later block (no loop).
-    Before: the run stopped with an error (c15c interim)."""
+    """The level is carried from roll to roll: roll 0's realized block decays by its own 24 h (a = e^{−24λ},
+    g = (1 − a)/(24λ), λ = ln(1 + loss)) and holds 10·g MWh (loss 0.01: 8.8956; loss 0: 10), and each later roll
+    starts from the state at the previous roll's realized end.  Roll 1's first block row holds −su on its own state,
+    the carried level in its bounds and no state of a later block (no loop).  Rolls 1 and 2 hold the end of p2020,
+    which the rolls hold only in part, and close it at the level roll 0 began it at (fix_start 0): the 10 MWh that
+    cannot leave (inverter off) go to the slack.  Before the per-period closure the chain stayed open and the
+    realized blocks held 10·g·a and 10·g·a² MWh; before that, the run stopped with an error (c15c interim)."""
     import math
+
+    from tests.engine._lp_rows import row_bounds as bounds_of
 
     rolls = _rolls(tmp_path_factory, f"ibr_carry{int(loss * 100)}", _q4_values(loss=loss))
     h = 24 * math.log1p(loss)
-    a, g = (math.exp(-h), (1 - math.exp(-h)) / h) if loss > 0 else (1.0, 1.0)
-    for i, (step, b_first) in enumerate(zip(rolls, ("t0001", "t0025", "t0049"))):
-        s = _states_mwh(step)
-        for k in range(int(b_first[1:]), int(b_first[1:]) + 24):
-            assert s[("p2020", f"t{k:04d}")] == pytest.approx(10.0 * g * a ** i, rel=1e-7), (i, k)
+    g = (1 - math.exp(-h)) / h if loss > 0 else 1.0
+    s = _states_mwh(rolls[0])
+    for k in range(1, 25):
+        assert s[("p2020", f"t{k:04d}")] == pytest.approx(10.0 * g, rel=1e-7), k
+    for step in rolls[1:]:
+        assert bounds_of(build(step.flex_data), "storage_state_roll_close", "battery,") == {
+            "storage_state_roll_close[battery,p2020,t0072]": (pytest.approx(0.0, abs=1e-9),
+                                                               pytest.approx(0.0, abs=1e-9))}
+        assert _states_mwh(step)[("p2020", "t0072")] == pytest.approx(0.0, abs=1e-6)
     # The carry handed to a roll is the previous roll's state at its realized end (the step before the roll's first).
     for prev, step, first in zip(rolls, rolls[1:], (25, 49)):
         assert _carry_mwh(step.flex_data) == pytest.approx(_states_mwh(prev)[("p2020", f"t{first - 1:04d}")],
@@ -198,15 +207,26 @@ def test_rolling_blocks_fix_start(tmp_path_factory) -> None:
 
 
 def test_rolling_blocks_reference_value(tmp_path_factory) -> None:
-    """use_reference_value 0.4 (tests.json battery, inverter on): each roll's last step is pinned to 0.4 · 50 = 20 MWh
-    — the roll holds p2020 in part, so the blocks chain forward and the end is not tied to the start.  Before (in a
-    solve that is not rolling the node is excluded from the pin): the run stopped with an error."""
+    """use_reference_value 0.4 (tests.json battery, inverter on): roll 0 holds p2020 in part, so its blocks chain
+    forward and its last step is pinned to 0.4 · 50 = 20 MWh.  Rolls 1 and 2 hold the end of p2020 and close the
+    period there at the level roll 0 began it at, which replaces the reference pin at that step.  Before the
+    per-period closure the reference pinned t0072 too and the period never closed; before that (in a solve that is
+    not rolling the node is excluded from the pin) the run stopped with an error."""
+    from tests.engine._lp_rows import row_bounds as bounds_of
+
     rolls = _rolls(tmp_path_factory, "ibr_ref", _roll_values(48.0, 24.0))
-    for step, last in zip(rolls, ("t0048", "t0072", "t0072")):
+    pb0 = build(rolls[0].flex_data)
+    assert set(row_terms(pb0, "storage_state_solve_horizon_reference_value", "battery,")) == {
+        "storage_state_solve_horizon_reference_value[battery,p2020,t0048]"}
+    assert _states_mwh(rolls[0])[("p2020", "t0048")] == pytest.approx(20.0, abs=1e-6)
+    start = utf8(rolls[0].handoff.scope_start_state).filter((pl.col("node") == "battery")
+                                                            & (pl.col("step") == "t0001"))["value"][0]
+    for step in rolls[1:]:
         pb = build(step.flex_data)
-        rows = row_terms(pb, "storage_state_solve_horizon_reference_value", "battery,")
-        assert set(rows) == {f"storage_state_solve_horizon_reference_value[battery,p2020,{last}]"}
-        assert _states_mwh(step)[("p2020", last)] == pytest.approx(20.0, abs=1e-6)
+        assert row_terms(pb, "storage_state_solve_horizon_reference_value", "battery,") == {}
+        (key, (lo, hi)), = bounds_of(pb, "storage_state_roll_close", "battery,").items()
+        assert key == "storage_state_roll_close[battery,p2020,t0072]" and lo == hi == pytest.approx(start)
+        assert _states_mwh(step)[("p2020", "t0072")] == pytest.approx(start, abs=1e-6)
 
 
 def test_rolling_blocks_cross_period(tmp_path_factory) -> None:
@@ -481,7 +501,9 @@ def test_rolling_blocks_tail_end_takes_the_horizon_method(tmp_path_factory, meth
     of that tail gets the node's storage_solve_horizon_method like a roll end (owner default for Q-c15e2-A).  Only
     p2025 is the roll's last period (#37), and its looping end is not pinned.  use_reference_value (0.4, battery
     existing 50 MWh): the tail end is pinned to 20 MWh; use_reference_price (30): the tail-end state has a negative
-    objective coefficient; free: neither.  Roll 0 holds p2020 whole and p2025 in part (it ends the roll): no tail."""
+    objective coefficient; free: neither.  Roll 0 holds p2020 whole and p2025 in part (it ends the roll): no tail.
+    The tail is the end of p2020, which roll 1 continues: it closes the period there at the level roll 0 began it at
+    (roll 0 loops p2020 from its wrap), so use_reference_value pins no row there now; a price still values it."""
     from flextool.engine.model import _self_discharge
 
     rolls = _rolls(tmp_path_factory, f"ibr_tail_{method}", _roll_values(96.0, 48.0, ("p2020", "p2025"))
@@ -498,11 +520,11 @@ def test_rolling_blocks_tail_end_takes_the_horizon_method(tmp_path_factory, meth
     ref = set(row_terms(pb, "storage_state_solve_horizon_reference_value", "battery,"))
     m = pb.canonicalise()
     obj = {nm: float(m.col_obj[i]) for i, nm in enumerate(m.col_names) if nm.startswith("v_state[battery,p2020,")}
-    if method == "use_reference_value":
-        assert ref == {"storage_state_solve_horizon_reference_value[battery,p2020,t0072]"}
-        assert _states_mwh(rolls[1])[("p2020", "t0072")] == pytest.approx(0.4 * SU, abs=1e-6)
-    else:
-        assert ref == set()
+    assert ref == set()
+    start = utf8(rolls[0].handoff.scope_start_state).filter((pl.col("node") == "battery") & (pl.col("period") == "p2020")
+                                                            & (pl.col("step") == "t0001"))["value"][0]
+    assert start == pytest.approx(_states_mwh(rolls[0])[("p2020", "t0072")], abs=1e-9)
+    assert _states_mwh(rolls[1])[("p2020", "t0072")] == pytest.approx(start, abs=1e-6)
     priced = {nm for nm, c in obj.items() if c != 0.0}
     assert priced == ({"v_state[battery,p2020,t0072]"} if method == "use_reference_price" else set())
     if method == "use_reference_price":

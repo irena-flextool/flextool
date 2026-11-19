@@ -26,7 +26,6 @@ from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 from flextool.engine.preprocess._solve_context import (
     FlexDataError,
     SolveContext,
-    _load_edd_history,
     _load_period_branch,
     _load_period_in_use,
     _load_period_share,
@@ -105,17 +104,6 @@ def test_period_branch_under_axis_enums_keeps_labels_or_raises(tmp_path):
         reset_global_axis_enums(tok)
 
 
-def test_edd_history_round_trip(tmp_path):
-    provider = FlexDataProvider()
-    frame = pl.DataFrame(
-        {"entity": ["e1"], "period_history": ["d2025"], "period": ["d2030"]},
-    )
-    _seed(provider, "edd_history", frame)
-    path = tmp_path / "solve_data" / "edd_history.csv"
-    out = _load_edd_history(path, provider=provider)
-    assert out.equals(frame)
-
-
 def test_steps_in_use_round_trip(tmp_path):
     provider = FlexDataProvider()
     _seed(
@@ -166,8 +154,7 @@ def test_solve_branch_weight_round_trip(tmp_path):
 
 def test_maybe_read_round_trip(tmp_path):
     """The generic ``_maybe_read`` loader (powers
-    p_entity_period_existing_capacity + p_entity_pre_existing +
-    p_entity_all_existing) routes through the Provider too."""
+    p_entity_pre_existing + p_entity_all_existing) routes through the Provider too."""
     provider = FlexDataProvider()
     frame = pl.DataFrame(
         {"entity": ["e1"], "period": ["d2025"], "value": [42.0]},
@@ -188,7 +175,6 @@ def test_maybe_read_round_trip(tmp_path):
     [
         (_load_period_in_use, "period_in_use_set.csv"),
         (_load_period_branch, "period__branch.csv"),
-        (_load_edd_history, "edd_history.csv"),
         (_load_steps_in_use, "steps_in_use.csv"),
         (_load_solve_branch_weight, "solve_branch_weight.csv"),
     ],

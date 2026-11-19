@@ -21,10 +21,8 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from flextool.engine.preprocess.params._existing import (
-    _construction_lag_configured,
-    edd_invest_set_lf,
-)
+from flextool.engine.preprocess.params._cohorts import invest_cohorts
+from flextool.engine.preprocess.params._existing import _construction_lag_configured
 from flextool.engine.preprocess.params._derived import _build_commission_lf
 from flextool.engine.preprocess.params._walks import (
     WindowMethod,
@@ -109,26 +107,23 @@ def test_commissioning_lag_error_subclasses_value_error() -> None:
 def test_guard_raises_through_real_builder(monkeypatch) -> None:
     """When the §2.5 guard fires inside ``period_walk_iterator``, the
     dedicated ``CommissioningLagError`` must PROPAGATE through the real
-    builder ``edd_invest_set_lf`` — the exact callable ``apply_derived_c``
-    wraps in its ``try`` as ``_edd_invest_lf`` — so its narrow re-raise
-    (``except (LineageFilterError, CommissioningLagError): raise``) ahead of
-    the broad ``except Exception`` fires instead of silently reverting to
-    the unlagged set (MAJOR-1).
+    builder of the investment cohorts (``invest_cohorts``, which
+    ``apply_derived_c`` and ``apply_synthetic_invest_sets`` call without a
+    ``try``) instead of silently reverting to the unlagged set (MAJOR-1).
 
     The guard firing is modelled by patching ``period_walk_iterator`` (the
     walker the builder calls, and where the real guard lives) to raise the
-    dedicated type: the builder has no swallow of its own, so the escape is
-    what lets ``apply_derived_c``'s narrow except catch and re-raise it."""
+    dedicated type: the builder has no swallow of its own."""
     def _raise_lag(*_a, **_k):
         raise CommissioningLagError(
             "commission_lf join produced no surviving lag rows")
     monkeypatch.setattr(
-        "flextool.engine.preprocess.params._existing.period_walk_iterator",
+        "flextool.engine.preprocess.params._walks.period_walk_iterator",
         _raise_lag)
     with pytest.raises(CommissioningLagError, match="no surviving lag rows"):
-        edd_invest_set_lf(
-            _source(), "s", _ed_lf("nuke"), PERIODS, PERIODS,
-            commission_lf=_desync_commission()).collect()
+        invest_cohorts(
+            _source(), "s", _ed_lf("nuke").collect(), PERIODS,
+            commission_lf=_desync_commission().with_columns(d_c=pl.lit("2")))
 
 
 def test_guard_does_not_raise_on_zero_overlap_cohort() -> None:

@@ -9,8 +9,8 @@ heavily non-unique indices that crash flextool's downstream MultiIndex
 joins).
 
 The polar_high analogue: when a chain runs with realised invest in
-many sub-solves, the in-memory ``SolveHandoff.realized_invest``
-carriers emitted for each sub-solve must have UNIQUE (entity, period)
+many sub-solves, the in-memory ``SolveHandoff.realized_cohort``
+carriers emitted for each sub-solve must have UNIQUE (entity, cohort)
 keys.  The chain-runner accumulator (``build_handoff_from_solution``
 reading ``prior_handoff`` and folding in this-solve's contributions)
 is the polar_high code path that, if buggy, would produce per-solve
@@ -33,6 +33,8 @@ direct port.
 """
 from __future__ import annotations
 
+import polars as pl
+
 import pytest
 
 from flextool.engine import run_chain_from_db
@@ -51,12 +53,12 @@ SCENARIOS = (
 )
 
 
-def test_chain_realized_invest_handoff_is_unique_across_rolling_solves(
+def test_chain_realized_cohort_handoff_is_unique_across_rolling_solves(
     scenario_workdir,
 ) -> None:
     """For every multi-solve invest fixture and every sub-solve, the
-    in-memory handoff's ``realized_invest`` and ``realized_existing``
-    carriers must have unique (entity, period) keys.
+    in-memory handoff's ``realized_cohort`` carrier must have unique
+    (entity, cohort) and (entity, decision period) keys.
 
     Flextool's drop_levels test asserts this for the on-disk
     ``ed_invest.csv`` ladder after dropping the ``solve`` level.
@@ -80,26 +82,21 @@ def test_chain_realized_invest_handoff_is_unique_across_rolling_solves(
         for sub, step in sols.items():
             h = step.handoff
 
-            ri = h.realized_invest
-            if ri is not None:
-                assert ri.unique(["entity", "period"]).height == ri.height, (
-                    f"{scenario_name}/{sub}: realized_invest has "
-                    f"duplicate (entity, period) rows — equivalent of "
+            rc = h.realized_cohort
+            if rc is not None:
+                assert rc.unique(["entity", "cohort"]).height == rc.height, (
+                    f"{scenario_name}/{sub}: realized_cohort has "
+                    f"duplicate (entity, cohort) rows — equivalent of "
                     f"flextool's drop_levels non-unique-index bug.\n"
-                    f"{ri}"
+                    f"{rc}"
                 )
-                # Levels are exactly (entity, period) — no leftover
-                # solve dim (analogue of "droplevel('solve')").
-                assert set(ri.columns) >= {"entity", "period", "value"}, (
-                    f"{scenario_name}/{sub}: realized_invest "
-                    f"columns unexpected: {ri.columns}")
-
-            re = h.realized_existing
-            if re is not None:
-                assert re.unique(["entity", "period"]).height == re.height, (
-                    f"{scenario_name}/{sub}: realized_existing "
-                    f"has duplicate (entity, period) rows.\n{re}"
-                )
+                # One row per decision: no leftover solve dim (analogue of
+                # "droplevel('solve')").  The generation rows of a
+                # reinvest_automatic chain share their decision's period.
+                rc = rc.filter(pl.col("kind") != "generation")
+                assert rc.unique(["entity", "period_decided"]).height == rc.height, (
+                    f"{scenario_name}/{sub}: realized_cohort has duplicate "
+                    f"(entity, period_decided) rows.\n{rc}")
 
             # divest_cumulative: keyed by entity only; uniqueness
             # is the analogue of flextool's d_realize_invest dedup

@@ -206,6 +206,12 @@ def node_additional_results(par, s, v, r, debug):
     return results
 
 
+def node_storage_usage(par, s, v, r, debug):
+    """Net use of each storage node with storage_nested_fix_method fix_usage in each realised step (MWh: the flows
+    out of the node minus the flows into it, times the step duration), the quantity an upper-level fix_usage caps."""
+    return [(r.storage_usage_dt, 'node_storage_usage_dt_e')]
+
+
 def node_ramp_envelope(par, s, v, r, debug):
     """Ramp envelope of each node (``calc_ramp_envelope``): per transition t → t⁺ the net-load and demand ramps
     and the room of the units, storages, VRE and connections to move the node's supply up and down (down bands

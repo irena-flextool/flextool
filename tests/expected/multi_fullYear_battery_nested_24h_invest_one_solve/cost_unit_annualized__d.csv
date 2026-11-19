@@ -1,9 +1,9 @@
-solve,period,unit,commodity_cost,other operational,investment,retirement,fixed cost pre-existing,fixed cost invested
-dispatch_fullYear_roll,p2020,coal_plant,20.6931,0.0,0.0,0.0,50.0,0.0
-dispatch_fullYear_roll,p2020,wind_plant,0.0,0.0,18.4889,0.0,0.0,0.0
-dispatch_fullYear_roll,p2025,coal_plant,23.6966,0.0,0.0,0.0,50.0,0.0
-dispatch_fullYear_roll,p2025,wind_plant,0.0,0.0,30.302,0.0,0.0,0.0
-dispatch_fullYear_roll,p2030,coal_plant,26.6718,0.0,0.0,0.0,50.0,0.0
-dispatch_fullYear_roll,p2030,wind_plant,0.0,0.0,42.1152,0.0,0.0,0.0
-dispatch_fullYear_roll,p2035,coal_plant,29.6299,0.0,0.0,0.0,50.0,0.0
-dispatch_fullYear_roll,p2035,wind_plant,0.0,0.0,53.9283,0.0,0.0,0.0
+solve,period,unit,commodity_cost,other operational,investment,replacement,extension,retirement,salvage,fixed cost pre-existing,fixed cost invested
+dispatch_fullYear_roll,p2020,coal_plant,20.1866,0.0,0.0,0.0,0.0,0.0,0.0,50.0,0.0
+dispatch_fullYear_roll,p2020,wind_plant,0.0,0.0,54.2711,0.0,0.0,0.0,0.0,0.0,0.0
+dispatch_fullYear_roll,p2025,coal_plant,23.1972,0.0,0.0,0.0,0.0,0.0,0.0,50.0,0.0
+dispatch_fullYear_roll,p2025,wind_plant,0.0,0.0,28.3685,0.0,0.0,0.0,0.0,0.0,0.0
+dispatch_fullYear_roll,p2030,coal_plant,26.179,0.0,0.0,0.0,0.0,0.0,0.0,50.0,0.0
+dispatch_fullYear_roll,p2030,wind_plant,0.0,0.0,20.6949,0.0,0.0,0.0,0.0,0.0,0.0
+dispatch_fullYear_roll,p2035,coal_plant,29.1428,0.0,0.0,0.0,0.0,0.0,0.0,50.0,0.0
+dispatch_fullYear_roll,p2035,wind_plant,0.0,0.0,11.3588,0.0,0.0,0.0,0.0,0.0,0.0

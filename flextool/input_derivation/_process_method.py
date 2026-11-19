@@ -41,6 +41,8 @@ from collections.abc import Mapping
 
 import polars as pl
 
+from flextool import run_warnings
+
 from flextool.engine.input._piecewise_curve import curves_by_unit, rises_first, unit_flags
 from flextool.input_derivation._piecewise import parse_piecewise_curves
 from flextool.input_derivation._specs import METHODS_MAPPING
@@ -134,11 +136,7 @@ def derive_process_method(
             current_startup = startup_method_map.get(process_name, "no_startup")
             if current_startup == "no_startup":
                 startup_method_map[process_name] = "linear"
-                logger.info(
-                    "Process '%s': startup_method overridden to 'linear' "
-                    "because minimum_time_method='%s' requires online variables",
-                    process_name, mtm,
-                )
+                run_warnings.note("W-0229", [process_name], details={process_name: f"minimum_time_method {mtm}"})
 
     # --- piecewise_linear: automatic linear start-ups (W3) and the forced fork of multi-line curves ---
     piecewise = sorted(p for p, ct in ct_method_map.items() if ct == "piecewise_linear")
@@ -160,10 +158,9 @@ def derive_process_method(
                 by_d = by_unit[process_name]
                 d = next(d for d in sorted(by_d, key=lambda x: (x is not None, x or "")) if rises_first(by_d[d]))
                 pts = by_d[d]
-                logger.info(
-                    "Unit '%s': startup_method set to linear: its piecewise_linear_efficiency curve burns fuel at "
-                    "zero output (efficiency rises from load %s to %s%s), which needs online variables",
-                    process_name, f"{pts[0][0]:g}", f"{pts[1][0]:g}", f" in period {d}" if d is not None else "")
+                run_warnings.note("W-0230", [process_name], details={process_name: (
+                    f"efficiency rises from load {pts[0][0]:g} to {pts[1][0]:g}"
+                    + (f" in period {d}" if d is not None else ""))})
     if promoted and provider.has("input/process__startup_method"):
         sm = provider.get("input/process__startup_method")
         if sm is not None:
@@ -237,18 +234,12 @@ def derive_process_method(
         key = (ct, startup, fork)
         method = METHODS_MAPPING.get(key)
         if method is None:
-            logger.warning(
-                "process_method: no mapping for process '%s' with "
-                "(ct_method=%s, startup_method=%s, fork_method=%s) — skipping",
-                process_name, ct, startup, fork,
-            )
+            run_warnings.warn("W-0227", process_name, details={
+                process_name: f"ct_method {ct}, startup_method {startup}, fork_method {fork}"})
             continue
         if method == "not_applicable":
-            logger.warning(
-                "process_method: method resolves to 'not_applicable' for "
-                "process '%s' (ct_method=%s, startup_method=%s, fork_method=%s)",
-                process_name, ct, startup, fork,
-            )
+            run_warnings.warn("W-0228", process_name, details={
+                process_name: f"ct_method {ct}, startup_method {startup}, fork_method {fork}"})
         rows.append((process_name, method))
 
     # ------------------------------------------------------------------

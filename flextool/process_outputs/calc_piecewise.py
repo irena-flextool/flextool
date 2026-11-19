@@ -149,9 +149,11 @@ def piecewise_input_and_excess(flex_data: "FlexData", solution: "Solution | None
         exist = _param(getattr(flex_data, "p_process_existing_count", None), ("p", "d"), "exist")
         cap = (cap.join(exist, on=["p", "d"], how="left") if exist is not None
                else cap.with_columns(exist=pl.lit(None, dtype=pl.Float64)))
-        for var, edd, d_col, alias in (("v_invest_p", "edd_invest_set", "d_invest", "inv"),
-                                       ("v_divest_p", "edd_divest_active", "d_divest", "div")):
-            units = _invest_units(solution, var, getattr(flex_data, edd, None), d_col, built, flex_data)
+        from flextool.engine.preprocess.params._cohorts import in_service
+        frames = in_service(flex_data)
+        for var, edd, d_col, alias in (("v_invest_p", frames.alive, "d_invest", "inv"),
+                                       ("v_divest_p", frames.retired_p, "d_divest", "div")):
+            units = _invest_units(solution, var, edd, d_col, built, flex_data)
             cap = (cap.join(units.rename({"value": alias}), on=["p", "d"], how="left") if units is not None
                    else cap.with_columns(pl.lit(None, dtype=pl.Float64).alias(alias)))
         y_parts.append(cap.join(us, on="p", how="inner").select(
@@ -244,7 +246,7 @@ def piecewise_excess(par, s) -> list[Excess]:
 
 def warn_piecewise_excess(par, s, node_units: "Mapping[str, str] | None" = None,
                           logger: logging.Logger | None = None) -> list[Excess]:
-    """Log W5 for each unit of :func:`piecewise_excess`; the amounts are in the unit of measure of its input nodes
+    """Warn (W-0531, one line) about the units of :func:`piecewise_excess`; the amounts are in the unit of measure of its input nodes
     (MWh unless all its inputs share another unit; ``input units`` when they differ).  Returns the findings."""
     found = piecewise_excess(par, s)
     if not found:
@@ -253,12 +255,13 @@ def warn_piecewise_excess(par, s, node_units: "Mapping[str, str] | None" = None,
     node_units = node_units or {}
     sources = getattr(s, "process_source", None)
     pairs = [(str(p), str(n)) for p, n in sources] if sources is not None and len(sources) else []
+    details: dict[str, str] = {}
     for f in found:
         units = {node_units.get(n, "MWh") for p, n in pairs if p == f.unit}
         unit = units.pop() if len(units) == 1 else "input units"
-        log.warning(
-            "Unit '%s' used more weighted input (input × conversion_flow_coeff) than its curve needs in %d time "
-            "step%s (largest %.4g %s in %s/%s, total %.4g %s): its input had no value or a negative value there (a surplus, a free or curtailed input, a "
-            "CO2 credit) or a reserve or a minimum on its input made it pay, so the solution is not unique or "
-            "burns input for nothing.", f.unit, f.steps, "" if f.steps == 1 else "s", f.largest, unit, f.at[0], f.at[1], f.total, unit)
+        details[f.unit] = (f"{f.steps} time step{'' if f.steps == 1 else 's'} (largest {f.largest:.4g} {unit} in "
+                           f"{f.at[0]}/{f.at[1]}, total {f.total:.4g} {unit})")
+        log.debug("Unit '%s' used more weighted input than its curve needs: %s", f.unit, details[f.unit])
+    from flextool import run_warnings
+    run_warnings.warn_grouped("W-0531", list(details), details=details)
     return found

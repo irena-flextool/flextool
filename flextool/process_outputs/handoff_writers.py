@@ -1,7 +1,7 @@
 """
 Solve-to-solve handoff CSV writers — DEBUG OUTPUT ONLY (item 163, c24).
 
-These writers produce five CSVs that MIRROR the engine's real,
+These writers produce four CSVs that MIRROR the engine's real,
 in-memory solve-to-solve handoff (``flextool.engine.preprocess.flex_data
 .build_handoff_from_solution`` / :class:`flextool.engine.solve._handoff
 .SolveHandoff`).  Nothing in the engine reads them back — the mirrors
@@ -9,14 +9,16 @@ are written for `--csv-dump` debugging only (owner decision, design_163
 .md §11 Q1): ``csv_dump=False`` (every normal run) computes nothing and
 writes nothing.
 
-The five handoff files (per ``ARCHITECTURE.md`` "Solve-to-solve
+The four handoff files (per ``ARCHITECTURE.md`` "Solve-to-solve
 handoff"):
 
-    1. solve_data/p_entity_period_existing_capacity.csv
-    2. solve_data/p_entity_divested.csv (and p_entity_divested_period.csv, per decision period)
-    3. solve_data/fix_storage_quantity.csv
-    4. solve_data/fix_storage_usage.csv
-    5. solve_data/p_roll_continue_state.csv
+    1. solve_data/p_entity_divested.csv
+    2. solve_data/fix_storage_quantity.csv
+    3. solve_data/fix_storage_usage.csv
+    4. solve_data/p_roll_continue_state.csv
+
+The realized investments and retirements per cohort have no mirror: the csv dump writes the carriers themselves
+(``produced_handoff/realized_cohort.csv`` / ``realized_retire.csv``).
 
 The nested ``fix_price`` carrier is built in memory by
 ``flextool.engine.preprocess.flex_data.build_handoff_from_solution`` (the
@@ -57,7 +59,6 @@ import pandas as pd
 import polars as pl
 
 from flextool.process_outputs.read_highs_solution import (
-    _load_realized_periods,
     extract_variable,
 )
 
@@ -69,9 +70,11 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 
-# The six basenames the handoff mirrors write under ``solve_data/`` (five
-# handoff files + the vestigial ``period_capacity.csv`` accumulator).  Used
-# by ``_bootstrap_dirs`` (item 163 §4, 163-5) to clear a reused work folder's
+# The basenames the handoff mirrors write under ``solve_data/`` (four handoff
+# files + the vestigial ``period_capacity.csv`` accumulator) and the two retired
+# mirrors (``p_entity_period_existing_capacity`` / ``p_entity_divested_period``,
+# still cleared from a work folder an older version left them in).  Used by
+# ``_bootstrap_dirs`` to clear a reused work folder's
 # leftover mirrors at run start, and by ``tools/output_snapshot.py``.
 MIRROR_FILES: tuple[str, ...] = (
     "p_entity_period_existing_capacity.csv",
@@ -109,72 +112,6 @@ def _provider_lookup_df(provider: "object | None", path: "Path | str"):
 # (per-solve).  These small helpers normalise their varied shapes into
 # Python dicts.
 # ---------------------------------------------------------------------------
-
-
-def _load_pre_existing(*, provider: "object | None" = None) -> dict[tuple[str, str], float]:
-    """Return ``{(period, entity): value}`` for ``p_entity_pre_existing``.
-
-    Provider-only (item 163: no work-folder CSV fallback): the canonical
-    in-memory frame at ``solve_data/p_entity_pre_existing`` (populated by
-    ``_chain_params.emit_p_entity_pre_existing``) is tall —
-    ``(entity, period, value)``.  A ``None`` provider or a missing key
-    gives ``{}`` — ``write_p_entity_period_existing_capacity`` treats an
-    empty pre_existing as "no pre-existing capacity recorded for this
-    solve", which is the correct semantics when nothing upstream produced
-    it.
-    """
-    if provider is None or not provider.has("solve_data/p_entity_pre_existing"):
-        return {}
-    df_pl = provider.get("solve_data/p_entity_pre_existing")
-    if df_pl is None or df_pl.is_empty():
-        return {}
-    # Tall ``(entity, period, value)`` schema — ``value`` is a
-    # repr-encoded string per ``_ed_value_frame``.  Convert
-    # directly to the ``{(period, entity): float}`` dict the
-    # downstream consumers expect.
-    out: dict[tuple[str, str], float] = {}
-    for row in df_pl.iter_rows(named=True):
-        period_v = row.get("period")
-        entity_v = row.get("entity")
-        value_v = row.get("value")
-        if period_v is None or entity_v is None or value_v is None:
-            continue
-        try:
-            out[(str(period_v), str(entity_v))] = float(value_v)
-        except (TypeError, ValueError):
-            continue
-    return out
-
-
-def _load_prior_existing(
-    *, prior_handoff: "SolveHandoff | None" = None,
-    writer_state: "OutputWriterState | None" = None,
-) -> tuple[dict[tuple[str, str], float], dict[tuple[str, str], float]]:
-    """Return prior ``p_entity_period_existing_capacity`` + ``_invested_capacity``.
-
-    With ``prior_handoff`` populated, read the two dicts from
-    ``realized_existing`` / ``realized_invest`` (in-memory, production's
-    real source).  Else fall back to ``writer_state.existing`` /
-    ``.invested`` — the previous call of THIS writer, within this same
-    cascade, wrote them (item 163: no work-folder CSV; see the module
-    docstring).  Empty when neither is available (e.g. the first solve).
-    """
-    if prior_handoff is not None and (
-        prior_handoff.realized_existing is not None
-        or prior_handoff.realized_invest is not None
-    ):
-        existing: dict[tuple[str, str], float] = {}
-        invested: dict[tuple[str, str], float] = {}
-        if prior_handoff.realized_existing is not None:
-            for r in prior_handoff.realized_existing.iter_rows(named=True):
-                existing[(str(r["entity"]), str(r["period"]))] = float(r["value"])
-        if prior_handoff.realized_invest is not None:
-            for r in prior_handoff.realized_invest.iter_rows(named=True):
-                invested[(str(r["entity"]), str(r["period"]))] = float(r["value"])
-        return existing, invested
-    if writer_state is not None:
-        return dict(writer_state.existing), dict(writer_state.invested)
-    return {}, {}
 
 
 def _load_prior_divested(
@@ -252,22 +189,6 @@ def _resolve_node_state(flex_data: "FlexData | None" = None) -> set[str]:
     try:
         col = f.columns[0]
         return set(f[col].cast(str).to_list())
-    except Exception:  # noqa: BLE001
-        return set()
-
-
-def _resolve_entity(flex_data: "FlexData | None" = None) -> set[str]:
-    """Full entity set (every process + connection + node) — the entity column
-    of ``flex_data.p_all_entity_unitsize``."""
-    if flex_data is None:
-        return set()
-    param = getattr(flex_data, "p_all_entity_unitsize", None)
-    if param is None:
-        return set()
-    try:
-        f = param.frame
-        entity_col = f.columns[0]
-        return set(f[entity_col].cast(str).to_list())
     except Exception:  # noqa: BLE001
         return set()
 
@@ -396,56 +317,6 @@ def write_p_entity_divested(
     return out_path
 
 
-def write_p_entity_divested_period(
-    h: "highspy.Highs", *, solve_name: str, work_folder: Path,
-    prior_handoff: "SolveHandoff | None" = None,
-    flex_data: "FlexData | None" = None,
-    is_first_solve: bool | None = None,
-    writer_state: "OutputWriterState | None" = None,
-    provider: "object | None" = None,
-    csv_dump: bool = False,
-) -> Path:
-    """Write ``solve_data/p_entity_divested_period.csv`` [entity, period, p_entity_divested_period] (debug mirror of
-    the ``realized_divest`` handoff carrier; only under ``csv_dump=True``).
-
-    ``retired[e, d] = prior[e, d] + v_divest[e, d] * unitsize[e]`` for the realized invest periods d of this solve
-    (``realized_invest_periods_of_current_solve``): the capacity retired per decision period, which a later solve
-    subtracts until the end of life of the pre-existing capacity.  ``prior`` is ``prior_handoff.realized_divest``
-    when populated, else ``writer_state.divested_period`` (this writer's previous call in the cascade)."""
-    out_path = work_folder / "solve_data" / "p_entity_divested_period.csv"
-    if not csv_dump:
-        return out_path
-    entities = set(_resolve_entity_divest(flex_data))
-    unitsize = _resolve_unitsize(flex_data)
-    prior: dict[tuple[str, str], float] = {}
-    if not is_first_solve:
-        if prior_handoff is not None and getattr(prior_handoff, "realized_divest", None) is not None:
-            for r in prior_handoff.realized_divest.iter_rows(named=True):
-                key = (str(r["entity"]), str(r["period"]))
-                prior[key] = prior.get(key, 0.0) + float(r["value"])
-        elif writer_state is not None:
-            prior = dict(writer_state.divested_period)
-    realized = _load_realized_periods(
-        work_folder / "solve_data" / "realized_invest_periods_of_current_solve.csv", provider=provider) or set()
-    divest_df = extract_variable(h, "v_divest", ("entity",), solve_name=solve_name, has_time=False)
-    retired = dict(prior)
-    if not divest_df.empty:
-        for (_solve, period), row in divest_df.iterrows():
-            if str(period) not in realized:
-                continue
-            for e, v in row.items():
-                if str(e) in entities and v:
-                    key = (str(e), str(period))
-                    retired[key] = retired.get(key, 0.0) + float(v) * unitsize.get(str(e), 1.0)
-    if writer_state is not None:
-        writer_state.divested_period = retired
-    out = pd.DataFrame([(e, d, v) for (e, d), v in sorted(retired.items()) if v],
-                       columns=["entity", "period", "p_entity_divested_period"])
-    out.to_csv(out_path, index=False, float_format="%.8g")
-    _logger.info("wrote %s (%d rows)", out_path, len(out))
-    return out_path
-
-
 def write_fix_storage_quantity(
     h: "highspy.Highs", *, solve_name: str, work_folder: Path,
     flex_data: "FlexData | None" = None,
@@ -553,115 +424,6 @@ def write_p_roll_continue_state(
     _logger.info("wrote %s (%d rows)", out_path, len(out))
     if writer_state is not None:
         writer_state.mirrors_written.add(name)
-    return out_path
-
-
-def write_p_entity_period_existing_capacity(
-    h: "highspy.Highs", *, solve_name: str, work_folder: Path,
-    prior_handoff: "SolveHandoff | None" = None,
-    flex_data: "FlexData | None" = None,
-    is_first_solve: bool | None = None,
-    writer_state: "OutputWriterState | None" = None,
-    provider: "object | None" = None,
-    csv_dump: bool = False,
-) -> Path:
-    """Write ``solve_data/p_entity_period_existing_capacity.csv`` (debug mirror; item 163: only under
-    ``csv_dump=True`` — the rows are still computed and ``writer_state`` is still updated every call,
-    because the next call's ``prior_existing``/``prior_invested`` fallback depends on it; only the disk
-    write is gated).
-
-    For each (entity, period) in ``ed_history_realized`` ∪ (entity × d_realize_invest), compute::
-
-        existing = (first_solve & period in period_first → p_entity_pre_existing[e,d])
-                 + (not first_solve & (e,d) in history → prior_existing[e,d])
-        invested = (not first_solve & (e,d) in history → prior_invested[e,d])
-
-    Item 163 drops the ``ed_invest`` / ``v_invest`` term: ``solve_data/solve__ed_invest.csv`` has had no
-    producer since v4 (F5 in design_163.md), so that term was always ∅ in a fresh run — this is the same
-    output every production run has always produced.
-    """
-    out_path = work_folder / "solve_data" / "p_entity_period_existing_capacity.csv"
-
-    pre_existing = _load_pre_existing(provider=provider)
-    first_solve = bool(is_first_solve)
-    prior_existing, prior_invested = (
-        ({}, {}) if first_solve
-        else _load_prior_existing(prior_handoff=prior_handoff, writer_state=writer_state)
-    )
-
-    # Periods to include in the iteration set.  For the FIRST solve the
-    # mod uses ``d_realize_invest ∪ d_fix_storage_period ∪
-    # d_realized_period`` (via ``ed_history_realized_first``); for later
-    # solves only ``d_realize_invest`` adds new keys (the realized /
-    # fix-storage periods only contribute on the first solve).
-    realize_invest = _load_realized_periods(
-        work_folder / "solve_data" / "realized_invest_periods_of_current_solve.csv",
-        provider=provider,
-    ) or set()
-    if first_solve:
-        realized_periods: set[str] = set()
-        rd_path = work_folder / "solve_data" / "realized_dispatch.csv"
-        _seeded_rd = _provider_lookup_df(provider, rd_path)
-        if _seeded_rd is not None:
-            realized_periods.update(
-                _seeded_rd["period"].cast(str).unique().to_list()
-            )
-        fix_storage_periods: set[str] = set()
-        fs_path = work_folder / "solve_data" / "fix_storage_timesteps.csv"
-        _seeded_fs = _provider_lookup_df(provider, fs_path)
-        if _seeded_fs is not None and _seeded_fs.height > 0:
-            fix_storage_periods.update(
-                _seeded_fs["period"].cast(str).unique().to_list()
-            )
-        iteration_periods = realize_invest | realized_periods | fix_storage_periods
-    else:
-        iteration_periods = set(realize_invest)
-
-    # period_first is written by Python orchestration to solve_data/.
-    # Fallback for the (unlikely) case it's missing: take min(realize_invest).
-    period_first = _load_realized_periods(
-        work_folder / "solve_data" / "period_first.csv",
-        provider=provider,
-    ) or ({min(realize_invest)} if realize_invest else set())
-
-    # Iteration set: the prior-history keys ∪ (entity × iteration_periods).
-    iter_keys: set[tuple[str, str]] = set(prior_existing.keys())
-    entities = _resolve_entity(flex_data)
-    for e in entities:
-        for d in iteration_periods:
-            iter_keys.add((e, d))
-
-    rows: list[tuple[str, str, float, float]] = []
-    existing_by_key: dict[tuple[str, str], float] = {}
-    invested_by_key: dict[tuple[str, str], float] = {}
-    for e, d in sorted(iter_keys):
-        existing = 0.0
-        invested = 0.0
-        if first_solve and d in period_first:
-            existing += pre_existing.get((d, e), 0.0)
-        if not first_solve:
-            existing += prior_existing.get((e, d), 0.0)
-            invested += prior_invested.get((e, d), 0.0)
-        rows.append((e, d, existing, invested))
-        existing_by_key[(e, d)] = existing
-        invested_by_key[(e, d)] = invested
-    if writer_state is not None:
-        writer_state.existing = existing_by_key
-        writer_state.invested = invested_by_key
-
-    out = pd.DataFrame(
-        rows,
-        columns=[
-            "entity", "period",
-            "p_entity_period_existing_capacity",
-            "p_entity_period_invested_capacity",
-        ],
-    )
-    if csv_dump:
-        out.to_csv(out_path, index=False, float_format="%.8g")
-        _logger.info("wrote %s (%d rows)", out_path, len(out))
-    if writer_state is not None:
-        writer_state.mirrors_written.add(out_path.name)
     return out_path
 
 
@@ -828,10 +590,9 @@ def write_all_handoffs(
     abort the rest, mirroring :func:`write_all_variables`.
 
     ``prior_handoff`` (when provided) sources the prior-roll state
-    (``realized_existing`` / ``realized_invest`` / ``divest_cumulative``)
-    from the in-memory ``SolveHandoff`` instead of the writer's own
-    previous call; forwarded to the two writers that consume prior state,
-    the remainder ignore it.
+    (``divest_cumulative``) from the in-memory ``SolveHandoff`` instead of
+    the writer's own previous call; forwarded to the writer that consumes
+    prior state, the remainder ignore it.
 
     ``flex_data``, ``is_first_solve`` and ``writer_state`` are REQUIRED
     (item 163: no work-folder disk fallback left in any writer) — a
@@ -839,9 +600,9 @@ def write_all_handoffs(
     threads all three on every call; a caller missing one is a wiring bug,
     never silently tolerated by relaxing a writer back to a disk read.
 
-    ``csv_dump`` gates the five handoff-mirror CSVs' disk WRITE (design_163
+    ``csv_dump`` gates the four handoff-mirror CSVs' disk WRITE (design_163
     .md §11 Q1: they are debug output only; ``csv_dump=False`` computes
-    nothing and writes nothing for those five).  ``period_capacity.csv`` is
+    nothing and writes nothing for those four).  ``period_capacity.csv`` is
     not one of them — it is written every call regardless of ``csv_dump``.
     """
     if flex_data is None:
@@ -861,13 +622,9 @@ def write_all_handoffs(
     dispatch: list[tuple[object, dict]] = [
         (write_p_entity_divested,
          {**fd_kwargs, "prior_handoff": prior_handoff}),
-        (write_p_entity_divested_period,
-         {**fd_kwargs, "prior_handoff": prior_handoff, "provider": provider}),
         (write_fix_storage_quantity, fd_kwargs),
         (write_p_roll_continue_state,
          {"flex_data": flex_data, "writer_state": writer_state, "csv_dump": csv_dump}),
-        (write_p_entity_period_existing_capacity,
-         {**fd_kwargs, "prior_handoff": prior_handoff, "provider": provider}),
         (write_fix_storage_usage, fd_kwargs),
     ]
     for fn, extra in dispatch:

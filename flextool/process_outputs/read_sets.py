@@ -653,9 +653,19 @@ def read_sets(
         s.dt_realize_dispatch = empty_multi_index(
             ["solve", "period", "time"],
         )
-    s.dt_fix_storage_timesteps = empty_multi_index(
-        ["solve", "period", "time"],
-    )
+    # The steps at which this solve hands the nested storage fix down (its own fix_storage_periods); empty for a
+    # solve without them.
+    fst = getattr(flex_data, "fix_storage_timesteps", None)
+    if fst is not None and fst.height > 0 and {"period", "step"}.issubset(fst.columns):
+        s.dt_fix_storage_timesteps = pd.MultiIndex.from_frame(
+            fst.select(pl.lit(solve_name).alias("solve"), pl.col("period").cast(pl.Utf8),
+                       pl.col("step").cast(pl.Utf8)).unique(maintain_order=True).to_pandas(),
+            names=["solve", "period", "time"],
+        )
+    else:
+        s.dt_fix_storage_timesteps = empty_multi_index(
+            ["solve", "period", "time"],
+        )
 
     # d_realize_invest — periods where invest *or divest* decisions are
     # realized.  Use the union of ed_invest_set and ed_divest_set "d"
@@ -734,21 +744,16 @@ def read_sets(
         dims=("e", "d"), names=["entity", "period"],
     )
 
-    # edd_invest may have either (e, d_invest, d) or (e, d) dims.
-    if (flex_data.edd_invest_set is not None
-            and flex_data.edd_invest_set.height > 0):
-        cols = flex_data.edd_invest_set.columns
-        if len(cols) >= 3:
-            pdf = flex_data.edd_invest_set.with_columns(
-                pl.lit(solve_name).alias("solve")
-            ).select("solve", cols[0], cols[1], cols[2]).to_pandas()
-            s.edd_invest = pd.MultiIndex.from_frame(
-                pdf, names=["solve", "entity", "period_invest", "period"],
-            )
-        else:
-            s.edd_invest = empty_multi_index(
-                ["solve", "entity", "period_invest", "period"]
-            )
+    # edd_invest — (e, d_invest, d): the periods each investment is in service (the cohort table's view).
+    from flextool.engine.preprocess.params._cohorts import invest_alive
+    edd_invest = invest_alive(getattr(flex_data, "cohort_alive", None))
+    if edd_invest.height > 0:
+        pdf = edd_invest.with_columns(
+            pl.lit(solve_name).alias("solve")
+        ).select("solve", "e", "d_invest", "d").to_pandas()
+        s.edd_invest = pd.MultiIndex.from_frame(
+            pdf, names=["solve", "entity", "period_invest", "period"],
+        )
     else:
         s.edd_invest = empty_multi_index(
             ["solve", "entity", "period_invest", "period"]
@@ -773,24 +778,6 @@ def read_sets(
         setattr(s, attr, _multi_index_with_solve(
             frame, solve_name=solve_name, dims=("e", "d_invest", "d"),
             names=["entity", "period_invest", "period"],
-        ))
-
-    # edd_operating_window (entity, period_invest, period) — the run periods in which the capacity of an
-    # investment decision operates; edd_retire_window (entity, period_divest, period) — the run periods a
-    # retirement applies to; edd_salvage_window likewise the run periods its salvage value is spread over
-    # (``_npv`` "Run-level fields of the reported costs").  The annualized investment and
-    # retirement costs are the yearly amounts in every period of these windows.
-    for attr, anchor, level in (("edd_operating_window", "d_invest", "period_invest"),
-                                ("edd_retire_window", "d_divest", "period_divest"),
-                                ("edd_salvage_window", "d_divest", "period_divest")):
-        frame = getattr(flex_data, attr, None)
-        if frame is not None and frame.height > 0:
-            frame = frame.select(pl.col(c).cast(pl.Utf8) for c in ("e", anchor, "d"))
-            if attr == "edd_operating_window":
-                frame = with_label_rows(frame, branch_of, (anchor, "d"))
-        setattr(s, attr, _multi_index_with_solve(
-            frame, solve_name=solve_name, dims=("e", anchor, "d"),
-            names=["entity", level, "period"],
         ))
 
     # process__node__profile__profile_method — DataFrame from FlexData
@@ -1063,7 +1050,16 @@ def read_sets(
 
     s.node__storage_start_end_method = empty_multi_index(["node", "method"])
     s.node__inflow_method = empty_multi_index(["node", "method"])
-    s.node__storage_nested_fix_method = empty_multi_index(["node", "method"])
+    # The node parameter storage_nested_fix_method (the same in every solve; the storage usage output).
+    nsfm = getattr(flex_data, "node__storage_nested_fix_method", None)
+    if nsfm is not None and nsfm.height > 0 and {"node", "method"}.issubset(nsfm.columns):
+        s.node__storage_nested_fix_method = pd.MultiIndex.from_frame(
+            nsfm.select(pl.col("node").cast(pl.Utf8), pl.col("method").cast(pl.Utf8))
+            .unique(maintain_order=True).to_pandas(),
+            names=["node", "method"],
+        )
+    else:
+        s.node__storage_nested_fix_method = empty_multi_index(["node", "method"])
 
     # process_source / process_sink — (process, source) / (process, sink).
     #

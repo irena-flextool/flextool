@@ -145,8 +145,10 @@ def test_pre_reveal_period_reads_plain_or_realized_data(midhorizon_run):
 
 
 # The here-and-now investment of 60 MW at p2035, at invest_cost 1 CUR/kW (1000 CUR/MW), lifetime 1 year and
-# discount_rate 0.05: annuity 0.05 / (1 - 1.05**-1) = 1.05, so 60 * 1000 * 1.05 = 63 000 CUR = 0.063 M CUR a year.
-EXPECTED_PRE_REVEAL_ANNUALIZED_INVEST_MCUR = 0.063
+# discount_rate 0.05: annuity 0.05 / (1 - 1.05**-1) / 1.05 = 1 (one payment at the start of the year, the default
+# discount_offset_investment 0), so 60 * 1000 * 1 = 60 000 CUR = 0.06 M CUR over its one year in service: the
+# investment event at p2035, annualized divided by p2035's investment factor (one year, no social discount rate: 1).
+EXPECTED_PRE_REVEAL_ANNUALIZED_INVEST_MCUR = 0.06
 
 
 @pytest.mark.solver
@@ -178,7 +180,7 @@ def test_realized_branch_reports_the_pre_reveal_investment(
         (pl.col("unit") == "base") & (pl.col("period") == PRE_REVEAL_PERIOD))
     assert capacity["invested"].to_list() == pytest.approx([EXPECTED_PRE_REVEAL_INVEST])
     costs = pl.read_csv(csv_dir / "annualized_costs__d.csv").filter(pl.col("period") == PRE_REVEAL_PERIOD)
-    assert costs["unit investment & retirement"].to_list() == pytest.approx(
+    assert costs["investment"].to_list() == pytest.approx(
         [EXPECTED_PRE_REVEAL_ANNUALIZED_INVEST_MCUR])
 
 

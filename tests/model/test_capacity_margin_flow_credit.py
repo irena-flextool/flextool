@@ -377,15 +377,14 @@ def test_share_constant_equals_period_map_in_rolling_and_stochastic_solves(tmp_p
 # ─── input checks ────────────────────────────────────────────────────────
 
 
-def test_capacity_margin_on_a_relative_of_peak_demand_group_is_reported_ignored(tmp_path_factory, caplog) -> None:
-    """``capacity_margin`` on a relative_of_peak_demand group is not its margin; the run says so."""
-    import logging
+def test_capacity_margin_on_a_relative_of_peak_demand_group_is_reported_ignored(tmp_path_factory) -> None:
+    """``capacity_margin`` on a relative_of_peak_demand group is not its margin; the run says so (W-0101)."""
+    from tests._support.coded_warnings import capture_coded
 
-    with caplog.at_level(logging.WARNING):
+    with capture_coded() as got:
         _shortfall(tmp_path_factory, "P_warn", BASE, [["group", "cm", "capacity_margin_relative", sc(0.1)]], [],
                    ["west"], margin=300.0, method="relative_of_peak_demand")
-    assert ("Group 'cm' has capacity_margin_absolute but capacity_margin_method is not absolute: the limit is ignored."
-            in caplog.text)
+    assert got.names("W-0101", limit="capacity_margin_absolute") == ["cm"]
 
 
 def test_balance_within_period_node_in_a_capacity_margin_group_is_an_error(tmp_path_factory) -> None:
@@ -400,14 +399,14 @@ def test_balance_within_period_node_in_a_capacity_margin_group_is_an_error(tmp_p
         _shortfall(tmp_path_factory, "bwp", BASE, vals, ents, ["west", "bwp"])
 
 
-def test_storage_node_with_demand_in_a_capacity_margin_group_is_reported(tmp_path_factory, caplog) -> None:
-    """A storage node of the group with demand has that demand left out of the margin; the run says so."""
-    import logging
+def test_storage_node_with_demand_in_a_capacity_margin_group_is_reported(tmp_path_factory) -> None:
+    """A storage node of the group with demand has that demand left out of the margin; the run says so (W-0100)."""
+    from tests._support.coded_warnings import capture_coded
 
     vals = [v for v in BAT_VALUES if v[2] != "penalty_method"] + [["node", "bat", "inflow", sc(-10.0)]]
-    with caplog.at_level(logging.WARNING):
+    with capture_coded() as got:
         _shortfall(tmp_path_factory, "bat_demand", BASE, vals, BAT_ENTITIES, ["west", "bat"])
-    assert "Capacity margin group 'cm': the storage node(s) bat have demand" in caplog.text
+    assert got.detail("W-0100", "cm") == "storage nodes with demand: bat"
 
 
 def test_relative_of_peak_demand_per_period_on_a_shared_timeline(tmp_path_factory) -> None:

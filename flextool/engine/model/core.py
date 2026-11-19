@@ -22,6 +22,10 @@ r reserve, ud up/down, c commodity, i price tier.  "× unitsize" converts to MW 
                                        units (connections) online / starting / stopping, count of unitsize
                                                                                               [_online]
   v_{invest,divest}_{p,n}[p|n,d]       capacity built / retired in d, count of unitsize
+  v_divest_built_{p,n}[p|n,c,d], v_divested_built_{p,n}[p|n,d]
+                                       model-built cohort c retired in d, retired so far     [_retire_built]
+  v_extend_{p,n}[p|n,c,d], v_extended_{p,n}[p|n,d]
+                                       cohort c kept beyond its end of life from d, extended in service [_extend]
   v_reserve[p,r,ud,n,d,t]              reserve held by p for n; × unitsize = MW               [_reserve]
   vq_reserve[r,ud,g,d,t]               reserve shortfall, fraction of the requirement scale   [_reserve]
   v_reserve_total[r,ud,g,d,t]          total reserve of a group with n-1 rows, MW             [_reserve]
@@ -35,7 +39,9 @@ r reserve, ud up/down, c commodity, i price tier.  "× unitsize" converts to MW 
                                        group floor slacks, fraction of the group's scale      [_group_slack]
 
 Equation families, in emit order (module in brackets when not model/core.py):
-  Balance & storage   rp_inter_period_{balance,cyclic,fan_start,max_state}, maxState_rp_start; nodeBalance_eq;
+  Balance & storage   rp_inter_period_{balance,cyclic,fan_start,max_state}, maxState_rp_start;
+                      rp_inter_period_{start_fix,start_carry,end_fix,start_max_state,start_min_state,end_match,start_match,
+                      reference_value} (the ends of the base-period chain); nodeBalance_eq;
                       nodeBalanceCoarse_eq, stateConstantCoarse_eq (coarse new_stepduration groups);
                       nodeBalancePeriod_eq; node_balance_fix_quantity_eq_lower; node_storage_usage_fix_le;
                       stateConstantWithinBlock_eq, nodeBalanceBlock_eq (bind_intraperiod_blocks)
@@ -50,17 +56,24 @@ Equation families, in emit order (module in brackets when not model/core.py):
                       maxFlow_exact_{forward,reverse} (exact connections) [_exact];
                       minFlow_{minload,output_floor,reserve,reserve_arc} [_unit_floors];
                       ramp_{sink,source}_{up,down}_constraint; ramp_change_eq (ramp cost)
-  Investment          max{Invest,Divest}_var_bound[_n], _entity_period_{p,n}, _entity_total[_path][_n]
+  Investment          max{Invest,Divest}_var_bound[_n], _entity_period_{p,n}, _entity_total[_path][_n];
+                      maxRetired_existing_{p,n}; divestedBuilt_{p,n}, maxDivest_cohort_{p,n} [_retire_built];
+                      extendedCapacity_{p,n}, maxExtend_cohort_{p,n} [_extend]
   Conversion          conversion_indirect (delayed inputs from [_delay]); conversion_piecewise (part-load curves of
                       piecewise_linear units); minInputShare
   Emissions & user    co2_max_period, co2_max_total; process_constraint_{equal,less_than,greater_than}[_period]
   Storage state       maxState; profile_state_{upper_limit,lower_limit,fixed};
-                      storage_state_start_binding[_cyclic_period]; storage_within_solve_path_end,
+                      storage_state_start_binding_cyclic_period; storage_within_solve_path_end,
                       storage_state_fan_start (stochastic fans); storage_state_end_binding;
+                      storage_state_roll_{anchor,close}[_share] (rolling cyclic storage, per instance or
+                      period); storage_state_roll_match (rolling forward chains);
+                      storage_state_end_match[_share] (forward chains whose start the solve decides);
                       storage_state_solve_horizon_reference_value
   Profiles            profile_flow_{upper_limit,lower_limit,fixed}
   Objective           balance slack penalty, commodity cost and sales, CO2 price, variable cost, startup cost,
-                      ramp cost, storage reference price, invest/divest annuities, existing fixed cost (optional constant)
+                      ramp cost, storage reference price, invest/divest annuities, existing fixed cost (optional
+                      constant),
+                      divest_built_cost [_retire_built], extend_cost [_extend]
   Feature modules     capacityMargin, inertia_constraint, non_sync_constraint + slack penalties [_group_slack];
                       reserveBalance_*, reserve_total_upper, reserve_process_*, connection_reserve_*,
                       reserve_storage_*
@@ -79,6 +92,7 @@ from polar_high import Sum, Where, Lag, Param
 from polar_high.engine import Expr, Var
 
 from flextool.engine.model import _balance_terms
+from flextool.engine.model import _capacity
 from flextool.engine.model import _coarse_flows
 from flextool.engine.model import _commodity_ladder
 from flextool.engine.model import _cumulative_invest
@@ -90,6 +104,8 @@ from flextool.engine.model import _lead_time
 from flextool.engine.model import _non_anticipativity
 from flextool.engine.model import _online
 from flextool.engine.model import _reserve
+from flextool.engine.model import _extend
+from flextool.engine.model import _retire_built
 from flextool.engine.model import _self_discharge
 from flextool.engine.model import _unit_floors
 from flextool.engine.input._axis_enums import alias_to_axis, align_join_dtypes, rename_to_axis
@@ -194,16 +210,26 @@ RAMP_COST: tuple[str, ...] = ("p_unitsize", "p_ramp_cost_arc")
 # Checked whenever a group has capacity_margin_method = absolute: without period_invest or the group scaling the
 # capacity margin would be skipped without a word.
 CAPACITY_MARGIN: tuple[str, ...] = ("period_invest", "p_inv_group_cap")
-# Investment adds the units of the earlier investment periods still in service (edd_invest_set, processes and
-# nodes); without it an investment would add no capacity.  A retirement removes pre-existing capacity only, up to
-# p_entity_pre_existing (maxRetired_existing_{p,n}).
-INVEST: tuple[str, ...] = ("p_entity_max_units", "edd_invest_set")
-DIVEST: tuple[str, ...] = ("p_entity_max_units", "edd_divest_active", "p_entity_pre_existing",
+# Investment adds the units of the earlier investment periods still in service (the cohorts' cohort_alive,
+# processes and nodes, _capacity); without it an investment would add no capacity.  A retirement removes
+# pre-existing capacity only, up to p_entity_pre_existing (maxRetired_existing_{p,n}), in the periods its reach
+# dd_forward and the existing cohort's cohort_alive give.
+INVEST: tuple[str, ...] = ("p_entity_max_units", "cohort_alive")
+DIVEST: tuple[str, ...] = ("p_entity_max_units", "cohort_alive", "dd_forward", "p_entity_pre_existing",
                             "pd_divest_set")
-# The node analogue of DIVEST: a node retirement removes its capacity through ndd_divest_active and costs per
-# state unit (p_state_unitsize); without them a node divest would cost or earn but never lose capacity.
-DIVEST_N: tuple[str, ...] = ("p_entity_max_units", "ndd_divest_active", "nd_divest_set", "p_entity_pre_existing",
-                              "p_state_unitsize")
+# The node analogue of DIVEST: a node retirement removes its capacity in the same periods and costs per state unit
+# (p_state_unitsize); without them a node divest would cost or earn but never lose capacity.
+DIVEST_N: tuple[str, ...] = ("p_entity_max_units", "cohort_alive", "dd_forward", "nd_divest_set",
+                              "p_entity_pre_existing", "p_state_unitsize")
+# A retirement of model-built capacity counts in the periods of cdd_divest_built (into the capacity rows through
+# v_divested_built), is bounded by its cohort (cohort_divest_built) and costs or earns cd_divest_built_cost /
+# cd_divest_built_fixed; without them it would remove capacity for nothing or remove none.
+DIVEST_BUILT: tuple[str, ...] = ("cdd_divest_built", "cohort_divest_built", "cd_divest_built_cost",
+                                 "cd_divest_built_fixed")
+# A life extension counts in the periods of cdd_extend (into the capacity rows through v_extended), is bounded by
+# its parent cohort (cohort_extend, dd_forward) and costs cd_extend_cost / cd_extend_fixed; without them it would
+# add capacity for nothing or add none.
+EXTEND: tuple[str, ...] = ("cdd_extend", "cohort_extend", "dd_forward", "cd_extend_cost", "cd_extend_fixed")
 
 
 def _check_covers_dt(d, field: str, feature: str, *, positive: bool = False, message: str | None = None) -> None:
@@ -259,7 +285,7 @@ def _check_covers_dt_steps(d, field: str, message: str) -> None:
 # Plain-English errors of the always-on coverage checks of ``_prepare`` (a partial ``solve_data`` CSV of a
 # reloaded run or a hand-built FlexData; the database path builds every Param over the solve's periods and steps).
 _INFLATION_OP_GAP = (
-    "The inflation factor of operating costs (p_inflation_factor_operations_yearly) has no value for period(s) "
+    "The discount factor of operating costs (p_inflation_factor_operations_yearly) has no value for period(s) "
     "{periods}; the operating costs of those periods would be left out. Add the period(s) to "
     "solve_data/p_inflation_factor_operations_yearly.csv, or re-run from the database.")
 _STEP_DURATION_GAP = (
@@ -345,6 +371,10 @@ class _Build:
     has_divest_p: bool = False
     has_invest_n: bool = False
     has_divest_n: bool = False
+    has_divest_built_p: bool = False     # cd_divest_built of processes: model-built capacity can be retired
+    has_divest_built_n: bool = False     # ... of storage nodes (_retire_built)
+    has_extend_p: bool = False           # cd_extend of processes: capacity can be extended (_extend)
+    has_extend_n: bool = False           # ... of storage nodes
     has_ladder: bool = False
     has_reserve: bool = False
     has_capacity_margin: bool = False
@@ -395,6 +425,14 @@ class _Build:
     v_divest_p: Var | None = None
     v_invest_n: Var | None = None
     v_divest_n: Var | None = None
+    v_divest_built_p: Var | None = None
+    v_divest_built_n: Var | None = None
+    v_divested_built_p: Var | None = None
+    v_divested_built_n: Var | None = None
+    v_extend_p: Var | None = None
+    v_extend_n: Var | None = None
+    v_extended_p: Var | None = None
+    v_extended_n: Var | None = None
     v_flow_back: Var | None = None
     v_ramp_up: Var | None = None
     v_ramp_down: Var | None = None
@@ -424,8 +462,7 @@ class _Build:
     reserve_down_at_source: dict = field(default_factory=dict)  # down at the source: raises the flow
     reserve_up_at_source: dict = field(default_factory=dict)    # up at the source: lowers the flow
     reserve_down_input_arcs: pl.DataFrame | None = None  # (p, source, sink) carrying reserve_down_at_source
-    invest_in_dispatch_p: Any = None        # Σ v_invest_p alive in d, (p, d)
-    divest_in_dispatch_p: Any = None        # Σ v_divest_p active in d, (p, d)
+    cap: Any = None                         # _capacity.CapacityInService: the capacity in service
     op_factor: Any = None                   # weight of operational cost terms, (d, t)
     ev_factor: Any = None                   # weight of event cost terms (start-ups, ramp changes), (d, t)
     self_discharge: Any = None              # _self_discharge.LossCoefficients, None without a loss
@@ -462,6 +499,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _shared_expressions,
         # ── constraints, in emit order ──
         _eq_rp_storage_chain,
+        _eq_rp_chain_ends,
         _eq_node_balance,
         _eq_node_balance_coarse,
         _eq_node_balance_period,
@@ -480,6 +518,8 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _eq_invest_period_caps,
         _eq_invest_total_caps,
         _eq_retired_existing,
+        _retire_built.add_constraints,
+        _extend.add_constraints,
         _eq_conversion,
         _eq_conversion_piecewise,
         _eq_min_input_share,
@@ -488,11 +528,12 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _eq_user_constraints,
         _eq_max_state,
         _eq_state_profiles,
-        _eq_storage_start_binding,
         _eq_storage_start_binding_cyclic,
         _eq_storage_within_solve_path_end,
         _eq_storage_state_fan_start,
         _eq_storage_end_binding,
+        _eq_storage_roll_end,
+        _eq_storage_end_match,
         _eq_storage_reference_value,
         _eq_profiles,
         # ── core objective terms ──
@@ -506,6 +547,8 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _obj_storage_reference_price,
         _obj_invest_divest,
         _obj_existing_fixed_cost,
+        _obj_existing_salvage,
+        _obj_existing_replacement,
         # ── further constraint families and their objective terms ──
         _group_slack.add_constraints,
         _group_slack.objective_terms,
@@ -606,6 +649,8 @@ def _prepare(b: _Build) -> None:
     b.has_divest_p = _has_rows(d.pd_divest_set)
     b.has_invest_n = _has_rows(d.nd_invest_set)
     b.has_divest_n = _has_rows(d.nd_divest_set)
+    _retire_built.prepare(b)
+    _extend.prepare(b)
     b.has_ladder = _commodity_ladder.has_feature(d)
     b.has_reserve = _has_rows(getattr(d, "reserve_upDown_group", None))
     b.has_capacity_margin = _group_slack.has_capacity_margin(d)
@@ -655,6 +700,10 @@ def _prepare(b: _Build) -> None:
         _check(d, DIVEST, "divest")
     if b.has_divest_n:
         _check(d, DIVEST_N, "divest")
+    if b.has_divest_built_p or b.has_divest_built_n:
+        _check(d, DIVEST_BUILT, "retirement of model-built capacity")
+    if b.has_extend_p or b.has_extend_n:
+        _check(d, EXTEND, "life extension")
     if b.has_online:
         _validate_no_online_dc_lines(d)
         _check(d, ONLINE, "online")
@@ -684,6 +733,8 @@ def _prepare(b: _Build) -> None:
     _validate_storage_binding_disjoint(d)
     if b.has_storage:
         _validate_storage_start_end_values(d)
+        _check_storage_accounting(b)
+        _warn_storage_slack_bypass(b)
     if b.has_rp:
         b.rp_start_idx = compute_nodeState_rp_block_first_dt(d)
     if b.has_online_lin:
@@ -698,7 +749,9 @@ def _prepare(b: _Build) -> None:
         b.twoway1var_arcs = _two_way_one_var_arcs(d)
         procs = [s.select(pl.col("p").cast(pl.Utf8))
                  for s in (d.pd_invest_set if b.has_invest_p else None,
-                           d.pd_divest_set if b.has_divest_p else None)
+                           d.pd_divest_set if b.has_divest_p else None,
+                           _retire_built.options(d, "p") if b.has_divest_built_p else None,
+                           _extend.options(d, "p") if b.has_extend_p else None)
                  if s is not None]
         b.invest_procs = pl.concat(procs).unique() if procs else None
         (b.flow_upper_rhs, b.flow_cap_mult,
@@ -823,6 +876,187 @@ def _validate_storage_binding_disjoint(d) -> None:
                     "migration step) and ensure each node has exactly one "
                     "storage_binding_method value."
                 )
+
+
+def _start_periods(d, names: set[str]) -> dict[str, list[str]]:
+    """``{node: [periods]}``: the periods of the nodes' first steps in this solve (nodeState_first_dt)."""
+    out: dict[str, list[str]] = {}
+    if not _has_rows(d.nodeState_first_dt):
+        return out
+    for n, p in d.nodeState_first_dt.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8)).unique().iter_rows():
+        if n in names:
+            out.setdefault(n, []).append(p)
+    return out
+
+
+def _check_storage_accounting(b: _Build) -> None:
+    """Storage start and end conditions that let a solve use energy it never produced (storage_semantics, Q7).
+
+    * use_reference_value below the start on storage the solve can invest in: warned where the reference row is
+      built (_warn_reference_below_start).  (fix_start_end with storage_state_end below storage_state_start is not
+      warned about: a drawdown the user stated; the matching end still caps the investment.)
+    * fix_start on a forward chain (bind_forward_only, bind_forward_only_blended_weights) whose capacity at the start
+      is not a decision of the solve, with an open end (no fix_end, no use_reference_value, no upper-level fix): the
+      start is an endowment the run may use up; a warning with its size (owner decision).
+    * A forward chain without representative periods whose explicit start (fix_start, or the reference start of
+      use_reference_value) is on capacity the solve invests in or extends during the start period, in a solve that
+      does not hold the last step of the model: the matching end (storage_state_end_match_share) needs both ends in
+      one solve, so it is not applied; a warning.  A free start is not warned about: the later solve that reaches
+      the end of the model matches it (_run_model._sequence_match_rows, _anchor_cyclic_in_rolling).  (A
+      representative-period chain always gets rp_inter_period_end_match.)
+    "Investable" counts life extensions in the start period too (:func:`_start_decision_periods`).
+    Each warning prints one line per solve, naming how many nodes and the first (owner rule); the values per node
+    go to the log at debug level.
+    """
+    from flextool.engine import _behaviour_changes
+    d = b.d
+    carried = set()
+    if _has_rows(_self_discharge.carried_nodes(d)):
+        carried = set(str(n) for n in _self_discharge.carried_nodes(d)["n"].to_list())
+    fix_start = set(str(n) for n in d.storage_fix_start["n"].to_list()) if _has_rows(d.storage_fix_start) else set()
+    fix_end = (set(str(n) for n in d.storage_fix_end["n"].to_list())
+               if _has_rows(getattr(d, "storage_fix_end", None)) else set())
+    share = ({str(n): float(v) for n, v in d.p_state_start.frame.select(pl.col("n").cast(pl.Utf8), "value").iter_rows()}
+             if d.p_state_start is not None else {})
+    starting = (fix_start | set(str(n) for n in d.nodeState["n"].to_list())) - carried
+    periods = _start_periods(d, starting)
+    invest = _start_decision_periods(b)
+
+    def investable(n: str) -> bool:
+        return bool(invest.get(n, set()) & set(periods.get(n, [])))
+
+    where = (f"solve '{_behaviour_changes.complete_solve_of(b.solve_name)}'" if b.solve_name else "this solve")
+    _warn_reference_start_mismatch(b, share)
+
+    forward = set()
+    for frame in (d.storage_bind_forward_only, d.storage_bind_forward_only_blended_weights):
+        if _has_rows(frame):
+            forward |= set(str(n) for n in frame["n"].to_list())
+    forward -= carried
+    if not forward:
+        return
+    nested = set()
+    steps = _nested_fixed_end(b, with_price=True)
+    if steps is not None:
+        nested = set(steps["n"].to_list())
+    reference = (set(str(n) for n in d.storage_use_reference_value["n"].to_list())
+                 if _has_rows(d.storage_use_reference_value) else set())
+    open_end = forward - nested - reference - fix_end
+    endowed = sorted(n for n in open_end & fix_start if n in share and not investable(n))
+    if endowed and d.p_state_existing_capacity is not None:
+        exist = {(str(n), str(p)): float(v) for n, p, v in d.p_state_existing_capacity.frame.select(
+            pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), "value").iter_rows()}
+        sizes, mwh = {}, {}
+        for n in endowed:
+            first = sorted(periods.get(n, []))
+            mwh[n] = share[n] * exist.get((n, first[0]), 0.0) if first else 0.0
+            if mwh[n] > 0:
+                sizes[n] = f"{n} {mwh[n]:.6g} MWh"
+        if sizes:
+            # One line per solve (the first solve of each level: a carried start is not an endowment).
+            total = sum(mwh[n] for n in sizes)
+            _behaviour_changes.storage_message(
+                "storage_endowment", b.solve_name, sorted(sizes),
+                lambda named: (f"Warning: {named} start {where} at storage_state_start on capacity the solve "
+                               "cannot change and end free (bind forward only, no fix_end, use_reference_value or "
+                               f"upper-level fix), so the run may use this start energy ({total:.6g} MWh in total, "
+                               "on the existing capacity before any retirement in this solve) "
+                               "without producing it. This is a valid model of an initial stock (an endowment); if "
+                               "the storage should return it, use fix_start_end, a cyclic storage_binding_method or "
+                               "use_reference_value."),
+                details=f"Endowment in {where}: {', '.join(sizes[n] for n in sorted(sizes))}.")
+    if not d.storage_solve_at_model_end:
+        # A free start (fix_nothing, not use_reference_value) is matched by the later solve that reaches the end of
+        # the model and continues the chain (_run_model._sequence_match_rows, _anchor_cyclic_in_rolling: the level
+        # the model started the node from at its nesting level), so only an explicit start on capacity the solve
+        # decides goes unmatched.
+        rp_nodes = set(str(n) for n in d.nodeState_rp["n"].to_list()) if _has_rows(d.nodeState_rp) else set()
+        decided = sorted(n for n in forward - nested - rp_nodes if investable(n) and (n in fix_start or n in reference))
+        if decided:
+            _behaviour_changes.storage_message(
+                "storage_end_match_not_applied", b.solve_name, decided,
+                lambda named: (f"Warning: {named} start {where} at a level the solve decides by investing "
+                               "(storage_state_start, or the reference value, of capacity it can build or extend) "
+                               "and chain forward, but the "
+                               "solve does not reach the end of the model, so the end is not held at least at that "
+                               "start: built storage can deliver its start energy without producing it. Use "
+                               "bind_within_solve(_blended_weights), or fix_start_end with storage_state_end at least "
+                               "storage_state_start."))
+
+
+def _warn_reference_start_mismatch(b: _Build, share: dict) -> None:
+    """Warn about use_reference_value nodes whose fix_start share differs from the reference value at their first
+    step (owner decision, Phase 5): fix_start wins.  A node without fix_start starts from the reference
+    (``preprocess.flex_data._reference_start_as_fix_start``), so the two agree there."""
+    from flextool.engine.preprocess.flex_data import reference_start_shares
+    ref = reference_start_shares(b.d)
+    off = sorted(n for n, v in ref.items() if n in share and abs(share[n] - v) > 1e-9)
+    if not off:
+        return
+    from flextool.engine import _behaviour_changes
+    solve = _behaviour_changes.complete_solve_of(b.solve_name)
+    _behaviour_changes.storage_message(
+        "storage_reference_start_mismatch", b.solve_name, off,
+        lambda named: (f"Warning: in solve '{solve}' {named} with use_reference_value have a storage_state_start "
+                       "(fix_start) that differs from the storage_state_reference_value at their first step; the "
+                       "start uses storage_state_start."),
+        details=f"Reference start mismatch in solve '{solve}': " + ", ".join(
+            f"{n} storage_state_start {share[n]:.6g}, reference {ref[n]:.6g}" for n in off))
+
+
+def _warn_storage_slack_bypass(b: _Build) -> None:
+    """Warn about storage nodes whose balance slack can act as a bypass of a hard balance.
+
+    A storage node with balance slack (vq_state_up / vq_state_down: penalty_method not off) that a unit or a
+    connection links to a node with penalty_method off: the storage slack supplies or absorbs energy that flows on
+    to (or comes from) the node meant to balance exactly, so the hard balance is bypassed at the storage node's
+    penalty, which can be far below what an unmet demand elsewhere should cost.  Only pure storage nodes (no own
+    inflow or demand, e.g. a battery): a carrier node's slack is the intended outlet of its unmet demand.  One
+    printed line per solve (the rolls of a rolling solve count as one solve), the node pairs in the log.
+    """
+    from flextool.engine import _behaviour_changes
+    d = b.d
+    off = getattr(d, "nodeBalance_penalty_off", None)
+    if not (_has_rows(off) and _has_rows(d.nodeState) and _has_rows(d.process_source_sink)):
+        return
+    off_nodes = set(str(n) for n in off["n"].to_list())
+    balanced = set(str(n) for n in d.nodeBalance["n"].to_list()) if _has_rows(d.nodeBalance) else set()
+    if _has_rows(d.nodeBalancePeriod):
+        balanced |= set(str(n) for n in d.nodeBalancePeriod["n"].to_list())
+    slack_storage = (set(str(n) for n in d.nodeState["n"].to_list()) & balanced) - off_nodes
+    # Only pure storage (e.g. a battery): a node with its own inflow or demand is a carrier node, whose slack is the
+    # intended outlet of its unmet demand (owner decision, Phase 5).
+    inflow = getattr(d, "p_inflow", None)
+    if slack_storage and inflow is not None and _has_rows(inflow.frame):
+        slack_storage -= set(str(n) for n in inflow.frame.filter(pl.col("value").abs() > 0)
+                             .select(pl.col("n").cast(pl.Utf8)).unique()["n"].to_list())
+    if not slack_storage:
+        return
+    nodes_of: dict[str, set[str]] = {}
+    for p, src, snk in d.process_source_sink.select(
+            pl.col("p").cast(pl.Utf8), pl.col("source").cast(pl.Utf8), pl.col("sink").cast(pl.Utf8)).iter_rows():
+        nodes_of.setdefault(p, set()).update((src, snk))
+    linked: dict[str, set[str]] = {}
+    for nodes in nodes_of.values():
+        for n in nodes & slack_storage:
+            hard = (nodes & off_nodes) - {n}
+            if hard:
+                linked.setdefault(n, set()).update(hard)
+    if not linked:
+        return
+    solve = _behaviour_changes.complete_solve_of(b.solve_name)
+    where = f"solve '{solve}'" if solve else "this solve"
+    first = sorted(linked)[0]
+    _behaviour_changes.storage_message(
+        "storage_slack_bypass", b.solve_name, sorted(linked),
+        lambda named: (f"Warning: in {where} {named} with balance slack (penalty_method not off) are linked by a "
+                       f"unit or a connection to node(s) with penalty_method off (e.g. {first} to "
+                       f"{_node_list(sorted(linked[first]))}). The storage slack can supply or absorb energy for those "
+                       "nodes and so bypass their hard balance at the storage node's penalty. If the balance should "
+                       "hold, set penalty_method off on the storage node too (or give it a high penalty), so that a "
+                       "shortfall shows where it arises."),
+        details=f"Storage slack bypass in {where}: "
+                + ", ".join(f"{n} ({_node_list(sorted(linked[n]))})" for n in sorted(linked)))
 
 
 STORAGE_START_END_MESSAGE = (
@@ -1003,6 +1237,10 @@ def _declare_variables(b: _Build) -> None:
         b.v_invest_n = m.add_var("v_invest_n", ("n", "d"), d.nd_invest_set)
     if b.has_divest_n:
         b.v_divest_n = m.add_var("v_divest_n", ("n", "d"), d.nd_divest_set)
+    # Retirement of model-built capacity (v_divest_built, v_divested_built): declared by _retire_built.
+    _retire_built.add_variables(b)
+    # Life extension (v_extend, v_extended): declared by _extend.
+    _extend.add_variables(b)
 
     # Reserve variables (v_reserve, vq_reserve, v_reserve_total): declared by _reserve.
     _reserve.add_variables(b)
@@ -1066,7 +1304,7 @@ def _shared_expressions(b: _Build) -> None:
     d = b.d
     _reserve_coupling(b)
     b.node_balance_flow_terms = _node_balance_flow_terms(b)
-    _invest_in_dispatch(b)
+    b.cap = _capacity.build_capacity(b)
     # Weight of every operational cost term per (d, t): step_duration ·
     # timestep_weight · inflation_op / period_share, times the branch
     # weight in stochastic solves.
@@ -1189,29 +1427,6 @@ def _source_reserve_arcs(unit_arcs: pl.DataFrame, sel: pl.DataFrame, *, direct: 
     return a.join(hit, on=["_p", "_source"], how="semi").select(keys).collect()
 
 
-def _invest_in_dispatch(b: _Build) -> None:
-    """(p, d) sums of the process invest / divest units in service in d.
-
-    invest_in_dispatch_p[p,d] = Σ_{(p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′]
-    divest_in_dispatch_p[p,d] = Σ_{(p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′]
-    edd_divest_active: d′ ≤ d < EOL[p], the end of life of p's pre-existing capacity (none for reinvest_automatic).
-    Read by maxFlow, maxOutputSum and the ramp limits.
-    """
-    if not b.has_proc:
-        return
-    d = b.d
-    if b.has_divest_p:
-        divested = _var_view(b.v_divest_p, "__at_divest", {"d": "d_divest"},
-                             to_axis=True)
-        b.divest_in_dispatch_p = Sum(Where(divested, d.edd_divest_active),
-                                     over=("d_divest",))
-    if b.has_invest_p:
-        invested = _var_view(b.v_invest_p, "__at_invest", {"d": "d_invest"},
-                             to_axis=True)
-        alive = _entity_rows(d.edd_invest_set, "e", d.process_source_sink, "p")
-        b.invest_in_dispatch_p = Sum(Where(invested, alive), over=("d_invest",))
-
-
 # ---------------------------------------------------------------------------
 # Equations
 
@@ -1327,15 +1542,17 @@ def _eq_rp_storage_chain(b: _Build) -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # v_state_inter[n,d,b_first(d)] − drift[n,d,b_first(d)]
     #   − v_state_inter[n,d″,b_first(d″)] + drift[n,d″,b_first(d″)] = 0
-    #   ∀ n ∈ bind_forward_only_blended_weights, d = the first root (sorted), d″ ∈ the other roots
+    #   ∀ n ∈ bind_forward_only_blended_weights, n ∉ the nodes of rp_inter_period_start_fix,
+    #     d = the first root (sorted), d″ ∈ the other roots
     #   roots = the rp periods of period_first_of_solve (the forecast branch periods of a fan in the solve's
     #     first period; one root without a fan: no rows), read as the periods of nodeState_first_dt, which is
     #     built from period_first_of_solve
     # Every forecast of a fan in the solve's first period starts its base-period
     # chain from the same level: the chain start v_state_inter − drift of the
     # first base period, which no other row binds in a forward-only chain.  A
-    # fix_start node is included: fix_start pins v_state in the first block,
-    # not the chain start.  The bind_within_solve_blended_weights roots are
+    # fix_start node is not included: rp_inter_period_start_fix pins each
+    # root's chain start at the share of that forecast's own capacity.  The
+    # bind_within_solve_blended_weights roots are
     # already tied by rp_inter_period_cyclic; the base-period levels inside a
     # tie window need no tie of their own (they follow from the tied net flows,
     # the tied block starts and this shared chain start).
@@ -1348,7 +1565,11 @@ def _eq_rp_storage_chain(b: _Build) -> None:
             ref = roots.filter(pl.col("d").cast(pl.Utf8) == root_names[0])
             other = (roots.filter(pl.col("d").cast(pl.Utf8) != root_names[0])
                      .rename({"d": "d_prev", "b": "b_prev"}))
-            over = (d.storage_bind_forward_only_blended_weights.select("n").unique()
+            fan_nodes = d.storage_bind_forward_only_blended_weights.select("n").unique()
+            pinned = _rp_start_pin_nodes(b)
+            if pinned is not None:
+                fan_nodes = fan_nodes.filter(~pl.col("n").cast(pl.Utf8).is_in(pinned["n"].cast(pl.Utf8).implode()))
+            over = (fan_nodes
                     .join(ref.select("d", "b"), how="cross")
                     .join(other.select("d_prev", "b_prev"), how="cross")
                     .select(*keys).sort(pl.col("d_prev").cast(pl.Utf8)))
@@ -1366,16 +1587,16 @@ def _eq_rp_storage_chain(b: _Build) -> None:
 
     # ─── EQ. ─── rp_inter_period_max_state / maxState_rp_start ───────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # v_state_inter[n,d,b] + Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′]
-    #   − Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]  ≤  state_upper[n,d]
+    # v_state_inter[n,d,b] + retired[n,d]
+    #   − invested[n,d]  ≤  state_upper[n,d]
     #   ∀ n ∈ nodeState_rp, (d,b) ∈ rp_base_period, d ∈ periods of dt
     # v_state_rp_start[n,d,t] + (same invest/divest terms)  ≤  state_upper[n,d]
     #   ∀ (n,d,t) ∈ nodeState_rp × rp_block_first
     # Capacity bounds of the boundary and block-start states, as maxState
     # bounds v_state: a base period of d is bounded by d's capacity.
     # state_upper = capacity / state_unitsize, so every term is in state units.
-    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
-    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+    # existing capacity counting until its end of life (none for reinvest_automatic).
     if _has_rows(d.rp_base_period_set):
         base_periods = typed(d.rp_base_period_set)
         if _has_rows(d.period_in_use_set):
@@ -1385,7 +1606,7 @@ def _eq_rp_storage_chain(b: _Build) -> None:
         over = nodes.join(base_periods.select("d", "b"), how="cross").select("n", "d", "b")
         if over.height > 0:
             lhs: dict = {"state_inter": Where(v_inter, over)}
-            lhs.update(_node_capacity_change_terms(b, nodes, "_rp"))
+            lhs.update(_capacity.node_capacity_change_terms(b, nodes, "_rp"))
             m.add_cstr(
                 "rp_inter_period_max_state",
                 over      = over,
@@ -1395,7 +1616,7 @@ def _eq_rp_storage_chain(b: _Build) -> None:
             )
     if _has_rows(b.rp_start_idx):
         lhs = {"state_rp_start": b.v_state_rp_start}
-        lhs.update(_node_capacity_change_terms(b, nodes, "_rp"))
+        lhs.update(_capacity.node_capacity_change_terms(b, nodes, "_rp"))
         m.add_cstr(
             "maxState_rp_start",
             over      = b.rp_start_idx,
@@ -1403,6 +1624,432 @@ def _eq_rp_storage_chain(b: _Build) -> None:
             lhs_terms = lhs,
             rhs_terms = {"upper": d.p_state_upper},
         )
+
+
+def _rp_typed(b: _Build, frame: pl.DataFrame) -> pl.DataFrame:
+    """Base-period labels (b, b_prev) onto v_state_inter's b dtype, periods (d, d_prev) onto its d dtype."""
+    schema = b.v_state_inter.frame.schema
+    return frame.with_columns(
+        [pl.col(c).cast(schema["b"], strict=False) for c in ("b", "b_prev") if c in frame.columns]
+        + [pl.col(c).cast(pl.Utf8).cast(schema["d"], strict=False) for c in ("d", "d_prev") if c in frame.columns])
+
+
+def _rp_chain_paths(b: _Build) -> "tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame] | None":
+    """``(roots, leaves, paths)`` of the base-period chain of a representative-period solve, typed onto
+    v_state_inter.
+
+    roots (d, b): the first base period of each rp period without a predecessor in rp_period_previous (the solve's
+    first period; each forecast branch of a fan in the first period); leaves (d, b): the last base period of each rp
+    period that is no period's predecessor (the solve's last period; each terminal branch); paths (d, b, d_prev,
+    b_prev): each leaf (d_prev, b_prev) with the root (d, b) its periods descend from.  None without a chain.
+    """
+    d = b.d
+    if not (_has_rows(d.rp_base_first) and _has_rows(d.rp_base_last)):
+        return None
+    first = _rp_typed(b, d.rp_base_first).select("d", "b")
+    last = _rp_typed(b, d.rp_base_last).select("d", "b")
+    if _has_rows(d.period_in_use_set):
+        in_use = dispatch_periods(d).select(pl.col("d").cast(pl.Utf8))
+        first = first.filter(pl.col("d").cast(pl.Utf8).is_in(in_use["d"].implode()))
+        last = last.filter(pl.col("d").cast(pl.Utf8).is_in(in_use["d"].implode()))
+    prev_of: dict[str, str] = {}
+    if _has_rows(d.rp_period_previous):
+        prev_of = {str(a): str(p) for a, p in d.rp_period_previous.select(
+            pl.col("d").cast(pl.Utf8), pl.col("d_prev").cast(pl.Utf8)).iter_rows()}
+    periods = [str(x) for x in first["d"].cast(pl.Utf8).to_list()]
+    is_prev = set(prev_of.values())
+    root_names = [p for p in periods if p not in prev_of]
+    leaf_names = [str(x) for x in last["d"].cast(pl.Utf8).to_list() if str(x) not in is_prev]
+    if not root_names or not leaf_names:
+        return None
+
+    def root_of(period: str) -> str:
+        seen = set()
+        while period in prev_of and period not in seen:
+            seen.add(period)
+            period = prev_of[period]
+        return period
+
+    roots = first.filter(pl.col("d").cast(pl.Utf8).is_in(root_names))
+    leaves = last.filter(pl.col("d").cast(pl.Utf8).is_in(leaf_names))
+    pairs = pl.DataFrame({"_root": [root_of(p) for p in leaf_names], "_leaf": leaf_names},
+                         schema={"_root": pl.Utf8, "_leaf": pl.Utf8})
+    paths = (pairs
+             .join(roots.with_columns(_root=pl.col("d").cast(pl.Utf8)), on="_root", how="inner")
+             .join(leaves.rename({"d": "d_prev", "b": "b_prev"}).with_columns(_leaf=pl.col("d_prev").cast(pl.Utf8)),
+                   on="_leaf", how="inner")
+             .select("d", "b", "d_prev", "b_prev"))
+    return roots, leaves, paths
+
+
+def _rp_node_set(b: _Build, frame) -> "pl.DataFrame | None":
+    """``frame`` (n) ∩ nodeState_rp, typed onto v_state_inter's n; None when empty."""
+    d = b.d
+    if not (_has_rows(frame) and _has_rows(d.nodeState_rp)):
+        return None
+    n_dtype = b.v_state_inter.frame.schema["n"]
+    out = (frame.select(pl.col("n").cast(pl.Utf8)).unique()
+           .join(d.nodeState_rp.select(pl.col("n").cast(pl.Utf8)).unique(), on="n", how="inner")
+           .select(pl.col("n").cast(n_dtype, strict=False)).sort("n"))
+    return out if out.height > 0 else None
+
+
+def _rp_minus(frame: "pl.DataFrame | None", other) -> "pl.DataFrame | None":
+    """``frame`` (n) without the nodes of ``other`` (any frame with n); None when empty."""
+    if frame is None:
+        return None
+    if _has_rows(other):
+        frame = frame.filter(~pl.col("n").cast(pl.Utf8).is_in(other.select(pl.col("n").cast(pl.Utf8))["n"].implode()))
+    return frame if frame.height > 0 else None
+
+
+def _nested_nodes(b: _Build, *, with_price: bool) -> "pl.DataFrame | None":
+    """``(n,)`` Utf8: the nodes an upper-level solve fixes at some step of this solve (_nested_fixed_end)."""
+    steps = _nested_fixed_end(b, with_price=with_price)
+    return None if steps is None else steps.select("n").unique()
+
+
+def _rp_start_pin_nodes(b: _Build) -> "pl.DataFrame | None":
+    """``(n,)``: the representative-period nodes whose chain start fix_start pins (storage_fix_start ∩
+    nodeState_rp, not carried); None when none or the data to pin is missing."""
+    d = b.d
+    if not (b.has_storage and b.has_rp and d.p_state_start is not None and b.cap.existing_state_n is not None
+            and d.p_state_unitsize is not None):
+        return None
+    nodes = _rp_node_set(b, d.storage_fix_start)
+    return _rp_minus(nodes, _self_discharge.carried_nodes(d))
+
+
+def _rp_end_pin_nodes(b: _Build) -> "pl.DataFrame | None":
+    """``(n,)``: the representative-period nodes whose chain end fix_end pins (storage_fix_end ∩ nodeState_rp, in a
+    solve whose chain ends at the end of the model: it holds the model's last period, storage_rp_chain_at_model_end,
+    or its last step; no upper-level fix_quantity / fix_usage on the node)."""
+    d = b.d
+    at_end = d.storage_solve_at_model_end or getattr(d, "storage_rp_chain_at_model_end", False)
+    if not (b.has_storage and b.has_rp and at_end and d.p_state_end is not None
+            and b.cap.existing_state_n is not None and d.p_state_unitsize is not None):
+        return None
+    return _rp_minus(_rp_node_set(b, d.storage_fix_end), _nested_nodes(b, with_price=False))
+
+
+def _start_decision_periods(b: _Build) -> dict[str, set[str]]:
+    """``{node: {periods}}``: the periods in which this solve decides storage capacity of the node: an investment
+    (nd_invest_set) or a life extension (``_extend.options``: the extended cohort starts to operate there).  A start
+    in such a period is on capacity the solve decides, so it is not an endowment (fix_start_energy and
+    node_in_service count the extended capacity too)."""
+    d = b.d
+    out: dict[str, set[str]] = {}
+    frames = [d.nd_invest_set] if b.has_invest_n and _has_rows(d.nd_invest_set) else []
+    extend = _extend.options(d, "n")
+    if extend is not None:
+        frames.append(extend)
+    for frame in frames:
+        for n, p in frame.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8)).unique().iter_rows():
+            out.setdefault(n, set()).add(p)
+    return out
+
+
+def _invest_at_start_nodes(b: _Build, nodes: "pl.DataFrame | None", periods: list[str]) -> set[str]:
+    """The ``nodes`` (n) whose capacity this solve decides (invests in or extends, :func:`_start_decision_periods`)
+    during one of ``periods`` (the periods the chain or the solve starts in): their capacity at the start, so also
+    a fix_start start, is a decision of the solve."""
+    if nodes is None:
+        return set()
+    names = set(str(n) for n in nodes["n"].to_list())
+    wanted = set(periods)
+    return {n for n, ps in _start_decision_periods(b).items() if n in names and ps & wanted}
+
+
+def _eq_rp_chain_ends(b: _Build) -> None:
+    """Representative-period storage: the absolute level at the start and the end of the base-period chain
+    (fix_start, fix_end, use_reference_value, the start's capacity bounds and the matching end)."""
+    if not (b.has_storage and b.has_rp and b.v_state_inter is not None):
+        return
+    m, d = b.m, b.d
+    has_rep_blocks = d.rp_base__rep is not None and _has_rows(d.rp_block_first) and _has_rows(d.p_rp_last_step)
+    shape = _rp_chain_paths(b)
+    if not has_rep_blocks or shape is None:
+        return
+    roots, leaves, paths = shape
+    drift = _rp_weighted_drift(b, d.nodeState_rp)
+    if drift is None:
+        return
+    v_inter = b.v_state_inter
+    inter_prev = _var_view(v_inter, "__chain_end", {"d": "d_prev", "b": "b_prev"})
+    forward = _rp_node_set(b, d.storage_bind_forward_only_blended_weights)
+    start_pin = _rp_start_pin_nodes(b)
+    end_pin = _rp_end_pin_nodes(b)
+    su = d.p_state_unitsize
+
+    # ─── EQ. ─── rp_inter_period_start_fix ───────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state_inter[n,d,b] − drift[n,d,b] − state_start[n]·invested[n,d] + state_start[n]·retired[n,d]
+    #   = state_start[n] · capacity[n,d] / state_unitsize[n]
+    #   ∀ n ∈ storage_fix_start ∩ nodeState_rp, n ∉ carried, (d,b) ∈ chain roots (the first base period of the
+    #     solve's first period; of each forecast branch of a fan in the first period)
+    # The level at the start of the chain (the level the first base period starts from: its end level less the
+    # weighted net change of its blocks) is the share state_start of the storage capacity in service, in state
+    # units.  The block-internal states start from free offsets (v_state_rp_start), so the start is pinned on the
+    # chain, the absolute level, not on a state inside the first block.  With bind_within_solve_blended_weights /
+    # bind_within_period_blended_weights the closure (rp_inter_period_cyclic) then holds the cycle at that level, as
+    # storage_state_start_binding_cyclic_period does without representative periods.  Only where no state of the
+    # node was realised before this solve (the first solve of the model and of each nested level).
+    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+    # existing capacity counting until its end of life (none for reinvest_automatic).
+    if start_pin is not None:
+        over = start_pin.join(roots, how="cross").select("n", "d", "b")
+        lhs: dict = {"state_inter": Where(v_inter, over), "neg_rp_drift": -Where(drift, over)}
+        invested, divested = _capacity.node_in_service(b, start_pin, "_rp_start", coef=d.p_state_start)
+        if invested is not None:
+            lhs["invest_neg"] = -invested
+        if divested is not None:
+            lhs["divest"] = divested
+        _notice_nodes("rp_storage_chain_pinned", start_pin, b)
+        m.add_cstr(
+            "rp_inter_period_start_fix",
+            over      = over,
+            sense     = "==",
+            lhs_terms = lhs,
+            rhs_terms = {"target": (d.p_state_start * b.cap.existing_state_n) / su},
+        )
+
+    # ─── EQ. ─── rp_inter_period_end_fix ─────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state_inter[n,d,b] − state_end[n]·invested[n,d] + state_end[n]·retired[n,d]
+    #   = state_end[n] · capacity[n,d] / state_unitsize[n]
+    #   ∀ n ∈ storage_fix_end ∩ nodeState_rp, (d,b) ∈ chain leaves (the last base period of the solve's last
+    #     period; of each terminal branch), the chain ends at the end of the model (storage_rp_chain_at_model_end: the
+    #     solve holds the model's last period, whose last base period ends with it), no upper-level fix_quantity /
+    #     fix_usage on n
+    # The level at the end of the chain (the end of the last base period) is the share state_end of the storage
+    # capacity in service, in every solve whose horizon holds the last step of the model, as
+    # storage_state_end_binding pins v_state without representative periods.
+    if end_pin is not None:
+        over = end_pin.join(leaves, how="cross").select("n", "d", "b")
+        lhs = {"state_inter": Where(v_inter, over)}
+        invested, divested = _capacity.node_in_service(b, end_pin, "_rp_end", coef=d.p_state_end)
+        if invested is not None:
+            lhs["invest_neg"] = -invested
+        if divested is not None:
+            lhs["divest"] = divested
+        _notice_nodes("rp_storage_chain_pinned", end_pin, b)
+        m.add_cstr(
+            "rp_inter_period_end_fix",
+            over      = over,
+            sense     = "==",
+            lhs_terms = lhs,
+            rhs_terms = {"target": (d.p_state_end * b.cap.existing_state_n) / su},
+        )
+
+    if forward is None:
+        return
+    # ─── EQ. ─── rp_inter_period_start_carry ─────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # (v_state_inter[n,d,b] − drift[n,d,b]) · state_unitsize[n] = roll_continue_state[n]
+    #   ∀ n ∈ bind_forward_only_blended_weights ∩ nodeState_rp ∩ carried, (d,b) ∈ chain roots
+    # A representative-period solve that follows another solve (a sequence, or a roll) starts the base-period chain
+    # of a forward node from the level realised before it (the carry, MWh, routed by the cascade), as a
+    # bind_forward_only node without representative periods does at its first step (owner decision).  Before, the
+    # chain started free.  The block-internal states keep their free offsets: only the chain is absolute.
+    carried = _rp_node_set(b, _self_discharge.carried_nodes(d))
+    carry_start = None if carried is None else _rp_minus(
+        forward.join(carried, on="n", how="semi"), start_pin)
+    if carry_start is not None and d.p_roll_continue_state is not None:
+        over = carry_start.join(roots, how="cross").select("n", "d", "b")
+        level = (d.p_roll_continue_state.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").cast(pl.Float64))
+                 .join(over.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                                   pl.col("b").cast(pl.Utf8)), on="n", how="inner")
+                 .select("n", "d", "b", "value"))
+        _notice_nodes("rp_storage_chain_pinned", carry_start, b)
+        m.add_cstr(
+            "rp_inter_period_start_carry",
+            over      = over,
+            sense     = "==",
+            lhs_terms = {"state_inter": Where(v_inter, over) * su, "neg_rp_drift": -Where(drift, over) * su},
+            rhs_terms = {"carry": Param(("n", "d", "b"), _rp_typed(b, level))},
+        )
+    # The forward chains with a free start: neither the start pin nor the carry above applies.
+    free_start = _rp_minus(_rp_minus(forward, start_pin), carry_start)
+
+    # ─── EQ. ─── rp_inter_period_start_max_state / rp_inter_period_start_min_state ─
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state_inter[n,d,b] − drift[n,d,b] + retired[n,d] − invested[n,d]  ≤  state_upper[n,d]
+    # v_state_inter[n,d,b] − drift[n,d,b]  ≥  0
+    #   ∀ n ∈ bind_forward_only_blended_weights ∩ nodeState_rp, n ∉ the nodes of rp_inter_period_start_fix,
+    #     (d,b) ∈ chain roots
+    # The level a forward chain starts from is a physical level: within the storage capacity in service, as every
+    # base-period level (rp_inter_period_max_state).  Without the bounds the start of a forward chain had no bound.
+    if free_start is not None:
+        over = free_start.join(roots, how="cross").select("n", "d", "b")
+        lhs = {"state_inter": Where(v_inter, over), "neg_rp_drift": -Where(drift, over)}
+        upper = dict(lhs)
+        upper.update(_capacity.node_capacity_change_terms(b, free_start, "_rp_start_max"))
+        _notice_nodes("rp_storage_chain_pinned", free_start, b)
+        m.add_cstr(
+            "rp_inter_period_start_max_state",
+            over      = over,
+            sense     = "<=",
+            lhs_terms = upper,
+            rhs_terms = {"upper": d.p_state_upper},
+        )
+        m.add_cstr(
+            "rp_inter_period_start_min_state",
+            over      = over,
+            sense     = ">=",
+            lhs_terms = lhs,
+            rhs_terms = {},
+        )
+
+    # The forward chains whose start is a decision of this solve (storage_semantics: the matching end applies):
+    # a free start, or a fix_start share of capacity the solve can invest in during the start period; not where an
+    # upper-level solve fixes the node, nor where fix_start_end pins the end at least at the start share.
+    root_periods = [str(x) for x in roots["d"].cast(pl.Utf8).to_list()]
+    investable = _invest_at_start_nodes(b, _rp_minus(forward, free_start), root_periods)
+    closed_by_end = set()
+    if end_pin is not None and d.p_state_start is not None and d.p_state_end is not None:
+        shares = (d.p_state_start.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("s"))
+                  .join(d.p_state_end.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("e")), on="n"))
+        pinned = set(str(n) for n in end_pin["n"].to_list())
+        closed_by_end = {n for n, s, e in shares.iter_rows() if n in pinned and e >= s - 1e-12}
+    match_names = (set() if free_start is None else set(str(n) for n in free_start["n"].to_list())) | \
+        (investable - closed_by_end)
+    nested = _nested_nodes(b, with_price=True)
+    if nested is not None:
+        match_names -= set(nested["n"].to_list())
+    ref_nodes = _rp_minus(_rp_node_set(b, d.storage_use_reference_value), nested)
+    ref_nodes = _rp_minus(ref_nodes, end_pin)
+    if ref_nodes is not None:
+        ref_nodes = ref_nodes.filter(pl.col("n").cast(pl.Utf8).is_in(forward["n"].cast(pl.Utf8).implode()))
+        ref_nodes = ref_nodes if ref_nodes.height > 0 else None
+    match = forward.filter(pl.col("n").cast(pl.Utf8).is_in(sorted(match_names)))
+    endowment = None
+    if match.height > 0:
+        # Endowment (state units): the start a fix_start node has on the capacity that exists before the solve
+        # decides; 0 for a free start.  Only the start on the capacity the solve adds must come back.
+        endowment = (match.select(pl.col("n").cast(pl.Utf8)).join(
+            pl.DataFrame({"d": root_periods}, schema={"d": pl.Utf8}), how="cross"))
+        if investable and d.p_state_start is not None and b.cap.existing_state_n is not None:
+            exist = (d.p_state_start.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("s"))
+                     .filter(pl.col("n").is_in(sorted(investable)))
+                     .join(b.cap.existing_state_n.frame.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                                                              pl.col("value").alias("cap")), on="n")
+                     .join(su.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("us")), on="n")
+                     .select("n", "d", value=-pl.col("s") * pl.col("cap") / pl.col("us")))
+            endowment = endowment.join(exist, on=["n", "d"], how="left")
+        else:
+            endowment = endowment.with_columns(value=pl.lit(None, dtype=pl.Float64))
+        endowment = endowment.with_columns(pl.col("value").fill_null(0.0))
+
+    # ─── EQ. ─── rp_inter_period_end_match ───────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state_inter[n,d′,b′] − (v_state_inter[n,d,b] − drift[n,d,b])  ≥  − state_start[n]·existing[n,d] / su[n]
+    #   ∀ n ∈ bind_forward_only_blended_weights ∩ nodeState_rp whose start is a decision of the solve: a free start
+    #     (no fix_start, or carried), or fix_start while the solve can invest in n in the start period d (not with
+    #     fix_start_end at state_end ≥ state_start); n without an upper-level fix;
+    #     (d,b,d′,b′) ∈ chain paths (root (d,b), the leaf (d′,b′) of each path); the right-hand side is 0 for a
+    #     free start
+    # The matching end: a forward chain whose start the solve chooses ends at least at that start, so the solve
+    # cannot take energy it never produced (a free start full, the end empty; or storage built as a fuel tank whose
+    # fix_start share is spent once).  With fix_start only the start on the capacity the solve adds must come back:
+    # the start on existing capacity is the user's explicit endowment (state units).  An inequality: a start of 0,
+    # or no investment, always meets it, so it never forces slack.  fix_end and use_reference_value still set the
+    # end; with a free start this bounds the start by that end.
+    if match.height > 0:
+        over = match.join(paths, how="cross").select("n", "d", "b", "d_prev", "b_prev")
+        rhs = Param(("n", "d"), _rp_typed(b, endowment.with_columns(
+            pl.col("n").cast(v_inter.frame.schema["n"], strict=False))).select("n", "d", "value"))
+        _notice_nodes("storage_end_matches_start", match, b)
+        m.add_cstr(
+            "rp_inter_period_end_match",
+            over      = over,
+            sense     = ">=",
+            lhs_terms = {"state_end": Where(inter_prev, over), "neg_state_start": -Where(v_inter, over),
+                         "rp_drift_start": Where(drift, over)},
+            rhs_terms = {"endowment": rhs},
+        )
+
+    # ─── EQ. ─── rp_inter_period_start_match ─────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state_inter[n,d,b] · state_unitsize[n]  ≥  min(start[n], capacity[n,d])
+    #   ∀ n ∈ storage_roll_end(match) ∩ bind_forward_only_blended_weights ∩ nodeState_rp, (d,b) ∈ chain leaves,
+    #     not pinned by fix_end, no upper-level fix
+    #   start = the level (MWh) the node started the model from (a free start, recorded by the cascade)
+    # The matching end of a carried chain: a later representative-period solve that reaches the end of the model
+    # ends the chain at least at the level the model started the node from, so the solves together return it.
+    starts = _roll_end_rows(d, ("match",))
+    if starts is not None and b.cap.existing_state_n is not None:
+        names = set(starts["n"].cast(pl.Utf8).to_list()) & set(forward["n"].cast(pl.Utf8).to_list())
+        if end_pin is not None:
+            names -= set(end_pin["n"].cast(pl.Utf8).to_list())
+        if nested is not None:
+            names -= set(nested["n"].to_list())
+        nodes = forward.filter(pl.col("n").cast(pl.Utf8).is_in(sorted(names)))
+        if nodes.height > 0:
+            over = nodes.join(leaves, how="cross").select("n", "d", "b")
+            level = (over.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("b").cast(pl.Utf8))
+                     .join(starts.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("_s")), on="n")
+                     .join(b.cap.existing_state_n.frame.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                                                              pl.col("value").alias("_c")), on=["n", "d"], how="left")
+                     .select("n", "d", "b", value=pl.min_horizontal("_s", pl.col("_c").fill_null(pl.col("_s")))))
+            _notice_nodes("storage_end_matches_start", nodes, b)
+            m.add_cstr(
+                "rp_inter_period_start_match",
+                over      = over,
+                sense     = ">=",
+                lhs_terms = {"state_inter": Where(v_inter, over) * su},
+                rhs_terms = {"start": Param(("n", "d", "b"), _rp_typed(b, level))},
+            )
+
+    # ─── EQ. ─── rp_inter_period_reference_value ─────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state_inter[n,d,b] − reference_value[n,d,t]·invested[n,d] + reference_value[n,d,t]·retired[n,d]
+    #   = reference_value[n,d,t] · capacity[n,d] / state_unitsize[n]
+    #   ∀ n ∈ storage_use_reference_value ∩ bind_forward_only_blended_weights ∩ nodeState_rp, (d,b) ∈ chain leaves,
+    #     t = the node's last step in d (nodeState_last_dt), no upper-level fix on n
+    # use_reference_value sets the level at the end of the chain (the absolute level at the end of the horizon), not
+    # a state inside the last block.  A reference value below the start share of a node the solve can invest in:
+    # the matching end above stays (the solve cannot build storage to spend its start share) and caps the
+    # investment; a warning (_warn_reference_below_start).
+    if ref_nodes is not None and d.p_storage_state_reference_value is not None and _has_rows(d.nodeState_last_dt):
+        last_step = (d.nodeState_last_dt.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
+                     .join(leaves.select(pl.col("d").cast(pl.Utf8)), on="d", how="inner")
+                     .filter(pl.col("n").is_in(ref_nodes["n"].cast(pl.Utf8).implode())))
+        rv = (promote_param_to_dt(d.p_storage_state_reference_value, d.dt)
+              .select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8), "value")
+              .join(last_step.lazy(), on=["n", "d", "t"], how="inner")
+              .select("n", "d", "value").unique(subset=["n", "d"], keep="first").collect())
+        if investable and d.p_state_start is not None:
+            share = {str(n): v for n, v in d.p_state_start.frame.select(pl.col("n").cast(pl.Utf8), "value").iter_rows()}
+            _warn_reference_below_start(b, {n for n, _d, v in rv.iter_rows()
+                                            if n in investable - closed_by_end and v < share.get(n, 0.0) - 1e-12})
+        target = (rv.rename({"value": "rv"})
+                  .join(b.cap.existing_state_n.frame.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                                                            pl.col("value").alias("exist")), on=["n", "d"], how="left")
+                  .join(su.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("us")), on="n", how="inner")
+                  .with_columns(value=pl.col("rv") * pl.col("exist").fill_null(0.0) / pl.col("us")))
+        part = target
+        nodes = ref_nodes.filter(pl.col("n").cast(pl.Utf8).is_in(part["n"].implode()))
+        over = _rp_typed(b, nodes.join(leaves, how="cross").select("n", "d", "b"))
+        over = over.join(_rp_typed(b, part.select("n", "d").with_columns(
+            pl.col("n").cast(v_inter.frame.schema["n"], strict=False))), on=["n", "d"], how="semi")
+        if over.height > 0:
+            coef = Param(("n", "d"), _rp_typed(b, part.select("n", "d", pl.col("rv").alias("value")).with_columns(
+                pl.col("n").cast(v_inter.frame.schema["n"], strict=False))))
+            lhs = {"state_inter": Where(v_inter, over)}
+            invested, divested = _capacity.node_in_service(b, nodes, "_rp_ref", coef=coef)
+            if invested is not None:
+                lhs["invest_neg"] = -invested
+            if divested is not None:
+                lhs["divest"] = divested
+            _notice_nodes("rp_storage_chain_pinned", nodes, b)
+            m.add_cstr(
+                "rp_inter_period_reference_value",
+                over      = over,
+                sense     = "==",
+                lhs_terms = lhs,
+                rhs_terms = {"target": Param(("n", "d"), _rp_typed(b, part.select("n", "d", "value").with_columns(
+                    pl.col("n").cast(v_inter.frame.schema["n"], strict=False))))},
+            )
 
 
 def _rp_weighted_drift(b: _Build, nodes: pl.DataFrame, *, at_prev: bool = False):
@@ -1447,49 +2094,6 @@ def _rp_weighted_drift(b: _Build, nodes: pl.DataFrame, *, at_prev: bool = False)
     idx = nodes.select("n").unique().join(cohort.select(*keys), how="cross")
     return Sum((Where(state_at_last, idx) - Where(start_at_r, idx)) * rp_weight,
                over=("r", "last_step"))
-
-
-def _node_capacity_change_terms(b: _Build, nodes: pl.DataFrame, tag: str) -> dict:
-    """``{"divest": Σ v_divest_n, "invest_neg": −Σ v_invest_n}`` over the
-    invest / divest periods in service in d, dims (n, d), for ``nodes``.
-
-    ``tag`` keeps the variable-view names of different callers apart.
-    """
-    invested, divested = _node_in_service(b, nodes, tag)
-    terms: dict = {}
-    if divested is not None:
-        terms["divest"] = divested
-    if invested is not None:
-        terms["invest_neg"] = -invested
-    return terms
-
-
-def _node_in_service(b: _Build, nodes: pl.DataFrame, tag: str, coef: "Param | None" = None) -> tuple:
-    """``(Σ v_invest_n[n,d′], Σ v_divest_n[n,d′])`` over the invest / divest periods d′ in service in d,
-    dims (n, d), for ``nodes``; each is None when there is no such variable or period.
-
-    Divest uses ``ndd_divest_active`` — the node analogue of ``edd_divest_active``,
-    keyed on the node Enum (never the process Enum) so a node id never cross-joins
-    against process rows.  A node retirement counts from its period until the end
-    of life of the node's pre-existing storage (d′ ≤ d < EOL[n]; to the end of the
-    horizon for reinvest_automatic).
-
-    ``coef`` multiplies the variable inside the sum.  ``tag`` keeps the variable-view names of different
-    callers apart.
-    """
-    d = b.d
-    invested = divested = None
-    if b.has_invest_n:
-        view = _var_view(b.v_invest_n, "__at_invest" + tag, {"d": "d_invest"}, to_axis=True)
-        alive = _entity_rows(d.edd_invest_set, "e", nodes, "n")
-        if alive.height > 0:
-            invested = Sum(Where(view if coef is None else view * coef, alive), over=("d_invest",))
-    if b.has_divest_n:
-        view = _var_view(b.v_divest_n, "__at_divest" + tag, {"d": "d_divest"}, to_axis=True)
-        active = _entity_rows(d.ndd_divest_active, "n", nodes, "n")
-        if active.height > 0:
-            divested = Sum(Where(view if coef is None else view * coef, active), over=("d_divest",))
-    return invested, divested
 
 
 def _eq_node_balance(b: _Build) -> None:
@@ -1735,14 +2339,14 @@ def _fix_start_terms(b: _Build) -> dict:
     """nodeBalance_eq start terms of open-start nodes (_open_start_nodes) with fix_start."""
     # ─── fix_start terms (in nodeBalance_eq) ─────────────────────────────────
     #   − v_state[n,d,t]·(1 + α[n,d,t])·state_unitsize[n]
-    #   + (1 − β[n,d,t])·state_start[n]·(existing[n,d] + Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]·su[n]
-    #                                    − Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′]·su[n])
+    #   + (1 − β[n,d,t])·state_start[n]·(existing[n,d] + invested[n,d]·su[n]
+    #                                    − retired[n,d]·su[n])
     #   ∀ (n,d,t) ∈ nodeState_first_dt, n ∈ open-start nodes ∩ storage_fix_start, n ∉ carried
     # The first step of a node with no realised state from before the solve (carried: the nodes of
     # roll_continue_state; so the first solve of the model and of each nested level), where the state change is
     # omitted, starts from the start state (MWh); α, β: the self-discharge weights (_self_discharge, 0 without a
-    # loss).  Other fix_start nodes are pinned by storage_state_start_binding / storage_state_start_binding_cyclic_
-    # period.
+    # loss).  Other fix_start nodes are pinned by storage_state_start_binding_cyclic_period (cyclic) or
+    # rp_inter_period_start_fix (representative-period nodes: the start of their base-period chain).
     d = b.d
     first = _self_discharge.fix_start_first(d)
     if first is None:
@@ -1754,7 +2358,7 @@ def _fix_start_terms(b: _Build) -> dict:
     terms: dict = {"fwd_fix_state": -(state * su) if loss is None else -(state * loss.keep_now * su)}
     # A sparse Param term combines with the dense −inflow by outer join with
     # 0-fill, so rows outside ``first`` keep their balance.
-    start_energy = ((start * d.p_state_existing_capacity).frame
+    start_energy = ((start * b.cap.existing_state_n).frame
                     .join(first, on=["n", "d"], how="inner")
                     .select("n", "d", "t", "value"))
     if start_energy.height > 0:
@@ -1762,7 +2366,7 @@ def _fix_start_terms(b: _Build) -> dict:
     if b.has_invest_n:
         invested = _var_view(b.v_invest_n, "__at_fwd_fix", {"d": "d_invest"},
                              to_axis=True)
-        alive = (_entity_rows(d.edd_invest_set, "e", nodes, "n")
+        alive = (_entity_rows(b.cap.alive, "e", nodes, "n")
                  .join(first.select("n", "d", "t"), on=["n", "d"], how="inner"))
         if alive.height > 0:
             term = Sum(Where(invested * start * su, alive), over=("d_invest",))
@@ -1770,11 +2374,26 @@ def _fix_start_terms(b: _Build) -> dict:
     if b.has_divest_n:
         divested = _var_view(b.v_divest_n, "__at_fwd_fix", {"d": "d_divest"},
                              to_axis=True)
-        active = (_entity_rows(d.ndd_divest_active, "n", nodes, "n")
+        active = (_entity_rows(b.cap.retired_frame("n"), "n", nodes, "n")
                   .join(first.select("n", "d", "t"), on=["n", "d"], how="inner"))
         if active.height > 0:
             term = Sum(Where(divested * start * su, active), over=("d_divest",))
             terms["fwd_fix_divest_neg"] = -(term if loss is None else term * loss.keep_prev)
+    built = _retire_built.retired(b, "n")
+    if built is not None:
+        rows = (_entity_rows(_retire_built.retired_frame(b, "n"), "n", nodes, "n")
+                .join(first.select("n", "d", "t"), on=["n", "d"], how="inner"))
+        if rows.height > 0:
+            term = Where(built * start * su, rows)
+            terms["fwd_fix_divest_built_neg"] = -(term if loss is None else term * loss.keep_prev)
+    ext = _extend.extended(b, "n")
+    if ext is not None:
+        # The extended storage capacity in service (_extend): a capacity term, as an investment's.
+        rows = (_entity_rows(_extend.extended_frame(b, "n"), "n", nodes, "n")
+                .join(first.select("n", "d", "t"), on=["n", "d"], how="inner"))
+        if rows.height > 0:
+            term = Where(ext * start * su, rows)
+            terms["fwd_fix_extended_pos"] = term if loss is None else term * loss.keep_prev
     return terms
 
 
@@ -1787,7 +2406,9 @@ def _roll_continue_terms(b: _Build) -> dict:
     # previous roll, the previous solve of a sequence, the dispatch below a storage solve; roll_continue_state, MWh,
     # routed by the cascade: solve._carry_routing).  α, β: the self-discharge weights of an open-start node
     # (_self_discharge).  A cyclic node (_cyclic_nodes) cycles within the solve and takes no carry (how_to/solve_sequences.md
-    # rolling notes); a representative-period node starts each block from v_state_rp_start (no carry).  Nodes of
+    # rolling notes); a bind_within_solve node of a rolling roll that continues from a carried state is bind_forward_only
+    # in that roll (_run_model._anchor_cyclic_in_rolling) and takes the carry here, its horizon end in
+    # storage_state_roll_anchor / _close; a representative-period node starts each block from v_state_rp_start (no carry).  Nodes of
     # neither kind outside the open-start set take the unweighted form.
     d = b.d
     first = _self_discharge.roll_first(d)
@@ -1901,7 +2522,21 @@ def _fix_quantity_target(b: _Build) -> "pl.DataFrame | None":
               .group_by(["n", "d", "t"], maintain_order=True)
               .agg(pl.col("value").sum())
               .select("n", "d", "t", "value"))
+    target = _restated(d, target, "fix_quantity")
     return target if target.height > 0 else None
+
+
+def _restated(d, target: pl.DataFrame, kind: str) -> pl.DataFrame:
+    """``target`` (n, d, t, value) with the value of each node that ``storage_roll_end`` restates by ``kind``
+    (_run_model._nested_end_rows: the upper level interpolated inside an upper step, the cumulative fix_usage cap)."""
+    rows = _roll_end_rows(d, (kind,))
+    if rows is None or target.height == 0:
+        return target
+    over = rows.select(pl.col("n").cast(pl.Utf8).alias("_n"), pl.col("value").alias("_v"))
+    return (target.with_columns(_n=pl.col("n").cast(pl.Utf8))
+            .join(over, on="_n", how="left")
+            .with_columns(value=pl.coalesce("_v", "value"))
+            .drop("_n", "_v"))
 
 
 def _eq_node_balance_fix_quantity(b: _Build) -> None:
@@ -1912,9 +2547,13 @@ def _eq_node_balance_fix_quantity(b: _Build) -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # v_state[n,d,t] · state_unitsize[n]
     #   = Σ_{(d_up,d) ∈ period_branch, (d,t,t_up) ∈ dtt_timeline_matching} fix_storage_quantity[n,d_up,t_up]
+    #     (storage_roll_end(fix_quantity)[n] instead, where it is given)
     #   ∀ n ∈ n_fix_storage_quantity, d ∈ period_last, (n,d,t) ∈ nodeState_last_dt
     # Pins the storage state (MWh) at the last step of each last period to the
-    # state an upper-level (coarser) solve reached at the matching time.
+    # state an upper-level (coarser) solve reached at the matching time.  Where
+    # the horizon ends inside an upper step, the cascade restates the target as
+    # the upper level interpolated at that instant (the upper solve's level is
+    # linear within its step; _run_model._nested_end_rows), not the step's end.
     # Despite the name, the row is an equality.
     target = _fix_quantity_target(b)
     if target is None:
@@ -1957,7 +2596,34 @@ def _fix_usage_target(b: _Build) -> "pl.DataFrame | None":
               .group_by(["n", "d", "t"], maintain_order=True)
               .agg(pl.col("value").sum())
               .select("n", "d", "t", "value"))
+    target = _restated(d, target, "usage_cap")
+    target = _with_period_caps(d, target)
     return target if target.height > 0 else None
+
+
+def _with_period_caps(d, target: pl.DataFrame) -> pl.DataFrame:
+    """``target`` (n, d, t, value) with the ``usage_cap_period`` rows of ``storage_roll_end``: the cumulative
+    fix_usage cap of a period of a roll before its horizon's last period, at the period's last step in the roll
+    (_run_model._nested_end_rows; a period already in ``target`` keeps its row)."""
+    sre = getattr(d, "storage_roll_end", None)
+    if not _has_rows(sre) or "period" not in sre.columns:
+        return target
+    extra = (sre.filter((pl.col("kind") == "usage_cap_period") & pl.col("period").is_not_null())
+             .select(pl.col("n").cast(pl.Utf8), pl.col("period").cast(pl.Utf8).alias("d"), "value"))
+    if extra.height == 0:
+        return target
+    fixed = d.n_fix_storage_usage.select(pl.col("n").cast(pl.Utf8)).unique()
+    last = d.nodeState_last_dt.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                                      pl.col("t").cast(pl.Utf8))
+    extra = (extra.join(fixed, on="n", how="semi").join(last, on=["n", "d"], how="inner")
+             .join(target.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8)), on=["n", "d"], how="anti")
+             .select("n", "d", "t", "value").sort("n", "d", "t"))
+    if extra.height == 0:
+        return target
+    schema = target.schema
+    extra = extra.with_columns([pl.col(c).cast(schema[c], strict=False) for c in ("n", "d", "t")]
+                               + [pl.col("value").cast(schema["value"])])
+    return pl.concat([target, extra], how="vertical")
 
 
 def _fix_price_steps(b: _Build) -> "pl.DataFrame | None":
@@ -2018,11 +2684,19 @@ def _eq_storage_usage_fix(b: _Build) -> None:
     #     (v_flow[p,n,k,d,t]·unitsize[p]·slope[p,d,t] + v_online[p,d,t]·section[p,d,t]·unitsize[p])·Δt
     # + Σ_{(p,n,k) ∈ process_source_sink_noEff, t} v_flow[p,n,k,d,t]·unitsize[p]·Δt
     #   ≤ Σ_{(d_up,d) ∈ period_branch, t_up : ∃t (d,t,t_up) ∈ dtt_timeline_matching} fix_storage_usage[n,d_up,t_up]
+    #     (storage_roll_end(usage_cap)[n] instead, where it is given)
     #   ∀ n ∈ n_fix_storage_usage, d ∈ period_last, (n,d,t_last) ∈ nodeState_last_dt;   Δt = step_duration[d,t]
+    #   and, in a roll, ∀ (n,d) ∈ storage_roll_end(usage_cap_period): d a period of the roll before its horizon's
+    #     last one, RHS that cumulative cap
     # Caps the net energy drawn from storage node n over a whole period (MWh)
     # by the usage an upper-level (coarser) solve planned for the coarse
     # windows overlapping that period.  One row per period, at its last step;
-    # each coarse window counts once however many fine steps it covers.
+    # each coarse window counts once however many fine steps it covers.  The
+    # cascade restates the cap where that differs from the cumulative rule
+    # (_run_model._nested_end_rows): the upper usage from the period's start in
+    # the solve instance to the horizon end, each window pro rata to its hours
+    # in that span, less the usage the instance's earlier rolls realised in the
+    # period — so a rolling lower level uses at most what the upper planned.
     # The section term exists for min_load_efficiency units only.  The
     # process sink/source coefficient ratio is not applied (nor in the
     # source-side variable cost); it is 1 in every current dataset.
@@ -2156,14 +2830,17 @@ def _eq_max_flow(b: _Build) -> None:
     # ─── EQ. ─── maxFlow ─────────────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # v_flow[p,s,k,d,t] + Σ_r v_reserve_up[p,r,k,d,t] + Σ_r v_reserve_down[p,r,s,d,t] · φ[p,s,k,d,t]
-    #   − M·Σ_{(p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′]
-    #   + M·Σ_{(p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′]
+    #   − M·invested[p,d]
+    #   + M·retired[p,d]
     #   ≤ M · existing_count[p,d]
     #   ∀ (p,s,k,d,t) ∈ pss_dt, (p,s,k) ∉ flow_bound_arcs or (p,s,k) ∈ reserve_down_input_arcs
     #   M = capacity_max_coeff[p,s,k] · availability[p,d,t] on capped / uncapped arcs
     #   φ = 1 where v_flow is the input (k = p), 1/slope[p,d,t] on a direct unit's input→output arc
     #       (s ≠ p ≠ k); both reserve terms only for units (connections: connection_reserve_*, _reserve)
     # Caps every flow by the built capacity of its process (units of unitsize).
+    # existing_count[p,d] = existing_mw[p,d] / unitsize[p]: existing_mw from the cohorts (engine.md "Capacity
+    # symbols": the existing cohort with the user's existing of d, the investments earlier solves realized, minus
+    # their carried retirements).
     # On indirect-unit input arcs M = input_share_max · full-load input · a, a = x(availability) =
     # (slope·W(a₀) + section)/(slope·W(1) + section) (a₀ = availability, W(y) the output-side fuel width
     # filled to y, section only for a unit with an online variable); a ≥ availability (never tighter than
@@ -2174,18 +2851,18 @@ def _eq_max_flow(b: _Build) -> None:
     # downward reserve held at the source of a unit (it consumes more),
     # converted to the arc's flow.  A bound input arc gets this row as well
     # when it carries such a reserve (its v_flow bound stays, redundant).
-    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
-    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+    # existing capacity counting until its end of life (none for reinvest_automatic).
     # A row whose RHS is inf (existing capacity inf: no limit; the Benders splitter's cross-region half-flows)
     #   is left out, here and in maxFlow_back.
     lhs: dict = {"flow": b.v_flow}
     if b.reserve_up_to_sink_units is not None:
         lhs["reserve_up"] = b.reserve_up_to_sink_units
     lhs.update(b.reserve_down_at_source)
-    if b.divest_in_dispatch_p is not None:
-        lhs["divest"] = _scaled(b.divest_in_dispatch_p)
-    if b.invest_in_dispatch_p is not None:
-        lhs["invest_neg"] = -_scaled(b.invest_in_dispatch_p)
+    if b.cap.retired_p is not None:
+        lhs["divest"] = _scaled(b.cap.retired_p)
+    if b.cap.invested_p is not None:
+        lhs["invest_neg"] = -_scaled(b.cap.invested_p)
     over = (pss_dt.join(b.flow_bound_arcs, on=["p", "source", "sink"], how="anti")
             if b.flow_bound_arcs is not None else pss_dt)
     if b.flow_bound_arcs is not None and b.reserve_down_input_arcs is not None:
@@ -2228,8 +2905,8 @@ def _eq_max_flow(b: _Build) -> None:
     #   ∀ (p,s,k,d,t) ∈ pss_dt, (p,s,k) ∈ twoway1var_arcs
     # Caps the reverse flow of two-way one-variable arcs by the same built
     # capacity, so |v_flow − v_flow_back| ≤ capacity.  No reserve term.
-    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
-    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+    # existing capacity counting until its end of life (none for reinvest_automatic).
     if b.v_flow_back is not None and b.twoway1var_arcs is not None:
         back_over = _without_no_limit_rows(
             pss_dt.join(b.twoway1var_arcs, on=("p", "source", "sink"), how="inner"), b.flow_upper_rhs)
@@ -2271,8 +2948,8 @@ def _eq_max_output_sum(b: _Build) -> None:
     # existing_count[p,d] is the value maxFlow's output arcs of p carry
     # (all equal; max collapses them); a unit without an existing row gets 0.
     # Availability defaults to 1.0 for processes without availability data.
-    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
-    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+    # existing capacity counting until its end of life (none for reinvest_automatic).
     over = (b.pss_dt.join(arcs, on=["p", "source", "sink"], how="semi")
             .select("p", "d", "t")
             .unique(maintain_order=True))
@@ -2286,12 +2963,12 @@ def _eq_max_output_sum(b: _Build) -> None:
         if up_sink.height > 0:
             lhs["reserve_up"] = Sum(Where(reserve_at_sink, up_sink), over=("r", "ud", "sink"))
     avail = _availability_factor(d, over) if d.p_process_availability is not None else None
-    if b.invest_in_dispatch_p is not None:
-        lhs["invest_neg"] = -(b.invest_in_dispatch_p * avail if avail is not None
-                              else b.invest_in_dispatch_p)
-    if b.divest_in_dispatch_p is not None:
-        lhs["divest"] = (b.divest_in_dispatch_p * avail if avail is not None
-                         else b.divest_in_dispatch_p)
+    if b.cap.invested_p is not None:
+        lhs["invest_neg"] = -(b.cap.invested_p * avail if avail is not None
+                              else b.cap.invested_p)
+    if b.cap.retired_p is not None:
+        lhs["divest"] = (b.cap.retired_p * avail if avail is not None
+                         else b.cap.retired_p)
 
     existing = (flow_upper_existing.frame
                 .join(arcs, on=["p", "source", "sink"], how="semi")
@@ -2420,8 +3097,8 @@ def _eq_ramp(b: _Build) -> None:
     # side input_share_max[p,s], or on an indirect unit's input arc p_indirect_input_cap.  v_flow and v_reserve
     # are in units of unitsize, existing_count = capacity / unitsize.  Arcs with conversion_flow_coeff = 0 get no
     # row.
-    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
-    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+    # existing capacity counting until its end of life (none for reinvest_automatic).
     keys = ["p", "source", "sink"]
     for side, dir_, idx_set, ramp_speed in (
         ("sink",   "up",   d.process_source_sink_ramp_limit_sink_up,     d.p_ramp_speed_up_sink),
@@ -2554,11 +3231,11 @@ def _ramp_family(b: _Build, name: str, rows: pl.DataFrame, idx_set: pl.DataFrame
     rhs: dict = {}
     if built_rows.height > 0:
         rate_built = _ramp_rate(d, idx_set, side, built_rows, keys, b=b)
-        rhs["limit"] = (rate_built * d.p_process_existing_count) * sign
+        rhs["limit"] = (rate_built * b.cap.existing_count_p) * sign
         if b.has_invest_p:
-            rhs["invest"] = (b.invest_in_dispatch_p * rate_built) * sign
-        if b.has_divest_p:
-            rhs["divest"] = (b.divest_in_dispatch_p * rate_built) * (-sign)
+            rhs["invest"] = (b.cap.invested_p * rate_built) * sign
+        if b.cap.retired_p is not None:
+            rhs["divest"] = (b.cap.retired_p * rate_built) * (-sign)
     for kind, (sub, v_online_k, v_startup_k, v_shutdown_k) in online_rows.items():
         for term_name, term in _online_ramp_rhs(b, idx_set, ramp_speed, side, up, sub,
                                                 v_online_k, v_startup_k, v_shutdown_k, keys).items():
@@ -3090,7 +3767,8 @@ def _eq_invest_max_units(b: _Build) -> None:
 
 def _eq_invest_period_caps(b: _Build) -> None:
     """Capacity invested or divested per period, for entities with a per-period limit."""
-    if not (b.has_invest_p or b.has_divest_p or b.has_invest_n or b.has_divest_n):
+    if not (b.has_invest_p or b.has_divest_p or b.has_invest_n or b.has_divest_n
+            or b.has_divest_built_p or b.has_divest_built_n):
         return
     m, d = b.m, b.d
 
@@ -3100,8 +3778,10 @@ def _eq_invest_period_caps(b: _Build) -> None:
     #                                      ≤ invest_max_period[p,d]   ∀ (p,d) with a decision coming online in d,
     #                                                                   p ∈ ed_invest_period_set
     # (n: v_invest_n with state_unitsize[n], n ∈ ed_invest_period_set ∩ nd_invest_set)
-    # v_divest_p[p,d] · unitsize[p]        ≤ divest_max_period[p,d]   ∀ (p,d) ∈ ed_divest_period_set ∩ pd_divest_set
-    # v_divest_n[n,d] · state_unitsize[n]  ≤ divest_max_period[n,d]   ∀ (n,d) ∈ ed_divest_period_set ∩ nd_divest_set
+    # R_p[p,d] · unitsize[p]        ≤ divest_max_period[p,d]   ∀ (p,d) ∈ ed_divest_period_set ∩ (pd_divest_set ∪ B_p)
+    # R_n[n,d] · state_unitsize[n]  ≤ divest_max_period[n,d]   ∀ (n,d) ∈ ed_divest_period_set ∩ (nd_divest_set ∪ B_n)
+    #   R[e,d] = v_divest[e,d] + Σ_c v_divest_built[e,c,d] (existing and model-built capacity retired in d, each
+    #     term where it has a column); B = the (e,d) of cd_divest_built (_retire_built)
     #   (p,d) and (n,d) whose invest_max_period / retire_max_period is inf have no row (no limit in that period)
     # Caps the capacity coming online or retired in one period for entities with a per-period limit
     # (e.g. invest_method = invest_period_total).  An investment decided in o comes online in d = c(o)
@@ -3120,7 +3800,9 @@ def _eq_invest_period_caps(b: _Build) -> None:
         ("maxDivest_entity_period_n", b.has_divest_n, d.ed_divest_period_set, d.nd_divest_set,
          d.ed_divest_max_period, b.v_divest_n, "n", "divest", "retire_max_period"),
     ):
-        if not active or not _has_rows(period_set):
+        # A per-period retirement limit also sums the retirements of model-built capacity (_retire_built).
+        built = _retire_built.decided(b, axis) if kind == "divest" else None
+        if not (active or built is not None) or not _has_rows(period_set):
             continue
         unitsize = d.p_unitsize if axis == "p" else Param(("n",), d.p_state_unitsize.frame)
         if kind == "invest" and _lead_time.active(d):
@@ -3133,7 +3815,8 @@ def _eq_invest_period_caps(b: _Build) -> None:
                           axis, True, param_name=param_name)  # FA-12
             _lead_time.period_limit(b, name, axis, var, unitsize, entities, cap, "<=", param_name)
             continue
-        over = period_set.pipe(rename_to_axis, {"e": axis}).join(var_set, on=[axis, "d"], how="inner")
+        cells = var_set if built is None else _retire_built.retirement_cells(b, axis, var if active else None)
+        over = period_set.pipe(rename_to_axis, {"e": axis}).join(cells, on=[axis, "d"], how="inner")
         if over.height == 0 or cap is None:
             continue
         cap_frame = cap.frame.pipe(rename_to_axis, {"e": axis})
@@ -3143,18 +3826,22 @@ def _eq_invest_period_caps(b: _Build) -> None:
         over = without_no_limit_rows(over, cap_param, "upper")
         if over.height == 0:
             continue
+        lhs: dict = {kind: var * unitsize} if active else {}
+        if built is not None:
+            lhs["divest_built"] = built * unitsize
         m.add_cstr(
             name,
             over      = over,
             sense     = "<=",
-            lhs_terms = {kind:  var * unitsize},
+            lhs_terms = lhs,
             rhs_terms = {"cap": drop_no_limit_rows(cap_param, "upper")},
         )
 
 
 def _eq_invest_total_caps(b: _Build) -> None:
     """Capacity invested or divested over the horizon, for entities with a total limit."""
-    if not (b.has_invest_p or b.has_divest_p or b.has_invest_n or b.has_divest_n):
+    if not (b.has_invest_p or b.has_divest_p or b.has_invest_n or b.has_divest_n
+            or b.has_divest_built_p or b.has_divest_built_n):
         return
     m, d = b.m, b.d
     d_leaf = getattr(d, "d_leaf", None)
@@ -3169,12 +3856,13 @@ def _eq_invest_total_caps(b: _Build) -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{d ∈ D(leaf)} v_invest_p[p,d] · unitsize[p]  ≤  max(0, invest_max_total[p] − prior_inv[p])
     #   ∀ p ∈ e_invest_total ∩ process_source_sink ∩ P(v_invest_p) (, leaf)
-    # Σ_{d ∈ D(leaf)} v_divest_p[p,d] · unitsize[p]  ≤  max(0, divest_max_total[p] − prior_div[p])
-    #   ∀ p ∈ e_divest_total ∩ process_source_sink ∩ P(v_divest_p) (, leaf)
+    # Σ_{d ∈ D(leaf)} R_p[p,d] · unitsize[p]  ≤  max(0, divest_max_total[p] − prior_div[p])
+    #   ∀ p ∈ e_divest_total ∩ process_source_sink ∩ P(v_divest_p ∪ v_divest_built_p) (, leaf)
+    #   R[e,d] = v_divest[e,d] + Σ_c v_divest_built[e,c,d] (existing and model-built capacity retired in d)
     #   prior_inv[e] = p_entity_invested[e]  (capacity realized by all earlier solves of the
     #     chain, retired or not); prior_div[e] = p_entity_divested[e]  (capacity retired by all
-    #     earlier solves of the chain, at realized non-branch periods only)
-    #   _n: v_invest_n / v_divest_n with state_unitsize[n], n ∈ nodeState
+    #     earlier solves of the chain, existing and model-built, at realized non-branch periods only)
+    #   _n: v_invest_n / R_n with state_unitsize[n], n ∈ nodeState
     #   _path: one row per (entity, leaf), D(leaf) = periods of the leaf, only for (entity, leaf)
     #     pairs that have the variable
     # Caps the amount built (retired) over the chain; reinvestments count, retirements do not
@@ -3196,7 +3884,9 @@ def _eq_invest_total_caps(b: _Build) -> None:
          "maxDivest_entity_total_n", "maxDivest_entity_total_path_n", "divest_total", prior_divest,
          "retire_max_total"),
     ):
-        if not active or not _has_rows(total_set) or max_total is None:
+        # A retirement total also sums the retirements of model-built capacity (_retire_built).
+        built = _retire_built.decided(b, axis) if label == "divest_total" else None
+        if not (active or built is not None) or not _has_rows(total_set) or max_total is None:
             continue
         # Entities with flows (process_source_sink) or a state (nodeState) AND the variable: a
         # Benders region subproblem carries dangling v_invest_p columns of the coupling pipes the
@@ -3204,24 +3894,29 @@ def _eq_invest_total_caps(b: _Build) -> None:
         members = d.process_source_sink if axis == "p" else d.nodeState
         if not _has_rows(members):
             continue
+        cells = _retire_built.retirement_cells(b, axis, var if active else None) if built is not None else var.frame
         over_e = _entity_rows(total_set, "e", members, axis).join(
-            var.frame.select(axis).unique(), on=axis, how="semi")
+            cells.select(axis).unique(), on=axis, how="semi")
         if over_e.height == 0:
             continue
         max_total_frame = max_total.frame.pipe(rename_to_axis, {"e": axis})
         check_max_cap(over_e, max_total_frame, axis, False, param_name=param_name)  # FA-12
         cap = Param((axis,), minus_prior(max_total_frame, axis, prior))
         unitsize = d.p_unitsize if axis == "p" else Param(("n",), d.p_state_unitsize.frame)
-        terms = over_e.join(var.frame.select(axis, "d").unique(), on=axis, how="inner")
-        is_path, over, mask = leaf_rows(terms, axis, var, d_leaf)
+        terms = over_e.join(cells.select(axis, "d").unique(), on=axis, how="inner")
+        is_path, over, mask = leaf_rows(terms, axis, var if built is None else cells, d_leaf)
         name = path_name if is_path else legacy_name
+        lhs: dict = {label: Sum(Where(var * unitsize, mask), over=("d",))} if active else {}
+        if built is not None:
+            lhs[f"{label}_built"] = Sum(Where(built * unitsize, mask), over=("d",))
         m.add_cstr(
             name,
             over      = over,
             sense     = "<=",
-            lhs_terms = {label: Sum(Where(var * unitsize, mask), over=("d",))},
+            lhs_terms = lhs,
             rhs_terms = {"cap": cap},
         )
+
 
 
 def _eq_retired_existing(b: _Build) -> None:
@@ -3232,29 +3927,27 @@ def _eq_retired_existing(b: _Build) -> None:
 
     # ─── EQ. ─── maxRetired_existing_{p,n} ───────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_{(p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′] · unitsize[p]  ≤  pre_existing[p,d] − retired_carried[p,d]
-    #   ∀ (p,d) with some (p,d′,d) ∈ edd_divest_active, p ∈ process_source_sink
-    # Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′] · state_unitsize[n]  ≤  pre_existing[n,d] − retired_carried[n,d]
-    #   ∀ (n,d) with some (n,d′,d) ∈ ndd_divest_active, n ∈ nodeState
-    #   edd_divest_active = {(e,d′,d) : (e,d′) ∈ ed_divest_set, yr[d′] ≤ yr[d] < EOL[e]}, EOL[e] the end of
-    #     life of the entity's pre-existing capacity (from the start of the run; none for reinvest_automatic)
-    #   pre_existing = p_entity_pre_existing (the user's existing × unitsize, lifetime-gated: MW, MWh)
-    #   retired_carried = p_entity_retired_carried (retirements of earlier solves of a chain still counting in d)
+    # retired[p,d] · unitsize[p]  ≤  pre_existing[p,d] − retired_carried[p,d]
+    #   ∀ (p,d) with some (p,d′,d) ∈ retired, p ∈ process_source_sink
+    # retired[n,d] · state_unitsize[n]  ≤  pre_existing[n,d] − retired_carried[n,d]
+    #   ∀ (n,d) with some (n,d′,d) ∈ retired, n ∈ nodeState
+    #   retired[e,d] = Σ_{d′ : (e,d′,d) ∈ retired} v_divest[e,d′] (_capacity), retired = {(e,d′,d) : (e,d′) ∈
+    #     ed_divest_set, yr[d′] ≤ yr[d] < EOL[e]}, EOL[e] the end of life of the entity's existing cohort:
+    #     yr[d0] − age[e] + lifetime_technical[e,d0] rounded to a period start by end_of_life_method, d0 the
+    #     run's first period, age from age_at_model_start or model.start_year − build_year (none for
+    #     reinvest_automatic)
+    #   pre_existing = p_entity_pre_existing (the existing cohort's size: the user's existing × unitsize,
+    #     lifetime-gated, MW, MWh)
+    #   retired_carried = p_entity_retired_carried (the existing cohort's retirements that earlier solves of a
+    #     chain realized and that still count in d; handoff realized_retire, engine.md "Capacity symbols")
     # Only capacity that existed before the run can be retired: the capacity retired so far and still counting in
     # d stays within the pre-existing capacity of d (a declining existing map, or an entity that also invests,
     # cannot retire more than was there).  A retirement option exists only where pre_existing > 0.
-    pre = getattr(d, "p_entity_pre_existing", None)
-    pre_frame = pre.frame if pre is not None else None
-    carried = getattr(d, "p_entity_retired_carried", None)
-    if pre_frame is not None and carried is not None and carried.frame.height > 0:
-        pre_frame, carried_frame = align_join_dtypes(pre_frame, carried.frame.rename({"value": "carried"}), ["e", "d"])
-        pre_frame = (pre_frame.join(carried_frame, on=["e", "d"], how="left")
-                     .with_columns(value=pl.col("value") - pl.col("carried").fill_null(0.0))
-                     .drop("carried"))
+    pre_frame = _capacity.existing_not_retired(b)
     for axis, active_set, var, members in (
-            ("p", getattr(d, "edd_divest_active", None), b.v_divest_p if b.has_divest_p else None,
+            ("p", b.cap.retired_frame("p"), b.v_divest_p if b.has_divest_p else None,
              d.process_source_sink),
-            ("n", getattr(d, "ndd_divest_active", None), b.v_divest_n if b.has_divest_n else None, d.nodeState)):
+            ("n", b.cap.retired_frame("n"), b.v_divest_n if b.has_divest_n else None, d.nodeState)):
         if var is None or not _has_rows(active_set) or not _has_rows(members):
             continue
         active = _entity_rows(active_set, axis, members, axis)
@@ -3370,8 +4063,7 @@ def _eq_conversion_piecewise(b: _Build) -> None:
     #     + pw_intercept[p,g,d] · unitsize[p] · U[p,d,t]
     #   ∀ (p,g,d,t): p ∈ process_piecewise, (p,d,t) ∈ process_indirect_dt, g ∈ seg(p,d)
     #   U[p,d,t] = v_online_linear[p,d,t] | v_online_integer[p,d,t]            p with online variables
-    #   U[p,d,t] = existing_count[p,d] + Σ_{(p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′]
-    #              − Σ_{(p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′]          p without (existing_count → RHS)
+    #   U[p,d,t] = existing_count[p,d] + invested[p,d] − retired[p,d]          p without (existing_count → RHS)
     #   pw_intercept[p,g,d] = ℓ_{g−1}·ℓ_g·(1/η_{g−1} − 1/η_g) / (ℓ_g − ℓ_{g−1}),  pw_slope[p,g,d] = 1/η_g − pw_intercept/ℓ_g
     #     (ℓ_i, η_i: piecewise_linear_efficiency points, merged when collinear; origin line g = 0: 1/η₀, 0 when the
     #     efficiency falls from the first point; without online variables: 1/max η, 0 and the falling segments;
@@ -3452,7 +4144,7 @@ def _eq_conversion_piecewise(b: _Build) -> None:
                     .select("p", "seg", "d", value=pl.col("value") * pl.col("__us").fill_null(1.0))
                     .collect())
         per_unit_p = Param(("p", "seg", "d"), per_unit)
-        ec = d.p_process_existing_count
+        ec = b.cap.existing_count_p
         if ec is not None:
             ecf = ec.frame
             ecf = ecf.collect() if isinstance(ecf, pl.LazyFrame) else ecf
@@ -3464,10 +4156,10 @@ def _eq_conversion_piecewise(b: _Build) -> None:
                         .collect())
             if existing.height > 0:
                 rhs["cap_existing"] = Param(("p", "seg", "d"), existing)
-        if b.invest_in_dispatch_p is not None:
-            rhs["cap_invest"] = b.invest_in_dispatch_p * per_unit_p
-        if b.divest_in_dispatch_p is not None:
-            rhs["cap_divest"] = b.divest_in_dispatch_p * per_unit_p * -1.0
+        if b.cap.invested_p is not None:
+            rhs["cap_invest"] = b.cap.invested_p * per_unit_p
+        if b.cap.retired_p is not None:
+            rhs["cap_divest"] = b.cap.retired_p * per_unit_p * -1.0
     _coarse_flows.add_cstr(
         b, "conversion_piecewise",
         over      = over,
@@ -3921,7 +4613,7 @@ def _eq_user_constraints(b: _Build) -> None:
         return
     d = b.d
     v_invest_p, v_invest_n = b.v_invest_p, b.v_invest_n
-    lookback = d.edd_invest_lookback_set
+    lookback = b.cap.prebuilt
 
     # ─── EQ. ─── process_constraint_{equal,less_than,greater_than}[_period] ──
     # ─────────────────────────────────────────────────────────────────────────
@@ -3929,7 +4621,7 @@ def _eq_user_constraints(b: _Build) -> None:
     #   + Σ_n v_state[n,d,t]·state_unitsize[n]·node_state_coef[n,cn]
     #   + Σ_e inv[e,d]·invested_coef[e,cn]
     #   + Σ_e con[e,d]·in_construction_coef[e,cn]
-    #   + Σ_e v_divest[e,d]·us[e]·retired_coef[e,cn]
+    #   + Σ_e (v_divest[e,d] + Σ_c v_divest_built[e,c,d])·us[e]·retired_coef[e,cn]
     #   + Σ_e pre[e,d]·prebuilt_coef[e,cn]
     #   + Σ_e cap[e,d]·capacity_coef[e,cn]
     #   + Σ_{p ∈ process_online} v_online[p,d,t]·online_coef[p,cn]
@@ -3942,10 +4634,14 @@ def _eq_user_constraints(b: _Build) -> None:
     # (us = state_unitsize, existing = capacity, the storage capacity), MW (MWh):
     #   inv[e,d] = Σ_{(e,o,d) ∈ edd_invest_commission} v_invest[e,o]·us[e] + carried_commission[e,d]
     #   con[e,d] = Σ_{(e,o,d) ∈ edd_invest_in_construction} v_invest[e,o]·us[e] + carried_in_construction[e,d]
-    #   pre[e,d] = existing[e,d] − carried_commission[e,d] + Σ_{(e,d′,d) ∈ edd_invest_lookback} v_invest[e,d′]·us[e]
-    #                            − Σ_{(e,d′,d) ∈ edd/ndd_divest_active, d′ ≠ d} v_divest[e,d′]·us[e]
-    #   cap[e,d] = existing[e,d] + Σ_{(e,d′,d) ∈ edd_invest_set} v_invest[e,d′]·us[e]
-    #                            − Σ_{(e,d′,d) ∈ edd/ndd_divest_active} v_divest[e,d′]·us[e]
+    #   pre[e,d] = existing[e,d] − carried_commission[e,d] + prebuilt[e,d]·us[e]
+    #                            − Σ_{(e,d′,d) ∈ retired, d′ ≠ d} v_divest[e,d′]·us[e]
+    #                            − (v_divested_built[e,d] − Σ_c v_divest_built[e,c,d])·us[e]
+    #                            + (v_extended[e,d] − Σ_c v_extend[e,c,d])·us[e]
+    #   cap[e,d] = existing[e,d] + invested[e,d]·us[e] − retired[e,d]·us[e]
+    #   invested, prebuilt, retired: the capacity in service (_capacity; retired includes v_divested_built, the
+    #     model-built capacity retired so far, _retire_built, less v_extended, the capacity extended beyond its
+    #     end of life, _extend: capacity, never in inv or con)
     # A linear constraint authored by the user over flows (MW), storage states (MWh) and capacities.  The
     # invested term is the capacity that comes online in d (an investment decided in o with a construction
     # lead time comes online in c(o); without one c(o) = o and inv[e,d] = v_invest[e,d]·us[e]); the
@@ -3965,8 +4661,8 @@ def _eq_user_constraints(b: _Build) -> None:
     # per-step rows.  A row whose terms all vanish in the solve (its entities have no flow, state, investment
     # or retirement there) is left out: a configuration error when the remaining existing-capacity constant
     # sense constant cannot hold, else a warning naming the constraint.
-    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
-    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+    # existing capacity counting until its end of life (none for reinvest_automatic).
     # Row rule (coarse steps): a per-step constraint whose flow and online terms are all on coarse processes and
     # whose state terms are on coarse nodes gets one row per coarse step, process_constraint_*_coarse = the row's Δt-weighted
     # mean over the step (_coarse_flows.add_cstr); its coefficients are constant, so it is the per-step row itself
@@ -4056,7 +4752,7 @@ def _eq_user_constraints(b: _Build) -> None:
     node_cap = d.p_node_constraint_capacity_coeff
     proc_cap = d.p_process_constraint_capacity_coeff
     for coef in (node_pre, proc_pre, node_cap, proc_cap):
-        existing = _user_constraint_existing(d, coef, node=coef is node_pre or coef is node_cap)
+        existing = _user_constraint_existing(b, coef, node=coef is node_pre or coef is node_cap)
         if existing is not None:
             const_terms.append(existing)
     # Capacity earlier solves of a chain decided with a construction lead time: coming online in d it is in the
@@ -4102,7 +4798,7 @@ def _eq_user_constraints(b: _Build) -> None:
         has_invest, has_divest = ((b.has_invest_p, b.has_divest_p) if axis == "p"
                                   else (b.has_invest_n, b.has_divest_n))
         invest, divest = (v_invest_p, b.v_divest_p) if axis == "p" else (v_invest_n, b.v_divest_n)
-        active = d.edd_divest_active if axis == "p" else d.ndd_divest_active
+        active = b.cap.retired_frame(axis)
         pre, cap = (proc_pre, proc_cap) if axis == "p" else (node_pre, node_cap)
         retired = (d.p_process_constraint_retired_capacity_coeff if axis == "p"
                    else d.p_node_constraint_retired_capacity_coeff)
@@ -4115,8 +4811,8 @@ def _eq_user_constraints(b: _Build) -> None:
                 capacity_terms.append(-Sum(Where(view * unitsize, earlier) * pre, over=(axis, "d_divest")))
                 netted.update(earlier.get_column("cn").cast(pl.Utf8).to_list())
         # Capacity in service: the investments alive in d and every retirement up to d.
-        if has_invest and cap is not None and _has_rows(d.edd_invest_set):
-            alive = (_entity_rows(d.edd_invest_set, "e", _collected(cap.frame), axis)
+        if has_invest and cap is not None and _has_rows(b.cap.alive):
+            alive = (_entity_rows(b.cap.alive, "e", _collected(cap.frame), axis)
                      .join(cap.frame.select(axis, "cn"), on=axis, how="inner"))
             if alive.height > 0:
                 view = _var_view(invest, "__at_inv_cap_uc", {"d": "d_invest"}, to_axis=True)
@@ -4132,6 +4828,8 @@ def _eq_user_constraints(b: _Build) -> None:
                 Where(divest * unitsize, retired.frame.select(axis, "cn")) * retired,
                 over=(axis,),
             ))
+        capacity_terms.extend(_user_constraint_built_terms(b, axis, unitsize, pre, cap, retired))
+        capacity_terms.extend(_user_constraint_extended_terms(b, axis, unitsize, pre, cap))
     if netted:
         from flextool.engine import _behaviour_changes
         _behaviour_changes.notice("user_constraint_prebuilt_nets_retirements", "user constraints", sorted(netted),
@@ -4204,6 +4902,70 @@ def _eq_user_constraints(b: _Build) -> None:
     if pt_cns:
         _eq_user_constraints_period_total(b, pt_cns, invest_terms + capacity_terms, online_by_class, const_terms,
                                           rhs_constant)
+
+
+def _user_constraint_built_terms(b: _Build, axis: str, unitsize: Param, pre: "Param | None", cap: "Param | None",
+                                 retired: "Param | None") -> list:
+    """The model-built retirement terms of the user constraints on ``axis`` (_retire_built), dims (cn, d):
+
+        pre:     − (v_divested_built[e,d] − Σ_c v_divest_built[e,c,d])·us[e]·prebuilt_coef[e,cn]
+        cap:     − v_divested_built[e,d]·us[e]·capacity_coef[e,cn]
+        retired: + Σ_c v_divest_built[e,c,d]·us[e]·retired_coef[e,cn]
+
+    the retirements decided before d that still count there, every retirement counting in d, and those decided
+    in d (the model-built part of retired[e,d] and of the retirements of d)."""
+    built = _retire_built.retired(b, axis)
+    if built is None:
+        return []
+    decided = _retire_built.decided(b, axis)
+    counted, options = _retire_built.retired_frame(b, axis), _retire_built.decided_frame(b, axis)
+    terms: list = []
+    for coef, sign, with_decided in ((pre, -1.0, True), (cap, -1.0, False)):
+        if coef is None:
+            continue
+        rows = counted.join(coef.frame.select(axis, "cn"), on=axis, how="inner")
+        if rows.height == 0:
+            continue
+        terms.append(Sum(Where(built * unitsize, rows) * coef, over=(axis,)) * sign)
+        if with_decided:
+            now = options.join(coef.frame.select(axis, "cn"), on=axis, how="inner")
+            if now.height > 0:
+                terms.append(Sum(Where(decided * unitsize, now) * coef, over=(axis,)))
+    if retired is not None:
+        now = options.join(retired.frame.select(axis, "cn"), on=axis, how="inner")
+        if now.height > 0:
+            terms.append(Sum(Where(decided * unitsize, now) * retired, over=(axis,)))
+    return terms
+
+
+def _user_constraint_extended_terms(b: _Build, axis: str, unitsize: Param, pre: "Param | None",
+                                    cap: "Param | None") -> list:
+    """The life-extension terms of the user constraints on ``axis`` (_extend), dims (cn, d):
+
+        pre: + (v_extended[e,d] − Σ_c v_extend[e,c,d])·us[e]·prebuilt_coef[e,cn]
+        cap: + v_extended[e,d]·us[e]·capacity_coef[e,cn]
+
+    the extended capacity in service from the start of d (an extension decided in d starts to operate there) and
+    every extension in service in d.  An extension is capacity, never an investment: it has no term with
+    invested_coef or in_construction_coef."""
+    ext = _extend.extended(b, axis)
+    if ext is None:
+        return []
+    decided = _extend.decided(b, axis)
+    counted, options = _extend.extended_frame(b, axis), _extend.decided_frame(b, axis)
+    terms: list = []
+    for coef, with_decided in ((pre, True), (cap, False)):
+        if coef is None:
+            continue
+        rows = counted.join(coef.frame.select(axis, "cn"), on=axis, how="inner")
+        if rows.height == 0:
+            continue
+        terms.append(Sum(Where(ext * unitsize, rows) * coef, over=(axis,)))
+        if with_decided:
+            now = options.join(coef.frame.select(axis, "cn"), on=axis, how="inner")
+            if now.height > 0:
+                terms.append(-Sum(Where(decided * unitsize, now) * coef, over=(axis,)))
+    return terms
 
 
 def _eq_user_constraints_period_total(b: _Build, pt_cns: list[str], capacity_terms: list, online_by_class: list,
@@ -4332,7 +5094,8 @@ def _user_constraint_live_keys(terms: list) -> set[str]:
 def _check_user_constraints_without_terms(b: _Build, empty_rows: list[tuple[pl.DataFrame, str]],
                                           const_terms: list) -> None:
     """User-constraint rows left without a variable in this solve: an error where ``constant sense constant``
-    cannot hold, else a warning (once per constraint per run) — the row is left out either way."""
+    cannot hold, else warning W-0004 (one line per solve, each constraint once per run) — the row is left out
+    either way."""
     d = b.d
     empty = [(rows, sense) for rows, sense in empty_rows if rows.height > 0]
     if not empty:
@@ -4379,12 +5142,10 @@ def _check_user_constraints_without_terms(b: _Build, empty_rows: list[tuple[pl.D
             f"User constraints without any variable in {where} cannot hold: {', '.join(failing)}. Their "
             "coefficients only refer to flows, storage states, units online, investments or retirements that this "
             "solve does not have. Remove the constraint from the solve, or give it a term that the solve has.")
-    from flextool.engine import _behaviour_changes
-    for cn, cases in sorted(holding.items()):
-        _behaviour_changes.warn_once(
-            ("user_constraint_without_terms", cn),
-            f"Warning: user constraint '{cn}' has no variable in {where} ({'; '.join(cases)}). It always holds "
-            "there, so it is left out.")
+    if holding:
+        from flextool import run_warnings
+        run_warnings.warn_grouped("W-0004", sorted(holding), solve=b.solve_name or "this solve", per_run=True,
+                                  details={cn: "; ".join(cases) for cn, cases in sorted(holding.items())})
 
 
 def _collected(frame) -> pl.DataFrame:
@@ -4409,20 +5170,21 @@ def _user_constraint_carried(d, coef: "Param | None", kind: str, *, node: bool, 
     return Param(("cn", "d"), frame) if frame.height > 0 else None
 
 
-def _user_constraint_existing(d, coef: "Param | None", *, node: bool) -> "Param | None":
+def _user_constraint_existing(b: _Build, coef: "Param | None", *, node: bool) -> "Param | None":
     """``Σ_e existing[e,d]·coef[e,cn]`` as a ``(cn, d)`` Param (MW, MWh for nodes); None without rows."""
     if coef is None:
         return None
+    d, cap = b.d, b.cap
     if node:
-        if d.p_state_existing_capacity is None:
+        if cap.existing_state_n is None:
             return None
-        frame = (d.p_state_existing_capacity.frame
+        frame = (cap.existing_state_n.frame
                  .join(coef.frame.rename({"value": "coef"}), on="n", how="inner")
                  .with_columns(value=pl.col("value") * pl.col("coef")))
     else:
-        if d.p_process_existing_count is None or d.p_unitsize is None:
+        if cap.existing_count_p is None or d.p_unitsize is None:
             return None
-        frame = (d.p_process_existing_count.frame.rename({"value": "ec"})
+        frame = (cap.existing_count_p.frame.rename({"value": "ec"})
                  .join(d.p_unitsize.frame.rename({"value": "us"}), on="p", how="inner")
                  .with_columns(cap=pl.col("ec") * pl.col("us"))
                  .join(coef.frame.rename({"value": "coef"}), on="p", how="inner")
@@ -4441,15 +5203,15 @@ def _eq_max_state(b: _Build) -> None:
 
     # ─── EQ. ─── maxState ────────────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # v_state[n,d,t] + Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′]
-    #   − Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]  ≤  state_upper[n,d]
+    # v_state[n,d,t] + retired[n,d]
+    #   − invested[n,d]  ≤  state_upper[n,d]
     #   ∀ (n,d,t) ∈ nodeState_dt
     # Caps the storage state by the built storage capacity.  state_upper = capacity / state_unitsize, so
     # every term is in state units.
-    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
-    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+    # existing capacity counting until its end of life (none for reinvest_automatic).
     lhs: dict = {"state": b.v_state}
-    lhs.update(_node_capacity_change_terms(b, d.nodeState, ""))
+    lhs.update(_capacity.node_capacity_change_terms(b, d.nodeState, ""))
     m.add_cstr(
         "maxState",
         over      = b.nodeState_dt,
@@ -4473,17 +5235,17 @@ def _eq_state_profiles(b: _Build) -> None:
 
     # ─── EQ. ─── profile_state_{upper_limit,lower_limit,fixed} ───────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # v_state[n,d,t] − profile[f,d,t]·av[n,d,t]·Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]
-    #   + profile[f,d,t]·av[n,d,t]·Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′]
+    # v_state[n,d,t] − profile[f,d,t]·av[n,d,t]·invested[n,d]
+    #   + profile[f,d,t]·av[n,d,t]·retired[n,d]
     #   ≤ / ≥ / =  profile[f,d,t] · av[n,d,t] · capacity[n,d] / state_unitsize[n]
     #   ∀ (n,f) ∈ node_profile_{upper,lower,fixed}, (d,t) ∈ dt
     # Bounds the storage state by a profile times the built storage capacity, in state units.
     # av = node availability, 1 for nodes without availability data.  The invest/divest terms are
     # restricted to the (n,f) pairs of the method's set.
-    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
-    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+    # existing capacity counting until its end of life (none for reinvest_automatic).
     state_unitsize = d.p_state_unitsize.frame.rename({"value": "us"})
-    existing_count = Param(("n", "d"), d.p_state_existing_capacity.frame.rename({"value": "cap"})
+    existing_count = Param(("n", "d"), b.cap.existing_state_n.frame.rename({"value": "cap"})
                            .join(state_unitsize, on="n", how="inner")
                            .with_columns(value=pl.col("cap") / pl.col("us"))
                            .select("n", "d", "value"))
@@ -4496,7 +5258,7 @@ def _eq_state_profiles(b: _Build) -> None:
             rhs = rhs * avail
         lhs: dict = {"state": b.v_state}
         node_profile_pairs = idx.select("n", "f").unique()
-        invested, divested = _node_in_service(b, d.nodeState, "_node_profile")
+        invested, divested = _capacity.node_in_service(b, d.nodeState, "_node_profile")
         if invested is not None:
             term = invested * d.p_profile_value
             if avail is not None:
@@ -4516,69 +5278,46 @@ def _eq_state_profiles(b: _Build) -> None:
         )
 
 
-def _eq_storage_start_binding(b: _Build) -> None:
-    """Start state of fix_start storage nodes."""
-    d = b.d
-    if not (b.has_storage
-            and _has_rows(d.storage_fix_start)
-            and d.p_state_start is not None
-            and d.p_state_existing_capacity is not None
-            and d.p_state_unitsize is not None):
-        return
-    m = b.m
+def _roll_end_rows(d, kinds) -> "pl.DataFrame | None":
+    """``(n, value)`` of the storage_roll_end rows of the ``kinds`` (_run_model._anchor_cyclic_in_rolling); None
+    when there are none."""
+    sre = getattr(d, "storage_roll_end", None)
+    if not _has_rows(sre):
+        return None
+    out = sre.filter(pl.col("kind").is_in(list(kinds))).select("n", "value")
+    return out if out.height > 0 else None
 
-    # ─── EQ. ─── storage_state_start_binding ─────────────────────────────────
-    # ─────────────────────────────────────────────────────────────────────────
-    # v_state[n,d,t] − state_start[n]·Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]
-    #   + state_start[n]·Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′]
-    #   = state_start[n] · capacity[n,d] / state_unitsize[n]
-    #   ∀ (n,d,t) ∈ nodeState_first_dt, n ∈ storage_fix_start, n ∉ carried,
-    #     n ∉ bind_forward_only ∪ bind_within_timeblock ∪ bind_within_solve ∪ bind_within_period ∪ nodeStateBlock
-    # Pins the state at the first step to the share state_start of the built storage capacity (state
-    # units).  Only where no state of the node was realised before this solve (carried: the nodes of
-    # roll_continue_state), i.e. the first solve of the model and of each nested level.  The nodes left are the
-    # representative-period (blended weights) nodes,
-    # whose first step starts from v_state_rp_start.  bind_forward_only nodes get their start through
-    # nodeBalance_eq (_fix_start_terms); the cyclic nodes (bind_within_timeblock, bind_within_solve,
-    # bind_within_period, bind_intraperiod_blocks) are pinned by storage_state_start_binding_cyclic_period.
-    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
-    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
-    nodes = d.storage_fix_start
-    for excluded in (d.storage_bind_forward_only, d.storage_bind_within_timeblock, d.storage_bind_within_solve,
-                     d.storage_bind_within_period, d.nodeStateBlock):
-        if _has_rows(excluded):
-            nodes = nodes.join(excluded, on="n", how="anti")
-    nodes = _self_discharge.without_nodes(nodes, _self_discharge.carried_nodes(d))
-    if nodes is None:
-        return
-    over = d.nodeState_first_dt.join(nodes, on="n", how="inner")
-    if over.height == 0:
-        return
-    target = (d.p_state_start * d.p_state_existing_capacity) / d.p_state_unitsize
-    lhs: dict = {"state": b.v_state}
-    invested, divested = _node_in_service(b, d.nodeState, "_start", coef=d.p_state_start)
-    if invested is not None:
-        lhs["invest_neg"] = -invested
-    if divested is not None:
-        lhs["divest"] = divested
-    m.add_cstr(
-        "storage_state_start_binding",
-        over      = over,
-        sense     = "==",
-        lhs_terms = lhs,
-        rhs_terms = {"target": target},
-    )
+
+def _cyclic_pin_coefficient(b: _Build) -> "Param | None":
+    """``(n)``: the share of the capacity a cyclic node's first-roll wrap is pinned at: storage_state_start of the
+    fix_start nodes, storage_state_end of the ``wrap_end`` nodes of storage_roll_end (a fix_end node of a rolling
+    instance that reaches the model end, without fix_start).  None when neither."""
+    d = b.d
+    parts = []
+    if _has_rows(d.storage_fix_start) and d.p_state_start is not None:
+        parts.append(d.p_state_start.frame.join(d.storage_fix_start.select("n"), on="n", how="semi")
+                     .select("n", "value"))
+    wrap_end = _roll_end_rows(d, ("wrap_end",))
+    if wrap_end is not None and d.p_state_end is not None:
+        end = d.p_state_end.frame.join(wrap_end.select("n"), on="n", how="semi").select("n", "value")
+        if parts:
+            end = end.join(parts[0].select("n"), on="n", how="anti")
+        parts.append(end)
+    parts = [f for f in parts if f.height > 0]
+    if not parts:
+        return None
+    return Param(("n",), pl.concat(parts, how="vertical"))
 
 
 def _cyclic_start_pin_steps(b: _Build) -> "pl.DataFrame | None":
     """``(n, d, t)``: the steps storage_state_start_binding_cyclic_period pins (the wrap targets of the cyclic
-    fix_start nodes' first steps, less the steps an upper-level solve fixes, which are logged); None when there are
-    none."""
+    fix_start nodes' first steps, and of the ``wrap_end`` nodes of storage_roll_end, less the steps an upper-level
+    solve fixes, which are logged); None when there are none."""
     d = b.d
+    coef = _cyclic_pin_coefficient(b)
     if not (b.has_storage
-            and _has_rows(d.storage_fix_start)
-            and d.p_state_start is not None
-            and d.p_state_existing_capacity is not None
+            and coef is not None
+            and b.cap.existing_state_n is not None
             and d.p_state_unitsize is not None
             and _has_rows(d.nodeState_first_dt)):
         return None
@@ -4586,7 +5325,7 @@ def _cyclic_start_pin_steps(b: _Build) -> "pl.DataFrame | None":
                                           d.storage_bind_within_period, _self_discharge.block_cyclic_nodes(d)))
     if cyclic is None:
         return None
-    nodes = cyclic.join(d.storage_fix_start, on="n", how="inner")
+    nodes = cyclic.join(coef.frame.select(pl.col("n").cast(cyclic.schema["n"], strict=False)), on="n", how="inner")
     nodes = _self_discharge.without_nodes(nodes, _self_discharge.carried_nodes(d))
     if nodes is None:
         return None
@@ -4625,26 +5364,32 @@ def _eq_storage_start_binding_cyclic(b: _Build) -> None:
 
     # ─── EQ. ─── storage_state_start_binding_cyclic_period ───────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # v_state[n,d′,t′] − state_start[n]·Σ_{(n,d″,d′) ∈ edd_invest_set} v_invest_n[n,d″]
-    #   + state_start[n]·Σ_{(n,d″,d′) ∈ ndd_divest_active} v_divest_n[n,d″]
+    # v_state[n,d′,t′] − state_start[n]·invested[n,d′]
+    #   + state_start[n]·retired[n,d′]
     #   = state_start[n] · capacity[n,d′] / state_unitsize[n]
-    #   ∀ n ∈ storage_fix_start ∩ (bind_within_timeblock ∪ bind_within_solve ∪ bind_within_period
-    #     ∪ looping nodeStateBlock), n ∉ carried, (n,d,t) ∈ nodeState_first_dt, (d′,t′) = the step (d,t) starts
-    #     from (the node's wrap), (n,d′,t′) ∉ the steps node_balance_fix_quantity_eq_lower fixes
+    #   ∀ n ∈ (storage_fix_start ∪ storage_roll_end(wrap_end)) ∩ (bind_within_timeblock ∪ bind_within_solve
+    #     ∪ bind_within_period ∪ looping nodeStateBlock), n ∉ carried, (n,d,t) ∈ nodeState_first_dt,
+    #     (d′,t′) = the step (d,t) starts from (the node's wrap), (n,d′,t′) ∉ the steps
+    #     node_balance_fix_quantity_eq_lower fixes
     # The first step of a cyclic node starts from its wrap target, so the start state is pinned there, to the
     # share state_start of the built storage capacity (state units): the last step of the first timeblock
-    # (bind_within_timeblock; in a roll, of the timeblock's part in the roll), of the solve (bind_within_solve) or
-    # of the first period (bind_within_period, bind_intraperiod_blocks).  Only where no state of the node was
+    # (bind_within_timeblock), of the solve (bind_within_solve) or of the first period (bind_within_period, also
+    # bind_within_timeblock in a rolling solve, and bind_intraperiod_blocks; in a roll, of its part in the roll).  Only where no state of the node was
     # realised before this solve (the first solve of the model and of each nested level); a later solve neither
-    # pins nor carries a cyclic node (it cycles within the solve).  Where an
+    # pins nor carries a cyclic node (it cycles within the solve; a later roll of a rolling bind_within_solve node
+    # chains forward from the carry instead, _run_model._anchor_cyclic_in_rolling).  Where an
     # upper-level solve fixes the state at the wrap target the upper value wins (the two equalities would sit on
     # one variable).  A bind_intraperiod_blocks node that chains forward (fix_start_end, or a roll that holds its
     # first period only in part) has its start in nodeBalanceBlock_eq (_fix_start_terms); fix_start_end nodes of the
     # other cyclic methods are forward-only in the solve (_run_model._fix_start_end_chains_forward).
-    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
-    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+    # In a rolling instance that reaches the model end, a fix_end node without fix_start is pinned the same way at
+    # storage_state_end (state_start below stands for that share; storage_roll_end kind wrap_end): its cycle level
+    # is the end value, as in a solve that is not rolling, where the end pin sits on the wrap target.
+    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+    # existing capacity counting until its end of life (none for reinvest_automatic).
+    coef = _cyclic_pin_coefficient(b)
     lhs: dict = {"state": b.v_state}
-    invested, divested = _node_in_service(b, d.nodeState, "_cyclic", coef=d.p_state_start)
+    invested, divested = _capacity.node_in_service(b, d.nodeState, "_cyclic", coef=coef)
     if invested is not None:
         lhs["invest_neg"] = -invested
     if divested is not None:
@@ -4654,7 +5399,7 @@ def _eq_storage_start_binding_cyclic(b: _Build) -> None:
         over      = over,
         sense     = "==",
         lhs_terms = lhs,
-        rhs_terms = {"target": (d.p_state_start * d.p_state_existing_capacity) / d.p_state_unitsize},
+        rhs_terms = {"target": (coef * b.cap.existing_state_n) / d.p_state_unitsize},
     )
 
 
@@ -4670,6 +5415,25 @@ def _state_cells_typed(b: _Build, frame: pl.DataFrame, rename: dict) -> pl.DataF
     dtype."""
     schema = b.v_state.frame.schema
     return frame.with_columns([pl.col(c).cast(schema[rename.get(c, c)], strict=False) for c in frame.columns])
+
+
+def _state_keys_typed(b: _Build, frame: pl.DataFrame) -> pl.DataFrame:
+    """``frame`` (n, d, t, value) with its keys cast onto v_state's dtypes."""
+    schema = b.v_state.frame.schema
+    return frame.with_columns([pl.col(c).cast(schema[c], strict=False) for c in ("n", "d", "t")])
+
+
+def _notice_nodes(change_id: str, nodes, b: "_Build | None" = None) -> None:
+    """The behaviour-change notice of ``change_id`` for the nodes of ``nodes`` (a frame with n, or names): one
+    printed line per change and complete solve of ``b`` (how many nodes and the first; owner rule), the names in the
+    log at debug level, however many rows of the build name the change."""
+    if nodes is None:
+        return
+    names = nodes["n"].to_list() if isinstance(nodes, pl.DataFrame) else list(nodes)
+    if names:
+        from flextool.engine import _behaviour_changes
+        _behaviour_changes.notice(change_id, "nodes", sorted(set(str(n) for n in names)),
+                                  solve=(b.solve_name if b is not None else None) or "")
 
 
 def _notice_stochastic_storage_paths(names) -> None:
@@ -4820,9 +5584,9 @@ def _eq_storage_state_fan_start(b: _Build) -> None:
     _notice_stochastic_storage_paths(over["n"].to_list())
 
 
-def _eq_storage_end_binding(b: _Build) -> None:
-    """End state of fix_end / fix_start_end storage nodes at the last step of the entire model, in every sub-solve
-    whose horizon holds that step."""
+def _end_binding_steps(b: _Build) -> "pl.DataFrame | None":
+    """``(n, d, t)``: the steps storage_state_end_binding pins (the last step of the entire model, of the fix_end /
+    fix_start_end nodes, less the steps an upper-level fix_quantity / fix_usage fixes); None when there are none."""
     d = b.d
     if not (b.has_storage
             and d.storage_solve_at_model_end
@@ -4830,24 +5594,36 @@ def _eq_storage_end_binding(b: _Build) -> None:
             and d.p_state_end is not None
             and _has_rows(d.nodeState_last_dt)
             and d.period_last is not None
-            and d.p_state_existing_capacity is not None
+            and b.cap.existing_state_n is not None
             and d.p_state_unitsize is not None):
-        return
+        return None
     over = (d.nodeState_last_dt
             .join(d.period_last, on="d", how="inner")
             .join(d.storage_fix_end, on="n", how="inner")
             .select("n", "d", "t").unique())
+    if _has_rows(d.nodeState_rp):
+        # A representative-period node's end is the end of its base-period chain (rp_inter_period_end_fix), not a
+        # state inside the last representative block.
+        over = over.join(d.nodeState_rp.select(pl.col("n").cast(over.schema["n"], strict=False)), on="n", how="anti")
     # An upper-level storage fix at the step wins (fix_quantity: a second equality on the same state; fix_usage: with
     # the end pinned the usage cap can be infeasible).  A nested fix_price does not conflict and keeps the pin.
     over = _without_steps(over, _nested_fixed_end(b, with_price=False))
     over = over.sort("n", "d", "t")
-    if over.height == 0:
+    return over if over.height > 0 else None
+
+
+def _eq_storage_end_binding(b: _Build) -> None:
+    """End state of fix_end / fix_start_end storage nodes at the last step of the entire model, in every sub-solve
+    whose horizon holds that step."""
+    d = b.d
+    over = _end_binding_steps(b)
+    if over is None:
         return
 
     # ─── EQ. ─── storage_state_end_binding ───────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # v_state[n,d,t] − state_end[n]·Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]
-    #   + state_end[n]·Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′]
+    # v_state[n,d,t] − state_end[n]·invested[n,d]
+    #   + state_end[n]·retired[n,d]
     #   = state_end[n] · capacity[n,d] / state_unitsize[n]
     #   ∀ n ∈ storage_fix_end, (n,d,t) ∈ nodeState_last_dt, d ∈ period_last, storage_solve_at_model_end,
     #     (n,d,t) ∉ the steps node_balance_fix_quantity_eq_lower / node_storage_usage_fix_le fix
@@ -4860,11 +5636,11 @@ def _eq_storage_end_binding(b: _Build) -> None:
     # steers the end through the objective and keeps the pin.  A fix_start_end node chains forward whatever its
     # storage_binding_method (_run_model._fix_start_end_chains_forward, _self_discharge.block_forward_nodes), so its
     # start is in the first step's balance and never on this state; a cyclic node is pinned here by fix_end only.
-    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
-    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+    # existing capacity counting until its end of life (none for reinvest_automatic).
     m = b.m
     lhs: dict = {"state": Where(b.v_state, over)}
-    invested, divested = _node_in_service(b, d.storage_fix_end, "_end", coef=d.p_state_end)
+    invested, divested = _capacity.node_in_service(b, d.storage_fix_end, "_end", coef=d.p_state_end)
     if invested is not None:
         lhs["invest_neg"] = -invested
     if divested is not None:
@@ -4874,8 +5650,407 @@ def _eq_storage_end_binding(b: _Build) -> None:
         over      = over,
         sense     = "==",
         lhs_terms = lhs,
-        rhs_terms = {"target": (d.p_state_end * d.p_state_existing_capacity) / d.p_state_unitsize},
+        rhs_terms = {"target": (d.p_state_end * b.cap.existing_state_n) / d.p_state_unitsize},
     )
+
+
+def _end_match_nodes(b: _Build) -> "tuple[pl.DataFrame | None, pl.DataFrame | None, pl.DataFrame | None]":
+    """``(free_first, share_first, ends)`` of the matching end of forward chains without representative periods.
+
+    free_first (n, d, t): the first steps of the bind_forward_only nodes whose chain starts free in this solve
+    (no fix_start, no carry); share_first (n, d, t): those of the fix_start nodes the solve can invest in during the
+    first period (not with fix_start_end at state_end ≥ state_start); ends (n, d, t): the last step of each last
+    period of those nodes.  Only in a solve that holds both the start of the chain (not carried: the first solve of
+    the model and of each nested level) and the last step of the model (storage_solve_at_model_end), and not for a
+    node an upper-level solve fixes.  Each None when empty.
+    """
+    d = b.d
+    none = (None, None, None)
+    # The first roll of a rolling solve that does not reach the end of the model: its free-start nodes get the row
+    # at its horizon end (storage_roll_end kind match_first, _run_model._anchor_cyclic_in_rolling).
+    first_roll = _roll_end_rows(d, ("match_first",))
+    if not (b.has_storage and (d.storage_solve_at_model_end or first_roll is not None)
+            and _has_rows(d.storage_bind_forward_only)
+            and _has_rows(d.nodeState_last_dt) and _has_rows(d.period_last) and _has_rows(d.nodeState_first_dt)):
+        return none
+    forward = d.storage_bind_forward_only.select(pl.col("n").cast(pl.Utf8)).unique()
+    if not d.storage_solve_at_model_end:
+        forward = forward.join(first_roll.select(pl.col("n").cast(pl.Utf8)), on="n", how="semi")
+    nested = _nested_nodes(b, with_price=True)
+    if nested is not None:
+        forward = forward.join(nested, on="n", how="anti")
+    if _has_rows(d.nodeState_rp):
+        forward = forward.join(d.nodeState_rp.select(pl.col("n").cast(pl.Utf8)), on="n", how="anti")
+    if forward.height == 0:
+        return none
+
+    def restrict(first) -> "pl.DataFrame | None":
+        if first is None:
+            return None
+        out = first.filter(pl.col("n").cast(pl.Utf8).is_in(forward["n"].implode()))
+        return out if out.height > 0 else None
+
+    free_first = restrict(_self_discharge.open_first(d))
+    share_first = restrict(_self_discharge.fix_start_first(d)) if d.storage_solve_at_model_end else None
+    if share_first is not None:
+        periods = sorted(set(str(x) for x in share_first["d"].to_list()))
+        investable = _invest_at_start_nodes(b, share_first.select("n").unique(), periods)
+        if _has_rows(d.storage_fix_end) and d.p_state_end is not None and d.p_state_start is not None:
+            shares = (d.p_state_start.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("s"))
+                      .join(d.p_state_end.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("e")),
+                            on="n"))
+            fix_end = set(str(n) for n in d.storage_fix_end["n"].to_list())
+            investable -= {n for n, s, e in shares.iter_rows() if n in fix_end and e >= s - 1e-12}
+        share_first = share_first.filter(pl.col("n").cast(pl.Utf8).is_in(sorted(investable)))
+        share_first = share_first if share_first.height > 0 else None
+    names = set()
+    for f in (free_first, share_first):
+        if f is not None:
+            names |= set(str(n) for n in f["n"].to_list())
+    if not names:
+        return none
+    ends = (d.nodeState_last_dt.join(d.period_last, on="d", how="inner")
+            .filter(pl.col("n").cast(pl.Utf8).is_in(sorted(names)))
+            .select("n", "d", "t").unique().sort("n", "d", "t"))
+    return free_first, share_first, (ends if ends.height > 0 else None)
+
+
+def _eq_storage_end_match(b: _Build) -> None:
+    """The matching end of forward chains (no representative periods) whose start is a decision of the solve."""
+    d = b.d
+    free_first, share_first, ends = _end_match_nodes(b)
+    if ends is None:
+        return
+    m = b.m
+    end_view = _var_view(b.v_state, "__end_match", {"d": "d_end", "t": "t_end"})
+    ends = ends.rename({"d": "d_end", "t": "t_end"})
+
+    # ─── EQ. ─── storage_state_end_match ─────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state[n,d_end,t_end] − v_state[n,d,t]  ≥  0
+    #   ∀ n ∈ bind_forward_only, (n,d,t) ∈ nodeState_first_dt with a free start (no fix_start, n ∉ carried),
+    #     (n,d_end,t_end) ∈ nodeState_last_dt, d_end ∈ period_last, storage_solve_at_model_end
+    #     (or n ∈ storage_roll_end(match_first): the first roll of a rolling solve), no upper-level fix on n
+    # The matching end: a forward chain that starts free (the solve chooses the level of the first step, which has
+    # no state change) ends the model at least at that level, so the solve cannot start full and end empty with
+    # energy it never produced.  An inequality: a start of 0 always meets it, so it does not force slack by
+    # itself.  fix_end and use_reference_value still set the end; with a free start this bounds the start by that
+    # end.  With a stochastic fan in the first period every root start is tied (storage_state_fan_start), so each
+    # last step is held to it.  In a rolling solve the first roll gets the row at its horizon end, so it does not
+    # choose its start for free while the rolls reaching the end of the model return it (storage_state_roll_match).
+    if free_first is not None:
+        over = (free_first.select("n", "d", "t")
+                .join(ends.with_columns(pl.col("n").cast(free_first.schema["n"], strict=False)), on="n", how="inner")
+                .sort("n", "d", "t", "d_end", "t_end"))
+        if over.height > 0:
+            _notice_nodes("storage_end_matches_start", over.select("n").unique(), b)
+            m.add_cstr(
+                "storage_state_end_match",
+                over      = over,
+                sense     = ">=",
+                lhs_terms = {"state_end": Where(end_view, over), "neg_state_start": -Where(b.v_state, over)},
+                rhs_terms = {},
+            )
+
+    # ─── EQ. ─── storage_state_end_match_share ───────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state[n,d_end,t_end] − state_start[n]·invested[n,d] + state_start[n]·retired[n,d]  ≥  0
+    #   ∀ n ∈ bind_forward_only ∩ storage_fix_start, n ∉ carried, (n,d,t) ∈ nodeState_first_dt, the solve can
+    #     invest in n in d (nd_invest_set), not fix_start_end with state_end ≥ state_start; (n,d_end,t_end) as above
+    # The matching end of a fix_start start on capacity the solve can invest in: the start on the capacity the solve
+    # adds in the first period (state units) comes back by the end of the model, so storage is not built as a fuel
+    # tank whose fix_start share is spent once.  The start on existing capacity is the user's endowment and may be
+    # used.  No investment always meets it.
+    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+    # existing capacity counting until its end of life (none for reinvest_automatic).
+    if share_first is not None and d.p_state_start is not None:
+        over = (share_first.select("n", "d", "t")
+                .join(ends.with_columns(pl.col("n").cast(share_first.schema["n"], strict=False)), on="n", how="inner")
+                .sort("n", "d", "t", "d_end", "t_end"))
+        if over.height > 0:
+            nodes = over.select("n").unique()
+            lhs: dict = {"state_end": Where(end_view, over)}
+            invested, divested = _capacity.node_in_service(b, nodes, "_end_match", coef=d.p_state_start)
+            if invested is not None:
+                lhs["invest_neg"] = -invested
+            if divested is not None:
+                lhs["divest"] = divested
+            _notice_nodes("storage_end_matches_start", nodes, b)
+            m.add_cstr(
+                "storage_state_end_match_share",
+                over      = over,
+                sense     = ">=",
+                lhs_terms = lhs,
+                rhs_terms = {},
+            )
+
+
+def _roll_horizon_ends(b: _Build, nodes: pl.DataFrame) -> "pl.DataFrame | None":
+    """``(n, d, t)`` of ``nodes`` (n): the last step of each last period (the roll's horizon end; each terminal
+    branch of a stochastic roll); None when there are none."""
+    d = b.d
+    if not (_has_rows(d.nodeState_last_dt) and _has_rows(d.period_last)):
+        return None
+    over = (d.nodeState_last_dt.join(d.period_last, on="d", how="inner")
+            .join(nodes.select(pl.col("n").cast(d.nodeState_last_dt.schema["n"], strict=False)), on="n", how="semi")
+            .select("n", "d", "t").unique().sort("n", "d", "t"))
+    return over if over.height > 0 else None
+
+
+def _first_scope_ends(b: _Build, nodes: pl.DataFrame) -> "pl.DataFrame | None":
+    """``(n, d, t)`` of ``nodes`` (n): where the first scope of a rolling roll ends within the roll — the step the
+    roll's first step would wrap to: the last step of the first period in the roll (bind_within_period, also
+    bind_within_timeblock, which a rolling solve uses as bind_within_period, and bind_intraperiod_blocks).  None
+    when there are none."""
+    d = b.d
+    if not (_has_rows(d.nodeState_first_dt) and _has_rows(d.nodeState_last_dt)):
+        return None
+    names = nodes.select(pl.col("n").cast(pl.Utf8)).unique()
+    first = (d.nodeState_first_dt.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
+             .join(names, on="n", how="semi"))
+    if first.height == 0:
+        return None
+    last = d.nodeState_last_dt.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
+    utf = first.select("n", "d").join(last, on=["n", "d"], how="inner").unique()
+    if utf.height == 0:
+        return None
+    over = (b.nodeState_dt
+            .with_columns(_n=pl.col("n").cast(pl.Utf8), _d=pl.col("d").cast(pl.Utf8), _t=pl.col("t").cast(pl.Utf8))
+            .join(utf.rename({"n": "_n", "d": "_d", "t": "_t"}), on=["_n", "_d", "_t"], how="semi")
+            .select("n", "d", "t").unique().sort("n", "d", "t"))
+    return over if over.height > 0 else None
+
+
+def _do_nothing_level(b: _Build, start: pl.DataFrame, ends: pl.DataFrame) -> pl.DataFrame:
+    """``(n, d, t, value)`` (Utf8 keys, MWh): the anchor level of each horizon end of ``ends`` — the lower of the
+    carried level ``start`` (n, value) and the level the storage would reach from it by doing nothing.
+
+    Doing nothing: no flow in or out, only the node's own ``inflow`` (a negative one is a forced outflow) and its
+    self-discharge, step by step along the forward chain from the roll's first step (dtttdt_forward_only):
+    S_t = (S⁻·(1 − β_t) + inflow_t) / (1 + α_t), clipped to [0, existing capacity] (the balance rows'
+    self-discharge weights, _self_discharge).  That level is reachable by construction, so the anchor never forces
+    slack; a lossless node without inflow keeps the carried level.
+    """
+    d = b.d
+    start = start.select(pl.col("n").cast(pl.Utf8), pl.col("value").cast(pl.Float64))
+    ends = ends.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
+    out = ends.join(start, on="n", how="inner")
+    names = set(start["n"].to_list())
+    inflow = None
+    if d.p_inflow is not None and _has_rows(d.p_inflow.frame) and "t" in d.p_inflow.frame.columns:
+        inflow = (d.p_inflow.frame.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                                          pl.col("t").cast(pl.Utf8), pl.col("value").cast(pl.Float64))
+                  .filter(pl.col("n").is_in(names) & (pl.col("value") != 0.0)))
+    loss = None
+    if b.self_discharge is not None:
+        loss = (b.self_discharge.frame.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                                              pl.col("t").cast(pl.Utf8), "alpha", "beta")
+                .filter(pl.col("n").is_in(names)))
+    moving = set()
+    for frame in (inflow, loss.filter((pl.col("alpha") > 0) | (pl.col("beta") > 0)) if loss is not None else None):
+        if frame is not None:
+            moving |= set(frame["n"].to_list())
+    lag = d.dtttdt_forward_only
+    if not moving or not _has_rows(lag) or not _has_rows(d.nodeState_first_dt):
+        return out
+    nxt: dict = {}
+    for dd, tt, dp, tp in lag.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8),
+                                     pl.col("d_previous").cast(pl.Utf8),
+                                     pl.col("t_previous_within_solve").cast(pl.Utf8)).iter_rows():
+        nxt.setdefault((dp, tp), []).append((dd, tt))
+    e_of = {} if inflow is None else {(n, dd, tt): v for n, dd, tt, v in inflow.iter_rows()}
+    ab_of = {} if loss is None else {(n, dd, tt): (a, bb) for n, dd, tt, a, bb in loss.iter_rows()}
+    cap_of: dict = {}
+    if b.cap.existing_state_n is not None:
+        cap_of = {(n, dd): v for n, dd, v in b.cap.existing_state_n.frame.select(
+            pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("value").cast(pl.Float64)).iter_rows()}
+    first = d.nodeState_first_dt.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
+    carry = dict(start.iter_rows())
+    level: dict = {}
+    for node in sorted(moving & names):
+        roots = [(dd, tt) for dd, tt in first.filter(pl.col("n") == node).select("d", "t").iter_rows()]
+        queue = [(step, carry[node]) for step in roots]
+        while queue:
+            (dd, tt), prev = queue.pop()
+            a, bb = ab_of.get((node, dd, tt), (0.0, 0.0))
+            now = (prev * (1.0 - bb) + e_of.get((node, dd, tt), 0.0)) / (1.0 + a)
+            now = min(max(now, 0.0), cap_of.get((node, dd), float("inf")))
+            level[(node, dd, tt)] = now
+            queue.extend((step, now) for step in nxt.get((dd, tt), ()))
+    if not level:
+        return out
+    held = pl.DataFrame([(n, dd, tt, v) for (n, dd, tt), v in level.items()],
+                        schema={"n": pl.Utf8, "d": pl.Utf8, "t": pl.Utf8, "_hold": pl.Float64}, orient="row")
+    return (out.join(held, on=["n", "d", "t"], how="left")
+            .with_columns(value=pl.min_horizontal("value", pl.col("_hold").fill_null(pl.col("value"))))
+            .drop("_hold"))
+
+
+def _capped_at_capacity(b: _Build, level: pl.DataFrame) -> pl.DataFrame:
+    """``level`` (n, d, t, value MWh, Utf8 keys) lowered to the storage capacity in service in the row's period
+    (existing, MWh; owner decision: a closure keeps the start energy in MWh but never asks for more than the period
+    can hold)."""
+    cap = b.cap.existing_state_n
+    if cap is None:
+        return level
+    return (level.join(cap.frame.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                                        pl.col("value").cast(pl.Float64).alias("_cap")), on=["n", "d"], how="left")
+            .with_columns(value=pl.min_horizontal("value", pl.col("_cap").fill_null(pl.col("value"))))
+            .drop("_cap"))
+
+
+def _eq_storage_roll_end(b: _Build) -> None:
+    """The horizon end of the bind_within_solve nodes of a rolling roll that continues from a carried state."""
+    d = b.d
+    if not (b.has_storage and _has_rows(getattr(d, "storage_roll_end", None)) and d.p_state_unitsize is not None):
+        return
+    m = b.m
+    pinned_end = _end_binding_steps(b)
+
+    def rows(kinds, *, with_price: bool):
+        nodes = _roll_end_rows(d, kinds)
+        if nodes is None:
+            return None, None
+        over = (_first_scope_ends(b, nodes) if all(k.startswith("scope_") for k in kinds)
+                else _roll_horizon_ends(b, nodes))
+        if over is None:
+            return None, None
+        over = _without_steps(_without_steps(over, _nested_fixed_end(b, with_price=with_price)),
+                              None if pinned_end is None else _utf8_cells(pinned_end))
+        return (over, nodes) if over.height > 0 else (None, None)
+
+    # ─── EQ. ─── storage_state_roll_anchor ───────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state[n,d,t]·state_unitsize[n] ≥ min(carry[n], hold[n,d,t])
+    #   ∀ n ∈ storage_roll_end(anchor), (n,d,t) ∈ nodeState_last_dt, d ∈ period_last;
+    #     n ∈ storage_roll_end(scope_anchor), (n,d,t) = the end of the roll's first scope (_first_scope_ends: the
+    #     last step of the first period in the roll);
+    #     (n,d,t) ∉ the steps an upper-level solve fixes (fix_quantity, fix_usage, fix_price),
+    #     (n,d,t) ∉ the steps storage_state_end_binding pins
+    #   carry = the level the roll starts from (MWh, roll_continue_state); hold = the level reached from it by doing
+    #   nothing (_do_nothing_level: inflow and self-discharge only, clipped to [0, existing capacity])
+    # A bind_within_solve node of a rolling solve continues each roll from the level realised by the previous roll
+    # (the cascade rewrites it to bind_forward_only for the roll, _run_model._anchor_cyclic_in_rolling), and a roll
+    # whose horizon does not reach the end of its solve ends at least at that level: each roll's plan is cyclic on
+    # its own start, as the first roll's wrap is.  An inequality, so that it can always be reached: storing more has
+    # a cost, so a lossless node ends at the carried level.  Where an upper-level solve fixes, caps or prices the
+    # state at the step, that replaces the anchor; fix_end (at the last step of the model) wins.  The same per
+    # period (bind_within_period, bind_intraperiod_blocks; bind_within_timeblock in a rolling solve is
+    # bind_within_period, _run_model._timeblock_binds_within_period_in_roll): a roll that
+    # starts inside a period an earlier roll began continues it from the carry (scope_carry: its first step has no
+    # wrap) and anchors the period's part in the roll; for bind_intraperiod_blocks also the roll that begins a period
+    # at its first step and holds it in part (its blocks chain forward from the carry).
+    over, nodes = rows(("anchor",), with_price=True)
+    scope_over, scope_nodes = rows(("scope_anchor",), with_price=True)
+    if scope_over is not None:
+        # A bind_within_period / bind_intraperiod_blocks node whose first period continues from the carry: the
+        # anchor sits where that period's part in the roll ends.
+        over = scope_over if over is None else pl.concat([over, scope_over.cast(over.schema)]).unique()
+        nodes = scope_nodes if nodes is None else pl.concat([nodes, scope_nodes.cast(nodes.schema)])
+    if over is not None:
+        level = _do_nothing_level(b, nodes, over)
+        m.add_cstr(
+            "storage_state_roll_anchor",
+            over      = over,
+            sense     = ">=",
+            lhs_terms = {"state": Where(b.v_state, over) * d.p_state_unitsize},
+            rhs_terms = {"level": Param(("n", "d", "t"), _state_keys_typed(b, level))},
+        )
+
+    # ─── EQ. ─── storage_state_roll_close ────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state[n,d,t]·state_unitsize[n] = start[n]
+    #   ∀ n ∈ storage_roll_end(close), (n,d,t) ∈ nodeState_last_dt, d ∈ period_last;
+    #     n ∈ storage_roll_end(scope_close), (n,d,t) = the end of the roll's first scope (_first_scope_ends);
+    #     (n,d,t) ∉ the steps an upper-level fix_quantity / fix_usage fixes,
+    #     (n,d,t) ∉ the steps storage_state_end_binding pins
+    #   start = the level (MWh) the first roll of the instance (scope_close: the roll that began the period)
+    #   started from (the cascade records it), at most the storage capacity in service in d (owner
+    #   decision: the start energy is kept in MWh, so capacity built later adds none, but a closure never asks
+    #   for more than the closing period can hold)
+    # A roll whose horizon holds the last step of its solve instance closes the cycle of bind_within_solve: it ends at
+    # the level the instance started from, so the realised rolls together return what they took (every roll whose
+    # horizon reaches that step, e.g. two when the horizon is not a multiple of the jump).  An upper-level
+    # fix_quantity / fix_usage at the step replaces it (that target carries the upper solve's closure); a nested
+    # fix_price only values the state and keeps it; fix_end wins at the last step of the model.  Per period
+    # (bind_within_timeblock in a rolling solve is bind_within_period): the roll that holds the end of a period it
+    # continues (or reaches the end of the instance) ends
+    # the scope at its start level, so a realised roll boundary inside the scope creates no energy (logic doc
+    # Lemma 4).
+    over, nodes = rows(("close",), with_price=False)
+    scope_over, scope_nodes = rows(("scope_close",), with_price=False)
+    if scope_over is not None:
+        # The end of a continued period that the roll holds: it ends at the level the period started from in the
+        # roll that began it.
+        over = scope_over if over is None else pl.concat([over, scope_over.cast(over.schema)]).unique()
+        nodes = scope_nodes if nodes is None else pl.concat([nodes, scope_nodes.cast(nodes.schema)])
+    if over is not None:
+        level = _capped_at_capacity(b, over.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
+                                    .join(nodes.select(pl.col("n").cast(pl.Utf8), pl.col("value").cast(pl.Float64)),
+                                          on="n"))
+        m.add_cstr(
+            "storage_state_roll_close",
+            over      = over,
+            sense     = "==",
+            lhs_terms = {"state": Where(b.v_state, over) * d.p_state_unitsize},
+            rhs_terms = {"start": Param(("n", "d", "t"), _state_keys_typed(b, level))},
+        )
+
+    # ─── EQ. ─── storage_state_roll_match ────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state[n,d,t]·state_unitsize[n] ≥ min(start[n], capacity[n,d])
+    #   ∀ n ∈ storage_roll_end(match) ∖ nodeState_rp, (n,d,t) ∈ nodeState_last_dt, d ∈ period_last,
+    #     (n,d,t) ∉ the steps an upper-level solve fixes, (n,d,t) ∉ the steps storage_state_end_binding pins
+    #   start = the level (MWh) the first roll started the node from (free: fix_nothing; the cascade records it)
+    # The matching end of a forward chain in a rolling solve or a sequence: a roll (or a later solve) that reaches
+    # the end of the model ends a bind_forward_only node whose start the first roll (the first solve) chose at least
+    # at that start (storage_state_end_match in a solve that holds the whole model).  An inequality: the first roll's own horizon end is held to its start
+    # (storage_state_end_match), so it starts no higher than it can refill.
+    over, nodes = rows(("match",), with_price=True)
+    if over is not None and _has_rows(d.nodeState_rp):
+        over = over.join(d.nodeState_rp.select(pl.col("n").cast(over.schema["n"], strict=False)), on="n", how="anti")
+        over = over if over.height > 0 else None
+    if over is not None:
+        level = _capped_at_capacity(b, over.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
+                                    .join(nodes.select(pl.col("n").cast(pl.Utf8), pl.col("value").cast(pl.Float64)),
+                                          on="n"))
+        m.add_cstr(
+            "storage_state_roll_match",
+            over      = over,
+            sense     = ">=",
+            lhs_terms = {"state": Where(b.v_state, over) * d.p_state_unitsize},
+            rhs_terms = {"start": Param(("n", "d", "t"), _state_keys_typed(b, level))},
+        )
+
+    # ─── EQ. ─── storage_state_roll_anchor_share / storage_state_roll_close_share ──
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state[n,d,t] − state_start[n]·invested[n,d] + state_start[n]·retired[n,d]
+    #   (≥ | =) state_start[n] · capacity[n,d] / state_unitsize[n]
+    #   ∀ n ∈ storage_roll_end(anchor_share | close_share), (n,d,t) as above (the anchor's or the closure's
+    #     exclusions)
+    # The first roll of a nested lower level under an upper-level fix_quantity / fix_usage starts from fix_start
+    # (forward, _fix_start_terms, not from its wrap: the wrap target would be the upper target), so where no upper
+    # target lies at its horizon end the anchor (≥, a roll that does not reach the end of its instance) or the
+    # closure (=) is the fix_start share of the capacity in service.
+    if b.cap.existing_state_n is not None and d.p_state_start is not None:
+        for kind, name, sense, with_price in (("anchor_share", "storage_state_roll_anchor_share", ">=", True),
+                                              ("close_share", "storage_state_roll_close_share", "==", False)):
+            over, nodes = rows((kind,), with_price=with_price)
+            if over is None:
+                continue
+            lhs: dict = {"state": Where(b.v_state, over)}
+            invested, divested = _capacity.node_in_service(b, nodes.select("n"), f"_{kind}", coef=d.p_state_start)
+            if invested is not None:
+                lhs["invest_neg"] = -invested
+            if divested is not None:
+                lhs["divest"] = divested
+            m.add_cstr(
+                name,
+                over      = over,
+                sense     = sense,
+                lhs_terms = lhs,
+                rhs_terms = {"target": (d.p_state_start * b.cap.existing_state_n) / d.p_state_unitsize},
+            )
 
 
 def _horizon_end_steps(b: _Build) -> "pl.DataFrame | None":
@@ -4904,7 +6079,7 @@ def _eq_storage_reference_value(b: _Build) -> None:
     if not (b.has_storage
             and _has_rows(d.storage_use_reference_value)
             and d.p_storage_state_reference_value is not None
-            and d.p_state_existing_capacity is not None
+            and b.cap.existing_state_n is not None
             and d.p_state_unitsize is not None):
         return
     ends = _horizon_end_steps(b)
@@ -4914,6 +6089,13 @@ def _eq_storage_reference_value(b: _Build) -> None:
     over = (ends
             .join(d.storage_use_reference_value, on="n", how="inner")
             .select("n", "d", "t").unique())
+    if _has_rows(d.nodeState_rp):
+        # A representative-period node takes its reference value on the end of its base-period chain
+        # (rp_inter_period_reference_value), not on a state inside the last representative block; a cyclic one
+        # none (its closure wins).
+        rp_ref = over.join(d.nodeState_rp.select(pl.col("n").cast(over.schema["n"], strict=False)), on="n", how="semi")
+        _notice_nodes("rp_storage_chain_pinned", rp_ref.select("n").unique(), b)
+        over = over.join(d.nodeState_rp.select(pl.col("n").cast(over.schema["n"], strict=False)), on="n", how="anti")
     if _has_rows(d.nodeStateBlock):
         # A bind_intraperiod_blocks node (in storage_use_reference_value in rolling solves only) is pinned where the
         # roll holds the period in part (period_block_chain): at the roll end and at the end of a chained tail that a
@@ -4924,13 +6106,18 @@ def _eq_storage_reference_value(b: _Build) -> None:
     # An upper-level storage fix at the step (fix_quantity, fix_usage or fix_price) overrides the horizon-end
     # reference value (how_to/solve_sequences.md, nested solves); the reference stays at every other roll end.
     over = _without_steps(over, _nested_fixed_end(b, with_price=True))
+    # A rolling roll that closes a bind_intraperiod_blocks period it continues (storage_roll_end kind scope_close)
+    # ends the period at its start level there; the reference stays at the roll's other ends.
+    closes = _roll_end_rows(d, ("scope_close",))
+    if closes is not None:
+        over = _without_steps(over, _utf8_cells(_first_scope_ends(b, closes)))
     if over.height == 0:
         return
 
     # ─── EQ. ─── storage_state_solve_horizon_reference_value ─────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # v_state[n,d,t] − reference_value[n,d,t]·Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′]
-    #   + reference_value[n,d,t]·Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′]
+    # v_state[n,d,t] − reference_value[n,d,t]·invested[n,d]
+    #   + reference_value[n,d,t]·retired[n,d]
     #   = reference_value[n,d,t] · capacity[n,d] / state_unitsize[n]
     #   ∀ n ∈ storage_use_reference_value, (n,d,t) ∈ horizon_end,
     #     (n ∈ nodeStateBlock ⇒ d ∈ period_block_chain), (n,d,t) ∉ the steps an upper-level solve fixes
@@ -4947,22 +6134,31 @@ def _eq_storage_reference_value(b: _Build) -> None:
     # infeasible (fix_usage), or a price meant to steer that end (fix_price).
     # reference_value on the pinned rows only: as a coefficient of the invest / divest sums it would otherwise span
     # every (n, d_invest, d, t) of the solve.
-    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
-    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+    # existing capacity counting until its end of life (none for reinvest_automatic).
     rv = (promote_param_to_dt(d.p_storage_state_reference_value, d.dt)
           .join(over.lazy(), on=["n", "d", "t"], how="inner")
           .select("n", "d", "t", "value")
           .collect())
     target = (rv.lazy().rename({"value": "rv"})
-              .join(d.p_state_existing_capacity.frame.lazy().rename({"value": "exist"}),
+              .join(b.cap.existing_state_n.frame.lazy().rename({"value": "exist"}),
                     on=["n", "d"], how="inner")
               .join(d.p_state_unitsize.frame.lazy().rename({"value": "us"}), on="n", how="inner")
               .with_columns(value=pl.col("rv") * pl.col("exist") / pl.col("us"))
               .select("n", "d", "t", "value")
               .collect())
+    # A reference value below the start share (fix_start, or the reference at the first step) of a node whose start
+    # the solve decides by investing: the matching end (storage_state_end_match_share) stays, as for fix_start_end,
+    # and caps the investment; a warning (_warn_reference_below_start).
+    _free, share_first, _ends = _end_match_nodes(b)
+    if share_first is not None and d.p_state_start is not None:
+        share = {str(n): v for n, v in d.p_state_start.frame.select(pl.col("n").cast(pl.Utf8), "value").iter_rows()}
+        matched = set(str(n) for n in share_first["n"].to_list())
+        _warn_reference_below_start(b, {str(n) for n, v in rv.select("n", "value").iter_rows()
+                                        if str(n) in matched and v < share[str(n)] - 1e-12})
     lhs: dict = {"state": Where(b.v_state, over)}
-    invested, divested = _node_in_service(b, d.storage_use_reference_value, "_ref_value",
-                                          coef=Param(("n", "d", "t"), rv))
+    invested, divested = _capacity.node_in_service(b, d.storage_use_reference_value, "_ref_value",
+                                                   coef=Param(("n", "d", "t"), rv))
     if invested is not None:
         lhs["invest_neg"] = -invested
     if divested is not None:
@@ -4976,6 +6172,23 @@ def _eq_storage_reference_value(b: _Build) -> None:
     )
 
 
+def _warn_reference_below_start(b: _Build, nodes: set) -> None:
+    """Warn about the nodes whose use_reference_value end lies below their start share while the solve can invest
+    in their storage in the period they start in (owner decision, Phase 5; before a configuration error): as for
+    fix_start_end, the matching end stays, so storage built must return its start energy, which caps the
+    investment.  One printed line per solve."""
+    if not nodes:
+        return
+    from flextool.engine import _behaviour_changes
+    solve = _behaviour_changes.complete_solve_of(b.solve_name)
+    _behaviour_changes.storage_message(
+        "storage_reference_below_start", b.solve_name, sorted(nodes),
+        lambda named: (f"Warning: in solve '{solve}' {named} with use_reference_value end below their start and the "
+                       "solve can invest in their storage: storage built must still return its start energy (the "
+                       "matching end), which caps that investment. Give storage_state_reference_value at least the "
+                       "start if the storage should be built freely."))
+
+
 def _eq_profiles(b: _Build) -> None:
     """Profile limits of process flows."""
     if not b.has_profile:
@@ -4985,8 +6198,8 @@ def _eq_profiles(b: _Build) -> None:
     # ─── EQ. ─── profile_flow_{upper_limit,lower_limit,fixed} ────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # v_flow[p,s,k,d,t] ± (Σ_r v_reserve[p,r,k,d,t] + Σ_r v_reserve[p,r,s,d,t] · φ[p,s,k,d,t])
-    #   − profile[f,d,t]·av[p,d,t]·Σ_{(p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′]
-    #   + profile[f,d,t]·av[p,d,t]·Σ_{(p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′]
+    #   − profile[f,d,t]·av[p,d,t]·invested[p,d]
+    #   + profile[f,d,t]·av[p,d,t]·retired[p,d]
     #   ≤ / ≥ / =  profile[f,d,t] · av[p,d,t] · existing_count[p,d]
     #   ∀ (p,s,k,f) ∈ process_profile_{upper,lower,fixed}, (d,t) ∈ dt
     # Bounds a flow by a profile times the built capacity, in units of unitsize.  av = availability, 1 for
@@ -4995,21 +6208,19 @@ def _eq_profiles(b: _Build) -> None:
     # at the sink; up at a unit's source); a source-side reserve is converted to the arc's flow by φ (1
     # where v_flow is the input, 1/slope on a direct unit's input→output arc).  The fixed profile has no
     # reserve term.  The invest/divest terms are restricted to the (p,f) pairs of the method's set.
-    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
-    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+    # existing capacity counting until its end of life (none for reinvest_automatic).
+    # The cached sums of _capacity, present only where a period is in service (no term over an empty domain).
     invested = divested = None
-    if b.has_invest_p:
-        alive = _entity_rows(d.edd_invest_set, "e", d.process_source_sink, "p")
-        if alive.height > 0:
-            invest_view = _var_view(b.v_invest_p, "__at_invest_prof", {"d": "d_invest"}, to_axis=True)
-            invested = Sum(Where(invest_view, alive), over=("d_invest",))
-    if b.has_divest_p:
-        # edd_divest_active and process_source_sink carry different p vocabularies: cast to the former.
-        procs = d.process_source_sink.select(pl.col("p").cast(d.edd_divest_active.schema["p"], strict=False)).unique()
-        active = d.edd_divest_active.join(procs, on="p", how="semi")
-        if active.height > 0:
-            divest_view = _var_view(b.v_divest_p, "__at_divest_prof", {"d": "d_divest"}, to_axis=True)
-            divested = Sum(Where(divest_view, active), over=("d_divest",))
+    if b.has_invest_p and _entity_rows(b.cap.alive, "e", d.process_source_sink, "p").height > 0:
+        invested = b.cap.invested_p
+    if b.has_divest_p or b.has_divest_built_p or b.has_extend_p:
+        # The retirements and process_source_sink carry different p vocabularies: cast to the former.
+        retired_p = b.cap.retired_frame("p")
+        procs = d.process_source_sink.select(pl.col("p").cast(retired_p.schema["p"], strict=False)).unique()
+        if (retired_p.join(procs, on="p", how="semi").height > 0 or b.has_divest_built_p
+                or b.has_extend_p):
+            divested = b.cap.retired_p
     reserve_down = -b.reserve_down_to_sink if b.reserve_down_to_sink is not None else None
     source_terms = {
         "profile_flow_upper_limit": dict(b.reserve_down_at_source),
@@ -5023,7 +6234,7 @@ def _eq_profiles(b: _Build) -> None:
         if not _has_rows(idx):
             continue
         over = idx.join(d.dt, how="cross")
-        rhs = d.p_profile_value * d.p_process_existing_count
+        rhs = d.p_profile_value * b.cap.existing_count_p
         avail = _availability_factor(d, idx) if d.p_process_availability is not None else None
         if avail is not None:
             rhs = rhs * avail
@@ -5069,6 +6280,9 @@ def _sum_terms(terms: list) -> Expr | None:
 
 # Every operational cost term is weighted by b.op_factor:
 #   w_op[d,t] = step_duration[d,t] · timestep_weight[d,t] · inflation_op[d] / period_share[d] · branch_weight[d,t]
+#   inflation_op[d] (the social discount factor of operating costs) = Σ_y pyr[d,y]·(1 + social_discount_rate)^−(
+#     base[d,y] + pyr[d,y]·discount_offset_operations), y the years d represents, pyr their length, base[d,y] the
+#     years from the run start to the start of y
 # step_duration turns a rate (currency/h) into currency per step, timestep_weight scales a representative step
 # to the time it stands for, / period_share scales the modelled part of the period to a full year, and
 # inflation_op discounts that year's operating cost; branch_weight is 1 outside stochastic solves.  Terms for point events
@@ -5398,7 +6612,8 @@ def _obj_storage_reference_price(b: _Build) -> Expr | None:
 
 def _obj_invest_divest(b: _Build) -> Expr | None:
     """Investment and divestment costs of processes and storage nodes."""
-    if not (b.has_invest_p or b.has_divest_p or b.has_invest_n or b.has_divest_n):
+    if not (b.has_invest_p or b.has_divest_p or b.has_invest_n or b.has_divest_n
+            or b.has_divest_built_p or b.has_divest_built_n or b.has_extend_p or b.has_extend_n):
         return None
     d = b.d
     terms: list = []
@@ -5420,19 +6635,66 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
              .drop("w"))
         return Param(cost.dims, f)
 
+    def _costs(var: str, *fields: str) -> list["Param | None"]:
+        """The cost frames ``fields`` of a solve that has ``var`` investment variables.  The preprocessing gives
+        each of them (zero rows where no cost is authored); none at all means the cost derivation did not run for
+        the solve, which would leave the investments free in the objective, so it is an error.  (A retirement
+        without its frames only loses its saving: no check.)"""
+        params = [getattr(d, f, None) for f in fields]
+        if all(p is None for p in params):
+            raise FlexToolConfigError(
+                f"The solve has {var} variables but none of the cost coefficients {', '.join(fields)}: the "
+                "decisions would be free in the objective. The cost derivation did not run for this solve; please "
+                "report it as a FlexTool bug.")
+        return params
+
     # ─── OBJ. ─── invest_cost_p ──────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{(p,d) ∈ pd_invest_set} v_invest_p[p,d]·unitsize[p] · annual_discounted[p,d] · bw[d]
     #   + Σ_{(p,d) ∈ pd_invest_set} v_invest_p[p,d]·unitsize[p] · lifetime_fixed_cost[p,d] · bw[d]
-    # Cost of process capacity decided in period d, currency/MW: the investment annuity summed over the
-    # discounted years it operates within the horizon, and the inflation-adjusted fixed cost over the same
-    # years of its lifetime.  With a construction lead time the capacity operates from its start of operation
-    # c(d): both windows start there, and the invest cost, interest rate, lifetime and fixed cost are those of
-    # c(d) (invest_cost is an overnight cost); without one c(d) = d.  No w_op: both factors are already per
-    # period.
+    #   annual_discounted[p,d] = (a_cap[p,c] − a_salv[p,c]) · Σ_{d′ ∈ L(p,d)} inflation_inv[d′]
+    #                                                                       (reinvest_choice / no_reinvestment)
+    #   inflation_inv[d] (the social discount factor of investment payments) = Σ_y pyr[d,y]·(1 +
+    #     social_discount_rate)^−(base[d,y] + pyr[d,y]·discount_offset_investment) (y, pyr, base as for inflation_op)
+    #                          = Σ_{g ∈ gen(p,d)} a_b[g] · Σ_{d′ ∈ L_g(p,d)} inflation_inv[d′]   (reinvest_automatic)
+    #   gen(p,d): the chain of the capacity decided in d: g1 online at c(d); g_{k+1} online at y_eol[g_k] =
+    #     round_end_of_life(y_on[g_k] + lifetime_technical[p, d_on(g_k)], end_of_life_method[p]) (at least one
+    #     period: the next seam when that is at or before y_on[g_k]), until the end of the horizon
+    #   L_g(p,d) = the solve's periods d′ on the walk lineage with yr[c] ≤ yr[d′], y_on[g] ≤ yr[d′] < y_eol[g]
+    #   a_b[g] = a_cap[g] − a_salv[g] as below, every value read at d_on(g) (the period g comes online in, on d′'s
+    #     lineage inside a stochastic fan), S at d_eol(g)
+    #   c = c(d) the period the capacity comes online; L(p,d) = the solve's periods d′ with yr[c] ≤ yr[d′] < y_eol[p,d]
+    #     (no upper end for reinvest_automatic): the periods the cohort of the decision is in service in, y_eol =
+    #     round_end_of_life(yr[c] + lifetime_technical[p,c], end_of_life_method[p]) (engine.md "Capacity symbols")
+    #   a_cap[p,c] = A[p,c]·G(n)/G(L) (A[p,c] when n = L); A[p,c] = ann(invest_cost[p,c], discount_rate[p,c], n);
+    #     n = payback_time[p,c] (lifetime_technical[p,c] where the entity has none); L = lifetime_technical[p,c];
+    #     G(x) = Σ_{k<⌈x⌉} min(1, x−k)·(1+social_discount_rate)^−k
+    #   a_salv[p,c] = S·(1+r)^−L·af(r, L), S = 1000·net_salvage_value[p,d_eol] (d_eol the period y_eol starts; the
+    #     last period after the last period start), r = discount_rate[p,c]
+    #   lifetime_fixed_cost[p,d] = 1000 · Σ_{d′ ∈ L(p,d)} fixed_cost[p,d′]·inflation_op[d′]
+    #   ann(c, r, n) = c·1000·af(r, n);  af(r, x) = r / (1 − (1+r)^−x) · (1+r)^(off_inv − 1) (1 / x for r = 0);
+    #     off_inv = discount_offset_investment: each payment falls off_inv years into its service year
+    # Cost of process capacity decided in period d, currency/MW. Capital: the level yearly cost of a plant of its real
+    # lifetime (the present value of the loan, paid over payback_time at discount_rate, spread evenly over
+    # lifetime_technical years; the payments are sized for when they fall, so the loan taken when the capacity comes
+    # online is worth invest_cost at discount_rate for every off_inv), charged for each year the cohort is in service
+    # inside the horizon (discounted per period). end_of_life_method sets the years in service, not the price;
+    # payback_time and discount_rate set only the size (with discount_rate = social_discount_rate payback_time changes
+    # nothing for a whole number of years). The salvage value at the end of the real lifetime lowers the price: its
+    # present value at discount_rate, levelled over the lifetime_technical years (the textbook capital recovery with
+    # salvage when payback_time = lifetime_technical). A reinvest_automatic plant is replaced at the end of its life
+    # by a plant at the invest cost (and discount_rate, payback_time, lifetime_technical, salvage value) of the period
+    # the replacement comes online, and so on to the end of the horizon; each pays its own level yearly cost for its
+    # years in service (with constant values the chain charges the first plant's annuity for every period).
+    # The inflation-adjusted fixed cost of each period the capacity
+    # operates in is charged over the same periods (it stops at the rounded end of life), as for existing capacity.
+    # With a construction lead time the capacity operates from its start of operation c(d): both windows start there,
+    # and the invest cost, interest rate, payback time and lifetime are those of c(d): their period maps describe the
+    # plant as constructed (invest_cost is an overnight cost); without one c(d) = d. No w_op: both factors are already
+    # per period. A solve with invest variables and neither cost frame is an error, not a free investment.
     if b.has_invest_p:
-        annu = _cost(d.ed_entity_annual_discounted, "p")
-        lf = _cost(d.ed_lifetime_fixed_cost, "p")
+        annu, lf = (_cost(p, "p") for p in _costs("v_invest_p", "ed_entity_annual_discounted",
+                                                    "ed_lifetime_fixed_cost"))
         if annu is not None:
             terms.append(Sum(b.v_invest_p * d.p_unitsize * annu))
         if lf is not None:
@@ -5441,24 +6703,36 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
     # ─── OBJ. ─── divest_cost_p ──────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # − Σ_{(p,d) ∈ pd_divest_set} v_divest_p[p,d]·unitsize[p] · lifetime_fixed_cost_divest[p,d] · bw[d]
-    #   − Σ_{(p,d) ∈ pd_divest_set} v_divest_p[p,d]·unitsize[p] · annual_divest_discounted[p,d] · bw[d]
+    #   − Σ_{(p,d) ∈ pd_divest_set} v_divest_p[p,d]·unitsize[p] · divest_salvage[p,d] · bw[d]
     #   lifetime_fixed_cost_divest[p,d] = Σ_{d′ ∈ W(p,d)} fixed_cost[p,d′]·1000·inflation_op[d′]
-    #   annual_divest_discounted[p,d] = ann(salvage_value[p,d], discount_rate[p,d], lifetime[p,d])
-    #                                   · Σ_{d′ ∈ S(p,d)} inflation_inv[d′]
-    #   W(p,d) = the solve's periods d′ with yr[d] ≤ yr[d′] < EOL[p] (the window of edd_divest_active: until the
+    #   divest_salvage[p,d] = [g1 in service in d]·(D(d)·S_d − a_x[p]·S̄_x[p,d])
+    #                         − [g a replacement, m > 0]·set[g,d] + Σ_{replacements g′ ≥ g} a_b[g′]·S̄[g′,d]
+    #     (reinvest_automatic: g the generation of p's existing chain in service in d, g1 the existing plant;
+    #      m = yr[d] − y_on[g]; set, S̄[g′,d] and a_b as in divest_built_cost (_retire_built), a_b of one plant
+    #      built in d_on(g′); other entities: the first term, g1 the existing cohort)
+    #   W(p,d) = the solve's periods d′ with yr[d] ≤ yr[d′] < EOL[p] (the window of retired[p,·]: until the
     #     end of life of p's pre-existing capacity, the end of the horizon for reinvest_automatic)
-    #   S(p,d) = the solve's periods d′ with yr[d] ≤ yr[d′] < yr[d] + lifetime[p,d] (raw lifetime)
+    #   S_d = 1000·net_salvage_value[p,d]; D(d) = (1+social_discount_rate)^−(years from the run start to the start of d)
+    #   a_x[p] = S_x·(1+r_x)^−R_x·af(r_x, R_x) (af: invest_cost_p), S_x = 1000·net_salvage_value[p,d_eol] (the
+    #     last period's value after the last period start), r_x = discount_rate[p,d0], R_x = y_eol[p] − y0 (y_end[p]
+    #     − y0 for a life past the horizon; 0 for a plant that serves no period), y_eol / y_end of g1 for
+    #     reinvest_automatic (a_x = 0 without a lifetime); y0 / d0 the start of the run
+    #   S̄_x[p,d] = Σ_{d′ ∈ history ∪ solve, y0 ≤ yr[d′] < EOL[p], on d's lineage} inflation_inv[d′]
     # Saving from process capacity retired in period d, currency/MW: the fixed cost of the existing capacity it no
-    # longer pays (each period's, with the factor the existing fixed cost has), and the salvage-value annuity over
-    # the discounted years of lifetime inside the horizon, the basis of an investment's annuity (so retiring
-    # existing capacity and building identical new capacity gains nothing).
+    # longer pays (each period's, with the factor the existing fixed cost has), and its salvage settlement.  The
+    # investment in existing capacity is sunk; it holds its salvage value as a level credit a_x per year in service
+    # (existing_salvage); a retired MW receives its net salvage value at the start of d and gives back every credit,
+    # so it earns exactly S_d·D(d).  A kept plant's credits are counted inside the horizon only.  Existing
+    # reinvest_automatic capacity is replaced at its end of life (existing_replacement): retiring it also avoids every
+    # replacement still to come, and retiring a replacement settles that plant's contract as it ran (a replacement
+    # retired at its own start was never bought).
     if b.has_divest_p:
         lfd = _cost(d.ed_lifetime_fixed_cost_divest, "p")
-        annd = _cost(d.ed_entity_annual_divest_discounted, "p")
+        salvage = _cost(d.ed_divest_salvage, "p")
         if lfd is not None:
             terms.append(-Sum(b.v_divest_p * d.p_unitsize * lfd))
-        if annd is not None:
-            terms.append(-Sum(b.v_divest_p * d.p_unitsize * annd))
+        if salvage is not None:
+            terms.append(-Sum(b.v_divest_p * d.p_unitsize * salvage))
 
     # ─── OBJ. ─── invest_cost_n ──────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
@@ -5467,8 +6741,8 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
     # As invest_cost_p for storage capacity, currency/MWh of storage.
     if b.has_invest_n:
         us_n = Param(("n",), d.p_state_unitsize.frame)
-        annu_n = _cost(d.ed_entity_annual_discounted, "n")
-        lf_n = _cost(d.ed_lifetime_fixed_cost, "n")
+        annu_n, lf_n = (_cost(p, "n") for p in _costs("v_invest_n", "ed_entity_annual_discounted",
+                                                        "ed_lifetime_fixed_cost"))
         if annu_n is not None:
             terms.append(Sum(b.v_invest_n * us_n * annu_n))
         if lf_n is not None:
@@ -5477,16 +6751,21 @@ def _obj_invest_divest(b: _Build) -> Expr | None:
     # ─── OBJ. ─── divest_cost_n ──────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # − Σ_{(n,d) ∈ nd_divest_set} v_divest_n[n,d]·state_unitsize[n] · lifetime_fixed_cost_divest[n,d] · bw[d]
-    #   − Σ_{(n,d) ∈ nd_divest_set} v_divest_n[n,d]·state_unitsize[n] · annual_divest_discounted[n,d] · bw[d]
-    # As divest_cost_p for storage capacity (W over ndd_divest_active's window).
+    #   − Σ_{(n,d) ∈ nd_divest_set} v_divest_n[n,d]·state_unitsize[n] · divest_salvage[n,d] · bw[d]
+    # As divest_cost_p for storage capacity (W over the window of retired[n,·]).
     if b.has_divest_n:
         us_n = Param(("n",), d.p_state_unitsize.frame)
         lfd_n = _cost(d.ed_lifetime_fixed_cost_divest, "n")
-        annd_n = _cost(d.ed_entity_annual_divest_discounted, "n")
+        salvage_n = _cost(d.ed_divest_salvage, "n")
         if lfd_n is not None:
             terms.append(-Sum(b.v_divest_n * us_n * lfd_n))
-        if annd_n is not None:
-            terms.append(-Sum(b.v_divest_n * us_n * annd_n))
+        if salvage_n is not None:
+            terms.append(-Sum(b.v_divest_n * us_n * salvage_n))
+
+    # The retirement of model-built capacity (divest_built_cost_{p,n}): _retire_built.
+    terms.extend(_retire_built.objective_terms(b))
+    # The life extensions (extend_cost_{p,n}): _extend.
+    terms.extend(_extend.objective_terms(b))
     return _sum_terms(terms)
 
 
@@ -5495,7 +6774,7 @@ def _obj_existing_fixed_cost(b: _Build) -> None:
     d = b.d
     if not (b.include_existing_fixed_cost
             and d.p_ed_fixed_cost is not None
-            and d.p_entity_all_existing is not None):
+            and b.cap.existing_mw_e is not None):
         return
 
     # ─── OBJ. ─── existing_fixed_cost ────────────────────────────────────────
@@ -5507,7 +6786,7 @@ def _obj_existing_fixed_cost(b: _Build) -> None:
     # include_existing_fixed_cost; when pd_branch_weight is present, periods without a weight row drop out.
     # Multiplied by scale_the_objective like every other objective term.
     fc_frame = (
-        d.p_entity_all_existing.frame.rename({"value": "exist"})
+        b.cap.existing_mw_e.frame.rename({"value": "exist"})
         .join(d.p_ed_fixed_cost.frame.rename({"value": "fc"}),
               on=["e", "d"], how="inner")
         .join(d.p_inflation_op.frame.rename({"value": "infl"}),
@@ -5523,6 +6802,74 @@ def _obj_existing_fixed_cost(b: _Build) -> None:
     fc_const = fc_frame.sort("e", "d")["contrib"].sum()  # fixed summation order (the joins leave it unspecified)
     if fc_const:
         b.m.add_obj_constant(float(fc_const) * b.scale_the_objective)
+
+
+def _obj_existing_salvage(b: _Build) -> None:
+    """The salvage value of existing capacity as a level yearly credit, an objective constant (opt-in)."""
+    d = b.d
+    credit = getattr(d, "ed_existing_salvage_credit", None)
+    if not (b.include_existing_fixed_cost and credit is not None and b.cap.existing_cohort_size_e is not None):
+        return
+
+    # ─── OBJ. ─── existing_salvage ───────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # − Σ_{(e,d) ∈ credit} (pre_existing[e,d] − retired_carried[e,d]) · a_x[e]·inflation_inv[d] · bw[d]
+    #   pre_existing = p_entity_pre_existing (the existing cohort's size, lifetime-gated, MW, MWh),
+    #   retired_carried = p_entity_retired_carried (its retirements realized by earlier solves of a chain)
+    #   credit = ed_existing_salvage_credit[e,d] = a_x[e]·inflation_inv[d] over the periods y0 ≤ yr[d] < EOL[e] of
+    #     an entity that may retire (a_x: divest_cost_p)
+    #   bw = pd_branch_weight, factor 1 when absent
+    # The salvage value of existing capacity, received at its end of life, as a level yearly income over its
+    # service years from the run start, the same credit as a built plant's (net of the retirements of earlier
+    # solves; a retirement in this solve gives its credits back through divest_cost_p).  A constant, added only with
+    # include_existing_fixed_cost, multiplied by scale_the_objective like every other objective term.
+    exist = _capacity.existing_not_retired(b).rename({"value": "exist"})
+    frame, credit_frame = align_join_dtypes(exist, credit.frame.rename({"value": "credit"}), ["e", "d"])
+    frame = frame.join(credit_frame, on=["e", "d"], how="inner")
+    if d.pd_branch_weight is not None:
+        frame, weights = align_join_dtypes(frame, d.pd_branch_weight.frame.rename({"value": "pdbw"}), ["d"])
+        frame = (frame.join(weights, on="d", how="inner")
+                      .with_columns(contrib=pl.col("exist") * pl.col("credit") * pl.col("pdbw")))
+    else:
+        frame = frame.with_columns(contrib=pl.col("exist") * pl.col("credit"))
+    constant = frame.sort("e", "d")["contrib"].sum()  # fixed summation order (the joins leave it unspecified)
+    if constant:
+        b.m.add_obj_constant(-float(constant) * b.scale_the_objective)
+
+
+def _obj_existing_replacement(b: _Build) -> None:
+    """The replacement of existing reinvest_automatic capacity at its end of life, an objective constant
+    (opt-in)."""
+    d = b.d
+    price = getattr(d, "ed_existing_replacement", None)
+    if not (b.include_existing_fixed_cost and price is not None and b.cap.existing_cohort_size_e is not None):
+        return
+
+    # ─── OBJ. ─── existing_replacement ───────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{(e,d) ∈ price} (pre_existing[e,d] − retired_carried[e,d]) · a_b[g(e,d)]·inflation_inv[d] · bw[d]
+    #   price = ed_existing_replacement[e,d] = a_b[g(e,d)]·inflation_inv[d], g(e,d) the replacement of e's existing
+    #     capacity in service in d (a generation g ≥ 2 of the existing reinvest_automatic chain: online at the end of
+    #     life of the one before, round_end_of_life(y_on + lifetime_technical[e, d_on(g)]), until the horizon end)
+    #   a_b[g] = a_cap[g] − a_salv[g] (invest_cost_p) of one plant built in d_on(g) (on d's lineage in a stochastic
+    #     fan), its salvage at its end of life; 0 without an invest_cost (and no salvage value)
+    #   pre_existing, retired_carried as in existing_salvage; bw = pd_branch_weight, factor 1 when absent
+    # The replacement of existing capacity at its end of life, at the invest cost (and the other values) of the period
+    # the replacement comes online: no decision changes it except retiring the capacity first, whose retirement
+    # coefficient (divest_cost_p) gives the replacement back whether or not this constant is added.  A constant,
+    # added only with include_existing_fixed_cost, multiplied by scale_the_objective like every other objective term.
+    exist = _capacity.existing_not_retired(b).rename({"value": "exist"})
+    frame, price_frame = align_join_dtypes(exist, price.frame.rename({"value": "price"}), ["e", "d"])
+    frame = frame.join(price_frame, on=["e", "d"], how="inner")
+    if d.pd_branch_weight is not None:
+        frame, weights = align_join_dtypes(frame, d.pd_branch_weight.frame.rename({"value": "pdbw"}), ["d"])
+        frame = (frame.join(weights, on="d", how="inner")
+                      .with_columns(contrib=pl.col("exist") * pl.col("price") * pl.col("pdbw")))
+    else:
+        frame = frame.with_columns(contrib=pl.col("exist") * pl.col("price"))
+    constant = frame.sort("e", "d")["contrib"].sum()  # fixed summation order (the joins leave it unspecified)
+    if constant:
+        b.m.add_obj_constant(float(constant) * b.scale_the_objective)
 
 
 # ---------------------------------------------------------------------------

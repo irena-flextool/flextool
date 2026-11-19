@@ -1,4 +1,4 @@
-"""The discount base of a solve's own factors (``_npv`` "The discount base of a solve's own factors", item 242).
+"""The discount base of a solve's own factors (``_discount`` "The discount base of a solve's own factors", item 242).
 
 Every solve discounts its investments and its operations from the start of the run.  The base reaches the model
 along three paths: ``p_inflation_op`` of a real solve and the investment walks (``_inflation_factors_lf`` with
@@ -39,7 +39,7 @@ def _later_solve_provider(years: list[tuple[str, float]]) -> FlexDataProvider:
     for name in ("steps_in_use", "steps_complete_solve"):
         prov.put(f"solve_data/{name}", _utf8({"period": ["p2"], "step": ["t03"], "duration": [2.0]}))
     prov.put("solve_data/solve_current", _utf8({"solve": ["later"]}))
-    prov.put("input/p_inflation_rate", _utf8({"model": ["m"], "value": [0.05]}))
+    prov.put("input/p_social_discount_rate", _utf8({"model": ["m"], "value": [0.05]}))
     return prov
 
 
@@ -47,7 +47,7 @@ class _Source:
     """The model's inflation scalars: rate 0.05, the default offsets."""
 
     def parameter(self, cls: str, name: str) -> pl.DataFrame:
-        if (cls, name) == ("model", "inflation_rate"):
+        if (cls, name) == ("model", "social_discount_rate"):
             return pl.DataFrame({"value": [0.05]})
         raise KeyError(name)
 
@@ -64,7 +64,7 @@ def test_the_three_paths_give_the_run_start_factors() -> None:
     """A solve over p2 after p1: the real-solve factors (``_inflation_factors_lf`` with ``solve_year_rows``) and
     the sub-solve seeds of ``_period_calc`` are both the hand values, discounted from the start of the run."""
     from flextool.engine.preprocess.emit._period_calc import emit_period_calculated_params
-    from flextool.engine.preprocess.params._npv import _inflation_factors_lf, solve_year_rows
+    from flextool.engine.preprocess.params._discount import _inflation_factors_lf, solve_year_rows
 
     prov = _later_solve_provider([(str(y), 1.0) for y in range(5)])
     rows = solve_year_rows(Path("."), prov)
@@ -82,7 +82,7 @@ def test_a_solve_that_starts_the_run_keeps_its_own_count() -> None:
     """Whole-year widths from the run start: the solve's own count already gives every year its base, so no
     year rows (the factors stay byte-identical); a fractional year before a period (item 259) or a later start
     give rows."""
-    from flextool.engine.preprocess.params._npv import year_rows_from_history
+    from flextool.engine.preprocess.params._discount import year_rows_from_history
 
     whole = {"p1": [(str(y), 1.0) for y in range(5)], "p2": [(str(y), 1.0) for y in range(5, 10)]}
     assert year_rows_from_history({"p1": 0.0, "p2": 5.0}, whole) is None
@@ -98,7 +98,7 @@ def test_a_period_without_history_is_an_error_only_when_the_rows_are_needed() ->
     """The gate over the periods with history decides first: a solve that keeps its own count keeps it even with
     a period outside its history (byte-identical, as before); one that needs the rows cannot discount that
     period."""
-    from flextool.engine.preprocess.params._npv import year_rows_from_history
+    from flextool.engine.preprocess.params._discount import year_rows_from_history
 
     assert year_rows_from_history({"p1": 0.0}, {"p1": [("0", 1.0)], "p3": [("1", 1.0)]}, solve="s") is None
     with pytest.raises(ValueError, match="Period 'p3' of solve 's'"):
@@ -109,7 +109,7 @@ def test_a_single_solve_with_its_map_out_of_period_order_counts_in_the_map_order
     """A single solve whose ``years_represented`` map lists p2 before p1 (periodAll order p1, p2): its history and
     its own rows count in the map order (p2 from 0, p1 from 5), the investment walk's database count in the period
     order (p1 from 0).  Both factors take the map order (the run's base); the v79 marker names such a solve."""
-    from flextool.engine.preprocess.params._npv import year_rows_from_history
+    from flextool.engine.preprocess.params._discount import year_rows_from_history
 
     own = {"p2": [(str(y), 1.0) for y in range(5)], "p1": [(str(y), 1.0) for y in range(5, 10)]}
     walk = {"p1": [(str(y), 1.0) for y in range(5)], "p2": [(str(y), 1.0) for y in range(5, 10)]}
@@ -121,20 +121,20 @@ def test_a_single_solve_with_its_map_out_of_period_order_counts_in_the_map_order
     assert rows.filter(pl.col("d") == "p2")["base"].to_list() == [0.0, 1.0, 2.0, 3.0, 4.0]
 
 
-def test_notice_names_the_solve_once_and_only_with_inflation(capsys) -> None:
+def test_notice_names_the_solve_once_and_only_with_inflation(coded_log) -> None:
     """The notice fires while the marker is present and inflation discounts the costs; the rolls of a rolling
     solve are announced once, by the rolling solve's name."""
     from flextool.engine import _behaviour_changes as bc
-    from flextool.engine.preprocess.params._npv import notice_discount_from_run_start
+    from flextool.engine.preprocess.params._discount import notice_discount_from_run_start
 
     bc.start_run({"chained_solve_discount_from_run_start": '{"since": 79}'})
     try:
-        capsys.readouterr()
+        coded_log()
         notice_discount_from_run_start("later", 0.0)
-        assert capsys.readouterr().out == ""
+        assert coded_log() == ""
         for roll in ("roll_p2_roll_0", "roll_p2_roll_1", "later"):
             notice_discount_from_run_start(roll, 0.05)
-        lines = capsys.readouterr().out.splitlines()
+        lines = coded_log.notices()
         assert len(lines) == 2 and "Affected solves: roll_p2." in lines[0] and "Affected solves: later." in lines[1]
     finally:
         bc.start_run({})

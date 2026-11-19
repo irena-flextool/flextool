@@ -6,7 +6,7 @@
 #   co2_price; the override scenarios of tests/assistant/grounding_projects.py add their alternative after the
 #   base chain);
 # - timeline: solve y2020_2day_dispatch, period p2020, timeset 2day = t0001..t0048 (48 steps of 1 h), no
-#   timestep weights, years_represented 1 (default), inflation_rate 0 (default);
+#   timestep weights, years_represented 1 (default), social_discount_rate 0 (default);
 # - _d_ energy tables are annualised: sample total / period_share_of_year, period_share = 48 / 8760, so
 #   x 182.5 (_output_meta ENERGY_ANNUAL, docs/advanced_concepts.md); _dt_ tables are MW per step; costs_dt_p is
 #   CUR per step (not annualised); annualized_costs_d_p is M CUR/a;
@@ -349,10 +349,10 @@ questions:
         kind: statement
         critical: true
         criterion: "States the objective term: vq_state_up x penalty_up (CUR/MWh) x step duration x timestep weight x
-          inflation factor / period share of year (x branch weight), i.e. the penalty per MWh scaled to a year and
-          to the price base."
+          operational discount factor / period share of year (x branch weight), i.e. the penalty per MWh scaled to a
+          year and to the price base."
         derivation: "core.py OBJ. balance_slack_penalty: Σ vq_state_up * penalty_up * w_op, with w_op[d,t] =
-          step_duration * timestep_weight * inflation_op / period_share * branch_weight"
+          step_duration * timestep_weight * inflation_op (the social discount factor) / period_share * branch_weight"
       - id: penalty_parameter
         kind: token
         value: penalty_up
@@ -457,10 +457,11 @@ questions:
         scale_units: ["MW", "GW"]
         critical: true
         derivation: "invest_2day_test = init, west, coal, coal_invest, invest_2day (invest_periods [p2020]).
-          Cost of 1 MW built in p2020: annuity 400 CUR/kW x 1000 x 0.05 / (1 - 1.05^-30) = 26020.57 CUR/MW/a plus
-          fixed_cost 100 CUR/kW/a x 1000 = 100000 CUR/MW/a, total 126020.57 CUR/MW for the one-year horizon.
+          Cost of 1 MW built in p2020: annuity 400 CUR/kW x 1000 x 0.05 / (1 - 1.05^-30) / 1.05 = 24781.50 CUR/MW/a
+          (paid at the start of the year, discount_offset_investment 0) plus fixed_cost 100 CUR/kW/a x 1000 = 100000
+          CUR/MW/a, total 124781.50 CUR/MW for the one-year horizon.
           Value of 1 MW in a sample hour with slack above it: (penalty 900 - fuel 20 / 0.4 = 50) = 850 CUR/MWh x
-          8760 / 48 = 155125 CUR/a > 126020.57, so every MW up to the peak slack is worth building (break-even 0.81
+          8760 / 48 = 155125 CUR/a > 124781.50, so every MW up to the peak slack is worth building (break-even 0.80
           sample hours). Peak slack 372 MW at t0043 (872 - 500); invest_method invest_total applies only
           invest_max_total 700 (not binding); invest_max_period (250 in p2020) is not applied under invest_total.
           Built 372 MW, total 872 MW."
@@ -477,15 +478,15 @@ questions:
         kind: statement
         critical: true
         criterion: "Lists the input differences: invest_periods [p2020] on the solve, and coal_plant's invest_method
-          invest_total, invest_cost 400 CUR/kW, lifetime 30, discount_rate 0.05, fixed_cost 100 CUR/kW/a,
-          invest_max_total 700, invest_max_period map; and notes that fixed_cost also applies to the existing 500 MW
+          invest_total, invest_cost 400 CUR/kW, lifetime_technical 30, discount_rate 0.05,
+          fixed_cost 100 CUR/kW/a, invest_max_total 700, invest_max_period map; and notes that fixed_cost also applies to the existing 500 MW
           (a constant cost of 50 M CUR/a that does not change the decision)."
         derivation: "tests.json alternative coal_invest + grounding_projects.py INVEST_2DAY; existing_fixed_cost OBJ:
           500 MW x 100000 CUR/MW/a = 50000000 CUR/a"
       - id: why_amount
         kind: statement
         critical: true
-        criterion: "Explains the amount by comparing the yearly cost per MW (annuity + fixed cost, about 126000 CUR/MW/a)
+        criterion: "Explains the amount by comparing the yearly cost per MW (annuity + fixed cost, about 125000 CUR/MW/a)
           with the avoided penalty net of fuel per MW per year (850 CUR/MWh x 182.5 h/a per sample hour), so building
           stops at the peak slack of 372 MW and the slack after is 0."
         derivation: "LP marginal argument above; after investing 372 MW the capacity 872 MW covers every hour"
@@ -502,12 +503,13 @@ questions:
         criterion: "Says the upward slack at west in invest_2day_test is 0 (all hours covered)."
         derivation: "872 MW >= peak demand 872 MW"
     allowed_derived:
-      - {value: 26020.57, note: "annuity per MW, CUR/MW/a", tolerance: {rel: 0.001}}
-      - {value: 26.02057, note: "annuity per kW, CUR/kW/a", tolerance: {rel: 0.001}}
-      - {value: 0.0650514, note: "annuity factor 0.05 / (1 - 1.05^-30)", tolerance: {rel: 0.001}}
+      - {value: 24781.50, note: "annuity per MW, CUR/MW/a", tolerance: {rel: 0.001}}
+      - {value: 24.78150, note: "annuity per kW, CUR/kW/a", tolerance: {rel: 0.001}}
+      - {value: 0.0619537, note: "annuity factor 0.05 / (1 - 1.05^-30) / 1.05", tolerance: {rel: 0.001}}
+      - {value: 0.0650514, note: "year-end annuity factor 0.05 / (1 - 1.05^-30)", tolerance: {rel: 0.001}}
       - {value: 100000, note: "fixed cost per MW, CUR/MW/a"}
-      - {value: 126020.57, note: "yearly cost per MW, CUR/MW/a", tolerance: {rel: 0.001}}
-      - {value: 126.02, note: "yearly cost per kW, CUR/kW/a", tolerance: {rel: 0.001}}
+      - {value: 124781.50, note: "yearly cost per MW, CUR/MW/a", tolerance: {rel: 0.001}}
+      - {value: 124.78, note: "yearly cost per kW, CUR/kW/a", tolerance: {rel: 0.001}}
       - {value: 155125, note: "avoided net penalty per MW per sample hour, CUR/a (850 x 182.5)"}
       - {value: 164250, note: "avoided penalty per MW per sample hour before fuel, CUR/a (900 x 182.5)"}
       - {value: 850, note: "penalty 900 minus fuel 50, CUR/MWh"}

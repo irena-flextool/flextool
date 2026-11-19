@@ -37,6 +37,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
+from tests._support.coded_warnings import capture_coded
 from tests.engine._unit_db import b64, is_realization, make_db, run, utf8
 
 REPO = Path(__file__).resolve().parents[2]
@@ -882,20 +883,19 @@ def test_silent_x_profile_period_map_on_nested_investment_sub_solves(tmp_path_fa
         assert step.solution.obj == pytest.approx(twin.solution.obj, rel=1e-9), name
 
 
-def test_silent_x_profile_missing_periods_warns_once(tmp_path_factory, capfd) -> None:
+def test_silent_x_profile_missing_periods_warns_once(tmp_path_factory) -> None:
     """73-g (O1): wind_profile = {p2020: 0.3} only -> sub-solve p2020 reads 0.3, the sub-solves of p2025, p2030
     and p2035 read 0 (a profile without a value is 0), and one warning per run names the profile, the parameter,
     the alternative and the missing periods.  The ``index_name: period`` twin warns the same and gives the same
     parameters and objectives."""
     runs = {}
     for label in (None, "period"):
-        capfd.readouterr()
-        steps = _nested_profile(tmp_path_factory, pmap({"p2020": 0.3}, label), cache=False)
-        out = capfd.readouterr().out
-        warned = [line for line in out.splitlines() if "has no value for period(s)" in line]
-        assert len(warned) == 1, warned
-        assert "profile 'wind_profile', parameter 'profile' (alternative 'c73_" in warned[0], warned
-        assert "has no value for period(s) p2025, p2030, p2035" in warned[0], warned
+        with capture_coded() as got:
+            steps = _nested_profile(tmp_path_factory, pmap({"p2020": 0.3}, label), cache=False)
+        warned = [call.details for call in got.calls if call.code == "W-0310"]
+        assert len(warned) == 1 and list(warned[0]) == ["wind_profile"], warned
+        assert warned[0]["wind_profile"].startswith("alternative 'c73_"), warned
+        assert warned[0]["wind_profile"].endswith("no value for p2025, p2030, p2035"), warned
         runs[label] = steps
     silent, labelled = runs[None], runs["period"]
     assert list(silent) == [f"invest_5weeks_{p}" for p in NESTED_PERIODS]

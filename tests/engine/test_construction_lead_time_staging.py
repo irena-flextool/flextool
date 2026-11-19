@@ -26,10 +26,8 @@ from __future__ import annotations
 
 import polars as pl
 
-from flextool.engine.preprocess.params._existing import (
-    commissioning_year_lf,
-    edd_invest_set_lf,
-)
+from flextool.engine.preprocess.params._cohorts import invest_alive, invest_cohorts
+from flextool.engine.preprocess.params._existing import commissioning_year_lf
 
 PERIODS = ["p1", "p2", "p3", "p4"]
 YEARS = [0.0, 5.0, 8.0, 20.0]
@@ -76,10 +74,10 @@ def _source(entity, lead, method="closest_seam"):
 
 
 def _alive(src, entity, order):
-    ed = pl.LazyFrame({"e": [entity], "d": [order]})
-    commission_lf = commissioning_year_lf(src, "s", ed, PERIODS)
-    edd = edd_invest_set_lf(
-        src, "s", ed, PERIODS, PERIODS, commission_lf=commission_lf).collect()
+    ed = pl.DataFrame({"e": [entity], "d": [order]})
+    commission_lf = commissioning_year_lf(src, "s", ed.lazy(), PERIODS)
+    _, alive = invest_cohorts(src, "s", ed, PERIODS, commission_lf=commission_lf)
+    edd = invest_alive(alive)
     return set(edd.filter(pl.col("d_invest") == order)["d"].to_list())
 
 

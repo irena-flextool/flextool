@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests._support.coded_warnings import capture_coded
 from tests.engine._unit_db import CHP_CHAIN, PLANT_CHAIN, b64, make_db, run
 
 
@@ -23,21 +24,7 @@ def _strict_autoscale(monkeypatch):
 
 
 ZERO = b64(0.0, "float")
-W1 = ("Warning: unit 'coal_plant' uses no input: all its outputs have conversion_flow_coeff 0, so its output to "
-      "'west' is free up to max_flow_for_unconstrained_variables (1000000). Give an output a non-zero "
-      "conversion_flow_coeff, or tie the flow with a user constraint.")
-W2_HEAT = ("Warning: unit__outputNode (coal_chp, heat): conversion_flow_coeff is 0 and no user constraint, flowGroup "
-           "maximum or profile limit ties the output flow, so the unit can put any amount into 'heat' for free (a "
-           "free source on that node), up to max_flow_for_unconstrained_variables (1000000). Tie it with a user "
-           "constraint (constraint_flow_coeff), or give it a non-zero conversion_flow_coeff. (A flowGroup "
-           "min_instant_flow / min_cumulative_flow bounds it only from below.)")
-W2_COAL_IN = ("Warning: unit__inputNode (coal_plant, coal_market): conversion_flow_coeff is 0 and no user constraint, "
-              "flowGroup maximum or profile limit ties the input flow, so the unit can take any amount from "
-              "'coal_market' for free (a dump load on that node), up to max_flow_for_unconstrained_variables "
-              "(1000000). Tie it with a user constraint (constraint_flow_coeff), or give it a non-zero "
-              "conversion_flow_coeff. (A flowGroup min_instant_flow / min_cumulative_flow bounds it only from below.)")
-W3_HEAT = ("Warning: unit__outputNode (coal_chp, heat): capacity_max_coeff has no effect on an output with "
-           "conversion_flow_coeff 0 (the flow is outside the capacity limits).")
+LIMIT = "up to max_flow_for_unconstrained_variables (1000000)"
 
 
 def _validate(url: str, scenario: str) -> None:
@@ -48,48 +35,57 @@ def _validate(url: str, scenario: str) -> None:
         validate_zero_conversion_coeff(backend._db)
 
 
-def test_unit_with_all_outputs_zero_warns_once_per_run(tmp_path_factory, capsys) -> None:
+def test_unit_with_all_outputs_zero_warns_once_per_run(tmp_path_factory) -> None:
     url, scen = make_db(tmp_path_factory, alt="b213_w1", base_chain=PLANT_CHAIN,
                         values=[["unit__outputNode", ["coal_plant", "west"], "conversion_flow_coeff", ZERO]])
-    run(tmp_path_factory, url, scen)
-    out = capsys.readouterr().out
-    assert out.count(W1) == 1, out
-    assert "unit__outputNode (coal_plant, west): conversion_flow_coeff is 0" not in out, out
+    with capture_coded() as got:
+        run(tmp_path_factory, url, scen)
+    assert [n for call in got.calls if call.code == "W-0216" for n in call.names] == ["coal_plant"]
+    assert got.detail("W-0216", "coal_plant") == f"free outputs 'west', {LIMIT}"
+    assert "coal_plant, west" not in got.names("W-0217")
 
 
-def test_untied_zero_output_warns(tmp_path_factory, capsys) -> None:
+def test_untied_zero_output_warns(tmp_path_factory) -> None:
     """A constraint coefficient of 0 does not tie the flow."""
-    _validate(*make_db(tmp_path_factory, alt="b213_w2", base_chain=CHP_CHAIN, values=[
-        ["unit__outputNode", ["coal_chp", "heat"], "conversion_flow_coeff", ZERO],
-        ["unit__outputNode", ["coal_chp", "heat"], "constraint_flow_coeff",
-         b64({"index_type": "str", "data": [["coal_chp_fix", 0.0]]}, "map")]]))
-    out = capsys.readouterr().out
-    assert W2_HEAT in out and "uses no input" not in out, out
+    with capture_coded() as got:
+        _validate(*make_db(tmp_path_factory, alt="b213_w2", base_chain=CHP_CHAIN, values=[
+            ["unit__outputNode", ["coal_chp", "heat"], "conversion_flow_coeff", ZERO],
+            ["unit__outputNode", ["coal_chp", "heat"], "constraint_flow_coeff",
+             b64({"index_type": "str", "data": [["coal_chp_fix", 0.0]]}, "map")]]))
+    assert got.names("W-0217", side="output") == ["coal_chp, heat"]
+    assert got.detail("W-0217", "coal_chp, heat") == f"a free source on the node, {LIMIT}"
+    assert "W-0216" not in got.codes()
 
 
-def test_untied_zero_input_warns(tmp_path_factory, capsys) -> None:
-    _validate(*make_db(tmp_path_factory, alt="b213_w2_in", base_chain=PLANT_CHAIN, values=[
-        ["unit__inputNode", ["coal_plant", "coal_market"], "conversion_flow_coeff", ZERO]]))
-    assert W2_COAL_IN in capsys.readouterr().out
+def test_untied_zero_input_warns(tmp_path_factory) -> None:
+    with capture_coded() as got:
+        _validate(*make_db(tmp_path_factory, alt="b213_w2_in", base_chain=PLANT_CHAIN, values=[
+            ["unit__inputNode", ["coal_plant", "coal_market"], "conversion_flow_coeff", ZERO]]))
+    assert got.names("W-0217", side="input") == ["coal_plant, coal_market"]
+    assert got.detail("W-0217", "coal_plant, coal_market") == f"a dump load on the node, {LIMIT}"
 
 
-def test_zero_output_tied_by_a_user_constraint_is_silent(tmp_path_factory, capsys) -> None:
-    _validate(*make_db(tmp_path_factory, alt="b213_tied", base_chain=CHP_CHAIN, values=[
-        ["unit__outputNode", ["coal_chp", "heat"], "conversion_flow_coeff", ZERO]]))
-    assert "Warning" not in capsys.readouterr().out
+def test_zero_output_tied_by_a_user_constraint_is_silent(tmp_path_factory) -> None:
+    with capture_coded() as got:
+        _validate(*make_db(tmp_path_factory, alt="b213_tied", base_chain=CHP_CHAIN, values=[
+            ["unit__outputNode", ["coal_chp", "heat"], "conversion_flow_coeff", ZERO]]))
+    assert got.codes() == []
 
 
-def test_capacity_coeff_on_a_zero_output_warns(tmp_path_factory, capsys) -> None:
-    _validate(*make_db(tmp_path_factory, alt="b213_w3", base_chain=CHP_CHAIN, values=[
-        ["unit__outputNode", ["coal_chp", "heat"], "conversion_flow_coeff", ZERO],
-        ["unit__outputNode", ["coal_chp", "heat"], "capacity_max_coeff", b64(0.5, "float")]]))
-    out = capsys.readouterr().out
-    assert W3_HEAT in out and "no user constraint" not in out, out
+def test_capacity_coeff_on_a_zero_output_warns(tmp_path_factory) -> None:
+    with capture_coded() as got:
+        _validate(*make_db(tmp_path_factory, alt="b213_w3", base_chain=CHP_CHAIN, values=[
+            ["unit__outputNode", ["coal_chp", "heat"], "conversion_flow_coeff", ZERO],
+            ["unit__outputNode", ["coal_chp", "heat"], "capacity_max_coeff", b64(0.5, "float")]]))
+    assert got.names("W-0218") == ["coal_chp, heat"]
+    assert got.detail("W-0218", "coal_chp, heat") == "capacity_max_coeff"
+    assert "W-0217" not in got.codes()
 
 
-def test_zero_output_with_an_upper_limit_profile_is_silent(tmp_path_factory, capsys) -> None:
-    _validate(*make_db(tmp_path_factory, alt="b213_profile", base_chain=PLANT_CHAIN, values=[
-        ["unit__outputNode", ["coal_plant", "west"], "conversion_flow_coeff", ZERO],
-        ["profile", "cap", "profile", b64(0.5, "float")]],
-        entities=[["profile", "cap", None], ["unit__node__profile", ["coal_plant", "west", "cap"], None]]))
-    assert "Warning" not in capsys.readouterr().out
+def test_zero_output_with_an_upper_limit_profile_is_silent(tmp_path_factory) -> None:
+    with capture_coded() as got:
+        _validate(*make_db(tmp_path_factory, alt="b213_profile", base_chain=PLANT_CHAIN, values=[
+            ["unit__outputNode", ["coal_plant", "west"], "conversion_flow_coeff", ZERO],
+            ["profile", "cap", "profile", b64(0.5, "float")]],
+            entities=[["profile", "cap", None], ["unit__node__profile", ["coal_plant", "west", "cap"], None]]))
+    assert got.codes() == []

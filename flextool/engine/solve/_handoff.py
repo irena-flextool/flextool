@@ -22,11 +22,12 @@ Carrier schemas (each is the on-disk equivalent's columns, renamed
 for in-memory uniformity — string keys + ``value`` for single-value
 carriers, named metric columns for multi-value):
 
-    realized_invest        [entity, period, value]
-    realized_existing      [entity, period, value]
     realized_commission    [entity, period, commission_period, value]
     divest_cumulative      [entity, value]
-    realized_divest        [entity, period, value]
+    realized_cohort        [entity, cohort, kind, method, eol_method, period_decided, period_online, y_on, age,
+                            y_life, y_end, y_first_life_end, y_eol, period_eol, a_cap, pay, n_pay,
+                            r_loan, a_salv, nsv_eol, root, parent, size]
+    realized_retire        [entity, cohort, period, value]
     roll_end_state         [node, value]
     roll_end_online        [process, value]
     roll_end_flow          [process, source, sink, period, step, duration, value]
@@ -54,12 +55,10 @@ single wide ``fix_storage`` field (retired in Phase 4.1l).  Each
 metric is independent, so a separate per-metric carrier matches the
 producer/consumer reality without NULL-padding columns.
 
-``realized_invest`` and ``realized_existing`` together cover the two
-columns of ``solve_data/p_entity_period_existing_capacity.csv``:
-``realized_invest`` is what was *built this solve*, ``realized_existing``
-is the resolved existing-capacity history (pre-existing decay +
-divest enter this column and aren't reconstructible from
-``realized_invest`` alone).
+``realized_cohort`` / ``realized_retire`` carry the capacity a later solve starts from: each investment realized
+by the run as a cohort (its start of operation and end of life placed once, by the deciding solve) and the
+retirements per cohort; the existing capacity is the run's existing cohort with the user's ``existing`` of each
+period (``_cohort_handoff.existing_capacity``).
 """
 from __future__ import annotations
 
@@ -80,24 +79,10 @@ class SolveHandoff:
     to its dependent (child / next-roll) solves.
     """
 
-    # Realized invest *built this solve* in absolute units (post-unitsize).
-    # Producer: any solve with v_invest > 0.
-    # Consumer: subsequent solves' preprocessing.
-    # File equivalent: ``p_entity_period_invested_capacity`` column of
-    #   solve_data/p_entity_period_existing_capacity.csv.
-    realized_invest: pl.DataFrame | None = None
-
-    # Realized existing-capacity history per (entity, period) — captures
-    # pre-existing decay + divest that ``realized_invest`` doesn't.
-    # File equivalent: ``p_entity_period_existing_capacity`` column of
-    #   solve_data/p_entity_period_existing_capacity.csv.
-    realized_existing: pl.DataFrame | None = None
-
     # Realized investments with a construction lead time, chain-cumulative: decision period, the period the
     # capacity starts to operate in (found by the deciding solve on the run calendar) and the capacity
-    # (post-unitsize).  ``realized_invest`` / ``realized_existing`` key these by the start of operation; this
-    # carrier keeps the decision period, so a later solve knows what comes online and what is in construction in
-    # its periods.  Producer: ``build_handoff_from_solution``.  Consumer: ``apply_existing_chain``
+    # (post-unitsize): a later solve knows what comes online and what is in construction in its periods.
+    # Producer: ``build_handoff_from_solution``.  Consumer: ``apply_existing_chain``
     # (``p_entity_carried_commission`` / ``p_entity_carried_in_construction``).  In-memory only.
     realized_commission: pl.DataFrame | None = None
 
@@ -106,12 +91,18 @@ class SolveHandoff:
     # File equivalent: solve_data/p_entity_divested.csv.
     divest_cumulative: pl.DataFrame | None = None
 
-    # Capacity retired (post-unitsize) per realized, non-branch decision period, chain-cumulative.  A later solve
-    # subtracts a retirement from the periods it still counts in (from its decision period until the end of life
-    # of the entity's pre-existing capacity), not from every period.  Producer: ``build_handoff_from_solution``.
-    # Consumers: ``apply_existing_chain`` (``p_entity_retired_carried``) and the emitted
-    # ``p_entity_all_existing``.
-    realized_divest: pl.DataFrame | None = None
+    # The investments realized by this solve and the earlier solves of the run, one row per cohort (an investment
+    # decision), chain-cumulative: the cohort's row of the cohort table of the solve that decided it (run years,
+    # never recomputed: ``y_on`` / ``y_eol`` place it in a later solve's periods) and its ``size`` (MW, MWh for
+    # storage).  Columns: ``_cohort_handoff.realized_cohort_schema``.  Producer: ``build_handoff_from_solution``
+    # (``_cohort_handoff.realized_cohorts``).  Consumer: the later solves' existing capacity (emit
+    # ``_chain_params.emit_existing_capacity``).  In-memory only.
+    realized_cohort: pl.DataFrame | None = None
+
+    # Capacity retired (post-unitsize) per cohort and realized, non-branch decision period, chain-cumulative
+    # ``[entity, cohort, period, value]``: a later solve subtracts a retirement from the periods it still counts in
+    # (from its decision period while the cohort is in service).  Producer / consumer as ``realized_cohort``.
+    realized_retire: pl.DataFrame | None = None
 
     # End-of-roll storage state for ``bind_forward_only`` carry-over.
     # Producer: prior roll's v_state at its last (d, t).
@@ -239,8 +230,36 @@ class SolveHandoff:
     unit_detail: str = "none"
     online_left_out: frozenset = frozenset()
 
+    # The storage level (MWh) each storage node's first step starts from: the carried state, the fix_start energy
+    # (storage_state_start × capacity in service), the state of a cyclic node's wrap target, the free first state
+    # of an open chain, or the start of a representative-period node's base-period chain.  ``[node, value]``.  Read by the cascade
+    # (``solve._run_model``): the start of a rolling instance that its closing rolls return to, and the start a
+    # nested lower level borrows from this solve.  Producer: ``build_handoff_from_solution``.  Not a carrier: not in
+    # ``_FIELDS``.
+    cycle_start_state: pl.DataFrame | None = None
+
+    # The planned storage level (v_state × state_unitsize, MWh, the end of each step) of the nodes this solve hands a
+    # nested fix to (any storage_nested_fix_method), at every step of the solve: ``[node, period, step, value]``.
+    # The start a nested lower level that first appears after this solve's first step borrows.  Producer and
+    # consumer as ``cycle_start_state``.  Not a carrier.
+    storage_level: pl.DataFrame | None = None
+
+    # The level (MWh) each cyclic scope that starts in this solve starts from: every period of a bind_within_period
+    # node, every timeblock of a bind_within_timeblock node (the state of its first step's wrap target) and every
+    # period a rolling roll holds only in part of a bind_intraperiod_blocks node, keyed by the scope's first step:
+    # ``[node, period, step, value]``.  Read by the cascade (``solve._run_model._anchor_cyclic_in_rolling``): the
+    # level a later roll that continues the scope closes it to.  Producer and consumer as ``cycle_start_state``.
+    # Not a carrier.
+    scope_start_state: pl.DataFrame | None = None
+
+    # The net energy (MWh) this solve drew in its realised steps from each storage node an upper-level solve caps by
+    # fix_usage: ``[node, period, value]``.  The cascade sums it over the rolls of a solve instance, so that a roll's
+    # cap is the upper solve's usage from the start of the period less what the earlier rolls used
+    # (``solve._run_model._usage_cap``).  Producer: ``build_handoff_from_solution``.  Not a carrier.
+    realised_storage_usage: pl.DataFrame | None = None
+
     _FIELDS = (
-        "realized_invest", "realized_existing", "realized_commission", "divest_cumulative", "realized_divest",
+        "realized_commission", "divest_cumulative", "realized_cohort", "realized_retire",
         "roll_end_state", "upward_roll_end_state", "roll_end_online", "roll_end_flow",
         "roll_end_step", "online_history", "fix_online", "fix_reserve",
         "fix_storage_quantity", "fix_storage_price", "fix_storage_usage",

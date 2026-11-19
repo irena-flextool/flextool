@@ -25,6 +25,8 @@ import logging
 
 import polars as pl
 
+from flextool import run_warnings
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -76,10 +78,7 @@ def _iter_flat_ladder_rows(api, value, commodity: str,
     try:
         return api.convert_map_to_table(value)
     except Exception as exc:
-        logger.warning(
-            "Could not flatten ladder for commodity '%s': %s",
-            commodity, exc,
-        )
+        run_warnings.warn("W-0400", commodity, details={commodity: f"cannot be flattened: {exc}"})
         return []
 
 
@@ -203,11 +202,8 @@ def derive_commodity_ladder_cumulative(
         if pv["type"] is None:
             continue
         if pv["type"] != "map":
-            logger.warning(
-                "commodity.price_ladder_cumulative on '%s' has type %s "
-                "(expected nested 1d map); skipping.",
-                pv["entity_byname"][0], pv["type"],
-            )
+            run_warnings.warn("W-0400", pv["entity_byname"][0], details={
+                pv["entity_byname"][0]: f"price_ladder_cumulative has type {pv['type']} (expected a nested map)"})
             continue
         commodity = pv["entity_byname"][0]
         flat = _iter_flat_ladder_rows(api, pv["parsed_value"], commodity, logger)
@@ -280,11 +276,8 @@ def derive_commodity_ladder_annual(
         if pv["type"] is None:
             continue
         if pv["type"] != "map":
-            logger.warning(
-                "commodity.price_ladder_annual on '%s' has type %s "
-                "(expected nested map); skipping.",
-                pv["entity_byname"][0], pv["type"],
-            )
+            run_warnings.warn("W-0400", pv["entity_byname"][0], details={
+                pv["entity_byname"][0]: f"price_ladder_annual has type {pv['type']} (expected a nested map)"})
             continue
         commodity = pv["entity_byname"][0]
         flat = _iter_flat_ladder_rows(api, pv["parsed_value"], commodity, logger)
@@ -315,11 +308,8 @@ def derive_commodity_ladder_annual(
                 from flextool.engine import _behaviour_changes
                 _behaviour_changes.notice("price_ladder_periods_from_solve_periods", "commodities", [commodity])
             if not periods_cache:
-                logger.warning(
-                    "commodity.price_ladder_annual on '%s' is 2d_map but "
-                    "no model periods were available for expansion; "
-                    "skipping.", commodity,
-                )
+                run_warnings.warn("W-0400", commodity, details={
+                    commodity: "price_ladder_annual is a 2-level map but the model has no periods to spread it over"})
                 continue
             for period in periods_cache:
                 for tier_str in sorted(per_tier.keys(), key=_tier_sort_key):
@@ -354,11 +344,8 @@ def derive_commodity_ladder_annual(
                 quantity = _quantity_sentinel(facets.get("quantity", "inf"))
                 rows.append((commodity, period, tier_str, facets.get("price"), quantity))
         else:
-            logger.warning(
-                "commodity.price_ladder_annual on '%s' has unexpected "
-                "flattened shape (max row length %d); skipping.",
-                commodity, max_len,
-            )
+            run_warnings.warn("W-0400", commodity, details={
+                commodity: f"price_ladder_annual has an unexpected shape (max row length {max_len})"})
             continue
 
     frame = pl.DataFrame(

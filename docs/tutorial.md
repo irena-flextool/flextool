@@ -223,11 +223,14 @@ Add alternative *wind_invest*. On *wind_plant* (under *wind_invest*):
 
 - `invest_method` = *invest_no_limit* — the model may build any amount of new capacity.
 - `invest_cost` = `1000` — the overnight cost of new capacity [CUR/kW].
-- `lifetime` = `25` — years.
+- `lifetime_technical` = `25` — years the new capacity operates. Without a `payback_time`, the investment is also
+  paid back over these years.
 - `discount_rate` = `0.04` — the cost of capital, 4 %.
 
-The model turns the investment cost into a yearly payment (an annuity) over the lifetime:
-1000 × 0.04 / (1 − 1.04^−25) ≈ 64 CUR/kW per year.
+The model turns the investment cost into a yearly payment (an annuity) over the payback time, here the technical
+lifetime:
+1000 × 0.04 / (1 − 1.04^−25) / 1.04 ≈ 61.5 CUR/kW per year, paid at the start of each year (the `/ 1.04` makes the
+payments worth the 1000 CUR/kW at 4 % when the capacity starts to operate).
 
 On the solve *2day-dispatch* (under *wind_invest*):
 
@@ -240,7 +243,7 @@ Commit with **Ctrl-Enter**.
 Create a scenario *wind_invest* with alternatives *init*, *init_2day-test*, *west*, *coal*, *wind*, *network*, *wind_invest*. Commit, queue, execute. In the results:
 
 - **Capacity.** The unit capacity table (`unit_capacity__d`) shows the *existing* capacity of *wind_plant*, the capacity *invested* and the *total*. The model builds wind until one more MW would save less in fuel and penalties than its annuity.
-- **Costs.** The annualized costs (`annualized_costs__d`) now have a *unit investment & retirement* category: the annuity of the new capacity for one year, in M CUR.
+- **Costs.** The annualized costs (`annualized_costs__d`) now have an *investment* category: in this one-year period, the annuity of the new capacity for its one year in the model, in M CUR.
 - **Dispatch.** Compare *network* and *wind_invest* in the comparison view: more wind output and less coal.
 
 !!! note "One period, two days"

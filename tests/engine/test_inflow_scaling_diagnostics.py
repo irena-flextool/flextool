@@ -158,7 +158,7 @@ def test_nonuniform_weights_f_matches_handcompute_and_warns():
 
 
 def test_warning_logged_at_warning_level(caplog):
-    """The public emitter logs the WARNING line (naming node/period/f) for a
+    """The public emitter warns (W-0512, node/period named; f in the debug detail) for a
     non-uniform divergence, and still emits the diagnostic frame to the
     Provider."""
     weights = [0.5, 1.0, 1.5, 2.0]
@@ -166,17 +166,12 @@ def test_warning_logged_at_warning_level(caplog):
     w = {("d1", t): wv for t, wv in zip(times, weights)}
     provider = _base_provider(timestep_weight=w)
 
-    with caplog.at_level(
-        logging.WARNING,
-        logger="flextool.engine.preprocess.emit._inflow_scaling",
-    ):
+    with caplog.at_level(logging.DEBUG, logger="flextool.warnings"):
         emit_node_inflow_scaling_params(INP, SDD, provider=provider)
 
-    msgs = [r.getMessage() for r in caplog.records
-            if r.levelno == logging.WARNING]
-    assert any("inflow scaling" in m and "annN" in m and "d1" in m
-               and "f=" in m for m in msgs), (
-        f"expected a node/period/f warning; got {msgs}")
+    msgs = [r.getMessage() for r in caplog.records if r.name == "flextool.warnings"]
+    assert "Warning: timeset_weights change the annualised inflow by over 1% ('annN, d1') [W-0512]" in msgs, msgs
+    assert any(m.startswith("W-0512 annN, d1: timeset_weights give f=") for m in msgs), msgs
 
     # The standalone diagnostic frame reached the Provider (surfaced via
     # the solve_data key, NOT mixed into the scaling-frame parity set).

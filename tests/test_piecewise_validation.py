@@ -19,6 +19,7 @@ from spinedb_api import Array, DatabaseMapping, Map, TimeSeriesVariableResolutio
 from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.input_derivation._process_method import derive_process_method
 from flextool.input_derivation._validators import validate_piecewise_linear_inputs, validate_startup_inputs
+from tests._support.coded_warnings import capture_coded
 
 O1 = Map([0.4, 0.7, 1.0], [0.30, 0.40, 0.42])
 E8 = Map([0.4, 0.7, 1.0], [0.30, 0.36, 0.42])
@@ -62,19 +63,23 @@ def _db(tmp_path: Path, schema_db_url: str, entities: list, values: list) -> str
 
 
 def _check(tmp_path, schema_db_url, caplog, units: list[tuple[list, list]], extra_values=(), extra_entities=()):
-    """``(error text or None, warning messages)`` of ``validate_piecewise_linear_inputs``."""
+    """``(error text or None, coded warnings)`` of ``validate_piecewise_linear_inputs``: one ``<code> <name>:
+    <details>`` text per case."""
     ents = [e for u in units for e in u[0]] + list(extra_entities)
     vals = [v for u in units for v in u[1]] + list(extra_values)
     url = _db(tmp_path, schema_db_url, ents, vals)
     logger = logging.getLogger("test_piecewise_validation")
-    caplog.set_level(logging.INFO, logger=logger.name)
     error = None
-    with DatabaseMapping(url) as db:
+    with capture_coded() as got, DatabaseMapping(url) as db:
         try:
             validate_piecewise_linear_inputs(db, logger)
         except FlexToolConfigError as err:
             error = str(err)
-    return error, [r.getMessage() for r in caplog.records if r.name == logger.name]
+    return error, _cases(got)
+
+
+def _cases(got) -> list[str]:
+    return [f"{call.code} {name}: {call.details.get(name, '')}" for call in got.calls for name in call.names]
 
 
 # ─── errors ──────────────────────────────────────────────────────────────
@@ -219,9 +224,8 @@ def test_W1_min_load_below_first_point(tmp_path, schema_db_url, caplog) -> None:
     _, warnings = _check(tmp_path, schema_db_url, caplog, [_unit("U")],
                          extra_values=[("unit", ("U",), "min_load", 0.2)])
     assert warnings == [
-        "Unit 'U': min_load 0.2 is below the first point of its curve (load 0.4): between them the first segment is "
-        "extended (efficiency at min_load ≈ 0.19); without a higher min_load the unit can be online at zero "
-        "output, burning 0.78 MW of fuel per MW online"]
+        "W-0203 U: min_load 0.2 below the first point (load 0.4); efficiency at min_load ≈ 0.19, 0.78 MW of fuel "
+        "per MW online at zero output"]
 
 
 def test_W1_compares_each_period_with_its_min_load(tmp_path, schema_db_url, caplog) -> None:
@@ -233,32 +237,29 @@ def test_W1_compares_each_period_with_its_min_load(tmp_path, schema_db_url, capl
     _, warnings = _check(tmp_path, schema_db_url, caplog,
                          [_unit("U", curve=Map(["p2030", "p2035"], [O1, O1], **PERIOD)), _unit("C")],
                          extra_values=[("unit", ("U",), "min_load", min_load), ("unit", ("C",), "min_load", min_load)])
-    tail = ("(load 0.4): between them the first segment is extended (efficiency at min_load ≈ 0.19); without a "
-            "higher min_load the unit can be online at zero output, burning 0.78 MW of fuel per MW online")
-    assert sorted(warnings) == [f"Unit 'C': min_load 0.2 is below the first point of its curve in period p2030 {tail}",
-                                f"Unit 'U': min_load 0.2 is below the first point of its curve in period p2030 {tail}"]
+    tail = "in period p2030; efficiency at min_load ≈ 0.19, 0.78 MW of fuel per MW online at zero output"
+    assert sorted(warnings) == [f"W-0203 C: min_load 0.2 below the first point (load 0.4) {tail}",
+                                f"W-0203 U: min_load 0.2 below the first point (load 0.4) {tail}"]
 
 
 def test_W1_not_for_a_falling_curve_and_per_period(tmp_path, schema_db_url, caplog) -> None:
     curve = Map(["p2030", "p2035"], [ELECTROLYSER, O1], **PERIOD)
     _, warnings = _check(tmp_path, schema_db_url, caplog, [_unit("U", curve=curve)])
     assert len(warnings) == 1
-    assert warnings[0].startswith("Unit 'U': min_load 0 is below the first point of its curve in period p2035 "
-                                  "(load 0.4)")
+    assert warnings[0].startswith("W-0203 U: min_load 0 below the first point (load 0.4) in period p2035")
 
 
 def test_W2_efficiency_not_used(tmp_path, schema_db_url, caplog) -> None:
     _, warnings = _check(tmp_path, schema_db_url, caplog, [_unit("G", curve=FLAT)],
                          extra_values=[("unit", ("G",), "efficiency", 0.4),
                                        ("unit", ("G",), "efficiency_at_min_load", 0.3)])
-    assert warnings == ["Unit 'G': efficiency and efficiency_at_min_load are not used by a piecewise_linear unit "
-                        "(its curve gives the efficiency)"]
+    assert warnings == ["W-0202 G: efficiency and efficiency_at_min_load"]
 
 
 def test_W6_curve_on_another_method(tmp_path, schema_db_url, caplog) -> None:
     _, warnings = _check(tmp_path, schema_db_url, caplog, [_unit("G", ct=None), _unit("M", ct="min_load_efficiency")])
-    assert warnings == ["Unit 'G': piecewise_linear_efficiency is not used (conversion_method is constant_efficiency)",
-                        "Unit 'M': piecewise_linear_efficiency is not used (conversion_method is min_load_efficiency)"]
+    assert warnings == ["W-0201 G: conversion_method is constant_efficiency",
+                        "W-0201 M: conversion_method is min_load_efficiency"]
 
 
 def test_W7_input_items_of_multi_line_units(tmp_path, schema_db_url, caplog) -> None:
@@ -278,16 +279,13 @@ def test_W7_input_items_of_multi_line_units(tmp_path, schema_db_url, caplog) -> 
     _, warnings = _check(tmp_path, schema_db_url, caplog,
                          [_unit("E", inputs=("fuel", "gas"), curve=ELECTROLYSER), _unit("S", curve=ELECTROLYSER),
                           _unit("R", curve=RISING)], extra_values=vals, extra_entities=ents)
-    tail = "can be met by burning input above the part-load curve (piecewise_linear rows are 'at least'); " \
-           "check the post-solve warning"
     assert sorted(warnings) == sorted(
-        [f"Unit 'E': its {item} on input '{n}' {tail}"
+        [f"W-0204 E, {n}: {item}"
          for item, n in [("upward reserve 'r'", "fuel"), ("profile 'pr' (lower_limit)", "fuel"),
                          ("flowGroup 'fg' minimum", "gas"), ("constraint 'c'", "gas"), ("ramp limit", "gas")]]
-        + [f"Unit 'S': its upward reserve 'r' on input 'fuel' {tail}",
-           "Unit 'R': min_load 0 is below the first point of its curve (load 0.4): between them the first segment "
-           "is extended (efficiency at min_load ≈ 0); without a higher min_load the unit can be online at zero "
-           "output, burning 0.63 MW of fuel per MW online"])  # β = 0.4·(1/0.3 − 1/0.42)/0.6 = 0.635
+        + ["W-0204 S, fuel: upward reserve 'r'",
+           "W-0203 R: min_load 0 below the first point (load 0.4); efficiency at min_load ≈ 0, 0.63 MW of fuel per "
+           "MW online at zero output"])  # β = 0.4·(1/0.3 − 1/0.42)/0.6 = 0.635
 
 
 # ─── classifier: methods, forced fork, automatic start-ups (W3), W4 ──────
@@ -309,15 +307,13 @@ class _Provider:
 
 def _classify(url: str, caplog) -> tuple[dict[str, str], list[str], _Provider]:
     logger = logging.getLogger("test_piecewise_classifier")
-    caplog.set_level(logging.INFO, logger=logger.name)
     provider = _Provider()
     provider.put("input/process__startup_method",
                  pl.DataFrame({"process": ["B"], "startup_method": ["binary"]}))
-    with DatabaseMapping(url) as db:
+    with capture_coded() as got, DatabaseMapping(url) as db:
         derive_process_method(db, provider, logger, ct_method_overrides={})
     pm = provider.get("input/process_method")
-    return (dict(zip(pm["process"].to_list(), pm["method"].to_list())),
-            [r.getMessage() for r in caplog.records if r.name == logger.name], provider)
+    return dict(zip(pm["process"].to_list(), pm["method"].to_list())), _cases(got), provider
 
 
 def test_classifier_methods_and_automatic_startups(tmp_path, schema_db_url, caplog) -> None:
@@ -333,11 +329,9 @@ def test_classifier_methods_and_automatic_startups(tmp_path, schema_db_url, capl
     assert {u: methods[u] for u in "GRFEBP"} == {
         "G": "method_1way_nvar_LP", "R": "method_1way_1var_LP", "F": "method_1way_1var_off",
         "E": "method_1way_nvar_off", "B": "method_1way_nvar_MIP", "P": "method_1way_nvar_LP"}
-    assert ("Unit 'G': startup_method set to linear: its piecewise_linear_efficiency curve burns fuel at zero output "
-            "(efficiency rises from load 0.4 to 0.7), which needs online variables") in infos
-    assert ("Unit 'P': startup_method set to linear: its piecewise_linear_efficiency curve burns fuel at zero output "
-            "(efficiency rises from load 0.5 to 1 in period p2030), which needs online variables") in infos
-    assert not any(m.startswith(("Unit 'F'", "Unit 'E'", "Unit 'B'")) for m in infos)
+    assert "W-0230 G: efficiency rises from load 0.4 to 0.7" in infos
+    assert "W-0230 P: efficiency rises from load 0.5 to 1 in period p2030" in infos
+    assert not any(m.startswith(("W-0230 F", "W-0230 E", "W-0230 B")) for m in infos)
     sm = provider.get("input/process__startup_method")
     assert dict(zip(sm["process"].to_list(), sm["startup_method"].to_list())) == {
         "B": "binary", "G": "linear", "R": "linear", "P": "linear"}
@@ -352,13 +346,11 @@ def test_W4_only_startup_only_inputs(tmp_path, schema_db_url, caplog) -> None:
     url = _db(tmp_path, schema_db_url, ents, vals)
     _methods, _infos, provider = _classify(url, caplog)
     logger = logging.getLogger("test_piecewise_w4")
-    caplog.set_level(logging.WARNING, logger=logger.name)
-    with DatabaseMapping(url) as db:
+    with capture_coded() as got, DatabaseMapping(url) as db:
         validate_startup_inputs(db, provider, logger)
         with pytest.raises(FlexToolConfigError, match="unit 'U': a piecewise_linear unit needs at least one input"):
             validate_piecewise_linear_inputs(db, logger)
-    assert ("unit 'U': piecewise_linear with only startup_only inputs: its part-load curve has no input to draw "
-            "from.") in [r.getMessage() for r in caplog.records if r.name == logger.name]
+    assert "W-0210 U: piecewise_linear" in _cases(got)
 
 
 def test_W7_one_input_unit_flowgroup_inertia_and_negative_values(tmp_path, schema_db_url, caplog) -> None:
@@ -375,22 +367,18 @@ def test_W7_one_input_unit_flowgroup_inertia_and_negative_values(tmp_path, schem
             ("unit__inputNode", ("G", "fuel"), "inertia_constant", 2.0),
             ("commodity", ("c",), "price", Map(["p2030", "p2035"], [10.0, -1.0], **PERIOD)),
             ("commodity", ("c",), "co2_content", -0.1), ("unit", ("G",), "min_load", 0.4)]
-    tail = "can be met by burning input above the part-load curve (piecewise_linear rows are 'at least'); " \
-           "check the post-solve warning"
-    neg = "where the input pays, the unit can burn it above its part-load curve (piecewise_linear rows are " \
-          "'at least'); check the post-solve warning"
-    negatives = [f"Unit '{u}': commodity 'c' of input 'fuel' has {what}: {neg}" for u in ("E", "G")
+    negatives = [f"W-0204 {u}, fuel: commodity 'c' has {what}" for u in ("E", "G")
                  for what in ("a negative price", "a negative co2_content (a credit under a CO2 price)")]
     _, warnings = _check(tmp_path, schema_db_url, caplog, [_unit("E", curve=ELECTROLYSER), _unit("G")],
                          extra_values=vals, extra_entities=ents)
-    assert sorted(warnings) == sorted([f"Unit 'E': its flowGroup 'fg' minimum on input 'fuel' {tail}",
-                                       f"Unit 'E': its inertia for group 'ig' on input 'fuel' {tail}"] + negatives)
+    assert sorted(warnings) == sorted(["W-0204 E, fuel: flowGroup 'fg' minimum",
+                                       "W-0204 E, fuel: inertia for group 'ig'"] + negatives)
     caplog.clear()
     (tmp_path / "reduced").mkdir()
     _, warnings = _check(tmp_path / "reduced", schema_db_url, caplog, [_unit("E", curve=ELECTROLYSER), _unit("G")],
                          extra_values=vals + [("solve", ("s1",), "reduce_unit_detail_method", "online")],
                          extra_entities=ents)
-    assert f"Unit 'G': its inertia for group 'ig' on input 'fuel' {tail}" in warnings
+    assert "W-0204 G, fuel: inertia for group 'ig'" in warnings
     # A solve that no model runs leaves nothing out: model.solves runs s1 only, s2 has reduce online.
     caplog.clear()
     (tmp_path / "not_run").mkdir()
@@ -398,8 +386,8 @@ def test_W7_one_input_unit_flowgroup_inertia_and_negative_values(tmp_path, schem
                          extra_values=vals + [("model", ("flexTool",), "solves", Array(["s1"])),
                                               ("solve", ("s2",), "reduce_unit_detail_method", "online")],
                          extra_entities=ents + [("model", ("flexTool",)), ("solve", ("s2",))])
-    assert f"Unit 'G': its inertia for group 'ig' on input 'fuel' {tail}" not in warnings
-    assert f"Unit 'E': its inertia for group 'ig' on input 'fuel' {tail}" in warnings
+    assert "W-0204 G, fuel: inertia for group 'ig'" not in warnings
+    assert "W-0204 E, fuel: inertia for group 'ig'" in warnings
 
 
 def test_W7_not_for_items_that_cannot_pay(tmp_path, schema_db_url, caplog) -> None:
@@ -420,3 +408,21 @@ def test_W7_not_for_items_that_cannot_pay(tmp_path, schema_db_url, caplog) -> No
                          [_unit("E", inputs=("fuel", "gas"), curve=ELECTROLYSER), _unit("R", curve=RISING)],
                          extra_values=vals, extra_entities=ents)
     assert warnings == []
+
+
+def test_a_clean_model_prints_no_nameless_w0200_w0201(tmp_path, schema_db_url):
+    """B1: with no unit to name, W-0200 / W-0201 print no line and add nothing to the tally (an empty name list is
+    "no case", not "a case without a name")."""
+    from flextool import run_warnings
+    from flextool.input_derivation._validators import validate_min_load_efficiency_inputs
+
+    url = _db(tmp_path, schema_db_url, *_unit("plain", ct="constant_efficiency", curve=None))
+    run_warnings.start_run()
+    try:
+        with capture_coded() as got, DatabaseMapping(url) as db:
+            validate_min_load_efficiency_inputs(db, logging.getLogger("test"))
+            validate_piecewise_linear_inputs(db, logging.getLogger("test"))
+        assert got.lines() == [] and got.codes() == []
+        assert run_warnings.tally() == {} and run_warnings.tally_lines() == []
+    finally:
+        run_warnings.start_run()

@@ -19,6 +19,7 @@ import polars as pl
 import pytest
 
 from flextool.engine.input._solve_state import FlexToolConfigError
+from flextool.engine.preprocess.params._cohorts import invest_alive
 from tests.engine._lp_rows import row_terms
 from tests.engine._unit_db import b64, build, make_db, run, utf8
 from tests.engine.test_user_constraint_capacity_terms import CHAIN, GE, PLANT, SINGLE, _constraint, _map
@@ -85,8 +86,9 @@ def _total(step) -> dict[str, float]:
     fd = step.flex_data
     dec = _decisions(step)
     out = dict(utf8(fd.p_entity_all_existing.frame).filter(pl.col("e") == PLANT).select("d", "value").iter_rows())
-    if fd.edd_invest_set is not None:
-        for o, d in utf8(fd.edd_invest_set).filter(pl.col("e") == PLANT).select("d_invest", "d").iter_rows():
+    alive = invest_alive(fd.cohort_alive)
+    if alive.height > 0:
+        for o, d in utf8(alive).filter(pl.col("e") == PLANT).select("d_invest", "d").iter_rows():
             out[d] = out.get(d, 0.0) + dec.get(o, 0.0)
     return out
 

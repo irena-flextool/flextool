@@ -458,7 +458,7 @@ def test_read_total_system_cost_sums_all_categories(tmp_path):
     """read_total_system_cost sums every signed category (penalty + revenue)."""
     series = pd.Series(
         {
-            "unit investment & retirement": 10.0,
+            "investment": 10.0,
             "upward slack penalty": 5.0,     # unserved-energy penalty INCLUDED
             "commodity_sales": -3.0,         # revenue enters negative
         }

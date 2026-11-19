@@ -18,8 +18,13 @@ from typing import Iterable, Mapping
 
 import polars as pl
 
+from flextool.engine.input._lifetime_roles import END_OF_LIFE_METHODS
+
 #: Provider key of the run calendar frame ``[solve, period, yr, years_represented]``.
 RUN_CALENDAR_KEY = "solve_data/run_period_calendar"
+#: Provider key of the existing cohorts of the run (:func:`._cohorts.run_existing_cohorts`: Utf8 labels, run
+#: years), built once when the run starts and put on every sub-solve's Provider beside the run calendar.
+RUN_EXISTING_COHORT_KEY = "solve_data/run_existing_cohort"
 
 _SCHEMA = {"solve": pl.Utf8, "period": pl.Utf8, "yr": pl.Float64, "years_represented": pl.Float64}
 
@@ -57,6 +62,99 @@ class RunCalendar:
             if abs(y - yr) <= YEAR_TOL:
                 return d
         return None
+
+
+def snap_to_seam(t_star: float, method: str, seams: list[float], tol: float = YEAR_TOL) -> float:
+    """The seam (a period start, or the end of the horizon) that the year ``t_star`` rounds to with ``method``.
+
+    * ``previous_seam`` — the last seam ``<= t_star + tol``;
+    * ``next_seam``     — the first seam ``>= t_star - tol``;
+    * ``closest_seam``  — the nearer of the two, a tie (within ``tol``) goes to the later seam.
+
+    ``+inf`` when the method finds no seam (``next_seam`` past the last seam, or ``t_star = +inf``).  ``tol`` makes
+    two years closer than it the same seam; ``0.0`` compares exactly."""
+    lo = max((s for s in seams if s <= t_star + tol), default=None)
+    hi = min((s for s in seams if s >= t_star - tol), default=None)
+    if method == "previous_seam":
+        return lo if lo is not None else float("inf")
+    if method == "next_seam":
+        return hi if hi is not None else float("inf")
+    # closest_seam: the nearer one; a tie goes to the later seam.
+    if hi is None:
+        return lo if lo is not None else float("inf")
+    if lo is None:
+        return hi
+    return lo if (t_star - lo) < (hi - t_star) - tol else hi
+
+
+def round_end_of_life(y_end: float, method: str, seams: list[float], tol: float = YEAR_TOL) -> float:
+    """The end of life ``y_eol`` of capacity whose life ends at the year ``y_end``, rounded to a seam by the
+    ``end_of_life_method`` ``method`` (:func:`snap_to_seam`, two years within ``tol`` the same seam)::
+
+        +inf                              if y_end = +inf (reinvest_automatic: renewed, never ends)
+        seams[0]                          if y_end < seams[0] − tol (ended before the model start)
+        snap_to_seam(y_end, method)       otherwise
+
+    Past the last seam ``next_seam`` gives ``+inf`` and ``previous_seam`` / ``closest_seam`` the last seam (the end
+    of the horizon): in service to the end under all three.  The capacity is in service in the periods with
+    ``y[d] < y_eol``."""
+    if method not in END_OF_LIFE_METHODS:
+        raise ValueError(f"Unknown end_of_life_method {method!r}: use one of {', '.join(END_OF_LIFE_METHODS)}.")
+    if y_end == float("inf"):
+        return y_end
+    if seams and y_end < seams[0] - tol:
+        return seams[0]
+    return snap_to_seam(y_end, method, seams, tol)
+
+
+def eol_moves(y_end: float, seams: list[float], period_starts: Iterable[float], tol: float = YEAR_TOL) -> bool:
+    """Whether ``closest_seam`` takes out of service a period that ``next_seam`` keeps, for a life ending at
+    ``y_end``: ``c < n − tol`` and ``c`` is a period start (``period_starts``), with ``c`` / ``n`` the
+    :func:`round_end_of_life` of ``y_end`` by closest_seam / next_seam.  The capacity is in service in the periods
+    with ``y[d] < y_eol``, so the two in-service sets differ exactly then (the period starting at ``c``).  No move:
+    an end of life on a seam or a tie (``c = n``), past the horizon end (``c`` is the horizon end, ``n = +inf``:
+    in service to the end under both), before the model start, or ``+inf``."""
+    c = round_end_of_life(y_end, "closest_seam", seams, tol)
+    n = round_end_of_life(y_end, "next_seam", seams, tol)
+    return c < n - tol and any(abs(s - c) <= tol for s in period_starts)
+
+
+def solve_year_offset(rc: RunCalendar, years: Mapping[str, float]) -> tuple[float | None, str | None]:
+    """``(offset, mismatch)``: the constant ``rc.years[d] - years[d]`` over the periods of ``years`` (a solve's own
+    year calendar) that are on the run calendar ``rc``.  A solve that is not handed the run history counts years
+    from its own first period, so the offset is that period's run year.  ``(None, None)`` when no period of
+    ``years`` is on the run calendar; ``(None, d)`` when the offset of period ``d`` differs from the first one by
+    more than :data:`YEAR_TOL`."""
+    offsets = {d: rc.years[d] - y for d, y in years.items() if d in rc.years}
+    if not offsets:
+        return None, None
+    offset = next(iter(offsets.values()))
+    for d, off in offsets.items():
+        if abs(off - offset) > YEAR_TOL:
+            return None, d
+    return offset, None
+
+
+def run_years(years: Mapping[str, float], rc: RunCalendar | None) -> dict[str, float]:
+    """``{period: run year}`` of a solve's periods ``years`` (``{period: year}`` on the solve's own calendar).
+
+    A period on the run calendar ``rc`` takes its run year.  A period that is not (a branch period of a stochastic
+    fan) takes the run year of a period of ``years`` that is on the run calendar and has the same solve year within
+    :data:`YEAR_TOL` (its anchor period); a period with no such match keeps its own year.  No year is shifted by an
+    offset, so a run year compares exactly with the run-calendar seams.  Without a run calendar the solve is the
+    run: ``years`` unchanged."""
+    if rc is None:
+        return {str(d): float(y) for d, y in years.items()}
+    on_rc = [(float(y), rc.years[str(d)]) for d, y in years.items() if str(d) in rc.years]
+    out: dict[str, float] = {}
+    for d, y in years.items():
+        d = str(d)
+        if d in rc.years:
+            out[d] = rc.years[d]
+            continue
+        match = next((ry for ys, ry in on_rc if abs(ys - float(y)) <= YEAR_TOL), None)
+        out[d] = float(y) if match is None else match
+    return out
 
 
 def build_run_calendar(period_history: Mapping[str, list], solves: Iterable[str]) -> pl.DataFrame:
@@ -116,25 +214,32 @@ def read_run_calendar(provider) -> RunCalendar | None:
 
 def solve_calendar(years: Mapping[str, float], years_represented: Mapping[str, float] | None) -> RunCalendar:
     """A :class:`RunCalendar` of one solve's own periods (when no run calendar is available): the horizon ends
-    where the solve's last period ends, or at its last period start when the solve gives no period lengths."""
+    where the solve's last period ends.  A period without a ``years_represented`` value (every period, when the
+    solve gives none) represents one year, as the run calendar counts it (``solve._run_model``), so the seams are
+    the period starts and the end of the horizon in every case."""
     ordered = dict(sorted(((str(d), float(y)) for d, y in years.items()), key=lambda kv: kv[1]))
+    represented = dict(years_represented or {})
     horizon_end: float | None = None
     last_period: str | None = None
     for d, y in ordered.items():
-        rep = (years_represented or {}).get(d)
-        if rep is None:
-            continue
-        if horizon_end is None or y + float(rep) > horizon_end:
-            horizon_end, last_period = y + float(rep), d
+        rep = float(represented.get(d, 1.0))
+        if horizon_end is None or y + rep > horizon_end:
+            horizon_end, last_period = y + rep, d
     return RunCalendar(years=ordered, horizon_end=horizon_end, last_period=last_period)
 
 
 __all__ = [
     "RUN_CALENDAR_KEY",
+    "RUN_EXISTING_COHORT_KEY",
     "RunCalendar",
     "YEAR_TOL",
     "build_run_calendar",
+    "eol_moves",
     "read_run_calendar",
+    "round_end_of_life",
     "run_calendar_from_frame",
+    "run_years",
+    "snap_to_seam",
     "solve_calendar",
+    "solve_year_offset",
 ]

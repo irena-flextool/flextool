@@ -6,7 +6,7 @@ operational cost 1 CUR/MWh.  ``invest_rp`` sees only the representative block t1
 ``dispatch`` runs t1..t4 on the capacity ``invest_rp`` built.
 
 Hand values (independent of the code; they take the convention that the first period p1 has discount factor 1,
-with inflation_rate unset and years_represented 1).  The discount rate is the spec's 0: the straight-line annuity
+with social_discount_rate unset and years_represented 1).  The discount rate is the spec's 0: the straight-line annuity
 invest_cost / lifetime (before schema v79 an entered 0 was read as 0.05).
 
 * Investment.  Below 60 MW every MW short costs 1 MWh × 4380 × 1e4 = 4.38e7 CUR/a, far above the annuity
@@ -103,7 +103,7 @@ def test_the_dispatch_solve_has_no_investment_variable(chain) -> None:
 def test_the_investment_cost_is_counted_once(chain) -> None:
     _, csv = chain
     costs = pd.read_csv(csv / "costs_discounted.csv").set_index("category").iloc[:, 0]
-    assert float(costs["unit investment & retirement"]) == pytest.approx(INVEST_COST_MCUR, rel=1e-9)
+    assert float(costs["investment"]) == pytest.approx(INVEST_COST_MCUR, rel=1e-9)
 
 
 

@@ -201,7 +201,7 @@ def test_fix_start_with_investment(tmp_path_factory):
         ["node", "battery", "invest_max_total", b64(1000.0, "float")],
         ["node", "battery", "invest_min_total", b64(200.0, "float")],
         ["node", "battery", "invest_cost", b64(1.0, "float")],
-        ["node", "battery", "lifetime", b64(10.0, "float")],
+        ["node", "battery", "lifetime_technical", b64(10.0, "float")],
         ["node", "battery", "virtual_unitsize", b64(100.0, "float")]]
     step = _solve(tmp_path_factory, "sd_inv", vals, chain=CHAIN + ["battery_invest", "5weeks"])
     fd = step.flex_data
@@ -436,9 +436,10 @@ def test_output_roll(tmp_path_factory):
 
 
 def test_output_cyclic_roll(tmp_path_factory):
-    """bind_within_timeblock rolling 8 h / 4 h: a roll's first realized step starts from the roll's own wrap (its
-    last, look-ahead step), which the realized union of the outputs does not hold — the writer computes it from the
-    roll's own solution."""
+    """bind_within_timeblock rolling 8 h / 4 h: the first roll's first realized step starts from the roll's own wrap
+    (its last, look-ahead step), which the realized union of the outputs does not hold — the writer computes it from
+    the roll's own solution.  A later roll starts inside the timeblock the first roll began, so it continues it from
+    the carried level (MWh) instead of wrapping."""
     vals = [v for v in _roll_values(0.05) if v[2] not in ("storage_binding_method", "storage_start_end_method")]
     vals += [["node", "battery", "storage_binding_method", b64("bind_within_timeblock", "str")],
              ["node", "battery", "storage_start_end_method", b64("fix_nothing", "str")],
@@ -451,7 +452,12 @@ def test_output_cyclic_roll(tmp_path_factory):
         st = _states(step)
         order, dur = _steps_dur(fd)
         rep = _reported(wf, step.solve_name)
-        want = _hand_loss(order, dur, st, 0.05, loop=True)        # the roll is one timeblock part: it loops
+        carry = fd.p_roll_continue_state
+        if carry is None:
+            want = _hand_loss(order, dur, st, 0.05, loop=True)    # the first roll's timeblock part loops
+        else:
+            start = float(utf8(carry.frame).filter(pl.col("n") == "battery")["value"][0])
+            want = _hand_loss(order, dur, st, 0.05, start=start)  # a later roll continues from the carry
         assert rep
         for k, v in rep.items():
             assert v == pytest.approx(want[k], rel=1e-9, abs=1e-12), (step.solve_name, k)

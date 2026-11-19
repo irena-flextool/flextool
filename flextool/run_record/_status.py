@@ -36,6 +36,8 @@ from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence, TypeVar
 
+from flextool.run_warnings import CASES_ATTR as _CASES_ATTR
+from flextool.run_warnings import CODE_ATTR as _CODE_ATTR
 from flextool.run_record._owner import (
     ABANDONED_STATE,
     RUN_LOG_FILE,
@@ -70,7 +72,12 @@ _CREATE_TIME_SLACK = 5.0
 
 MAX_SOLVES = 1000
 _KEEP_FIRST_SOLVES = 100
+#: The most entries of ``warnings``.  A coded warning (``flextool.run_warnings``) takes one entry per code: ``cases``
+#: is the code's total over the run (the console tally's count), ``lines`` how many lines it printed, ``message``
+#: the first line and ``messages`` its distinct lines (other solves, other parameters), at most
+#: :data:`MAX_CODE_MESSAGES`; ``messages_omitted`` counts the distinct lines left out.
 MAX_WARNINGS = 50
+MAX_CODE_MESSAGES = 10
 _MESSAGE_LIMIT = 2000
 _WARNING_MESSAGE_LIMIT = 500
 #: The longest wait before a failed write is tried again (the waits double from 1 s).
@@ -252,7 +259,11 @@ class _WarningHandler(logging.Handler):
             message = record.getMessage()
         except Exception:  # noqa: BLE001 - a malformed log call must not break the run
             message = str(record.msg)
-        self._recorder._queue_warning(record.levelname, record.name, message)
+        code = getattr(record, _CODE_ATTR, None)
+        cases = getattr(record, _CASES_ATTR, None)
+        self._recorder._queue_warning(record.levelname, record.name, message,
+                                      code=code if isinstance(code, str) else None,
+                                      cases=cases if isinstance(cases, int) else 1)
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
@@ -293,6 +304,10 @@ class RunRecorder:
         self._wq_lock = threading.Lock()
         self._wq: list[dict[str, str]] = []
         self._wq_omitted = 0
+        # code -> its entry (queued or in the status) of the coded warnings (guarded by _wq_lock).
+        self._wq_coded: dict[str, dict[str, Any]] = {}
+        # Codes whose entry did not fit in ``warnings`` (their later lines are not counted again).
+        self._wq_dropped: set[str] = set()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._dirty = False
@@ -434,16 +449,54 @@ class RunRecorder:
         for level, msg, args in pending:
             _logger.log(level, msg, *args)
 
-    def _queue_warning(self, level: str, logger_name: str, message: str) -> None:
-        """Queue one warning for the status (the warning handler; takes only the leaf lock)."""
+    def _queue_warning(self, level: str, logger_name: str, message: str, *, code: str | None = None,
+                       cases: int = 1) -> None:
+        """Queue one warning for the status (the warning handler; takes only the leaf lock).
+
+        A coded warning whose code already has an entry adds its *cases*, one line and (when new) its text to that
+        entry; a code whose first line found ``warnings`` full is remembered, so its later lines are not counted
+        in ``warnings_omitted`` again.
+        """
         if self._finished or self._taken_over or self._disabled:
             return
-        entry = {"level": level, "logger": logger_name, "message": message[:_WARNING_MESSAGE_LIMIT]}
+        text = message[:_WARNING_MESSAGE_LIMIT]
+        entry: dict[str, Any] = {"level": level, "logger": logger_name, "message": text}
         with self._wq_lock:
+            if code is not None:
+                if code in self._wq_dropped:
+                    return
+                known = self._wq_coded.get(code)
+                if known is not None:
+                    known["cases"] += cases
+                    known["lines"] += 1
+                    if text not in known["messages"]:
+                        if len(known["messages"]) < MAX_CODE_MESSAGES:
+                            known["messages"].append(text)
+                        else:
+                            known["messages_omitted"] = known.get("messages_omitted", 0) + 1
+                    self._dirty = True
+                    return
+                entry.update(code=code, cases=cases, lines=1, messages=[text])
             if len(self._wq) + len(self._status.get("warnings") or ()) >= MAX_WARNINGS:
                 self._wq_omitted += 1
+                if code is not None:
+                    self._wq_dropped.add(code)
             else:
                 self._wq.append(entry)
+                if code is not None:
+                    self._wq_coded[code] = entry
+        self._dirty = True
+
+    def add_warning_cases(self, code: str, cases: int) -> None:
+        """Add *cases* to the entry of coded warning *code* without a line (the names a later call of the same
+        solve added: :func:`flextool.run_warnings.add_cases_listener`), so ``cases`` agrees with the tally."""
+        if self._finished or self._taken_over or self._disabled or cases <= 0:
+            return
+        with self._wq_lock:
+            known = self._wq_coded.get(code)
+            if known is None:
+                return
+            known["cases"] += cases
         self._dirty = True
 
     def _drain_warnings(self) -> None:
@@ -451,14 +504,18 @@ class RunRecorder:
         with self._wq_lock:
             queued, self._wq = self._wq, []
             omitted, self._wq_omitted = self._wq_omitted, 0
-        if not queued and not omitted:
-            return
-        warnings = self._status.setdefault("warnings", [])
-        for entry in queued:
-            if len(warnings) >= MAX_WARNINGS:
-                omitted += 1
-            else:
-                warnings.append(entry)
+            if not queued and not omitted:
+                return
+            warnings = self._status.setdefault("warnings", [])
+            for entry in queued:
+                if len(warnings) >= MAX_WARNINGS:
+                    omitted += 1
+                    code = entry.get("code")
+                    if code is not None:          # no stale pointer: the code's later lines are dropped too
+                        self._wq_coded.pop(code, None)
+                        self._wq_dropped.add(code)
+                else:
+                    warnings.append(entry)
         if omitted:
             self._status["warnings_omitted"] = self._status.get("warnings_omitted", 0) + omitted
 

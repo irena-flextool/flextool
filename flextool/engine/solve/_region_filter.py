@@ -1106,6 +1106,7 @@ def _build_region_data(
     )
     new.storage_fix_start = _filter_frame(src.storage_fix_start, "n", keep_nodes)
     new.storage_fix_end = _filter_frame(getattr(src, "storage_fix_end", None), "n", keep_nodes)
+    new.storage_roll_end = _filter_frame(getattr(src, "storage_roll_end", None), "n", keep_nodes)
     new.ndt_fix_storage_price = _filter_frame(getattr(src, "ndt_fix_storage_price", None), "n", keep_nodes)
     new.nodeStateBlock = _filter_frame(src.nodeStateBlock, "n", keep_nodes)
     new.nodeState_rp = _filter_frame(
@@ -1604,7 +1605,7 @@ _MASTER_NODE_FIELDS: tuple[str, ...] = (
     "storage_bind_within_timeblock", "storage_bind_forward_only",
     "storage_bind_within_solve", "storage_bind_within_period", "storage_bind_within_solve_blended_weights",
     "storage_bind_within_period_blended_weights",
-    "storage_bind_forward_only_blended_weights", "storage_fix_start", "storage_fix_end",
+    "storage_bind_forward_only_blended_weights", "storage_fix_start", "storage_fix_end", "storage_roll_end",
     "p_state_upper", "p_state_unitsize", "p_state_self_discharge",
     "p_state_start", "p_state_end", "p_state_existing_capacity",
     "storage_use_reference_value", "p_storage_state_reference_value",
@@ -1617,7 +1618,7 @@ _MASTER_NODE_FIELDS: tuple[str, ...] = (
     "p_node_capacity_for_scaling",
     # node-keyed invest/divest sets (the trade nodes are not the master's
     # invest variables — only the cross connections are).
-    "nd_invest_set", "nd_divest_set", "ndd_divest_active",
+    "nd_invest_set", "nd_divest_set",
     # CO2 / reserve / user-constraint / group features — all in-region
     # recourse, not part of the network-only master.  (The commodity
     # frames + ``p_commodity_price`` are REQUIRED-present by the PROCESSES
@@ -1672,7 +1673,7 @@ _MASTER_N_KEYED_FIELDS: tuple[str, ...] = (
     "storage_bind_within_timeblock", "storage_bind_forward_only",
     "storage_bind_within_solve", "storage_bind_within_period", "storage_bind_within_solve_blended_weights",
     "storage_bind_within_period_blended_weights",
-    "storage_bind_forward_only_blended_weights", "storage_fix_start", "storage_fix_end",
+    "storage_bind_forward_only_blended_weights", "storage_fix_start", "storage_fix_end", "storage_roll_end",
     "p_state_upper", "p_state_unitsize", "p_state_self_discharge",
     "p_state_start", "p_state_end", "p_state_existing_capacity",
     "storage_use_reference_value", "p_storage_state_reference_value",
@@ -1683,7 +1684,7 @@ _MASTER_N_KEYED_FIELDS: tuple[str, ...] = (
     "p_fix_storage_quantity", "n_fix_storage_usage",
     "ndt_fix_storage_usage", "p_fix_storage_usage", "ndt_fix_storage_price",
     "p_node_capacity_for_scaling",
-    "nd_invest_set", "nd_divest_set", "ndd_divest_active",
+    "nd_invest_set", "nd_divest_set",
     "group_node",
 )
 
@@ -2046,8 +2047,8 @@ def master_network_data(
     new.pd_divest_set = _keep_proc(data.pd_divest_set)
     new.ed_invest_set = _keep_entity_frame(data.ed_invest_set)
     new.ed_divest_set = _keep_entity_frame(data.ed_divest_set)
-    new.edd_invest_set = _keep_entity_frame(data.edd_invest_set)
-    new.edd_invest_lookback_set = _keep_entity_frame(data.edd_invest_lookback_set)
+    new.cohort = _keep_entity_frame(getattr(data, "cohort", None))
+    new.cohort_alive = _keep_entity_frame(getattr(data, "cohort_alive", None))
     new.ed_invest_commission = _keep_entity_frame(getattr(data, "ed_invest_commission", None))
     new.edd_invest_commission = _keep_entity_frame(getattr(data, "edd_invest_commission", None))
     new.edd_invest_in_construction = _keep_entity_frame(getattr(data, "edd_invest_in_construction", None))
@@ -2056,20 +2057,19 @@ def master_network_data(
     new.p_entity_carried_in_construction = _keep_entity_param(
         getattr(data, "p_entity_carried_in_construction", None))
     new.p_entity_retired_carried = _keep_entity_param(getattr(data, "p_entity_retired_carried", None))
-    new.edd_divest_active = _keep_entity_frame(data.edd_divest_active)
     new.p_entity_max_units = _keep_entity_param(data.p_entity_max_units)
     new.ed_lifetime_fixed_cost = _keep_entity_param(data.ed_lifetime_fixed_cost)
     new.ed_lifetime_fixed_cost_divest = _keep_entity_param(data.ed_lifetime_fixed_cost_divest)
     new.ed_entity_annual_discounted = _keep_entity_param(data.ed_entity_annual_discounted)
-    new.ed_entity_annual_divest_discounted = _keep_entity_param(
-        data.ed_entity_annual_divest_discounted)
-    for name in ("ed_entity_annual_discounted_run", "ed_entity_annual_divest_discounted_run",
-                 "ed_lifetime_fixed_cost_run", "ed_lifetime_fixed_cost_divest_run", "ed_annuity",
-                 "ed_divest_annuity", "p_entity_pre_existing"):
+    for name in ("ed_divest_salvage", "ed_existing_salvage_credit", "ed_existing_replacement",
+                 "ed_entity_annual_discounted_run",
+                 "p_entity_pre_existing", "cd_divest_built_cost",
+                 "cd_divest_built_fixed", "cd_extend_cost", "cd_extend_fixed"):
         setattr(new, name, _keep_entity_param(getattr(data, name, None)))
-    new.edd_operating_window = _keep_entity_frame(getattr(data, "edd_operating_window", None))
-    new.edd_retire_window = _keep_entity_frame(getattr(data, "edd_retire_window", None))
-    new.edd_salvage_window = _keep_entity_frame(getattr(data, "edd_salvage_window", None))
+    for name in ("cd_divest_built", "cdd_divest_built", "cohort_divest_built", "cd_extend", "cdd_extend",
+                 "cohort_extend", "edl_invest_lines_run", "edl_divest_lines", "edl_existing_credit_lines",
+                 "edl_existing_replacement_lines", "cdl_divest_built_lines", "cdl_extend_lines"):
+        setattr(new, name, _keep_entity_frame(getattr(data, name, None)))
     new.e_invest_total = _keep_entity_frame(data.e_invest_total)
     new.e_divest_total = _keep_entity_frame(data.e_divest_total)
     new.e_invest_max_total = _keep_entity_frame(data.e_invest_max_total)
@@ -2320,8 +2320,7 @@ def _warn_integer_region(region: str, rdata: FlexData) -> None:
                "valid for a mixed-integer subproblem; the decomposition may stop at a wrong solution. Set "
                "reduce_unit_detail_method = integers (or a level that contains it) on the solve to solve the "
                "regions as LPs, or use startup_method linear and a non-exact transfer method in decomposed regions.")
-        _logger.warning(msg)
-        print(f"Warning: {msg}", flush=True)
+        _logger.warning(f"Warning: {msg}")   # the console handler prints it (once; no extra print)
 
 
 def split(

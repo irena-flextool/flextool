@@ -29,7 +29,7 @@ import polars as pl
 import pytest
 
 from flextool.engine.preprocess.params import _existing as de
-from flextool.engine.preprocess.params import _npv as dn
+from flextool.engine.preprocess.params import _lifetime_inputs as dn
 
 
 def _mixed_existing_source():
@@ -48,7 +48,7 @@ def _mixed_existing_source():
     return InMemoryReader(entities, {("unit", "existing"): frame})
 
 
-@pytest.mark.parametrize("module", [de, dn], ids=["derived_existing", "derived_npv"])
+@pytest.mark.parametrize("module", [de, dn], ids=["derived_existing", "lifetime_inputs"])
 def test_null_index_row_is_scalar(module):
     """A null-index row must be flagged ``is_scalar=True``; the Map rows
     must stay ``is_scalar=False`` with their explicit period."""
@@ -67,7 +67,7 @@ def test_null_index_row_is_scalar(module):
     assert set(map_rows["d"].to_list()) == {"p2024", "p2025", "p2026"}
 
 
-@pytest.mark.parametrize("module", [de, dn], ids=["derived_existing", "derived_npv"])
+@pytest.mark.parametrize("module", [de, dn], ids=["derived_existing", "lifetime_inputs"])
 def test_scalar_broadcasts_across_period_grid(module):
     """The scalar must resolve to its constant value at EVERY period in
     the grid, not be zero-filled.  This is the load-bearing assertion:

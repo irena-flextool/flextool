@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from flextool.update_flextool.db_handle import open_database_mapping
+from tests._support.solve_summary import summary_objectives
 from flextool.representative_periods.clustering import greedy_convex_hull_clustering
 from flextool.representative_periods.weights import (
     compute_weight_matrix,
@@ -237,11 +238,11 @@ def _run_flextool(db_path: str, out_path: str, scenario: str) -> float:
     )
     if result.returncode != 0:
         pytest.fail(f"FlexTool failed:\n{result.stdout}\n{result.stderr}")
-    # Parse total_cost from output
-    for line in result.stdout.split("\n"):
-        if "total_cost.val" in line:
-            return float(line.split("=")[1].strip())
-    pytest.fail(f"Could not find total_cost in output:\n{result.stdout}")
+    # The objective of the first solve, from the solve summary printed at the end of the run
+    objectives = summary_objectives(result.stdout)
+    if not objectives:
+        pytest.fail(f"Could not find the solve summary in output:\n{result.stdout}")
+    return next(iter(objectives.values()))
 
 
 def _setup_rp_scenario(db_url: str, n_rp: int, period_length: int, storage_nodes: list[str]) -> None:

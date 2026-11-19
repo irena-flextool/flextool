@@ -112,10 +112,13 @@ NOT_TIME_SERIES: frozenset[tuple[str, str]] = frozenset({
     ("connection", "invest_cost"),
     ("connection", "invest_max_period"),
     ("connection", "invest_min_period"),
-    ("connection", "lifetime"),
+    ("connection", "life_extension_cost"),
+    ("connection", "life_extension_years"),
+    ("connection", "lifetime_technical"),
+    ("connection", "net_salvage_value"),
+    ("connection", "payback_time"),
     ("connection", "retire_max_period"),
     ("connection", "retire_min_period"),
-    ("connection", "salvage_value"),
     ("connection", "startup_cost"),
     ("connection__node", "constraint_flow_coeff"),
     ("constraint", "constant"),
@@ -150,11 +153,14 @@ NOT_TIME_SERIES: frozenset[tuple[str, str]] = frozenset({
     ("node", "invest_forced"),
     ("node", "invest_max_period"),
     ("node", "invest_min_period"),
-    ("node", "lifetime"),
+    ("node", "life_extension_cost"),
+    ("node", "life_extension_years"),
+    ("node", "lifetime_technical"),
+    ("node", "net_salvage_value"),
+    ("node", "payback_time"),
     ("node", "peak_inflow"),
     ("node", "retire_max_period"),
     ("node", "retire_min_period"),
-    ("node", "salvage_value"),
     ("node", "storage_state_reference_price"),
     ("solve", "fix_storage_periods"),
     ("solve", "invest_periods"),
@@ -183,11 +189,14 @@ NOT_TIME_SERIES: frozenset[tuple[str, str]] = frozenset({
     ("unit", "invest_cost"),
     ("unit", "invest_max_period"),
     ("unit", "invest_min_period"),
-    ("unit", "lifetime"),
+    ("unit", "life_extension_cost"),
+    ("unit", "life_extension_years"),
+    ("unit", "lifetime_technical"),
+    ("unit", "net_salvage_value"),
+    ("unit", "payback_time"),
     ("unit", "piecewise_linear_efficiency"),
     ("unit", "retire_max_period"),
     ("unit", "retire_min_period"),
-    ("unit", "salvage_value"),
     ("unit", "startup_cost"),
     ("unit__inputNode", "constraint_flow_coeff"),
     ("unit__inputNode", "startup_energy"),
@@ -200,11 +209,8 @@ NOT_TIME_SERIES: frozenset[tuple[str, str]] = frozenset({
 # exact.  The callers pass the entities it matters to (``approx_entities``).
 _APPROXIMATE_WHEN_VARYING: dict[tuple[str, str], str] = {
     ("unit", "min_load"): (
-        "unit.min_load varies within a solve step of new_stepduration (units with min_load_efficiency: "
-        "{entities}). The step uses the mean min_load and the harmonic means of efficiency and "
-        "efficiency_at_min_load, so the min_load_efficiency curve (slope and section) of those steps is an "
-        "approximation of the step mean of the hourly curves; it is exact for a min_load that is constant within "
-        "each step."),
+        "units with min_load_efficiency: the step uses the mean min_load and the harmonic means of efficiency and "
+        "efficiency_at_min_load (W-0519)"),
 }
 
 #: The time-series limits whose ``inf`` (``-inf`` for a lower limit) means no limit in that time step, by side.  A
@@ -319,13 +325,15 @@ def _what(key: tuple[str, str]) -> str:
     return f"{key[0]}.{key[1]}"
 
 
-def _note_once(notes: "set | None", tag: tuple, message: str) -> None:
-    """One WARNING per ``tag`` within ``notes`` (the run's dedupe set; always logged without one)."""
+def _note_once(notes: "set | None", tag: tuple, code: str, names: list, details: "dict | str",
+               **fmt: object) -> None:
+    """One coded warning per ``tag`` within ``notes`` (the run's dedupe set; always given without one)."""
     if notes is not None:
         if tag in notes:
             return
         notes.add(tag)
-    _LOGGER.warning(message)
+    from flextool import run_warnings
+    run_warnings.warn_grouped(code, names, details=details, **fmt)
 
 
 _KIND_CODE: dict[Agg, int] = {Agg.MEAN: 0, Agg.HARMONIC: 1, Agg.SUM: 2, Agg.LAST: 3}
@@ -497,11 +505,9 @@ def aggregate_to_solve_steps(
         name = _what(key) if key else "a time series"
         i = first_index(partial, label)
         sample = grouped.select(entity_cols).row(i) if entity_cols else ()
-        _note_once(notes, ("partial", key or label), (
-            f"{name}: a solve step of new_stepduration has values for only some of its time steps "
-            f"(e.g. {', '.join(str(x) for x in sample if x is not None)} at {steps_col[i]}); "
-            f"the step takes the time steps that have a value (the default of the other time steps is not part "
-            f"of it)."))
+        _note_once(notes, ("partial", key or label), "W-0518", [name], {name: (
+            f"e.g. {', '.join(str(x) for x in sample if x is not None)} at {steps_col[i]}; the step takes the "
+            "time steps that have a value")})
     varying_labels = [lab for lab in uniq if key_of(lab) in _APPROXIMATE_WHEN_VARYING]
     for label in varying_labels:
         key = key_of(label)
@@ -512,8 +518,8 @@ def aggregate_to_solve_steps(
         if approx_entities is not None and key in approx_entities:
             names &= set(approx_entities[key])
         if names:
-            _note_once(notes, ("varying", key),
-                       _APPROXIMATE_WHEN_VARYING[key].format(entities=", ".join(sorted(names))))
+            _note_once(notes, ("varying", key), "W-0519", sorted(names),
+                       _APPROXIMATE_WHEN_VARYING[key], parameter=".".join(key))
     # Earlier releases took the step's first base step, its default where that hour has no value: a step whose
     # first authored hour is not its first hour counts as changed too.
     step_p0 = grouped.select("__s").join(base.group_by("__s").agg(pl.col("__pos").min().alias("__sp0")),
@@ -597,7 +603,7 @@ def _warn_mixed_no_limit_steps(timed: pl.DataFrame, key: "tuple[str, str]", grou
 
         nl = inf (upper) / -inf (lower)
         M  = { (k, s) : ∃ b ∈ base(s), v[k, b] = nl  and  ∃ b' ∈ base(s), v[k, b'] finite }
-        warn once per (key, k) per run, naming the (period, s) of M for k     (MEAN / SUM: the step is nl)
+        warn (W-0513) once per (key, k) per run, naming the (period, s) of M for k  (MEAN / SUM: the step is nl)
         raise FlexToolConfigError     if a step has both nl and -nl            (the step would be NaN)
 
     ``k`` is the group of the frame other than ``period_col``; the period of a step is the row's ``period_col``
@@ -643,19 +649,16 @@ def _warn_mixed_no_limit_steps(timed: pl.DataFrame, key: "tuple[str, str]", grou
         raise FlexToolConfigError(
             "; ".join(parts) + ". These solve steps of new_stepduration combine time steps of inf and -inf, which "
             f"have no mean. For no limit in a time step, give {'inf' if side == 'upper' else '-inf'} there.")
-    from flextool.engine import _behaviour_changes
+    from flextool import run_warnings
 
     use = "inf" if side == "upper" else "-inf"
+    found: dict[tuple[str, str], str] = {}
     for (k,), g in steps.group_by("__k", maintain_order=True):
         where = g.get_column("__at").to_list()
         shown = ", ".join(where[:_MIXED_STEPS_SHOWN]) + (
             f" and {len(where) - _MIXED_STEPS_SHOWN} more" if len(where) > _MIXED_STEPS_SHOWN else "")
-        _behaviour_changes.warn_once(
-            ("mixed_no_limit_step", cls, param, k),
-            f"Warning: {cls} '{k}', parameter '{param}' is {use} (no limit) in some but not all time steps of "
-            f"these solve steps of new_stepduration: {shown}. A solve step takes the mean of its time steps, which "
-            f"is {use}, so the limit is dropped for the whole solve step. To keep a limit, give {use} in all or "
-            f"none of the time steps of a solve step, or use a shorter new_stepduration.")
+        found[(f"{cls} {k}", param)] = f"solve steps {shown}"
+    run_warnings.warn_grouped("W-0513", list(found), per_run=True, use=use, details=found)
 
 
 def aggregate_if_active(frame: pl.DataFrame, key: "tuple[str, str] | None", *, time_col: str = "t",

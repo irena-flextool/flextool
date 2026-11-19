@@ -1,3 +1,4 @@
+import io
 import logging
 import os
 import re
@@ -14,6 +15,8 @@ import yaml
 from spinedb_api import from_database, Array
 from flextool.update_flextool.db_handle import open_database_mapping
 from flextool import run_record
+# The lines around the solve summary printed at the end of a run (the GUI folds similar rows between them).
+from flextool.console_markers import SOLVE_SUMMARY_END, SOLVE_SUMMARY_START
 
 from flextool.lean_parquet import read_lean_parquet, read_lean_parquet_solve_labels, write_lean_parquet
 from flextool.process_outputs._sheet_names import excel_sheet_name
@@ -43,9 +46,9 @@ from flextool.process_outputs.out_ancillary import (
     slack_variables, input_sets, dc_power_flow,
     co2_duals, capacity_margin, reserve_requirement,
 )
-from flextool.process_outputs.out_capacity import unit_capacity, connection_capacity, node_capacity
+from flextool.process_outputs.out_capacity import cohort_capacity, connection_capacity, node_capacity, unit_capacity
 from flextool.process_outputs.out_costs import (
-    generic, cost_summaries, cost_breakdown_by_entity, CO2, realized_leaf_periods,
+    generic, cost_summaries, cost_breakdown_by_entity, CO2, realized_leaf_periods, shown_lines,
 )
 from flextool.process_outputs.out_flowgroup import flowGroup_indicators
 from flextool.process_outputs.out_flows import (
@@ -58,7 +61,9 @@ from flextool.process_outputs.out_group import (
     nodeGroup_indicators, nodeGroup_VRE_share,
     nodeGroup_total_inflow, nodeGroup_flows, nodeGroup_ramp_envelope,
 )
-from flextool.process_outputs.out_node import node_summary, node_additional_results, node_ramp_envelope
+from flextool.process_outputs.out_node import (
+    node_summary, node_additional_results, node_ramp_envelope, node_storage_usage,
+)
 from flextool.process_outputs.process_results import post_process_results
 from flextool.process_outputs.read_parameters import (
     read_parameters_multi,
@@ -490,12 +495,15 @@ def print_namespace_structure(namespace, name='r', max_items=3, output_file='nam
         sys.stdout = original_stdout
 
 
-def write_summary_csv(par, s, v, r, csv_dir):
-    """Write summary CSV file matching the GNU MathProg format"""
-    import os
+#: The first line of ``summary_solve.csv`` (followed by the UTC time of the output).
+SUMMARY_TITLE = "Diagnostic results from all solves. Output at (UTC): "
 
-    # Output file path
-    fn_summary = os.path.join(csv_dir, 'summary_solve.csv')
+
+def summary_solve_text(par, s, v, r, timestamp=None) -> str:
+    """The content of ``summary_solve.csv`` (the GNU MathProg format): the run's costs, period factors,
+    emissions and slacks.  Its first line is :data:`SUMMARY_TITLE` and *timestamp* (default: now, UTC)."""
+    # Imported here: flextool.engine pulls in polar_high and its solver backends, which `import flextool` must not.
+    from flextool.engine.preprocess.params._cost_lines import PRE_EXISTING_LINES
 
     # Get common parameters - these are Series indexed by period
     p_inflation_factor_operations_yearly = par.inflation_factor_operations_yearly
@@ -506,176 +514,213 @@ def write_summary_csv(par, s, v, r, csv_dir):
     period_in_use = complete_period_share_of_year.index
     d_realized_period = s.d_realized_period
 
-    # Open file and write all content
-    with open(fn_summary, 'w') as f:
-        # Header with timestamp
+    f = io.StringIO()
+    # Header with timestamp
+    if timestamp is None:
         timestamp = datetime.now(timezone.utc)
-        f.write(f'"Diagnostic results from all solves. Output at (UTC): {timestamp}"\n\n')
+    f.write(f'"{SUMMARY_TITLE}{timestamp}"\n\n')
 
-        # Total cost from solver (M CUR).  Iterate solve names in
-        # natural-sort order (so ``roll_0, roll_1, ..., roll_10, ...``
-        # not ``roll_1, roll_10, ...``).  ``v.obj.index`` carries the
-        # parquet-concat order, which depends on
-        # ``solve_data/solve__p_entity_pre_existing.csv`` — written as a
-        # header-only stub by the engine cascade for some rolling-solve
-        # paths, leaving the sort key unstable.  Natural-sort here is
-        # the writer-side guard that matches v3.32.0's numeric solve
-        # ordering.
-        f.write('\n')
-        f.write('"Solve","Objective","Total cost from solver, includes all penalty costs"\n')
-        sorted_solves = sorted(
-            v.obj.index,
-            key=lambda s: [int(t) if t.isdigit() else t
-                           for t in re.split(r"(\d+)", str(s))],
-        )
-        for row_idx in sorted_solves:
-            f.write(f'{row_idx},{v.obj.loc[row_idx, "objective"] / 1000000:.12g}\n')
+    # Total cost from solver (M CUR).  Iterate solve names in
+    # natural-sort order (so ``roll_0, roll_1, ..., roll_10, ...``
+    # not ``roll_1, roll_10, ...``).  ``v.obj.index`` carries the
+    # parquet-concat order, which depends on
+    # ``solve_data/solve__p_entity_pre_existing.csv`` — written as a
+    # header-only stub by the engine cascade for some rolling-solve
+    # paths, leaving the sort key unstable.  Natural-sort here is
+    # the writer-side guard that matches v3.32.0's numeric solve
+    # ordering.
+    f.write('\n')
+    f.write('"Solve","Objective","Total cost from solver, includes all penalty costs"\n')
+    sorted_solves = sorted(
+        v.obj.index,
+        key=lambda s: [int(t) if t.isdigit() else t
+                       for t in re.split(r"(\d+)", str(s))],
+    )
+    for row_idx in sorted_solves:
+        f.write(f'{row_idx},{v.obj.loc[row_idx, "objective"] / 1000000:.12g}\n')
 
-        # Total cost (calculated) full horizon (M CUR).  Mirrors the LP
-        # objective: oper + penalty + invest + divest + fixed (pre-existing
-        # + invested + divested).  Fixed-cost terms are in the LP obj at
-        # flextool.mod:2107-2126; omitting them here would under-report
-        # the objective for any scenario with non-zero existing capacity
-        # or a non-zero lifetime_fixed_cost on invest/divest entities.
-        total_cost_d = (
-            r.costOper_and_penalty_d
-                .add(r.costInvest_d, fill_value=0.0)
-                .add(r.costDivest_d, fill_value=0.0)
-                .add(r.costFixedPreExisting_d, fill_value=0.0)
-                .add(r.costFixedInvested_d, fill_value=0.0)
-                .add(r.costFixedDivested_d, fill_value=0.0)
-        )
-        total_cost_full = total_cost_d.sum(axis=0) / 1000000
-        # Realized periods: the rows of the periods some solve realizes (dispatch or investment), each once and
-        # from the start of the run (union_realized_slice / drop_levels).  The full horizon adds the rows no solve
-        # realizes: the fixed cost of existing capacity in the last solve's look-ahead periods.
-        realized_periods = s.d_realized_period.union(s.d_realize_invest)
-        total_cost_realized = total_cost_d[total_cost_d.index.isin(realized_periods)].sum(axis=0) / 1000000
+    # Total cost (calculated) full horizon (M CUR).  Mirrors the LP
+    # objective: oper + penalty + invest + divest + fixed (pre-existing
+    # + invested + divested).  Fixed-cost terms are in the LP obj at
+    # flextool.mod:2107-2126; omitting them here would under-report
+    # the objective for any scenario with non-zero existing capacity
+    # or a non-zero lifetime_fixed_cost on invest/divest entities.
+    lines_d = r.costLinesByCause_d
+    total_cost_d = (
+        r.costOper_and_penalty_d
+            .add(lines_d.sum(axis=1), fill_value=0.0)
+            .add(r.costFixedPreExisting_d, fill_value=0.0)
+            .add(r.costFixedInvested_d, fill_value=0.0)
+            .add(r.costFixedDivested_d, fill_value=0.0)
+    )
+    total_cost_full = total_cost_d.sum(axis=0) / 1000000
+    # Realized periods: the rows of the periods some solve realizes (dispatch or investment), each once and
+    # from the start of the run (union_realized_slice / drop_levels).  The full horizon adds the rows no solve
+    # realizes: the fixed cost of existing capacity in the last solve's look-ahead periods.
+    realized_periods = s.d_realized_period.union(s.d_realize_invest)
+    total_cost_realized = total_cost_d[total_cost_d.index.isin(realized_periods)].sum(axis=0) / 1000000
 
-        f.write(f'"Total cost (calculated) full horizon (M CUR)",{total_cost_full:.12g},"Annualized operational, penalty and investment costs"\n')
-        f.write(f'"Total cost (calculated) realized periods (M CUR)",{total_cost_realized:.12g}\n')
+    f.write(f'"Total cost (calculated) full horizon (M CUR)",{total_cost_full:.12g},"Annualized operational, penalty and investment costs"\n')
+    f.write(f'"Total cost (calculated) realized periods (M CUR)",{total_cost_realized:.12g}\n')
+    # The total the objectives count: the calculated total without the objective constants of existing capacity
+    # (its fixed cost, the replacement of reinvest_automatic capacity and its salvage credits), which the
+    # optimised objective leaves out (include_existing_fixed_cost is not set by a run).
+    constants = (r.costFixedPreExisting_d.sum() + lines_d[list(PRE_EXISTING_LINES)].sum().sum()) / 1000000
+    f.write(f'"Total cost counted in the objective (M CUR)",{total_cost_full - constants:.12g},'
+            '"The solver objective for one deterministic solve that realizes every period it optimises; with '
+            'look-ahead periods, the realized part of it (the look-ahead operation is in the solver objective '
+            'only); for several solves or a stochastic solve, the realized run total priced as the objectives '
+            'price it"\n')
 
-        # Operational costs for realized periods (M CUR)
-        operational_costs = r.costOper_d.sum(axis=0) / 1000000
-        f.write(f'"Operational costs for realized periods (M CUR)",{operational_costs:.12g}\n')
+    # Operational costs for realized periods (M CUR)
+    operational_costs = r.costOper_d.sum(axis=0) / 1000000
+    f.write(f'"Operational costs for realized periods (M CUR)",{operational_costs:.12g}\n')
 
-        # Investment costs for realized periods (M CUR)
-        investment_costs = r.costInvest_d.sum(axis=0) / 1000000
-        f.write(f'"Investment costs for realized periods (M CUR)",{investment_costs:.12g}\n')
+    # The investment-type costs by cost line (M CUR), each counted in the period its event is reported in.
+    # A positive salvage value shows as a negative cost.  The pre-existing lines only where they are not 0.
+    shown = shown_lines(lines_d)
+    for line in (c for c in shown if c not in PRE_EXISTING_LINES):
+        f.write(f'"{line[0].upper()}{line[1:]} (M CUR)",{lines_d[line].sum() / 1000000:.12g}\n')
 
-        # Retirement costs / salvage revenue for realized periods (M CUR).
-        # Sign follows the user's salvage_value input: positive salvage
-        # (scrap revenue) shows as a negative cost; negative salvage
-        # (decommissioning cost) shows as a positive cost.  Included in
-        # the solver objective since v_divest is a decision variable.
-        retirement_costs = r.costDivest_d.sum(axis=0) / 1000000
-        f.write(f'"Retirement costs / salvage revenue for realized periods (M CUR)",{retirement_costs:.12g}\n')
+    # Fixed costs for existing entities (M CUR)
+    fixed_costs_pre_existing = r.costFixedPreExisting_d.sum(axis=0) / 1000000
+    fixed_costs_invested = r.costFixedInvested_d.sum(axis=0) / 1000000
+    fixed_costs_divested = r.costFixedDivested_d.sum(axis=0) / 1000000
 
-        # Fixed costs for existing entities (M CUR)
-        fixed_costs_pre_existing = r.costFixedPreExisting_d.sum(axis=0) / 1000000
-        fixed_costs_invested = r.costFixedInvested_d.sum(axis=0) / 1000000
-        fixed_costs_divested = r.costFixedDivested_d.sum(axis=0) / 1000000
+    f.write(f'"Fixed costs for pre-existing entities (M CUR)",{fixed_costs_pre_existing:.12g}\n')
+    for line in (c for c in shown if c in PRE_EXISTING_LINES):
+        # The replacement of existing reinvest_automatic capacity and the salvage credits of existing capacity.
+        f.write(f'"{line[0].upper()}{line[1:]} (M CUR)",{lines_d[line].sum() / 1000000:.12g}\n')
+    f.write(f'"Fixed costs for invested entities (M CUR)",{fixed_costs_invested:.12g}\n')
+    f.write(f'"Fixed cost removal due to divested entities (M CUR)",{fixed_costs_divested:.12g}\n')
 
-        f.write(f'"Fixed costs for pre-existing entities (M CUR)",{fixed_costs_pre_existing:.12g}\n')
-        f.write(f'"Fixed costs for invested entities (M CUR)",{fixed_costs_invested:.12g}\n')
-        f.write(f'"Fixed cost removal due to divested entities (M CUR)",{fixed_costs_divested:.12g}\n')
+    # Penalty (slack) costs for realized periods (M CUR)
+    penalty_costs = r.costPenalty_d.sum(axis=0) / 1000000
+    f.write(f'"Penalty (slack) costs for realized periods (M CUR)",{penalty_costs:.12g}\n')
 
-        # Penalty (slack) costs for realized periods (M CUR)
-        penalty_costs = r.costPenalty_d.sum(axis=0) / 1000000
-        f.write(f'"Penalty (slack) costs for realized periods (M CUR)",{penalty_costs:.12g}\n')
+    # Period information table
+    f.write('\nPeriod')
+    for d in period_in_use:
+        f.write(f',{d}')
+    f.write('\n')
 
-        # Period information table
-        f.write('\nPeriod')
-        for d in period_in_use:
-            f.write(f',{d}')
-        f.write('\n')
+    # Time in use in years
+    f.write('"Time in use in years"')
+    for d in period_in_use:
+        f.write(f',{complete_period_share_of_year[d]:.12g}')
+    f.write('\n')
 
-        # Time in use in years
-        f.write('"Time in use in years"')
-        for d in period_in_use:
-            f.write(f',{complete_period_share_of_year[d]:.12g}')
-        f.write('\n')
+    # Operational discount factor
+    f.write('"Operational discount factor"')
+    for d in period_in_use:
+        f.write(f',{p_inflation_factor_operations_yearly[d]:.12g}')
+    f.write('\n')
 
-        # Operational discount factor
-        f.write('"Operational discount factor"')
-        for d in period_in_use:
-            f.write(f',{p_inflation_factor_operations_yearly[d]:.12g}')
-        f.write('\n')
+    # Investment discount factor — iterate ``period_in_use`` (the
+    # same axis as the "Operational discount factor" / "Time in use
+    # in years" rows above) so the per-period values align under
+    # the period header.  Earlier HEAD iterated ``s.d_realize_invest``
+    # which (a) emits no values for scenarios without realized
+    # invest decisions (e.g. ``capacity_margin``, where v3.32.0
+    # still wrote ``,1`` against the single p2020 period) and
+    # (b) carries a different period order on multi-period invest
+    # scenarios than the surrounding rows.  v3.32.0 wrote one
+    # value per period in ``period_in_use``.
+    f.write('"Investment discount factor"')
+    for d in period_in_use:
+        f.write(f',{p_inflation_factor_investment_yearly[d]:.12g}')
+    f.write('\n\n')
 
-        # Investment discount factor — iterate ``period_in_use`` (the
-        # same axis as the "Operational discount factor" / "Time in use
-        # in years" rows above) so the per-period values align under
-        # the period header.  Earlier HEAD iterated ``s.d_realize_invest``
-        # which (a) emits no values for scenarios without realized
-        # invest decisions (e.g. ``capacity_margin``, where v3.32.0
-        # still wrote ``,1`` against the single p2020 period) and
-        # (b) carries a different period order on multi-period invest
-        # scenarios than the surrounding rows.  v3.32.0 wrote one
-        # value per period in ``period_in_use``.
-        f.write('"Investment discount factor"')
-        for d in period_in_use:
-            f.write(f',{p_inflation_factor_investment_yearly[d]:.12g}')
-        f.write('\n\n')
+    # Emissions section
+    f.write('Emissions\n')
+    # Per scenario path only when the realized periods differ between
+    # paths (out_costs.realized_leaf_periods); otherwise one line.
+    leaf_periods = realized_leaf_periods(s)
+    if len(leaf_periods) > 1:
+        for leaf, periods in leaf_periods.items():
+            leaf_total = r.emissions_co2_d.reindex(periods).sum() / 1000000
+            f.write(f'"CO2 [Mt] ({leaf})",{leaf_total:.6g},'
+                    f'"System-wide annualized CO2 emissions for realized periods, scenario path {leaf}"\n')
+    else:
+        co2_total = r.emissions_co2_d.sum(axis=0) / 1000000
+        f.write(f'"CO2 [Mt]",{co2_total:.6g},"System-wide annualized CO2 emissions for realized periods"\n')
 
-        # Emissions section
-        f.write('Emissions\n')
-        # Per scenario path only when the realized periods differ between
-        # paths (out_costs.realized_leaf_periods); otherwise one line.
-        leaf_periods = realized_leaf_periods(s)
-        if len(leaf_periods) > 1:
-            for leaf, periods in leaf_periods.items():
-                leaf_total = r.emissions_co2_d.reindex(periods).sum() / 1000000
-                f.write(f'"CO2 [Mt] ({leaf})",{leaf_total:.6g},'
-                        f'"System-wide annualized CO2 emissions for realized periods, scenario path {leaf}"\n')
-        else:
-            co2_total = r.emissions_co2_d.sum(axis=0) / 1000000
-            f.write(f'"CO2 [Mt]",{co2_total:.6g},"System-wide annualized CO2 emissions for realized periods"\n')
+    # Slack variables section
+    f.write('\n"Slack variables multiplied by timestep duration and timestep weight, summed over the solved '
+            'time steps of each period (creating or removing energy/matter, creating inertia, adding '
+            'synchronous generation, creating reserve); capacity margin per period"\n')
 
-        # Slack variables section
-        f.write('\n"Slack variables multiplied by timestep duration and timestep weight, summed over the solved '
-                'time steps of each period (creating or removing energy/matter, creating inertia, adding '
-                'synchronous generation, creating reserve); capacity margin per period"\n')
+    # Node state slack - upward (creating energy)
+    for node in r.upward_node_slack_d_sample.columns:
+        for period in d_realized_period:
+            if period in r.upward_node_slack_d_sample.index and r.upward_node_slack_d_sample.loc[period, node] > 0:
+                f.write(f'Created, {node}, {period}, {r.upward_node_slack_d_sample.loc[period, node]:.5g}\n')
 
-        # Node state slack - upward (creating energy)
-        for node in r.upward_node_slack_d_sample.columns:
-            for period in d_realized_period:
-                if period in r.upward_node_slack_d_sample.index and r.upward_node_slack_d_sample.loc[period, node] > 0:
-                    f.write(f'Created, {node}, {period}, {r.upward_node_slack_d_sample.loc[period, node]:.5g}\n')
+    # Node state slack - downward (removing energy)
+    for node in r.downward_node_slack_d_sample.columns:
+        for period in d_realized_period:
+            if period in r.downward_node_slack_d_sample.index and r.downward_node_slack_d_sample.loc[period, node] > 0:
+                f.write(f'Removed, {node}, {period}, {r.downward_node_slack_d_sample.loc[period, node]:.5g}\n')
 
-        # Node state slack - downward (removing energy)
-        for node in r.downward_node_slack_d_sample.columns:
-            for period in d_realized_period:
-                if period in r.downward_node_slack_d_sample.index and r.downward_node_slack_d_sample.loc[period, node] > 0:
-                    f.write(f'Removed, {node}, {period}, {r.downward_node_slack_d_sample.loc[period, node]:.5g}\n')
+    # Inertia slack
+    for group in r.q_inertia_d_sample.columns:
+        for period in d_realized_period:
+            if period in r.q_inertia_d_sample.index and r.q_inertia_d_sample.loc[period, group] > 0:
+                f.write(f'Inertia, {group}, {period}, {r.q_inertia_d_sample.loc[period, group]:.5g}\n')
 
-        # Inertia slack
-        for group in r.q_inertia_d_sample.columns:
-            for period in d_realized_period:
-                if period in r.q_inertia_d_sample.index and r.q_inertia_d_sample.loc[period, group] > 0:
-                    f.write(f'Inertia, {group}, {period}, {r.q_inertia_d_sample.loc[period, group]:.5g}\n')
+    # Non-synchronous slack
+    for group in r.q_non_synchronous_d_sample.columns:
+        for period in d_realized_period:
+            if period in r.q_non_synchronous_d_sample.index and r.q_non_synchronous_d_sample.loc[period, group] > 0:
+                f.write(f'NonSync, {group}, {period}, {r.q_non_synchronous_d_sample.loc[period, group]:.5g}\n')
 
-        # Non-synchronous slack
-        for group in r.q_non_synchronous_d_sample.columns:
-            for period in d_realized_period:
-                if period in r.q_non_synchronous_d_sample.index and r.q_non_synchronous_d_sample.loc[period, group] > 0:
-                    f.write(f'NonSync, {group}, {period}, {r.q_non_synchronous_d_sample.loc[period, group]:.5g}\n')
+    # Capacity margin slack — iterate realized periods rather than
+    # d_realize_invest.  The capacity-margin constraint is defined
+    # per realized period and is independent of invest/divest
+    # entities; scenarios such as ``capacity_margin`` have no
+    # invest entities, so d_realize_invest is empty and this loop
+    # would silently drop legitimate slack rows.
+    for group in r.q_capacity_margin_d_not_annualized.columns:
+        for period in d_realized_period:
+            if period in r.q_capacity_margin_d_not_annualized.index and r.q_capacity_margin_d_not_annualized.loc[period, group] > 0:
+                f.write(f'CapMargin, {group}, {period}, {r.q_capacity_margin_d_not_annualized.loc[period, group]:.5g}\n')
 
-        # Capacity margin slack — iterate realized periods rather than
-        # d_realize_invest.  The capacity-margin constraint is defined
-        # per realized period and is independent of invest/divest
-        # entities; scenarios such as ``capacity_margin`` have no
-        # invest entities, so d_realize_invest is empty and this loop
-        # would silently drop legitimate slack rows.
-        for group in r.q_capacity_margin_d_not_annualized.columns:
-            for period in d_realized_period:
-                if period in r.q_capacity_margin_d_not_annualized.index and r.q_capacity_margin_d_not_annualized.loc[period, group] > 0:
-                    f.write(f'CapMargin, {group}, {period}, {r.q_capacity_margin_d_not_annualized.loc[period, group]:.5g}\n')
+    # Reserve slack
+    for group in r.q_reserves_d_sample.columns:
+        for period in d_realized_period:
+            if period in r.q_reserves_d_sample.index and r.q_reserves_d_sample.loc[period, group] > 0:
+                f.write(f'Reserve, {group}, {period}, {r.q_reserves_d_sample.loc[period, group]:.5g}\n')
+    return f.getvalue()
 
-        # Reserve slack
-        for group in r.q_reserves_d_sample.columns:
-            for period in d_realized_period:
-                if period in r.q_reserves_d_sample.index and r.q_reserves_d_sample.loc[period, group] > 0:
-                    f.write(f'Reserve, {group}, {period}, {r.q_reserves_d_sample.loc[period, group]:.5g}\n')
+
+
+
+def solve_summary_lines(text: str) -> list[str]:
+    """The console lines of the solve summary *text* (:func:`summary_solve_text`): its rows between
+    :data:`SOLVE_SUMMARY_START` and :data:`SOLVE_SUMMARY_END`, without the title line (the time of the output)
+    and the blank lines around it."""
+    rows = text.splitlines()
+    if rows and rows[0].startswith(f'"{SUMMARY_TITLE}'):
+        rows = rows[1:]
+    while rows and not rows[0].strip():
+        rows = rows[1:]
+    while rows and not rows[-1].strip():
+        rows = rows[:-1]
+    return [SOLVE_SUMMARY_START, *rows, SOLVE_SUMMARY_END]
+
+
+def print_solve_summary(text: str) -> None:
+    """Print the solve summary (:func:`solve_summary_lines`) to stdout."""
+    print("\n".join(solve_summary_lines(text)), flush=True)
+
+
+def write_summary_csv(par, s, v, r, csv_dir, text=None):
+    """Write ``summary_solve.csv`` (:func:`summary_solve_text`; *text* when the caller built it already)."""
+    import os
+    if text is None:
+        text = summary_solve_text(par, s, v, r)
+    with open(os.path.join(csv_dir, 'summary_solve.csv'), 'w', encoding='utf-8') as f:
+        f.write(text)
 
 
 # List of all output functions
@@ -698,6 +743,7 @@ ALL_OUTPUTS = [
     unit_capacity,
     connection_capacity,
     node_capacity,
+    cohort_capacity,
     nodeGroup_indicators,
     nodeGroup_VRE_share,
     flowGroup_indicators,
@@ -716,6 +762,7 @@ ALL_OUTPUTS = [
     unit_ramps,
     node_ramp_envelope,
     nodeGroup_ramp_envelope,
+    node_storage_usage,
     dc_power_flow,
 ]
 
@@ -981,6 +1028,9 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         settings_warnings: False when the caller already resolved the settings
             (``resolve_output_settings``) and showed their warnings, so they
             are not shown twice.
+
+    Returns the text of ``summary_solve.csv`` (:func:`summary_solve_text`; built whatever the write methods),
+    or ``None`` on the ``read_parquet_dir`` replay path or when it could not be built.
     """
     # The scenario name and the subdir become folder and file names: refuse one that is not a plain folder name
     # (UnsafeNameError) before anything is written or cleaned up.
@@ -1049,6 +1099,9 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
     # Read and process data
     start = log_time("Read configuration files", start, timing_recorder)
 
+    # The text of summary_solve.csv, built from the raw outputs (None on the parquet replay path); returned, so the
+    # run can print it at its end whatever the write methods.
+    summary_text = None
     # If results already exist as parquet files, read them
     if read_parquet_dir:
         from flextool.plot_outputs.format_helpers import TIMELINE_BREAKS_FILE, load_timeline_breaks
@@ -1098,6 +1151,10 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         from flextool.process_outputs.calc_piecewise import warn_piecewise_excess
         warn_piecewise_excess(par, s, unit_ctx.node_units)
         start = log_time("Post-processed outputs", start, timing_recorder)
+        try:
+            summary_text = summary_solve_text(par, s, v, r)
+        except Exception as exc:  # noqa: BLE001 - the console summary must not fail a run that writes no CSV
+            logging.warning("The solve summary could not be built: %s", exc)
 
         # The realized steps at which a time-series plot starts a new line (gaps in the timeline,
         # representative-block starts, periods that do not continue the previous one).
@@ -1357,7 +1414,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                 df_copy.to_csv(csv_path, index=False, float_format='%.8g')
         else:
             # Full CSV writing from output_raw (par,s,v,r available)
-            write_summary_csv(par, s, v, r, csv_dir)
+            write_summary_csv(par, s, v, r, csv_dir, text=summary_text)
             unit_rows.append(summary_solve_row())
 
             rename_raw = settings.get('rename', {})
@@ -1507,3 +1564,4 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             start = log_time('Wrote manifest.json', start, timing_recorder)
         except Exception as exc:  # noqa: BLE001
             logging.warning("Manifest write failed (non-fatal): %s", exc)
+    return summary_text

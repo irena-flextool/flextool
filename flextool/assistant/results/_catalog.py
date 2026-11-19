@@ -101,6 +101,9 @@ SYNONYMS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("invest", "investment", "investments", "invested", "built", "build", "expanded"), "capacity invested"),
     (("unserved", "not served", "loss of load", "lost load", "shortage"), "slack_up loss of load"),
     (("excess load",), "slack_down"),
+    (("retire", "retired", "retires", "retiring", "retirement", "retirements", "decommission", "decommissioned",
+      "decommissioning"), "retirement"),
+    (("vintage", "vintages", "cohort", "cohorts", "age"), "cohort capacity"),
 )
 
 
@@ -121,6 +124,10 @@ PREFERRED: tuple[Preferred, ...] = (
     Preferred(("unserved", "not served", "loss of load", "lost load", "shortage"),
               ("node_slack_up_d_e", "node_slack_up_dt_e", "node_d_ep")),
     Preferred(("fuel", "fuels"), ("costs_dt_p", "annualized_costs_d_p")),
+    Preferred(("retirement",), ("unit_retirement_ed_p", "connection_retirement_ed_p", "node_retirement_ed_p"),
+              unless=("cost", "costs", "salvage")),
+    Preferred(("cohort",), ("unit_cohort_capacity_ed_p", "connection_cohort_capacity_ed_p",
+                            "node_cohort_capacity_ed_p")),
     Preferred(("capacity",), ("unit_capacity_ed_p", "connection_capacity_ed_p", "node_capacity_ed_p"),
               unless=("margin", "factor", "factors", "cf", "slack", "share", "dual", "marginal", "shadow")),
     Preferred(("cost", "costs", "objective"),

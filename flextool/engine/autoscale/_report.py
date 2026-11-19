@@ -344,8 +344,8 @@ def format_console_summary(
     flag = "" if guard is None else f" guard={guard.level}"
     if not ranges_pre.trigger:
         return (
-            "Autoscale by polar-high: LP within HiGHS comfort zone "
-            f"(spreads <= {threshold_decades:g} decades) — no scaling applied" + flag
+            "Autoscale by polar-high: within HiGHS comfort zone "
+            f"(spreads <= {threshold_decades:g} decades), not scaled" + (f";{flag}" if flag else "")
         )
 
     pre_matrix = _fmt_decades(_decades(ranges_pre.matrix))

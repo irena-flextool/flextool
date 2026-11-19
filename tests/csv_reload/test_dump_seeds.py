@@ -55,7 +55,7 @@ def _invest_retire_limits(cls: str, ent: str) -> list:
         [cls, ent, "retire_min_period", per(0.5)],
         [cls, ent, "retire_max_total", 40.0],
         [cls, ent, "retire_min_total", 1.0],
-        [cls, ent, "salvage_value", 100.0],  # without a salvage value the entity gets no divest variable
+        [cls, ent, "net_salvage_value", 100.0],  # without a salvage value the entity gets no divest variable
     ]
 
 

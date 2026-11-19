@@ -18,7 +18,7 @@ from polar_high.engine import Expr, Var
 
 from flextool.engine.input._axis_enums import align_join_dtypes, rename_to_axis
 from flextool.engine.input._param_shapes import drop_no_limit_rows, without_no_limit_rows
-from flextool.engine.model import _coarse_flows, _lead_time
+from flextool.engine.model import _coarse_flows, _extend, _lead_time, _retire_built
 from flextool.engine.model._common import (
     _entities_of_kind,
     _entity_rows,
@@ -43,7 +43,6 @@ if TYPE_CHECKING:
 _GATE_FIELDS: tuple[str, ...] = (
     "e_invest_min_total", "e_divest_min_total",
     "ed_invest_min_period", "ed_divest_min_period",
-    "ed_invest_forbidden_no_investment",
     "ed_invest_cumulative", "ed_cumulative_max_capacity", "ed_cumulative_min_capacity",
     "gd_invest_period", "gd_divest_period",
     "g_invest_total", "g_divest_total", "g_invest_cumulative",
@@ -78,17 +77,19 @@ def _unitsize(d, axis: str) -> Param | None:
     return None if d.p_state_unitsize is None else Param(("n",), d.p_state_unitsize.frame)
 
 
-def _on_var_axis(frame: pl.DataFrame, axis: str, var: Var) -> pl.DataFrame:
-    """``frame`` (keyed on the entity-union axis e) renamed to ``axis`` and restricted to the entities of ``var``.
+def _on_var_axis(frame: pl.DataFrame, axis: str, var: "Var | pl.DataFrame") -> pl.DataFrame:
+    """``frame`` (keyed on the entity-union axis e) renamed to ``axis`` and restricted to the entities of ``var``
+    (a variable, or the ``[axis, d]`` cells of the retirement columns, _retire_built.retirement_cells).
 
     The entity-union Enum is cast to the narrower process / node Enum of ``var`` first, so that the
     membership test compares matching dtypes.
     """
+    cells = var if isinstance(var, pl.DataFrame) else var.frame
     out = frame.rename({"e": axis})
-    dtype = var.frame.schema[axis]
+    dtype = cells.schema[axis]
     if out.schema[axis] != dtype:
         out = out.with_columns(pl.col(axis).cast(dtype, strict=False))
-    return out.filter(pl.col(axis).is_in(var.frame[axis].unique()))
+    return out.filter(pl.col(axis).is_in(cells[axis].unique()))
 
 
 def _group_flow(b: _Build) -> Expr | None:
@@ -163,7 +164,6 @@ def add_constraints(b: _Build) -> None:
     """Every family of the module, in emit order, when some of its data is populated."""
     if not b.has_cumulative_invest:
         return
-    _eq_fix_no_investment(b)
     _eq_min_entity_period(b)
     _eq_min_invest_total(b)
     _eq_min_divest_total(b)
@@ -179,56 +179,31 @@ def add_constraints(b: _Build) -> None:
 
 
 def _check_group_retire_minimums(b: _Build) -> None:
-    """A group's minimum retirement (``retire_min_total`` / ``retire_min_period``) must fit in the pre-existing
-    capacity of its members: only that capacity can be retired (``maxRetired_existing_{p,n}``), so a larger
-    minimum is a configuration error, not an infeasible LP."""
+    """A group's minimum retirement (``retire_min_total`` / ``retire_min_period``) must fit in what its members can
+    retire: their pre-existing capacity (``maxRetired_existing_{p,n}``) and their retirable model-built capacity
+    (``maxDivest_cohort_{p,n}``, up to its cohorts' bounds), so a larger minimum is a configuration error, not an
+    infeasible LP."""
     d = b.d
     if (getattr(d, "p_group_retire_min_total", None) is None
             and getattr(d, "p_group_retire_min_period", None) is None):
         return
+    from flextool.engine.preprocess.params._retire_built import check_minimums_inputs
     from flextool.engine.preprocess.params._retire_existing import (
         active_windows,
         check_group_retirement_minimums,
         ed_values,
     )
+    _, built_total, built_alive = check_minimums_inputs(getattr(d, "cohort_divest_built", None),
+                                                        getattr(d, "cd_divest_built", None))
     check_group_retirement_minimums(
         group_entity=d.group_entity,
         min_total=d.p_group_retire_min_total,
         min_period=d.p_group_retire_min_period,
-        windows=active_windows([getattr(d, "edd_divest_active", None), getattr(d, "ndd_divest_active", None)]),
-        pre=ed_values(getattr(d, "p_entity_pre_existing", None)),
+        windows=active_windows([b.cap.retired_frame("p"), b.cap.retired_frame("n")]),
+        pre=ed_values(b.cap.existing_cohort_size_e),
         prior=chain_prior(d, "divest"),
-        carried=ed_values(getattr(d, "p_entity_retired_carried", None)))
-
-
-def _eq_fix_no_investment(b: _Build) -> None:
-    """fix_v_invest_no_investment_eq_{p,n}: no investment in the cells where investment is forbidden."""
-    forbid = b.d.ed_invest_forbidden_no_investment
-    if not _has_rows(forbid):
-        return
-
-    # ─── EQ. ─── fix_v_invest_no_investment_eq_{p,n} ─────────────────────────
-    # ─────────────────────────────────────────────────────────────────────────
-    # v_invest_p[p,d] = 0   ∀ (p,d) ∈ ed_invest_forbidden_no_investment ∩ pd_invest_set
-    # v_invest_n[n,d] = 0   ∀ (n,d) ∈ ed_invest_forbidden_no_investment ∩ nd_invest_set
-    # Pins investment to zero where the entity's invest method forbids it.
-    # Never emits rows: ed_invest_set (the v_invest_* domain) already excludes the forbidden cells, so the
-    # row domain is empty.
-    for name, var, axis in (("fix_v_invest_no_investment_eq_p", b.v_invest_p, "p"),
-                            ("fix_v_invest_no_investment_eq_n", b.v_invest_n, "n")):
-        if var is None:
-            continue
-        over, var_idx = align_join_dtypes(forbid.rename({"e": axis}), var.frame.select(axis, "d"), (axis, "d"))
-        over = over.join(var_idx, on=[axis, "d"], how="inner")
-        if over.height == 0:
-            continue
-        b.m.add_cstr(
-            name,
-            over      = over,
-            sense     = "==",
-            lhs_terms = {"invest": var},
-            rhs_terms = {"zero":   0.0},
-        )
+        carried=ed_values(getattr(d, "p_entity_retired_carried", None)),
+        built_total=built_total, built_alive=built_alive)
 
 
 def _eq_min_entity_period(b: _Build) -> None:
@@ -243,8 +218,10 @@ def _eq_min_entity_period(b: _Build) -> None:
     #                                      ≥ invest_min_period[p,d]   ∀ (p,d) with a decision coming online in d,
     #                                                                   p ∈ ed_invest_period_set
     # (n: v_invest_n with state_unitsize[n], n ∈ ed_invest_period_set ∩ nd_invest_set)
-    # v_divest_p[p,d] · unitsize[p]        ≥ divest_min_period[p,d]   ∀ (p,d) ∈ ed_divest_period_set ∩ pd_divest_set
-    # v_divest_n[n,d] · state_unitsize[n]  ≥ divest_min_period[n,d]   ∀ (n,d) ∈ ed_divest_period_set ∩ nd_divest_set
+    # R_p[p,d] · unitsize[p]        ≥ divest_min_period[p,d]   ∀ (p,d) ∈ ed_divest_period_set ∩ (pd_divest_set ∪ B_p)
+    # R_n[n,d] · state_unitsize[n]  ≥ divest_min_period[n,d]   ∀ (n,d) ∈ ed_divest_period_set ∩ (nd_divest_set ∪ B_n)
+    #   R[e,d] = v_divest[e,d] + Σ_c v_divest_built[e,c,d] (existing and model-built capacity retired in d);
+    #   B = the (e,d) of cd_divest_built (_retire_built)
     # Forces a minimum capacity to come online or be retired in a period; the floor twin of
     # max{Invest,Divest}_entity_period in model/core.py.  Capacity in MW (MWh for storage nodes).  Without a
     # construction lead time c(o) = o: v_invest_p[p,d] · unitsize[p] ≥ invest_min_period[p,d] over
@@ -258,20 +235,29 @@ def _eq_min_entity_period(b: _Build) -> None:
         ("minDivest_entity_period_n", d.ed_divest_period_set, d.ed_divest_min_period, b.v_divest_n, "n", "divest"),
     ):
         unitsize = _unitsize(d, axis)
-        if not _has_rows(period_set) or cap is None or var is None or unitsize is None:
+        # A retirement floor also counts the retirements of model-built capacity (_retire_built).
+        built = _retire_built.decided(b, axis) if kind == "divest" else None
+        if not _has_rows(period_set) or cap is None or (var is None and built is None) or unitsize is None:
             continue
         if kind == "invest" and _lead_time.active(d):
             entities = _on_var_axis(period_set, axis, var).join(var.frame.select(axis, "d"), on=[axis, "d"], how="semi")
             _lead_time.period_limit(b, name, axis, var, unitsize, entities, cap, ">=", "invest_min_period")
             continue
-        over = _on_var_axis(period_set, axis, var).join(var.frame.select(axis, "d"), on=[axis, "d"], how="inner")
+        if built is None:
+            over = _on_var_axis(period_set, axis, var).join(var.frame.select(axis, "d"), on=[axis, "d"], how="inner")
+            lhs: dict = {kind: var * unitsize}
+        else:
+            cells = _retire_built.retirement_cells(b, axis, var)
+            over = _on_var_axis(period_set, axis, cells).join(cells, on=[axis, "d"], how="inner")
+            lhs = {kind: var * unitsize} if var is not None else {}
+            lhs["divest_built"] = built * unitsize
         if over.height == 0:
             continue
         b.m.add_cstr(
             name,
             over      = over,
             sense     = ">=",
-            lhs_terms = {kind:  var * unitsize},
+            lhs_terms = lhs,
             rhs_terms = {"cap": Param((axis, "d"), cap.frame.rename({"e": axis}))},
         )
 
@@ -293,7 +279,7 @@ def _eq_min_invest_total(b: _Build) -> None:
     #   _n: the node analogue with v_invest_n and state_unitsize[n]
     # The part of the minimum not met by earlier solves of the chain must be met in this solve
     # (Q3).  One row per entity over the chain horizon, replacing the old per-period "invested and
-    # still alive" row; edd_invest_set is no longer read.  Always named _path, even with one
+    # still alive" row; the capacity in service is not read.  Always named _path, even with one
     # scenario leaf: a single row summed over alternative branches would let one branch meet the
     # minimum for all, so the per-leaf row shape is load-bearing, not cosmetic.
     for name, var, axis in (("minInvest_entity_total_path_p", b.v_invest_p, "p"),
@@ -330,8 +316,9 @@ def _eq_min_divest_total(b: _Build) -> None:
 
     # ─── EQ. ─── minDivest_entity_total_path_{p,n} ───────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_{d ∈ D(leaf)} v_divest_p[p,d] · unitsize[p]  ≥  max(0, divest_min_total[p] − prior_div[p])
-    #   ∀ p ∈ e_divest_total ∩ P(v_divest_p) with divest_min_total (, leaf)
+    # Σ_{d ∈ D(leaf)} R_p[p,d] · unitsize[p]  ≥  max(0, divest_min_total[p] − prior_div[p])
+    #   ∀ p ∈ e_divest_total ∩ P(v_divest_p ∪ v_divest_built_p) with divest_min_total (, leaf)
+    #   R[e,d] = v_divest[e,d] + Σ_c v_divest_built[e,c,d] (existing and model-built capacity retired in d)
     #   prior_div[p] = p_entity_divested[p]  (capacity retired by earlier solves of the chain, at
     #     realized non-branch periods only)
     #   _n: the node analogue with v_divest_n and state_unitsize[n]
@@ -340,22 +327,27 @@ def _eq_min_divest_total(b: _Build) -> None:
     for name, var, axis in (("minDivest_entity_total_path_p", b.v_divest_p, "p"),
                             ("minDivest_entity_total_path_n", b.v_divest_n, "n")):
         unitsize = _unitsize(d, axis)
-        if var is None or unitsize is None:
+        built = _retire_built.decided(b, axis)
+        if (var is None and built is None) or unitsize is None:
             continue
         members = _entities_of_kind(d, e_set, axis).pipe(rename_to_axis, {"e": axis})
         if members.height == 0:
             continue
-        over_e = members.join(var.frame.select(axis).unique(), on=axis, how="semi")
+        cells = var.frame if built is None else _retire_built.retirement_cells(b, axis, var)
+        over_e = members.join(cells.select(axis).unique(), on=axis, how="semi")
         if over_e.height == 0:
             continue
         cap_param = Param((axis,), minus_prior(cap.frame.pipe(rename_to_axis, {"e": axis}), axis, prior))
-        terms = over_e.join(var.frame.select(axis, "d").unique(), on=axis, how="inner")
-        _, over, mask = leaf_rows(terms, axis, var, d_leaf)
+        terms = over_e.join(cells.select(axis, "d").unique(), on=axis, how="inner")
+        _, over, mask = leaf_rows(terms, axis, var if built is None else cells, d_leaf)
+        lhs: dict = {"divest_total": Sum(Where(var * unitsize, mask), over=("d",))} if var is not None else {}
+        if built is not None:
+            lhs["divest_total_built"] = Sum(Where(built * unitsize, mask), over=("d",))
         b.m.add_cstr(
             name,
             over      = over,
             sense     = ">=",
-            lhs_terms = {"divest_total": Sum(Where(var * unitsize, mask), over=("d",))},
+            lhs_terms = lhs,
             rhs_terms = {"cap":          cap_param},
         )
 
@@ -363,15 +355,15 @@ def _eq_min_divest_total(b: _Build) -> None:
 def _eq_cumulative_capacity(b: _Build) -> None:
     """{max,min}Cumulative_capacity_{p,n}: total capacity of an entity per period, from above and below."""
     d = b.d
-    idx, edd = d.ed_invest_cumulative, d.edd_invest_set
-    if not _has_rows(idx) or edd is None:
+    idx, edd = d.ed_invest_cumulative, b.cap.alive
+    if not _has_rows(idx) or not _has_rows(edd):
         return
-    existing = d.p_entity_all_existing
+    existing = b.cap.existing_mw_e
 
     # ─── EQ. ─── {max,min}Cumulative_capacity_{p,n} ──────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_{d′ : (p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′] · unitsize[p]
-    #   − Σ_{d′ : (p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′] · unitsize[p]
+    # invested[p,d] · unitsize[p]
+    #   − retired[p,d] · unitsize[p]
     #   ≤ cumulative_max_capacity[p,d] − existing[p,d]        (maxCumulative_capacity_p)
     #   ≥ cumulative_min_capacity[p,d] − existing[p,d]        (minCumulative_capacity_p)
     #   max: ∀ (p,d) ∈ ed_invest_cumulative ∩ v_invest_p entities, p ∈ authors(cumulative_max_capacity) —
@@ -379,12 +371,12 @@ def _eq_cumulative_capacity(b: _Build) -> None:
     #        a period whose cumulative_max_capacity is inf has no row (no limit there)
     #       
     #   min: ∀ (p,d) ∈ ed_invest_cumulative ∩ v_invest_p entities ∩ cumulative_min_capacity.frame
-    #   _n: the node analogue with v_invest_n / v_divest_n, state_unitsize[n] and ``ndd_divest_active``.
+    #   _n: the node analogue with v_invest_n / v_divest_n and state_unitsize[n].
     # Keeps the capacity of an entity in a period (existing + invested and still alive − every
     # retirement up to and including d, #29, processes and storage nodes) within its cumulative
     # limits, MW (MWh for storage nodes).  Existing capacity is a constant on the right-hand side.
-    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
-    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+    # existing capacity counting until its end of life (none for reinvest_automatic).
     for name, sense, cap, var, divest, axis, param_name in (
         ("maxCumulative_capacity_p", "<=", d.ed_cumulative_max_capacity, b.v_invest_p, b.v_divest_p, "p",
          "cumulative_max_capacity"),
@@ -425,17 +417,28 @@ def _eq_cumulative_capacity(b: _Build) -> None:
         invest = _var_view(var, "__cumcap_at", {"d": "d_invest"})
         lhs: dict = {"invest_cum": Sum(Where(invest * unitsize, lifetime), over=("d_invest",))}
         if divest is not None:
-            active_frame = d.edd_divest_active if axis == "p" else d.ndd_divest_active
-            if active_frame is not None:
-                # #29: every earlier divestment still active at d, not just d's own — the maxFlow
-                # measure (core.py divest_in_dispatch_p).
-                view = _var_view(divest, "__cumcap_div", {"d": "d_divest"}, to_axis=True)
-                active = _entity_rows(active_frame, axis, rows, axis)
-                active, rows_div = align_join_dtypes(active, rows.select(axis, "d"), (axis, "d"))
-                active = active.join(rows_div, on=[axis, "d"], how="semi")
-                lhs["divest"] = -Sum(Where(view * unitsize, active), over=("d_divest",))
-            else:
-                lhs["divest"] = -Where(divest * unitsize, rows)
+            # #29: every earlier divestment still active at d, not just d's own — the maxFlow measure
+            # (retired[e,d], _capacity).
+            view = _var_view(divest, "__cumcap_div", {"d": "d_divest"}, to_axis=True)
+            active = _entity_rows(b.cap.retired_frame(axis), axis, rows, axis)
+            active, rows_div = align_join_dtypes(active, rows.select(axis, "d"), (axis, "d"))
+            active = active.join(rows_div, on=[axis, "d"], how="semi")
+            lhs["divest"] = -Sum(Where(view * unitsize, active), over=("d_divest",))
+        built = _retire_built.retired(b, axis)
+        if built is not None:
+            # The model-built capacity retired so far (_retire_built).
+            built_rows, rows_b = align_join_dtypes(_retire_built.retired_frame(b, axis), rows.select(axis, "d"),
+                                                   (axis, "d"))
+            built_rows = built_rows.join(rows_b, on=[axis, "d"], how="semi")
+            if built_rows.height > 0:
+                lhs["divest_built"] = -Where(built * unitsize, built_rows)
+        ext = _extend.extended(b, axis)
+        if ext is not None:
+            # The extended capacity in service (_extend) is capacity, not investment.
+            ext_rows, rows_e = align_join_dtypes(_extend.extended_frame(b, axis), rows.select(axis, "d"), (axis, "d"))
+            ext_rows = ext_rows.join(rows_e, on=[axis, "d"], how="semi")
+            if ext_rows.height > 0:
+                lhs["extended"] = Where(ext * unitsize, ext_rows)
         rhs: dict = {"cap": drop_no_limit_rows(Param((axis, "d"), cap_frame), "upper")}
         if existing is not None:
             rhs["minus_existing"] = -Param((axis, "d"), existing.frame.rename({"e": axis}))
@@ -461,7 +464,8 @@ def _eq_group_entity_period(b: _Build) -> None:
     #                                                             ≥ group_invest_min_period[g,d]   (min…_p)
     #   ∀ (g,d) ∈ gd_invest_period, restricted to the (g,d) some member actually has the variable for; a max row
     #   is left out where the group's limit is inf (no limit in that period)
-    #   Divest: v_divest_p with group_retire_{max,min}_period over gd_divest_period (same restriction)
+    #   Divest: R_p[p,d] = v_divest_p[p,d] + Σ_c v_divest_built_p[p,c,d] (existing and model-built capacity retired
+    #   in d) with group_retire_{max,min}_period over gd_divest_period (same restriction)
     #   _n: the node analogues with v_invest_n / v_divest_n and state_unitsize[n]
     # With a construction lead time the invest rows count capacity coming online in d:
     #   Σ_{p : (g,p) ∈ group_entity} (Σ_{(p,o,d) ∈ edd_invest_commission} v_invest_p[p,o] · unitsize[p]
@@ -492,14 +496,17 @@ def _eq_group_entity_period(b: _Build) -> None:
             continue
         for name, var, axis in sides:
             unitsize = _unitsize(d, axis)
-            if var is None or unitsize is None:
+            # A group's retirement also counts the retirements of model-built capacity (_retire_built).
+            built = _retire_built.decided(b, axis) if kind == "divest" else None
+            if (var is None and built is None) or unitsize is None:
                 continue
-            members = _on_var_axis(group_entity, axis, var)
+            cells = var.frame.select(axis, "d") if built is None else _retire_built.retirement_cells(b, axis, var)
+            members = _on_var_axis(group_entity, axis, cells)
             if members.height == 0:
                 continue
             # #82-adjacent: row domain is TERMS' (g, d), not the full gd_idx -- gd_idx may list a
             # branch period of a group's invest period (#67) that no member actually has the
-            # variable for (e.g. a member whose no_investment lifetime window has ended; before #218 also a
+            # variable for (e.g. a member whose no_reinvestment lifetime window has ended; before #218 also a
             # branch-native 0 beating the anchor's invest_cost, #82). A row
             # there would be vacuous on the LHS (empty sum) while the RHS min/max still carries
             # the branch's (inherited-or-own) cap, turning an unconstrained branch into an
@@ -507,7 +514,7 @@ def _eq_group_entity_period(b: _Build) -> None:
             if kind == "invest" and _lead_time.active(d):
                 _group_period_limit_online(b, name, axis, var, unitsize, members, gd_idx, cap, sense, param_name)
                 continue
-            terms = (members.join(var.frame.select(axis, "d"), on=axis, how="inner")
+            terms = (members.join(cells, on=axis, how="inner")
                      .join(gd_idx, on=["g", "d"], how="inner"))
             if terms.height == 0:
                 continue
@@ -519,11 +526,15 @@ def _eq_group_entity_period(b: _Build) -> None:
                 terms = without_no_limit_rows(terms, cap, "upper")
                 if terms.height == 0:
                     continue
+            lhs: dict = ({kind: Sum(Where(var * unitsize, terms.select("g", axis, "d")), over=(axis,))}
+                         if var is not None else {})
+            if built is not None:
+                lhs["divest_built"] = Sum(Where(built * unitsize, terms.select("g", axis, "d")), over=(axis,))
             b.m.add_cstr(
                 name,
                 over      = terms.select("g", "d").unique(),
                 sense     = sense,
-                lhs_terms = {kind:  Sum(Where(var * unitsize, terms.select("g", axis, "d")), over=(axis,))},
+                lhs_terms = lhs,
                 rhs_terms = {"cap": drop_no_limit_rows(cap, "upper")},
             )
 
@@ -645,7 +656,8 @@ def _eq_group_divest_total(b: _Build) -> None:
 
     # ─── EQ. ─── maxDivestGroup_entity_total[_path]_{p,n} / minDivestGroup_entity_total_path_{p,n} ───
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_{p:(g,p)∈group_entity} Σ_{d∈D(leaf)} v_divest_p[p,d]·unitsize[p]
+    # Σ_{p:(g,p)∈group_entity} Σ_{d∈D(leaf)} R_p[p,d]·unitsize[p]
+    #   R[e,d] = v_divest[e,d] + Σ_c v_divest_built[e,c,d] (existing and model-built capacity retired in d)
     #   ≤ max(0, group_retire_max_total[g] − Σ_{p∈g} prior_div[p])   (maxDivestGroup_entity_total[_path]_p)
     #   ≥ max(0, group_retire_min_total[g] − Σ_{p∈g} prior_div[p])   (minDivestGroup_entity_total_path_p)
     #   ∀ g ∈ g_divest_total (, leaf)
@@ -673,26 +685,31 @@ def _eq_group_divest_total(b: _Build) -> None:
          None, "minDivestGroup_entity_total_path_n", True, None),
     ):
         unitsize = _unitsize(d, axis)
-        if cap is None or var is None or unitsize is None:
+        built = _retire_built.decided(b, axis)
+        if cap is None or (var is None and built is None) or unitsize is None:
             continue
         members = (_entities_of_kind(d, group_entity, axis).pipe(rename_to_axis, {"e": axis})
                    .filter(pl.col("g").is_in(g_set["g"].unique())))
         if members.height == 0:
             continue
-        terms = members.join(var.frame.select(axis, "d").unique(), on=axis, how="inner")
+        cells = var.frame if built is None else _retire_built.retirement_cells(b, axis, var)
+        terms = members.join(cells.select(axis, "d").unique(), on=axis, how="inner")
         if terms.height == 0:
             continue
         if sense == "<=":
             # FA-12: only on g whose members have the variable.
             check_max_cap(terms.select("g").unique(), cap.frame, "g", False, param_name=param_name)
         cap_g = Param(("g",), minus_prior(cap.frame, "g", group_prior(group_entity, prior, d, axis)))
-        is_path, over, mask = leaf_rows(terms, "g", var, d_leaf)
+        is_path, over, mask = leaf_rows(terms, "g", var if built is None else cells, d_leaf)
         name = path_name if (always_path or is_path) else legacy_name
+        lhs: dict = {"divest_grp": Sum(Where(var * unitsize, mask), over=(axis, "d"))} if var is not None else {}
+        if built is not None:
+            lhs["divest_grp_built"] = Sum(Where(built * unitsize, mask), over=(axis, "d"))
         b.m.add_cstr(
             name,
             over      = over,
             sense     = sense,
-            lhs_terms = {"divest_grp": Sum(Where(var * unitsize, mask), over=(axis, "d"))},
+            lhs_terms = lhs,
             rhs_terms = {"cap":        cap_g},
         )
 
@@ -700,8 +717,8 @@ def _eq_group_divest_total(b: _Build) -> None:
 def _eq_group_invest_cumulative(b: _Build) -> None:
     """{max,min}InvestGroup_entity_cumulative: existing plus invested capacity of a group per period."""
     d = b.d
-    group_entity, g_set, edd = d.group_entity, d.g_invest_cumulative, d.edd_invest_set
-    if not _has_rows(group_entity) or not _has_rows(g_set) or edd is None:
+    group_entity, g_set, edd = d.group_entity, d.g_invest_cumulative, b.cap.alive
+    if not _has_rows(group_entity) or not _has_rows(g_set) or not _has_rows(edd):
         return
     in_groups = pl.col("g").is_in(g_set["g"].unique())
     # (g, d): the periods in which some member of the group has investments alive.
@@ -713,10 +730,10 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
 
     # ─── EQ. ─── {max,min}InvestGroup_entity_cumulative ──────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_{p : (g,p) ∈ group_entity} Σ_{d′ : (p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′] · unitsize[p]
-    #   + Σ_{n : (g,n) ∈ group_entity} Σ_{d′ : (n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′] · state_unitsize[n]
-    #   − Σ_{p : (g,p) ∈ group_entity} Σ_{d′ : (p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′] · unitsize[p]
-    #   − Σ_{n : (g,n) ∈ group_entity} Σ_{d′ : (n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′] · state_unitsize[n]
+    # Σ_{p : (g,p) ∈ group_entity} invested[p,d] · unitsize[p]
+    #   + Σ_{n : (g,n) ∈ group_entity} invested[n,d] · state_unitsize[n]
+    #   − Σ_{p : (g,p) ∈ group_entity} retired[p,d] · unitsize[p]
+    #   − Σ_{n : (g,n) ∈ group_entity} retired[n,d] · state_unitsize[n]
     #   ≤ cumulative_max_capacity[g,d] − Σ_{e : (g,e) ∈ group_entity} existing[e,d]   (max…)
     #   ≥ cumulative_min_capacity[g,d] − Σ_{e : (g,e) ∈ group_entity} existing[e,d]   (min…)
     #   ∀ g ∈ g_invest_cumulative (invest_method = cumulative_limits, #5/B-Q3), d with a cap value
@@ -733,8 +750,8 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
     # investment period of the solve cannot reach here: pass 1b refuses it
     # (``require_period_coverage``).  Capacity invested by earlier solves of a chain is not
     # counted (pre-existing, separate item).
-    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
-    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+    # existing capacity counting until its end of life (none for reinvest_automatic).
     for name, sense, cap, param_name in (
         ("maxInvestGroup_entity_cumulative", "<=", d.pd_group_cumulative_max_capacity,
          "cumulative_max_capacity"),
@@ -768,8 +785,8 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
             if terms.height > 0:
                 invest = _var_view(var, "__grp_cum_at", {"d": "d_invest"})
                 lhs[key] = Sum(Where(invest * unitsize, terms), over=(axis, "d_invest"))
-            active_frame = d.edd_divest_active if axis == "p" else d.ndd_divest_active
-            if divest is not None and active_frame is not None:
+            active_frame = b.cap.retired_frame(axis)
+            if divest is not None:
                 div_members = _on_var_axis(group_entity, axis, divest).filter(in_groups)
                 active_axis = _entity_rows(active_frame, axis, div_members, axis)
                 active_axis, div_members = align_join_dtypes(active_axis, div_members, (axis,))
@@ -777,11 +794,27 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
                 if div_terms.height > 0:
                     view = _var_view(divest, "__grp_cum_div", {"d": "d_divest"}, to_axis=True)
                     lhs[f"{key}_divest"] = -Sum(Where(view * unitsize, div_terms), over=(axis, "d_divest"))
+            built = _retire_built.retired(b, axis)
+            if built is not None:
+                # The model-built capacity retired so far (_retire_built).
+                counted = _retire_built.retired_frame(b, axis)
+                built_members = _on_var_axis(group_entity, axis, counted).filter(in_groups)
+                built_terms = built_members.join(counted, on=axis, how="inner")
+                if built_terms.height > 0:
+                    lhs[f"{key}_divest_built"] = -Sum(Where(built * unitsize, built_terms), over=(axis,))
+            ext = _extend.extended(b, axis)
+            if ext is not None:
+                # The extended capacity in service (_extend): capacity, not investment.
+                counted = _extend.extended_frame(b, axis)
+                ext_members = _on_var_axis(group_entity, axis, counted).filter(in_groups)
+                ext_terms = ext_members.join(counted, on=axis, how="inner")
+                if ext_terms.height > 0:
+                    lhs[f"{key}_extended"] = Sum(Where(ext * unitsize, ext_terms), over=(axis,))
         if not lhs:
             continue
         rhs: dict = {"cap": cap}
-        if d.p_entity_all_existing is not None:
-            group_existing = (d.p_entity_all_existing.frame
+        if b.cap.existing_mw_e is not None:
+            group_existing = (b.cap.existing_mw_e.frame
                               .join(group_entity, on="e", how="inner")
                               # Fixed summation order over the members.
                               .sort("g", "d", "e")

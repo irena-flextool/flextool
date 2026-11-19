@@ -16,9 +16,11 @@ invest_max_total 150, discount_rate 0.05, other_operational_cost 1 CUR/MWh), wit
 p2040: 1, p2045: 1} CUR/kW and ``lifetime`` 30 years (all capacity alive over the run).  p2045 uses ts1.
 
 Hand values: p2035 residual 120 - 60 = 60 MW -> invest 60; p2040 residual 120 MW -> 60 more; p2045 residual 60 MW
-< 120 MW existing -> invest 0.  Annuity at r = 0.05, n = 30: 0.05 / (1 - 1.05**-30) = 0.0650514.  The p2040
-annualized unit investment (both investments operate in p2040): (60 MW * 3000 CUR/MW + 60 MW * 1000 CUR/MW) *
-0.0650514 = 240 000 * 0.0650514 = 15 612.3 CUR = 0.0156123 M CUR.
+< 120 MW existing -> invest 0.  Annuity at r = 0.05, n = 30, paid at the start of each year (the default
+discount_offset_investment 0): 0.05 / (1 - 1.05**-30) / 1.05 = 0.0619537.  The investment of p2040 is an event
+at its start of operation: its 60 MW at 1000 CUR/MW over its years in service inside the run, p2040 and p2045
+(one year each, no social discount rate: factor 1), 60 * 1000 * 0.0619537 * 2 = 7 434.4 CUR; annualized, divided
+by p2040's investment factor 1: 0.0074344 M CUR.
 
 A second chain (item 266) checks the investment duals the same way: ``s1`` does not invest in p2040, so the p2040
 marginal (``unit_invest_marginal__d``) is the non-zero reduced cost of ``s1``, not ``s2``'s 0 row.
@@ -34,8 +36,8 @@ SCENARIO = "two_solves_invest_ahead"
 S1 = "stoch_2p_mid"
 S2 = "s2_dispatch_p2040"
 EXPECTED_INVESTED = {"p2035": 60.0, "p2040": 60.0, "p2045": 0.0}
-_ANNUITY_30Y = 0.05 / (1.0 - 1.05 ** -30)
-EXPECTED_P2040_ANNUALIZED_INVEST_MCUR = (60.0 * 3000.0 + 60.0 * 1000.0) * _ANNUITY_30Y / 1e6
+_ANNUITY_30Y = 0.05 / (1.0 - 1.05 ** -30) / 1.05
+EXPECTED_P2040_ANNUALIZED_INVEST_MCUR = 60.0 * 1000.0 * _ANNUITY_30Y * 2.0 / 1e6
 SCENARIO_NO_P2040_INVEST = "two_solves_no_p2040_invest"
 
 
@@ -60,7 +62,7 @@ def _add_two_solve_scenario(db_url: str, *, no_p2040_invest: bool = False) -> No
         db.add_entity_item(entity_class_name="solve", name=S2)
         put(db, "model", "flextool", "solves", Array([S1, S2]))
         put(db, "unit", "base", "invest_cost", Map(["p2035", "p2040", "p2045"], [3.0, 1.0, 1.0]))
-        put(db, "unit", "base", "lifetime", 30.0)
+        put(db, "unit", "base", "lifetime_technical", 30.0)
         put(db, "solve", S1, "realized_periods", Array(["p2035"]))
         # The no-p2040-invest chain: every period on ts1 (residual 60 MW) and 70 MW of existing base capacity.
         p2040_timeset = "ts1" if no_p2040_invest else "ts2"
@@ -122,7 +124,7 @@ def test_later_solve_does_not_overwrite_realized_investment(tmp_path, monkeypatc
     assert dict(zip(capacity["period"], capacity["invested"])) == pytest.approx(EXPECTED_INVESTED), capacity
     # The investment table is labelled with the solve that realizes each investment.
     costs = pl.read_csv(csv_dir / "annualized_costs__d.csv").filter(pl.col("period") == "p2040")
-    assert costs["unit investment & retirement"].to_list() == pytest.approx(
+    assert costs["investment"].to_list() == pytest.approx(
         [EXPECTED_P2040_ANNUALIZED_INVEST_MCUR], rel=1e-5)
 
 
@@ -136,12 +138,12 @@ def test_invest_marginal_of_a_period_comes_from_the_realizing_solve(tmp_path, mo
     p2040 row is a 0.
 
     Hand marginal = -(objective cost of 1 MW invested in d) / 1000 [CUR/kW] (value 0).  Undiscounted (factor 1,
-    years_represented 1), 1 MW invested in d costs invest_cost[d] * 1000 CUR/MW * a (a = 0.0650514, r = 0.05,
-    n = 30) in each period of the investing solve it is alive in:
+    years_represented 1), 1 MW invested in d costs invest_cost[d] * 1000 CUR/MW * a (a = 0.0619537, r = 0.05,
+    n = 30, paid at the start of each year) in each period of the investing solve it is alive in:
 
-    * p2035 (``s1``, alive in p2035 and p2040): -(3 * a * 2) = -0.3903084 CUR/kW
-    * p2040 (``s1``, alive in p2040):           -(1 * a * 1) = -0.0650514 CUR/kW
-    * p2045 (``s2``, alive in p2045):           -(1 * a * 1) = -0.0650514 CUR/kW
+    * p2035 (``s1``, alive in p2035 and p2040): -(3 * a * 2) = -0.3717225 CUR/kW
+    * p2040 (``s1``, alive in p2040):           -(1 * a * 1) = -0.0619537 CUR/kW
+    * p2045 (``s2``, alive in p2045):           -(1 * a * 1) = -0.0619537 CUR/kW
     """
     wf, csv_dir = _run_chain_and_write_outputs(tmp_path, monkeypatch, no_p2040_invest=True)
 

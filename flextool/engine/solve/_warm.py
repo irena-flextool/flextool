@@ -100,9 +100,9 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
     "ed_invest_set", "ed_divest_set",
     "pd_invest_set", "pd_divest_set",
     "nd_invest_set", "nd_divest_set",
-    "edd_invest_set", "edd_invest_lookback_set", "ed_invest_commission", "edd_invest_commission",
-    "edd_invest_in_construction", "edd_divest_active",
-    "ndd_divest_active",
+    "cohort", "cohort_alive", "dd_forward",
+    "ed_invest_commission", "edd_invest_commission",
+    "edd_invest_in_construction",
     "e_invest_total", "e_divest_total",
     "ed_invest_period_set", "ed_divest_period_set",
     # Ramp.
@@ -128,7 +128,8 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
     "storage_bind_forward_only_blended_weights",
     # Phase E — landed with the per-period cyclic-closure variant.
     "storage_bind_within_period_blended_weights",
-    "storage_fix_start", "storage_fix_end", "storage_solve_at_model_end",
+    "storage_fix_start", "storage_fix_end", "storage_solve_at_model_end", "storage_rp_chain_at_model_end",
+    "storage_roll_end",
     "dtttdt", "dtttdt_forward_only", "dtttdt_within_solve",
     "n_fix_storage_quantity", "ndt_fix_storage_quantity", "ndt_fix_storage_price",
     "dtt_timeline_matching", "period_branch", "period_last",
@@ -166,7 +167,7 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
     "process_reserve_upDown_node_increase_reserve_ratio",
     "process_reserve_upDown_node_large_failure_ratio",
     # Cumulative invest / group invest.
-    "ed_invest_forbidden_no_investment", "ed_invest_cumulative",
+    "ed_invest_cumulative",
     "group_entity", "g_invest_total", "g_divest_total",
     "g_invest_cumulative", "gd_invest_period", "gd_divest_period",
     "group_process_node",
@@ -480,8 +481,7 @@ def _apply_warm_updates(warm: WarmProblem,
     blocker = _reuse_blocker(prior, nxt)
     if blocker is not None:
         raise _IncompatibleUpdate(
-            f"FlexData field {blocker!r} differs between sub-solves; the "
-            f"live LP is reused only for an identical sub-solve")
+            f"FlexData field {blocker!r} differs from the previous sub-solve")
     return 0
 
 

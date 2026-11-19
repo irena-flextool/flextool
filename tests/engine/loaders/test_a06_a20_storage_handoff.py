@@ -238,7 +238,7 @@ def _stub_a20_passes(monkeypatch, calls: list, *,
     from flextool.engine.preprocess.params import _projection as _pp
     from flextool.engine.preprocess.params import _derived as _drv
     from flextool.engine.preprocess.params import _existing as _ex
-    from flextool.engine.preprocess.params import _npv
+    from flextool.engine.preprocess.params import _lifetime_costs
     def _record(label):
         return lambda *a, **kw: calls.append(label)
 
@@ -255,7 +255,7 @@ def _stub_a20_passes(monkeypatch, calls: list, *,
     monkeypatch.setattr(_drv, "apply_synthetic_invest_sets",
                         _record("synth_invest"))
     monkeypatch.setattr(_drv, "apply_delay_params", _record("synth_delay"))
-    monkeypatch.setattr(_npv, "apply_run_fields_of_synthetic_solve",
+    monkeypatch.setattr(_lifetime_costs, "apply_run_fields_of_synthetic_solve",
                         _record("synth_run_costs"))
     monkeypatch.setattr(_ex, "apply_existing_chain",
                         _record("10_existing"))

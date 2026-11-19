@@ -13,8 +13,9 @@ import pytest
 from spinedb_api import DatabaseMapping, to_database
 
 from flextool.input_derivation._validators import node_units_of_measure, validate_units_of_measure
+from tests._support.coded_warnings import capture_coded
 
-MIXED = "Mixed units of measure!"
+
 
 
 def _db(tmp_path: Path, schema_db_url: str, entities: list[tuple[str, tuple[str, ...]]],
@@ -34,11 +35,11 @@ def _db(tmp_path: Path, schema_db_url: str, entities: list[tuple[str, tuple[str,
 
 
 def _warnings(url: str, caplog) -> list[str]:
+    """The coded warnings of ``validate_units_of_measure``: ``<code> <name>: <details>`` per case."""
     logger = logging.getLogger("test_units_of_measure_validators")
-    caplog.set_level(logging.WARNING, logger=logger.name)
-    with DatabaseMapping(url) as db:
+    with capture_coded() as got, DatabaseMapping(url) as db:
         validate_units_of_measure(db, logger)
-    return [r.getMessage() for r in caplog.records if r.name == logger.name]
+    return [f"{call.code} {name}: {call.details.get(name, '')}" for call in got.calls for name in call.names]
 
 
 NODES = [("node", ("elec",)), ("node", ("east",)), ("node", ("water",)), ("node", ("heat",))]
@@ -66,7 +67,7 @@ def test_connection_across_units(tmp_path, schema_db_url, caplog) -> None:
                 ("connection", ("line",)), ("connection__node__node", ("line", "elec", "east"))]
     found = _uom(tmp_path, schema_db_url, caplog, entities)
     assert len(found) == 1, found
-    assert "Connection 'pipe'" in found[0] and "MWh: elec; m3: water" in found[0] and MIXED in found[0]
+    assert found == ["W-0221 pipe: MWh: elec; m3: water"]
 
 
 def test_commodity_across_units(tmp_path, schema_db_url, caplog) -> None:
@@ -75,7 +76,7 @@ def test_commodity_across_units(tmp_path, schema_db_url, caplog) -> None:
                 ("commodity__node", ("power", "elec")), ("commodity__node", ("power", "east"))]
     found = _uom(tmp_path, schema_db_url, caplog, entities)
     assert len(found) == 1, found
-    assert "Commodity 'fuel'" in found[0] and "co2_content" in found[0]
+    assert found == ["W-0401 fuel: MWh: elec; m3: water"]
 
 
 def test_node_group_across_units_warns_once(tmp_path, schema_db_url, caplog) -> None:
@@ -84,9 +85,8 @@ def test_node_group_across_units_warns_once(tmp_path, schema_db_url, caplog) -> 
                 ("group", ("power",)), ("group__node", ("power", "elec")), ("group__node", ("power", "east"))]
     found = _uom(tmp_path, schema_db_url, caplog, entities)
     assert len(found) == 1, found
-    assert found[0].startswith("Group 'all':") and MIXED in found[0]
     # Grouped by unit, so the m3 node that makes the sum mixed is named (WP1 review S3).
-    assert "MWh: east, elec; MWh_th: heat; m3: water" in found[0]
+    assert found == ["W-0105 all: MWh: east, elec; MWh_th: heat; m3: water"]
 
 
 def test_flow_group_across_units(tmp_path, schema_db_url, caplog) -> None:
@@ -95,7 +95,7 @@ def test_flow_group_across_units(tmp_path, schema_db_url, caplog) -> None:
                 ("flowGroup__unit__node", ("fg", "desal", "water"))]
     found = _uom(tmp_path, schema_db_url, caplog, entities)
     assert len(found) == 1, found
-    assert "flowGroup 'fg'" in found[0] and MIXED in found[0]
+    assert found[0].startswith("W-0108 fg: ")
 
 
 @pytest.mark.parametrize("flag,value,feature", [
@@ -107,8 +107,7 @@ def test_power_feature_group_with_a_non_power_node(tmp_path, schema_db_url, capl
     entities = [("group", ("g",)), ("group__node", ("g", "water"))]
     found = _uom(tmp_path, schema_db_url, caplog, entities, WATER + [("group", ("g",), flag, value)])
     assert len(found) == 1, found
-    assert f"it has {feature}; these group features are in MW (inertia in MW·s)" in found[0]
-    assert "water (m3) is not in MWh" in found[0]
+    assert found == [f"W-0106 g: {feature}; not in MWh: water (m3)"]
 
 
 def test_reserve_group_with_a_non_power_node(tmp_path, schema_db_url, caplog) -> None:
@@ -116,7 +115,7 @@ def test_reserve_group_with_a_non_power_node(tmp_path, schema_db_url, caplog) ->
                 ("reserve__upDown__group", ("primary", "up", "g"))]
     found = _uom(tmp_path, schema_db_url, caplog, entities)
     assert len(found) == 1, found
-    assert "it has reserves" in found[0]
+    assert found[0].startswith("W-0106 g: reserves;")
 
 
 def test_power_feature_group_with_a_suffixed_mwh_node_is_fine(tmp_path, schema_db_url, caplog) -> None:
@@ -126,7 +125,7 @@ def test_power_feature_group_with_a_suffixed_mwh_node_is_fine(tmp_path, schema_d
               ("group", ("g",), "has_inertia", "yes")]
     found = _uom(tmp_path, schema_db_url, caplog, entities, values)
     # Their units differ (a mixed sum), but neither is a non-power node.
-    assert len(found) == 1 and "assume power nodes" not in found[0], found
+    assert len(found) == 1 and found[0].startswith("W-0105 g: "), found
 
 
 def test_group_capacity_limit_over_different_units(tmp_path, schema_db_url, caplog) -> None:
@@ -137,7 +136,7 @@ def test_group_capacity_limit_over_different_units(tmp_path, schema_db_url, capl
                 ("group", ("free",)), ("group__unit", ("free", "desal")), ("group__unit", ("free", "pv"))]
     found = _uom(tmp_path, schema_db_url, caplog, entities, WATER + [("group", ("cap",), "invest_max_total", 10.0)])
     assert len(found) == 1, found
-    assert found[0].startswith("Group 'cap':") and "desal (m3)" in found[0] and "pv (MWh)" in found[0]
+    assert found[0].startswith("W-0107 cap: ") and "desal (m3)" in found[0] and "pv (MWh)" in found[0]
 
 
 def test_multi_output_unit_gives_no_warning(tmp_path, schema_db_url, caplog) -> None:
@@ -153,8 +152,7 @@ def test_rate_like_value(tmp_path, schema_db_url, caplog, value: str, shown: str
     """The warning shows the label the value would give and the amount unit to set (WP1 review S5)."""
     found = _uom(tmp_path, schema_db_url, caplog, [], [("node", ("water",), "unit_of_measure", value)])
     assert len(found) == 1, found
-    assert "looks like a rate" in found[0] and f"'{value}'" in found[0]
-    assert f"flows would be labelled '{shown}'. Set '{fix}'." in found[0]
+    assert found == [f"W-0305 water: unit_of_measure '{value}': flows would be labelled '{shown}'; set '{fix}'"]
 
 
 def test_a_capital_w_in_a_name_is_not_a_rate(tmp_path, schema_db_url, caplog) -> None:
@@ -203,9 +201,9 @@ def test_group_capacity_limit_counts_storage_nodes_only(tmp_path, schema_db_url,
                 ("group", ("cap",)), ("group__unit", ("cap", "pv")), ("group__node", ("cap", "water"))]
     limit = [("group", ("cap",), "invest_max_total", 10.0)]
     found = _uom(tmp_path, schema_db_url, caplog, entities, WATER + limit)
-    assert not any("capacity limits" in w for w in found), found
+    assert not any(w.startswith("W-0107") for w in found), found
     caplog.clear()
     (tmp_path / "storage").mkdir()
     found = _uom(tmp_path / "storage", schema_db_url, caplog, entities,
                  WATER + limit + [("node", ("water",), "node_type", "storage")])
-    assert len(found) == 1 and "capacity limits" in found[0] and "water (m3)" in found[0], found
+    assert len(found) == 1 and found[0].startswith("W-0107 cap: ") and "water (m3)" in found[0], found

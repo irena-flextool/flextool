@@ -95,7 +95,8 @@ if _CONSTRAINTS_CONFTEST.exists() and (
     sys.modules["_engine_constraints_conftest"] = _constraints_module
     _spec.loader.exec_module(_constraints_module)
 
-pytest_plugins = ["_engine_constraints_conftest"]
+# ``coded_log``: the coded warnings of a test (tests/_support/coded_warnings.py).
+pytest_plugins = ["_engine_constraints_conftest", "tests._support.coded_warnings"]
 REPO_ROOT = TEST_DIR.parent
 
 # Make db_utils importable from this directory
@@ -483,8 +484,8 @@ def lh2_master_build_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
         ["unit", "liquefier_B", "invest_method", _val("invest_no_limit"),
          alt],
         ["unit", "liquefier_B", "invest_cost", _val(25.0), alt],
-        ["node", "lh2_B", "lifetime", _val(20.0), alt],
-        ["unit", "liquefier_B", "lifetime", _val(20.0), alt],
+        ["node", "lh2_B", "lifetime_technical", _val(20.0), alt],
+        ["unit", "liquefier_B", "lifetime_technical", _val(20.0), alt],
     ]
     root = tmp_path_factory.mktemp("db_lh2mb")
     json_path = root / "lh2_master_build.json"
@@ -534,8 +535,8 @@ def lh2_master_hourly_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
         ["unit", "liquefier_B", "invest_method", _val("invest_no_limit"),
          alt],
         ["unit", "liquefier_B", "invest_cost", _val(25.0), alt],
-        ["node", "lh2_B", "lifetime", _val(20.0), alt],
-        ["unit", "liquefier_B", "lifetime", _val(20.0), alt],
+        ["node", "lh2_B", "lifetime_technical", _val(20.0), alt],
+        ["unit", "liquefier_B", "lifetime_technical", _val(20.0), alt],
         # Small DISTINCT flow costs on the (potential) coupling
         # connections: the pure-hourly storage coupling is otherwise
         # heavily degenerate (flat optimal-flow faces), which gives the
@@ -708,8 +709,8 @@ def stoch_two_period_hedge_db_url(
 
     Built from ``tests/fixtures/stoch_two_period_hedge.json`` (generated
     by ``tests/fixtures/build_stoch_two_period_hedge.py``): two scenarios
-    (``hedge`` = mid-horizon reveal at p2040 → RP 173 250; ``hedge_ws`` =
-    wait-and-see fan-at-p2035 → WS 157 500) on identical scenario data.
+    (``hedge`` = mid-horizon reveal at p2040 → RP 165 000; ``hedge_ws`` =
+    wait-and-see fan-at-p2035 → WS 150 000) on identical scenario data.
     Defensive migration as in :func:`stochastic_db_url`.
     """
     from flextool.update_flextool.db_migration import migrate_database

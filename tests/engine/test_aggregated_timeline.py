@@ -270,32 +270,21 @@ def test_stochastic_trunk_kept(tmp_path_factory) -> None:
     assert set(lag.select("d_previous", "t_previous_within_solve").iter_rows()) == {("p2035", "t0003")}
 
 
-def test_rolling_blocked_carry(tmp_path_factory) -> None:
-    """Rolling dispatch (horizon 8 h, jump 4 h) over 5weeks + Δ 2 with the coal ramp: only the roll that starts at
-    t0013 carries the previous roll's flow (from t0011); the rolls starting after a gap (t0009, t0025, t0037) do
-    not, and no ramp row links t0003 and t0009 inside a roll.  Before: all four continuation rolls carried."""
-    ramp = [["unit__outputNode", ["coal_plant", "west"], "ramp_method", b64("ramp_limit", "str")],
-            ["unit__outputNode", ["coal_plant", "west"], "ramp_speed_up", b64(0.002, "float")],
-            ["unit__outputNode", ["coal_plant", "west"], "ramp_speed_down", b64(0.002, "float")]]
-    vals = ramp + [
+def test_rolling_over_sampled_blocks_is_an_error(tmp_path_factory) -> None:
+    """Rolling dispatch (horizon 8 h, jump 4 h) over 5weeks + Δ 2: a rolling solve needs a continuous timeline, so a
+    period with several timeblocks is a configuration error (owner decision, Phase 5).  The block count is that of
+    the hourly timeset (t0001-t0004, t0009-t0016, t0025-t0028, t0037-t0040: four blocks), not of the aggregated
+    2-h steps, which are consecutive.  Before, the rolls starting after a gap took no ramp carry."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    vals = [
         ["solve", "dispatch_fullYear_roll", "period_timeset", _pmap({"p2020": "5weeks"})],
         ["solve", "dispatch_fullYear_roll", "realized_periods", b64({"value_type": "str", "data": ["p2020"]}, "array")],
         ["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", b64(8.0, "float")],
         ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", b64(4.0, "float")],
         ["solve", "dispatch_fullYear_roll", "new_stepduration", b64(2.0, "float")]]
-    steps = _run(tmp_path_factory, "agg_roll", vals, ["init", "west", "coal", "fullYear", "dispatch_fullYear_roll"])
-    carry = {}
-    for s in steps.values():
-        fd = s.flex_data
-        first = _dt(fd)[0][1]
-        c = fd.dt_ramp_carry
-        carry[first] = None if c is None or c.height == 0 else sorted(utf8(c).drop("d").rows())
-        link = {tuple(r) for r in utf8(fd.dt_ramp_link).select("t", "t_previous").iter_rows()} \
-            if fd.dt_ramp_link is not None else set()
-        assert ("t0009", "t0003") not in link
-    assert set(carry) == {"t0001", "t0009", "t0013", "t0025", "t0037"}
-    assert carry["t0009"] is None and carry["t0025"] is None and carry["t0037"] is None
-    assert carry["t0013"] is not None and all("t0011" in r for r in carry["t0013"])
+    with pytest.raises(FlexToolConfigError, match="period 'p2020' has 4 timeblocks"):
+        _run(tmp_path_factory, "agg_roll", vals, ["init", "west", "coal", "fullYear", "dispatch_fullYear_roll"])
 
 
 @pytest.mark.parametrize("case", ["5w", "5w2h", "2p2h", "mid2h"])

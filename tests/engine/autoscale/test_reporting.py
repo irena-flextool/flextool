@@ -156,7 +156,7 @@ def test_console_summary_no_trigger() -> None:
     )
     assert "within HiGHS comfort zone" in line
     assert "9" in line  # threshold surfaced
-    assert "no scaling applied" in line
+    assert "not scaled" in line
 
 
 # ---------------------------------------------------------------------------

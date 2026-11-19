@@ -699,7 +699,9 @@ def _storage_behaviour_notices(source: "InputSource", flex_data) -> None:
     if default_on and flex_data.p_state_start is not None and flex_data.p_state_start.frame.height > 0:
         explicit = _entity_scalar_explicit(source, "node", "storage_start_end_method", "n")
         authored = set() if explicit is None else {str(n) for n in explicit.frame.get_column("n").to_list()}
-        bc.notice("storage_default_fix_nothing", "storage nodes", sorted(n for n in storage if n not in authored))
+        # One printed line per run (how many nodes and the first; owner rule), the names in the log.
+        bc.notice("storage_default_fix_nothing", "storage nodes", sorted(n for n in storage if n not in authored),
+                  solve="")
     in_solve = set(storage)
     lines = [f"{n} (alternative {alt}: {old} -> {new})" for n, alt, old, new in rewritten if n in in_solve]
     if lines:

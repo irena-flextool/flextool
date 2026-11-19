@@ -180,8 +180,10 @@ def state_links(d, *, has_rp: bool, has_nsb: bool) -> list[StateLink]:
     """The state-change branches of ``model.core._state_change_terms``, one per storage_binding_method; each node
     is in one branch only (``_validate_storage_binding_disjoint``)."""
     links: list[StateLink] = []
+    carry = scope_carry_nodes(d)
     if d.storage_bind_within_timeblock is not None:
-        # bind_within_timeblock: t⁻ wraps around within the timeblock.
+        # bind_within_timeblock: t⁻ wraps around within the timeblock.  (A rolling solve uses it as
+        # bind_within_period: solve._run_model._timeblock_binds_within_period_in_roll.)
         links.append(StateLink("state_change", d.storage_bind_within_timeblock, d.dtttdt,
                                "t_previous_within_timeset", False, True))
     if _has_rows(d.storage_bind_forward_only) and _has_rows(d.dtttdt_forward_only):
@@ -198,9 +200,16 @@ def state_links(d, *, has_rp: bool, has_nsb: bool) -> list[StateLink]:
                                "t_previous_within_solve", True, True))
     if _has_rows(d.storage_bind_within_period) and _has_rows(d.dtttdt_within_period):
         # bind_within_period: t⁻ is the previous step of the period; the first step of each period wraps to the
-        # period's own last step.
-        links.append(StateLink("state_change_wp", d.storage_bind_within_period, d.dtttdt_within_period,
-                               "t_previous_within_period", False, True))
+        # period's own last step.  A node whose first period continues from the carry (scope_carry_nodes) has no
+        # wrap at the solve's first step.
+        looping = without_nodes(d.storage_bind_within_period, carry)
+        if looping is not None:
+            links.append(StateLink("state_change_wp", looping, d.dtttdt_within_period,
+                                   "t_previous_within_period", False, True))
+        carried = _scope_carried(d.storage_bind_within_period, carry)
+        lag = _without_first_steps(d, d.dtttdt_within_period) if carried is not None else None
+        if lag is not None:
+            links.append(StateLink("state_change_wp_carry", carried, lag, "t_previous_within_period", False, False))
     if has_nsb and _has_rows(d.dtttdt_block_lag):
         # bind_intraperiod_blocks: t⁻ from dtttdt_block_lag (the blocks of a period form a loop; in a rolling solve
         # the blocks of a period the roll holds only in part chain forward, with no row at the solve's first step).
@@ -221,6 +230,41 @@ def state_links(d, *, has_rp: bool, has_nsb: bool) -> list[StateLink]:
         links.append(StateLink("state_change_rp_interior", d.nodeState_rp, interior,
                                "t_previous_within_timeset", False, False))
     return links
+
+
+def scope_carry_nodes(d) -> "pl.DataFrame | None":
+    """bind_within_period nodes (n) of a rolling roll whose first scope (the period of the roll's first step) began
+    in an earlier roll: the roll continues that period from the carried level instead of wrapping its first step (``storage_roll_end`` kind ``scope_carry``,
+    ``solve._run_model._anchor_cyclic_in_rolling``).  None when there are none."""
+    sre = getattr(d, "storage_roll_end", None)
+    if not _has_rows(sre):
+        return None
+    out = sre.filter(pl.col("kind") == "scope_carry").select("n").unique(maintain_order=True)
+    ns = getattr(d, "nodeState", None)
+    if _has_rows(ns):
+        out = out.select(pl.col("n").cast(ns.schema["n"], strict=False))
+    return out if out.height > 0 else None
+
+
+def _scope_carried(method_nodes: "pl.DataFrame | None", carry: "pl.DataFrame | None") -> "pl.DataFrame | None":
+    """The nodes of ``method_nodes`` (n) that are in ``carry`` (n), with ``method_nodes``' dtype; None when none."""
+    if not (_has_rows(method_nodes) and _has_rows(carry)):
+        return None
+    out = method_nodes.join(carry.select(pl.col("n").cast(method_nodes.schema["n"], strict=False)), on="n",
+                            how="semi")
+    return out if out.height > 0 else None
+
+
+def _without_first_steps(d, lag: "pl.DataFrame | None") -> "pl.DataFrame | None":
+    """``lag`` without the rows of the solve's first step(s) (``nodeState_first_dt``): the step starts from the
+    carry, not from a wrap.  None when nothing is left."""
+    if not _has_rows(lag) or not _has_rows(getattr(d, "nodeState_first_dt", None)):
+        return lag
+    first = d.nodeState_first_dt.select(pl.col("d").cast(pl.Utf8).alias("_d"),
+                                        pl.col("t").cast(pl.Utf8).alias("_t")).unique()
+    out = (lag.with_columns(_d=pl.col("d").cast(pl.Utf8), _t=pl.col("t").cast(pl.Utf8))
+           .join(first, on=["_d", "_t"], how="anti").drop("_d", "_t"))
+    return out if out.height > 0 else None
 
 
 def previous_steps(links: list[StateLink]) -> pl.DataFrame:
@@ -420,19 +464,22 @@ def block_tail_ends(d) -> "pl.DataFrame | None":
 def cyclic_nodes(d) -> "pl.DataFrame | None":
     """Storage nodes whose chain closes on itself within the solve (n): bind_within_timeblock,
     bind_within_period, bind_within_solve and the bind_intraperiod_blocks nodes whose first period loops
-    (:func:`block_cyclic_nodes`).  Their first step wraps to a later step of the solve, so they take neither a start
+    (:func:`block_cyclic_nodes`), less the nodes whose first scope continues from the carry
+    (:func:`scope_carry_nodes`).  Their first step wraps to a later step of the solve, so they take neither a start
     term nor the roll carry."""
-    return node_union((d.storage_bind_within_timeblock, d.storage_bind_within_period,
-                        d.storage_bind_within_solve, block_cyclic_nodes(d)))
+    cyclic = node_union((d.storage_bind_within_timeblock, d.storage_bind_within_period,
+                         d.storage_bind_within_solve, block_cyclic_nodes(d)))
+    return without_nodes(cyclic, scope_carry_nodes(d))
 
 
 def open_start_nodes(d) -> "pl.DataFrame | None":
-    """Storage nodes whose chain starts open at the solve's first step (n): bind_forward_only and the
+    """Storage nodes whose chain starts open at the solve's first step (n): bind_forward_only, the
     bind_intraperiod_blocks nodes that chain forward from it (:func:`block_open_nodes`: fix_start_end, or a roll
-    that holds its first period only in part).
+    that holds its first period only in part) and the bind_within_period nodes whose first
+    period continues from the carry (:func:`scope_carry_nodes`).
     Their first step starts from the fix_start state in the first solve and from the roll carry in a continuation
     solve."""
-    return node_union((d.storage_bind_forward_only, block_open_nodes(d)))
+    return node_union((d.storage_bind_forward_only, block_open_nodes(d), scope_carry_nodes(d)))
 
 
 def fix_start_first(d) -> "pl.DataFrame | None":
@@ -480,3 +527,203 @@ def open_first(d) -> "pl.DataFrame | None":
         if covered is not None:
             first = first.join(covered.select("n", "d", "t"), on=["n", "d", "t"], how="anti")
     return first if first.height > 0 else None
+
+
+# ---------------------------------------------------------------------------
+# The level each storage chain starts from, in MWh (outputs and the cascade's handoff)
+# ---------------------------------------------------------------------------
+
+
+def fix_start_energy(d, chosen) -> "pl.DataFrame | None":
+    """``(n, d, t, value)`` (Utf8 keys): the start energy (MWh) of the first steps of :func:`fix_start_first`,
+    storage_state_start × the capacity in service (existing + invested − retired) in the step's period.
+
+    ``chosen(var, dims)`` returns a solved variable as ``(*dims, value)`` with Utf8 keys (``v_invest_n`` with dims
+    ``("n", "d_invest")``, ``v_divest_n`` with ``("n", "d_divest")``; None or empty when the solve has none).
+    None when no step starts from fix_start.
+    """
+    fix_first = fix_start_first(d)
+    if fix_first is None:
+        return None
+    fix_first = fix_first.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
+    su = d.p_state_unitsize.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("su"))
+    cap = (d.p_state_existing_capacity.frame
+           .select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("value").alias("cap")))
+    built = pl.DataFrame(schema={"n": pl.Utf8, "d": pl.Utf8, "built": pl.Float64})
+    from flextool.engine.preprocess.params._cohorts import in_service
+    frames = in_service(d)
+    for var, frame, ent, d_col, sign in (("v_invest_n", frames.alive, "e", "d_invest", 1.0),
+                                         ("v_divest_n", frames.retired_n, "n", "d_divest", -1.0)):
+        if frame is None or frame.height == 0:
+            continue
+        picked = chosen(var, ("n", d_col))
+        if picked is None or picked.height == 0:
+            continue
+        alive = frame.select(pl.col(ent).cast(pl.Utf8).alias("n"), pl.col(d_col).cast(pl.Utf8),
+                             pl.col("d").cast(pl.Utf8))
+        part = (alive.join(picked, on=["n", d_col], how="inner").group_by("n", "d")
+                .agg((pl.col("value").sum() * sign).alias("built")))
+        built = pl.concat([built, part], how="vertical")
+    built = built.group_by("n", "d").agg(pl.col("built").sum())
+    return (fix_first
+            .join(d.p_state_start.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("ss")),
+                  on="n", how="inner")
+            .join(cap, on=["n", "d"], how="left").join(su, on="n", how="left")
+            .join(built, on=["n", "d"], how="left")
+            .select("n", "d", "t", value=pl.col("ss") * (pl.col("cap").fill_null(0.0)
+                                                         + pl.col("built").fill_null(0.0) * pl.col("su"))))
+
+
+def start_levels(d, state: pl.DataFrame, chosen) -> "pl.DataFrame | None":
+    """``[node, value]``: the level (MWh) each storage node's first step starts from in a solved solve.
+
+    The carried state (:func:`roll_first`), the fix_start energy (:func:`fix_start_energy`), the state of a cyclic
+    node's wrap target (the step its first step continues from, :func:`state_links`) or, for an open chain with
+    neither, the state of its first step (the step has no state change).  ``state``: the solve's v_state
+    ``(n, d, t, value)`` in state units.  Representative-period nodes are left out (their first step starts from
+    the free v_state_rp_start of a block).  With several first steps (a stochastic fan in the first period) the
+    first in sorted order is taken: they start from the same level.  None without storage.
+    """
+    if not _has_rows(getattr(d, "nodeState_first_dt", None)) or d.p_state_unitsize is None:
+        return None
+
+    def utf8(frame: pl.DataFrame) -> pl.DataFrame:
+        return frame.with_columns([pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t") if c in frame.columns])
+
+    state = utf8(state)
+    su = utf8(d.p_state_unitsize.frame).select("n", pl.col("value").alias("su"))
+    first = utf8(d.nodeState_first_dt.select("n", "d", "t"))
+    rp = getattr(d, "nodeState_rp", None)
+    if _has_rows(rp):
+        first = first.join(utf8(rp.select("n")), on="n", how="anti")
+    parts = []
+    carry = roll_first(d)
+    if carry is not None:
+        parts.append(utf8(carry.select("n", "d", "t"))
+                     .join(utf8(d.p_roll_continue_state.frame.select("n", "value")), on="n", how="inner"))
+    fixed = fix_start_energy(d, chosen)
+    if fixed is not None:
+        parts.append(fixed)
+    cyclic = cyclic_nodes(d)
+    if cyclic is not None:
+        links = previous_steps(state_links(d, has_rp=False, has_nsb=_has_rows(getattr(d, "nodeStateBlock", None))))
+        wrap = (first.join(utf8(cyclic.select("n")), on="n", how="semi")
+                .join(links, on=["n", "d", "t"], how="inner")
+                .join(state.select("n", pl.col("d").alias("d_prev"), pl.col("t").alias("t_prev"), "value"),
+                      on=["n", "d_prev", "t_prev"], how="inner")
+                .join(su, on="n", how="inner")
+                .select("n", "d", "t", value=pl.col("value") * pl.col("su")))
+        parts.append(wrap)
+    free = open_first(d)
+    if free is not None:
+        parts.append(utf8(free.select("n", "d", "t"))
+                     .join(state, on=["n", "d", "t"], how="inner")
+                     .join(su, on="n", how="inner")
+                     .select("n", "d", "t", value=pl.col("value") * pl.col("su")))
+    parts = [p.select("n", "d", "t", pl.col("value").cast(pl.Float64)) for p in parts if p.height > 0]
+    if not parts:
+        return None
+    out = (pl.concat(parts, how="vertical")
+           .join(first, on=["n", "d", "t"], how="semi")
+           .sort("n", "d", "t")
+           .unique(subset=["n"], keep="first", maintain_order=True)
+           .select(pl.col("n").alias("node"), "value"))
+    return out if out.height > 0 else None
+
+
+def scope_start_levels(d, state: pl.DataFrame, start: "pl.DataFrame | None") -> "pl.DataFrame | None":
+    """``[node, period, step, value]``: the level (MWh) each cyclic scope that starts in a solved solve starts from,
+    keyed by the scope's first step in the solve.
+
+    The scopes: every period of a bind_within_period node whose first step wraps (the state of its wrap target, :func:`state_links`), and every period of a
+    bind_intraperiod_blocks node, from the step its first block continues from (the period's last block where the
+    blocks loop, the step before the period where they chain forward) or, at the solve's first step, from ``start``
+    (``[node, value]``, :func:`start_levels`).  ``state``: the solve's v_state ``(n, d, t, value)`` (state units).
+    Read by the cascade: the level a rolling roll that continues the scope closes it to
+    (``solve._run_model._anchor_cyclic_in_rolling``).  None when there are none.
+    """
+    if not _has_rows(getattr(d, "nodeState_first_dt", None)) or d.p_state_unitsize is None:
+        return None
+
+    def utf8(frame: pl.DataFrame) -> pl.DataFrame:
+        return frame.with_columns([pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t") if c in frame.columns])
+
+    state = utf8(state)
+    su = utf8(d.p_state_unitsize.frame).select("n", pl.col("value").alias("su"))
+    has_nsb = _has_rows(getattr(d, "nodeStateBlock", None))
+    links = [link for link in state_links(d, has_rp=False, has_nsb=has_nsb)
+             if link.key == "state_change_wp"]
+    parts = []
+    if links:
+        wrap = previous_steps(links).filter(pl.col("t_prev") >= pl.col("t"))
+        parts.append(wrap.join(state.select("n", pl.col("d").alias("d_prev"), pl.col("t").alias("t_prev"), "value"),
+                               on=["n", "d_prev", "t_prev"], how="inner")
+                     .select("n", "d", "t", "value"))
+    if has_nsb:
+        nsb = utf8(d.nodeStateBlock.select("n"))
+        firsts = state.join(nsb, on="n", how="semi").group_by("n", "d").agg(pl.col("t").min())
+        block_links = [link for link in state_links(d, has_rp=False, has_nsb=True)
+                       if link.key in ("state_change_block", "state_change_block_forward")]
+        prev = previous_steps(block_links) if block_links else None
+        if prev is not None and prev.height > 0:
+            parts.append(firsts.join(prev, on=["n", "d", "t"], how="inner")
+                         .join(state.select("n", pl.col("d").alias("d_prev"), pl.col("t").alias("t_prev"), "value"),
+                               on=["n", "d_prev", "t_prev"], how="inner")
+                         .select("n", "d", "t", "value"))
+        if start is not None and start.height > 0:
+            solve_first = utf8(d.nodeState_first_dt.select("n", "d", "t"))
+            parts.append(firsts.join(solve_first, on=["n", "d", "t"], how="inner")
+                         .join(start.select(pl.col("node").cast(pl.Utf8).alias("n"),
+                                            pl.col("value").cast(pl.Float64).alias("_mwh")), on="n", how="inner")
+                         .join(su, on="n", how="inner")
+                         .select("n", "d", "t", value=pl.col("_mwh") / pl.col("su")))
+    parts = [p.select("n", "d", "t", pl.col("value").cast(pl.Float64)) for p in parts if p.height > 0]
+    if not parts:
+        return None
+    out = (pl.concat(parts, how="vertical").unique(subset=["n", "d", "t"], keep="first")
+           .join(su, on="n", how="inner")
+           .select(pl.col("n").alias("node"), pl.col("d").alias("period"), pl.col("t").alias("step"),
+                   value=pl.col("value") * pl.col("su"))
+           .sort("node", "period", "step"))
+    return out if out.height > 0 else None
+
+
+def rp_chain_start_levels(d, values) -> "pl.DataFrame | None":
+    """``[node, value]``: the level (MWh) the base-period chain of each representative-period storage node starts
+    from in a solved solve: v_state_inter at the first base period of the solve's first period less that base
+    period's weighted net change of its blocks (``model.core._rp_weighted_drift``), × state_unitsize.
+
+    ``values(var)`` returns a solved variable as a frame (n, d, …, value) with Utf8 keys, or None.  None without
+    representative-period nodes.
+    """
+    rp = getattr(d, "nodeState_rp", None)
+    first = getattr(d, "nodeState_first_dt", None)
+    if not (_has_rows(rp) and _has_rows(first) and getattr(d, "rp_base__rep", None) is not None
+            and _has_rows(getattr(d, "p_rp_last_step", None)) and d.p_state_unitsize is not None):
+        return None
+    inter, state, start = values("v_state_inter"), values("v_state"), values("v_state_rp_start")
+    if inter is None or state is None or start is None:
+        return None
+    nodes = rp.select(pl.col("n").cast(pl.Utf8)).unique()
+    d0 = sorted(set(str(x) for x in first["d"].to_list()))
+    root = (inter.join(nodes, on="n", how="semi").filter(pl.col("d").is_in(d0))
+            .sort("n", "d", "b").group_by("n", maintain_order=True).first())
+    rep = d.rp_base__rep.frame.select(pl.col("d").cast(pl.Utf8), pl.col("b").cast(pl.Utf8), pl.col("r").cast(pl.Utf8),
+                                      pl.col("value").alias("w"))
+    last = d.p_rp_last_step.select(pl.col("d").cast(pl.Utf8), pl.col("r").cast(pl.Utf8),
+                                   pl.col("last_step").cast(pl.Utf8))
+    drift = (root.select("n", "d", "b")
+             .join(rep, on=["d", "b"], how="inner").join(last, on=["d", "r"], how="inner")
+             .join(state.select("n", "d", pl.col("t").alias("last_step"), pl.col("value").alias("_end")),
+                   on=["n", "d", "last_step"], how="left")
+             .join(start.select("n", "d", pl.col("t").alias("r"), pl.col("value").alias("_start")),
+                   on=["n", "d", "r"], how="left")
+             .group_by("n").agg((pl.col("w") * (pl.col("_end").fill_null(0.0) - pl.col("_start").fill_null(0.0)))
+                                .sum().alias("_drift")))
+    su = d.p_state_unitsize.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("su"))
+    out = (root.join(drift, on="n", how="left").join(su, on="n", how="inner")
+           .select(pl.col("n").alias("node"),
+                   value=(pl.col("value") - pl.col("_drift").fill_null(0.0)) * pl.col("su"))
+           .sort("node"))
+    return out if out.height > 0 else None
+

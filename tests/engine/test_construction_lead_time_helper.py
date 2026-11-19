@@ -2,7 +2,8 @@
 
 Drives :func:`._existing.commissioning_year_lf` directly against a
 hand-built stub source on the design §2.3 uneven calendar (seams
-``S = {0, 5, 8, 20}``), pinning ``c = snap(yr(o) + L, method)`` for every
+``S = {0, 5, 8, 20, 21}``: the stub gives no ``years_represented``, so the last
+period represents one year), pinning ``c = snap(yr(o) + L, method)`` for every
 method (§7d) and the two-level default (§7e).
 
 The stub feeds the seam calendar through ``solve.years_from_start``
@@ -17,7 +18,7 @@ import pytest
 
 from flextool.engine.preprocess.params._existing import commissioning_year_lf
 
-# §2.3 calendar: p1 [0,5), p2 [5,8), p3 [8,20), p4 [20, tail).
+# §2.3 calendar: p1 [0,5), p2 [5,8), p3 [8,20), p4 [20, 21) (no years_represented: p4 represents one year).
 PERIODS = ["p1", "p2", "p3", "p4"]
 YEARS = [0.0, 5.0, 8.0, 20.0]
 
@@ -95,9 +96,11 @@ def _yr_c(lead, method, order_period):
     (10.0, "previous_seam", "p2", 8.0),
     (10.0, "next_seam", "p2", 20.0),
     (10.0, "closest_seam", "p2", 20.0),  # |15-8|=7 > |15-20|=5 -> hi
-    # order p3 (yr 8), L=15 -> t*=23 > max seam 20: hi absent.
-    (15.0, "previous_seam", "p3", 20.0),  # snap to last seam
-    (15.0, "closest_seam", "p3", 20.0),   # snap to last seam
+    # order p3 (yr 8), L=15 -> t*=23.  No years_represented: each period represents one year, so the horizon
+    # ends at 20 + 1 = 21 (a seam); 23 > 21: hi absent, lo = 21, the end of the horizon: the capacity would start
+    # to operate after the model, yr_c = inf (not offered).
+    (15.0, "previous_seam", "p3", math.inf),
+    (15.0, "closest_seam", "p3", math.inf),
 ])
 def test_seam_snap(lead, method, order, expected) -> None:
     assert _yr_c(lead, method, order) == expected

@@ -224,7 +224,8 @@ def test_objective_bound_warning_once_per_rolling_solve(tmp_path_factory, monkey
     monkeypatch.setattr(_orchestration, "highs_objective_bound_warning", recorder)
     monkeypatch.delenv("FLEXTOOL_SAVE_MEMORY", raising=False)
     roll = "dispatch_fullYear_roll"
-    pmap = b64({"index_type": "str", "index_name": "period", "data": [["p2020", "5weeks"]]}, "map")
+    # a rolling solve needs a continuous timeline: 2day (48 h), not 5weeks (sampled)
+    pmap = b64({"index_type": "str", "index_name": "period", "data": [["p2020", "2day"]]}, "map")
     values = [["solve", roll, "period_timeset", pmap],
               ["solve", roll, "realized_periods", b64({"value_type": "str", "data": ["p2020"]}, "array")],
               ["solve", roll, "rolling_solve_horizon", b64(8.0, "float")],

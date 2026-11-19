@@ -36,8 +36,7 @@ def _seed_workdir_provider(wd: Path) -> FlexDataProvider:
     )
     # Empty placeholders for the SolveContext lazy carriers — only
     # seeded when the on-disk seed didn't supply them.
-    for stem in ("period_in_use_set", "period__branch", "edd_history",
-                  "p_entity_pre_existing"):
+    for stem in ("period_in_use_set", "period__branch"):
         key = f"solve_data/{stem}"
         if not provider.has(key):
             provider.put(key, pl.DataFrame())
@@ -88,16 +87,6 @@ def workdir(tmp_path: Path) -> Path:
         ["period", "branch"],
         [["p2020", "p2020"], ["p2020", "p2020_alt"]],
     )
-    _write_csv(
-        sd / "edd_history.csv",
-        ["entity", "period_history", "period"],
-        [["wind", "p2020", "p2025"]],
-    )
-    _write_csv(
-        sd / "p_entity_pre_existing.csv",
-        ["entity", "period", "value"],
-        [["wind", "p2020", 100]],
-    )
     inp.mkdir(parents=True, exist_ok=True)
     return tmp_path
 
@@ -116,8 +105,6 @@ def test_solve_context_typed_fields_loaded(workdir: Path) -> None:
     assert ctx.period_in_use.height == 2
     assert set(ctx.period_in_use["d"].to_list()) == {"p2020", "p2025"}
     assert ctx.period_branch.height == 2
-    assert ctx.edd_history.height == 1
-    assert ctx.p_entity_pre_existing.height == 1
 
 
 def test_solve_context_handles_missing_workdir(tmp_path: Path) -> None:
@@ -154,7 +141,7 @@ def test_from_workdir_requires_provider(workdir: Path) -> None:
 
 @pytest.mark.parametrize("loader", ["_maybe_read", "_read_frame"])
 def test_frame_loaders_require_provider(workdir: Path, loader: str) -> None:
-    path = workdir / "solve_data" / "edd_history.csv"
+    path = workdir / "solve_data" / "period__branch.csv"
     with pytest.raises(ValueError, match="requires a FlexDataProvider"):
         getattr(sc, loader)(path)
 

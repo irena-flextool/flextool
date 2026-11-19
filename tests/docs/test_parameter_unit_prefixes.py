@@ -126,8 +126,9 @@ def test_per_kw_traps_are_the_per_kw_parameters() -> None:
 
     per_kw = {(cls, param) for (param, cls), desc in DEFINITIONS.items() if desc.startswith("[CUR/kW")}
     found = {key for key, ts in traps().items() for t in ts if "multiplies the value by 1000" in t.text}
-    # The ×1000 parameters: invest_cost, fixed_cost and salvage_value of units, connections and nodes, and the
-    # group penalty_capacity_margin (P0 §1, verified in the engine).
+    # The ×1000 parameters: invest_cost, fixed_cost, net_salvage_value and life_extension_cost of units, connections
+    # and nodes, and the group penalty_capacity_margin (P0 §1, verified in the engine).
     assert found == per_kw == {
-        (cls, p) for cls in ("unit", "connection", "node") for p in ("invest_cost", "fixed_cost", "salvage_value")
+        (cls, p) for cls in ("unit", "connection", "node") for p in ("invest_cost", "fixed_cost", "net_salvage_value",
+                                                                 "life_extension_cost")
     } | {("group", "penalty_capacity_margin")}

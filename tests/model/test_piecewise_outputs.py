@@ -31,7 +31,7 @@ from tests.model.test_piecewise_oracles import CASES, E_CURVE, _pw
 pytestmark = pytest.mark.solver
 
 RTOL = 1e-7
-_W5_LOGGER = "flextool.process_outputs.calc_piecewise"
+_W5_LOGGER = "flextool.warnings"  # flextool.run_warnings.LOGGER_NAME: the W-0531 line and its debug details
 _RUNS: dict = {}
 
 
@@ -83,7 +83,7 @@ def _write(tmp_path_factory, name: str, *, in_memory: bool, caplog):
         return found
 
     caplog.clear()
-    caplog.set_level(logging.WARNING, logger=_W5_LOGGER)
+    caplog.set_level(logging.DEBUG, logger=_W5_LOGGER)
     extra = ({"solve_steps": [(s.solve_name, s.flex_data, s.effective_solution) for s in steps.values()]}
              if in_memory else {"flex_data": last.flex_data})
     with warnings.catch_warnings(), pytest.MonkeyPatch.context() as mp:
@@ -93,7 +93,7 @@ def _write(tmp_path_factory, name: str, *, in_memory: bool, caplog):
                       fallback_output_location=str(work), raw_output_dir=str(work / "output_raw"),
                       solution=last.solution, solve_name=last.solve_name,
                       flex_data_provider=last.flex_data_provider, **extra)
-    messages = [r.getMessage() for r in caplog.records if r.name == _W5_LOGGER]
+    messages = [r.getMessage() for r in caplog.records if r.name == _W5_LOGGER and "W-0531" in r.getMessage()]
     _RUNS[key] = (steps, work / "output_parquet" / scen, found, messages)
     return _RUNS[key]
 
@@ -133,12 +133,11 @@ def test_W5_O3_input_above_the_curve(tmp_path_factory, caplog, in_memory) -> Non
     f = found[0]
     assert f.steps == 3
     _close([f.largest, f.total], [Fr(1220, 77), Fr(3660, 77)], what="largest, total [MWh]")
-    assert len(messages) == 1
-    msg = messages[0]
-    assert msg.startswith(f"Unit 'E' used more weighted input (input × conversion_flow_coeff) than its curve needs "
-                          f"in 3 time steps (largest "
-                          f"{float(Fr(1220, 77)):.4g} MWh in p2030/")
-    assert f"total {float(Fr(3660, 77)):.4g} MWh): its input had no value or a negative value there" in msg
+    assert len(messages) == 2, messages
+    assert messages[0] == "Warning: piecewise unit used more input than its curve needs ('E') [W-0531]"
+    msg = messages[1]
+    assert msg.startswith(f"W-0531 E: 3 time steps (largest {float(Fr(1220, 77)):.4g} MWh in p2030/")
+    assert msg.endswith(f"total {float(Fr(3660, 77)):.4g} MWh)")
 
 
 @pytest.mark.parametrize("in_memory", [True, False], ids=["in_memory", "persisted"])

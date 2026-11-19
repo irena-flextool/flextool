@@ -1339,10 +1339,9 @@ def write_v_obj(
     )
     path = output_dir / f"v_obj__{solve_name}.parquet"
     write_lean_parquet(df, path)
-    # Emit the canonical ``total_cost.val`` stdout line so that callers
-    # parsing the FlexTool stdout (e.g. test_representative_periods)
-    # still see the objective value.
-    print(f"total_cost.val = {obj:.12g}")
+    # The objective of each solve is in the solve summary printed at the end of a run (and summary_solve.csv);
+    # the per-solve ``total_cost.val`` line is debug output only.
+    _logger.debug("total_cost.val = %.12g", obj)
     _logger.debug("Wrote v_obj for solve '%s' -> %s (%.10g)", solve_name, path, obj)
     return path
 
@@ -1634,31 +1633,7 @@ def write_v_self_discharge(
     rp_start = None
     if fd.nodeState_rp is not None and fd.nodeState_rp.height > 0:
         rp_start = _solution_frame(names, values, "v_state_rp_start", ("n", "d", "t"))
-    start = None
-    fix_first = at(sd.fix_start_first(fd))
-    if fix_first is not None:
-        su = fd.p_state_unitsize.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("su"))
-        cap = (fd.p_state_existing_capacity.frame
-               .select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("value").alias("cap")))
-        built = pl.DataFrame(schema={"n": pl.Utf8, "d": pl.Utf8, "built": pl.Float64})
-        for var, frame, ent, d_col, sign in (("v_invest", fd.edd_invest_set, "e", "d_invest", 1.0),
-                                             ("v_divest", fd.ndd_divest_active, "n", "d_divest", -1.0)):
-            if frame is None or frame.height == 0:
-                continue
-            chosen = _solution_frame(names, values, var, ("n", d_col))
-            alive = frame.select(pl.col(ent).cast(pl.Utf8).alias("n"), pl.col(d_col).cast(pl.Utf8),
-                                 pl.col("d").cast(pl.Utf8))
-            part = (alive.join(chosen, on=["n", d_col], how="inner").group_by("n", "d")
-                    .agg((pl.col("value").sum() * sign).alias("built")))
-            built = pl.concat([built, part], how="vertical")
-        built = built.group_by("n", "d").agg(pl.col("built").sum())
-        start = (fix_first
-                 .join(fd.p_state_start.frame.select(pl.col("n").cast(pl.Utf8), pl.col("value").alias("ss")),
-                       on="n", how="inner")
-                 .join(cap, on=["n", "d"], how="left").join(su, on="n", how="left")
-                 .join(built, on=["n", "d"], how="left")
-                 .select("n", "d", "t", value=pl.col("ss") * (pl.col("cap").fill_null(0.0)
-                                                              + pl.col("built").fill_null(0.0) * pl.col("su"))))
+    start = sd.fix_start_energy(fd, lambda var, dims: _solution_frame(names, values, var, dims))
     carry = None
     roll = at(sd.roll_first(fd))
     open_start = sd.open_start_nodes(fd)
@@ -1805,49 +1780,207 @@ def write_v_invest_fan(
     provider: "object | None" = None,
     col_names_cache: Sequence[str] | None = None,
     col_value: "object | None" = None,
-) -> "Path | None":
-    """Write ``v_invest_fan__{solve}.parquet``: the investment of a fan's branch periods, weighted to its label.
+) -> list[Path]:
+    """Write ``v_invest_fan__{solve}.parquet`` / ``v_divest_fan__{solve}.parquet``: the investment and the
+    retirement of existing capacity of a fan's branch periods, weighted to its label.
 
-    # ─── OUTPUT. ─── v_invest_fan ─────────────────────────────────────────────
-    # invest_fan[e,L] = Σ_{b ∈ B(L)} pd_branch_weight[b]·v_invest[e,b]
+    # ─── OUTPUT. ─── v_invest_fan / v_divest_fan ──────────────────────────────
+    # invest_fan[e,L] = Σ_{b ∈ B(L)} pd_branch_weight[b]·v_invest[e,b]      (divest_fan: v_divest)
     #   L a period label of a stochastic fan the solve realizes the investment of (``realized_invest_periods``),
     #   B(L) its forecast-branch periods (``period__branch`` rows (L, b), b ≠ L)
-    # Under ``stochastic_invest_method = recourse`` every branch decides its own investment: this is the
-    # probability-weighted investment of the fan, the amount whose cost the LP objective carries.  The reported
-    # costs add it to the label's own (shared) investment, which is 0 under recourse.  Rows: the realized labels;
-    # columns: the entities with a branch investment.
+    # Under ``stochastic_invest_method = recourse`` every branch decides its own investment and retirement: this is
+    # the probability-weighted decision of the fan, the amount whose cost the LP objective carries.  The reported
+    # costs add it to the label's own (shared) decision, which is 0 under recourse.  Rows: the realized labels;
+    # columns: the entities with a branch decision.
 
-    None (no file) without FlexData, without a fan or without an investment in a branch period.
+    No file without FlexData, without a fan or without a decision in a branch period.
     """
-    labels = _fan_labels(flex_data)
-    if not labels:
-        return None
-    pbf = flex_data.period_branch_full
-    branch_of = {str(b): str(d) for d, b in zip(pbf["d"].to_list(), pbf["b"].to_list())
-                 if str(d) in labels and str(b) != str(d)}
-    weights = flex_data.pd_branch_weight
-    if not branch_of or weights is None:
-        return None
+    from flextool.process_outputs._fan_labels import at_fan_labels, fan_branch_labels
+
+    branch_of = fan_branch_labels(flex_data) if flex_data is not None else {}
+    if not branch_of or flex_data.pd_branch_weight is None:
+        return []
+    labels = set(branch_of.values())
     names = col_names_cache if col_names_cache is not None else h.allVariableNames()
     values = col_value if col_value is not None else h.getSolution().col_value
-    chosen = _solution_frame(names, values, "v_invest", ("e", "b")).filter(pl.col("b").is_in(list(branch_of)))
-    if chosen.height == 0:
-        return None
-    w = weights.frame.select(pl.col("d").cast(pl.Utf8).alias("b"), pl.col("value").alias("w"))
-    mapping = pl.DataFrame({"b": list(branch_of), "d": list(branch_of.values())})
-    weighted = (chosen.join(w, on="b", how="inner").join(mapping, on="b", how="inner")
-                .group_by("e", "d").agg((pl.col("value") * pl.col("w")).sum().alias("value")))
     realized = _load_realized_invest_periods_list(realized_periods_csv, provider=provider)
     rows = [d for d in (realized if realized is not None else sorted(labels)) if d in labels]
-    entities = list(dict.fromkeys(chosen["e"].to_list()))
-    wide = weighted.to_pandas().pivot(index="d", columns="e", values="value").reindex(index=rows, columns=entities)
-    out = pd.DataFrame(wide.to_numpy(dtype=float), columns=pd.Index(entities, name="entity"),
-                       index=pd.MultiIndex.from_tuples([(solve_name, d) for d in rows],
-                                                       names=["solve", "period"])).fillna(0.0)
-    out += 0.0
-    path = Path(output_dir) / f"v_invest_fan__{solve_name}.parquet"
-    write_lean_parquet(out, path)
-    return path
+    written: list[Path] = []
+    for var, name in (("v_invest", "v_invest_fan"), ("v_divest", "v_divest_fan")):
+        chosen = _solution_frame(names, values, var, ("e", "d")).filter(pl.col("d").is_in(list(branch_of)))
+        if chosen.height == 0:
+            continue
+        weighted = at_fan_labels(chosen, flex_data, "d")
+        entities = list(dict.fromkeys(chosen["e"].to_list()))
+        wide = weighted.to_pandas().pivot(index="d", columns="e", values="value").reindex(index=rows, columns=entities)
+        out = pd.DataFrame(wide.to_numpy(dtype=float), columns=pd.Index(entities, name="entity"),
+                           index=pd.MultiIndex.from_tuples([(solve_name, d) for d in rows],
+                                                           names=["solve", "period"])).fillna(0.0)
+        out += 0.0
+        path = Path(output_dir) / f"{name}__{solve_name}.parquet"
+        write_lean_parquet(out, path)
+        written.append(path)
+    return written
+
+
+#: The parquets of :func:`write_v_divest_built` (output name → the quantity, per realized investment period and
+#: entity; the lines also per cost line and report period).
+DIVEST_BUILT_OUTPUTS: tuple[str, ...] = ("v_divest_built", "v_divested_built", "v_divest_built_lines")
+
+
+def write_v_divest_built(
+    h: "highspy.Highs",
+    *,
+    solve_name: str,
+    output_dir: Path | str,
+    flex_data: "FlexData | None",
+    realized_periods_csv: Path | str | None = None,
+    provider: "object | None" = None,
+    col_names_cache: Sequence[str] | None = None,
+    col_value: "object | None" = None,
+) -> list[Path]:
+    """Write the retirements of model-built capacity (:data:`DIVEST_BUILT_OUTPUTS`), one parquet each.
+
+    # ─── OUTPUT. ─── v_divest_built / v_divested_built / v_divest_built_lines ───
+    # divest_built[e,d]       = Σ_c v_divest_built[e,c,d]                     (units retired in d)
+    # divested_built[e,d]     = v_divested_built[e,d]                         (units retired so far, counting in d)
+    # divest_built_lines[e,d,line,d_report] = Σ_c v_divest_built[e,c,d]·us[e]·cdl_divest_built_lines[e,c,d,line,d_report]
+    #   us = unitsize (state_unitsize for a storage node); d a period whose investment the solve realizes (a fan's
+    #   branch periods at its label, weighted by pd_branch_weight)
+    # The model-built capacity retired (per cohort in the LP, summed over the cohorts of an entity here) and its
+    # objective term divest_built_cost_{p,n} split by cost line and the period each is reported in (CUR; the lines
+    # add up to the term; the fixed cost it saves is reported from the capacity in service, calc_costs).  Rows: the
+    # realized investment periods; columns: the entities with a retirable cohort (the lines: (entity, line,
+    # period_report)).
+
+    No file without FlexData or without a retirement option of model-built capacity.
+    """
+    if flex_data is None or getattr(flex_data, "cd_divest_built", None) is None:
+        return []
+    return _write_cohort_decisions(
+        h, solve_name=solve_name, output_dir=output_dir, flex_data=flex_data,
+        decision=("v_divest_built_p", "v_divest_built_n"), counted=("v_divested_built_p", "v_divested_built_n"),
+        lines=getattr(flex_data, "cdl_divest_built_lines", None),
+        outputs=DIVEST_BUILT_OUTPUTS, realized_periods_csv=realized_periods_csv, provider=provider,
+        col_names_cache=col_names_cache, col_value=col_value)
+
+
+#: The parquets of :func:`write_v_extend` (output name → the quantity, per realized investment period and entity; the
+#: lines also per cost line and report period).
+EXTEND_OUTPUTS: tuple[str, ...] = ("v_extend", "v_extended", "v_extend_lines")
+
+
+def write_v_extend(
+    h: "highspy.Highs",
+    *,
+    solve_name: str,
+    output_dir: Path | str,
+    flex_data: "FlexData | None",
+    realized_periods_csv: Path | str | None = None,
+    provider: "object | None" = None,
+    col_names_cache: Sequence[str] | None = None,
+    col_value: "object | None" = None,
+) -> list[Path]:
+    """Write the life extensions (:data:`EXTEND_OUTPUTS`), one parquet each.
+
+    # ─── OUTPUT. ─── v_extend / v_extended / v_extend_lines ───
+    # extend[e,d]       = Σ_c v_extend[e,c,d]                          (units extended in d, starting to operate)
+    # extended[e,d]     = v_extended[e,d]                              (extended units in service in d)
+    # extend_lines[e,d,line,d_report] = Σ_c v_extend[e,c,d]·us[e]·cdl_extend_lines[e,c,d,line,d_report]   (CUR)
+    #   us = unitsize (state_unitsize for a storage node); d a period whose investment the solve realizes (a fan's
+    #   branch periods at its label, weighted by pd_branch_weight)
+    # The capacity kept beyond its end of life (per parent cohort in the LP, summed here) and its objective term
+    # extend_cost_{p,n} split by cost line and the period each is reported in (the lines add up to its price term;
+    # its fixed cost is reported from the capacity in service, calc_costs).  Rows: the realized investment periods;
+    # columns: the entities with an extension option (the lines: (entity, line, period_report)).
+
+    No file without FlexData or without an extension option.
+    """
+    if flex_data is None or getattr(flex_data, "cd_extend", None) is None:
+        return []
+    return _write_cohort_decisions(
+        h, solve_name=solve_name, output_dir=output_dir, flex_data=flex_data,
+        decision=("v_extend_p", "v_extend_n"), counted=("v_extended_p", "v_extended_n"),
+        lines=getattr(flex_data, "cdl_extend_lines", None),
+        outputs=EXTEND_OUTPUTS, realized_periods_csv=realized_periods_csv, provider=provider,
+        col_names_cache=col_names_cache, col_value=col_value)
+
+
+def _write_cohort_decisions(
+    h: "highspy.Highs",
+    *,
+    solve_name: str,
+    output_dir: Path | str,
+    flex_data: "FlexData",
+    decision: tuple[str, str],
+    counted: tuple[str, str],
+    lines: "pl.DataFrame | None",
+    outputs: tuple[str, ...],
+    realized_periods_csv: Path | str | None,
+    provider: "object | None",
+    col_names_cache: Sequence[str] | None,
+    col_value: "object | None",
+) -> list[Path]:
+    """The parquets ``outputs`` of a per-cohort decision (``decision`` ``[axis, cohort, d]`` of processes and
+    storage nodes) and of its per-entity aggregate (``counted`` ``[axis, d]``): the units decided in d (summed over
+    the cohorts), the aggregate and the decided MW times the cost lines ``lines`` (``[e, cohort, d, line, d_report,
+    value]``, a fan's branch decisions weighted to its label); rows the realized investment periods, columns the
+    entities with a decision column ((entity, line, period_report) for the lines)."""
+    from flextool.process_outputs._fan_labels import at_fan_labels
+
+    names = col_names_cache if col_names_cache is not None else h.allVariableNames()
+    values = col_value if col_value is not None else h.getSolution().col_value
+    decided = pl.concat([_solution_frame(names, values, var, ("e", "cohort", "d")) for var in decision])
+    counted_frame = pl.concat([_solution_frame(names, values, var, ("e", "d")) for var in counted])
+    if decided.height == 0:
+        return []
+    sizes = [param.frame.select(pl.col(col).cast(pl.Utf8).alias("e"), pl.col("value").alias("us"))
+             for param, col in ((getattr(flex_data, "p_unitsize", None), "p"),
+                                (getattr(flex_data, "p_state_unitsize", None), "n"))
+             if param is not None]
+    us = pl.concat(sizes).unique(subset=["e"], keep="first", maintain_order=True)
+
+    mw = decided.join(us, on="e", how="inner").with_columns(mw=pl.col("value") * pl.col("us"))
+    keys = ["e", "cohort", "d"]
+    long = {
+        outputs[0]: decided.group_by("e", "d", maintain_order=True).agg(pl.col("value").sum()),
+        outputs[1]: counted_frame,
+    }
+    realized = _load_realized_invest_periods_list(realized_periods_csv, provider=provider)
+    entities = list(dict.fromkeys(decided["e"].to_list()))
+    rows = realized if realized is not None else list(dict.fromkeys(decided["d"].to_list()))
+    written: list[Path] = []
+    for name in outputs[:2]:
+        frame = long[name]
+        wide = (frame.to_pandas().pivot_table(index="d", columns="e", values="value", aggfunc="sum")
+                if frame.height > 0 else pd.DataFrame())
+        wide = wide.reindex(index=rows, columns=entities)
+        out = pd.DataFrame(wide.to_numpy(dtype=float), columns=pd.Index(entities, name="entity"),
+                           index=pd.MultiIndex.from_tuples([(solve_name, d) for d in rows],
+                                                           names=["solve", "period"])).fillna(0.0)
+        out += 0.0
+        path = Path(output_dir) / f"{name}__{solve_name}.parquet"
+        write_lean_parquet(out, path)
+        written.append(path)
+    if lines is not None and lines.height > 0:
+        amounts = (mw.select(*keys, "mw").join(lines, on=keys, how="inner")
+                     .group_by("e", "d", "line", "d_report", maintain_order=True)
+                     .agg((pl.col("mw") * pl.col("value")).sum().alias("value")))
+        amounts = at_fan_labels(amounts, flex_data, "d", ("d_report",)).filter(pl.col("d").is_in(rows))
+        if amounts.height > 0:
+            wide = amounts.to_pandas().pivot_table(index="d", columns=["e", "line", "d_report"], values="value",
+                                                   aggfunc="sum")
+            wide = wide.reindex(index=rows)
+            out = pd.DataFrame(wide.to_numpy(dtype=float),
+                               columns=pd.MultiIndex.from_tuples(list(wide.columns),
+                                                                 names=["entity", "line", "period_report"]),
+                               index=pd.MultiIndex.from_tuples([(solve_name, d) for d in rows],
+                                                               names=["solve", "period"])).fillna(0.0)
+            out += 0.0
+            path = Path(output_dir) / f"{outputs[2]}__{solve_name}.parquet"
+            write_lean_parquet(out, path)
+            written.append(path)
+    return written
 
 
 def write_all_variables(
@@ -1959,6 +2092,22 @@ def write_all_variables(
             col_value=col_value,
         )),
         ("v_invest_fan", lambda: write_v_invest_fan(
+            h, solve_name=solve_name, output_dir=output_dir,
+            flex_data=flex_data,
+            realized_periods_csv=realized_periods_csv,
+            provider=provider,
+            col_names_cache=col_names_cache,
+            col_value=col_value,
+        )),
+        ("v_divest_built", lambda: write_v_divest_built(
+            h, solve_name=solve_name, output_dir=output_dir,
+            flex_data=flex_data,
+            realized_periods_csv=realized_periods_csv,
+            provider=provider,
+            col_names_cache=col_names_cache,
+            col_value=col_value,
+        )),
+        ("v_extend", lambda: write_v_extend(
             h, solve_name=solve_name, output_dir=output_dir,
             flex_data=flex_data,
             realized_periods_csv=realized_periods_csv,

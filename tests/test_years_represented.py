@@ -4,7 +4,7 @@ Verifies that p_inflation_factor_operations_yearly and
 p_inflation_factor_investment_yearly correctly account for
 p_years_represented values by checking the output CSV files.
 
-With inflation_rate = 0 (default), the expected inflation factor for
+With social_discount_rate = 0 (default), the expected inflation factor for
 a period equals the sum of p_years_represented over its years:
   - years_represented = 1 (default): 1 year with p_years_represented = 1 => factor = 1
   - years_represented = 5: 5 years with p_years_represented = 1 => factor = 5
@@ -216,7 +216,7 @@ class TestYearsRepresented1:
 
     The coal scenario uses the default solve (y2020_2day_dispatch)
     with no explicit years_represented, so p_years_represented = 1.
-    With inflation_rate = 0 (default), the factor should be exactly 1.
+    With social_discount_rate = 0 (default), the factor should be exactly 1.
     """
 
     @pytest.fixture(scope="class")

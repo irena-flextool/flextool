@@ -30,7 +30,8 @@ from flextool.engine.input._param_shapes import (
     without_no_limit_rows,
 )
 from flextool.engine.preprocess._provider_io import _provider_key
-from flextool.engine.model import _balance_terms, _coarse_flows
+from flextool.engine.preprocess.params._cohorts import in_service
+from flextool.engine.model import _balance_terms, _coarse_flows, _extend, _retire_built
 from flextool.engine.model._common import _availability_factor, _has_rows, _indirect_sum_arcs, _var_view
 
 if TYPE_CHECKING:
@@ -367,24 +368,35 @@ def _arcs_at_group(arcs: pl.DataFrame, side: str, group_nodes: pl.DataFrame) -> 
 
 
 def _invest_change(b: _Build, procs: pl.DataFrame, tag: str) -> tuple[Expr | None, Expr | None]:
-    """``(Σ_{d′} v_invest_p[p,d′], Σ_{d′} v_divest_p[p,d′])`` over (p,d′,d) ∈ edd_invest_set / edd_divest_active,
-    restricted to the processes in ``procs``; each None when absent.  Indexed (p, d)."""
-    d = b.d
+    """``(invested[p,d], retired[p,d])`` (``_capacity``) restricted to the processes in ``procs``; each None when
+    absent.  Indexed (p, d)."""
     procs_p = procs.select("p").unique()
     invest = divest = None
-    edd_inv = getattr(d, "edd_invest_set", None)
+    edd_inv = b.cap.alive
     if b.has_invest_p and b.v_invest_p is not None and _has_rows(edd_inv):
         e = edd_inv.rename({"e": "p"}) if "e" in edd_inv.columns else edd_inv
         e, pp = align_join_dtypes(e, procs_p, ("p",))
         e = e.join(pp, on="p", how="inner")
         if e.height > 0:
             invest = Sum(Where(_var_view(b.v_invest_p, f"__{tag}_inv", {"d": "d_invest"}), e), over=("d_invest",))
-    edd_div = getattr(d, "edd_divest_active", None)
+    edd_div = b.cap.retired_frame("p")
     if b.has_divest_p and b.v_divest_p is not None and _has_rows(edd_div):
         e, pp = align_join_dtypes(edd_div, procs_p, ("p",))
         e = e.join(pp, on="p", how="inner")
         if e.height > 0:
             divest = Sum(Where(_var_view(b.v_divest_p, f"__{tag}_div", {"d": "d_divest"}), e), over=("d_divest",))
+    built = _retire_built.retired(b, "p")
+    if built is not None:
+        # The model-built capacity retired so far (_retire_built).
+        rows, pp = align_join_dtypes(_retire_built.retired_frame(b, "p"), procs_p, ("p",))
+        rows = rows.join(pp, on="p", how="inner")
+        if rows.height > 0:
+            term = Where(built, rows)
+            divest = term if divest is None else divest + term
+    ext = _extend.capacity_term(b, "p", procs_p)
+    if ext is not None:
+        # The extended capacity in service (_extend): capacity, carried with the retirements (never an investment).
+        divest = -ext if divest is None else divest - ext
     return invest, divest
 
 
@@ -707,7 +719,7 @@ def _eq_capacity_margin(b: _Build) -> None:
     _behaviour_changes.notice("capacity_margin_counts_by_flow", "groups", _names(gcm, "g"))
     invc = d.p_inv_group_cap
     p_us = d.p_unitsize
-    exist_cnt = d.p_process_existing_count
+    exist_cnt = b.cap.existing_count_p
 
     # ─── EQ. ─── capacityMargin ──────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
@@ -746,7 +758,8 @@ def _eq_capacity_margin(b: _Build) -> None:
     #   M[g,d] = capacity_margin_absolute[g,d] (absolute)  |  capacity_margin_relative[g,d] · P[g,d] (relative_of_peak_demand), 0 where not
     #   authored;  P[g,d] = max(0, max_t Σ_{n ∈ N(g)} demand[n,d,t]) over the period's original time series
     #   (before representative periods and new_stepduration; _capacity_margin_peak, resolve_capacity_margin)
-    #   Σ_{d′} over edd_invest_set / edd_divest_active
+    #   Σ_{d′} v_invest_p[p,d′] = invested[p,d], Σ_{d′} v_divest_p[p,d′] = retired[p,d] (the capacity in service,
+    #   _capacity)
     # Substituting the balance of each n ∈ N(g) (flow_FV + B¬FV + q_up − q_down = demand) gives
     #   Σ_{K} (counted capacity − flow into N(g)) + vq ≥ M + Σ_n q_up − (slack energy of S(g)) / Δt:
     # only firm and VRE headroom holds the margin.  Each counted capacity bounds the unit's dispatch into N(g)
@@ -759,8 +772,8 @@ def _eq_capacity_margin(b: _Build) -> None:
     # served it, and is priced once, by penalty_up.  Units fed from fuel or commodity nodes count at capacity: the
     # fuel is assumed to last through the peak.  Existing capacity is a constant and moves to the right-hand side.
     # The row is scaled by icap, which makes the slack a fraction of group_capacity_for_scaling.
-    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
-    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+    # existing capacity counting until its end of life (none for reinvest_automatic).
     # Row rule (coarse steps): a group whose flow members (the processes of B¬FV) are all coarse processes gets one
     # row per coarse step, capacityMargin_coarse = the row's Δt-weighted mean over the step
     # (_coarse_flows.add_cstr): availability, the profile, the inflow and the slope act through their step means,
@@ -1070,7 +1083,9 @@ def capacity_margin_report(d, sol, *, scale_the_objective: "float | None" = None
     One evaluation of the row's terms at the solution, from the class frames the row is built from
     (:func:`capacity_margin_unit_arcs`, :func:`_counted_terms`, ``_balance_terms.balance_flow_values``):
 
-        firm, vre   = Σ_{arcs of F(g) / V(g)} (existing_count + Σ invest − Σ divest) · unitsize · κ   (per unit)
+        firm, vre   = Σ_{arcs of F(g) / V(g)} (existing_count + Σ invest − Σ divest − divested_built + extended)
+                      · unitsize · κ   (per unit; divested_built the model-built capacity retired so far, extended
+                      the life extensions in service)
         storage_flow, unit_flow, connections_net, consumption
                     = the B¬FV terms of the storage-backed units' output, the other by-flow unit outputs
                       (converters inside g, conversion_flow_coeff 0), the connections (both ends, reverse
@@ -1112,8 +1127,20 @@ def capacity_margin_report(d, sol, *, scale_the_objective: "float | None" = None
     if arcs is not None:
         units = _param_utf8(d.p_process_existing_count, ("p", "d"), "exist")
         units = units if units is not None else pl.DataFrame(schema={"p": pl.Utf8, "d": pl.Utf8, "exist": pl.Float64})
-        inv = _invest_units(d, sol, "v_invest_p", getattr(d, "edd_invest_set", None), "d_invest")
-        div = _invest_units(d, sol, "v_divest_p", getattr(d, "edd_divest_active", None), "d_divest")
+        frames = in_service(d)
+        inv = _invest_units(d, sol, "v_invest_p", frames.alive, "d_invest")
+        div = _invest_units(d, sol, "v_divest_p", frames.retired_p, "d_divest")
+        if "v_divested_built_p" in getattr(sol, "_vars", {}):
+            # The model-built capacity retired so far (_retire_built): already per (p, d).
+            built = _as_utf8(sol.value("v_divested_built_p")).select("p", "d", pl.col("value").cast(pl.Float64))
+            div = built if div is None else (pl.concat([div, built]).group_by("p", "d", maintain_order=True)
+                                                .agg(pl.col("value").sum()))
+        if "v_extended_p" in getattr(sol, "_vars", {}):
+            # The life extensions in service (_extend): capacity of their own, already per (p, d).
+            kept = (_as_utf8(sol.value("v_extended_p"))
+                    .select("p", "d", value=-pl.col("value").cast(pl.Float64)))
+            div = kept if div is None else (pl.concat([div, kept]).group_by("p", "d", maintain_order=True)
+                                               .agg(pl.col("value").sum()))
         kap = _as_utf8(kappa.frame).rename({"value": "kappa"})
         cap = kap.join(units, on=["p", "d"], how="left")
         for frame, alias in ((inv, "inv"), (div, "div")):

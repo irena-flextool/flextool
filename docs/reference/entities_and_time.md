@@ -50,9 +50,9 @@ Timesets pick one or more sections from the `timeline` to form a `timeset`. Each
 - `model`: model defines the sequence of solves to be performed (e.g. first an investment solve and then a dispatch solve)
 
   - *solves*: sequence of solves in the model represented with an array of solve names.
-  - *inflation_rate*: [e.g. 0.02 for 2%] Model-wide inflation rate applied to all future costs. When inputs are in real (constant-price) terms, set to 0 (default). When inputs are in nominal terms, set to expected inflation.
-  - *inflation_offset_investment*: [years] Offset from the period (often year) start to the first payment of the investment cost annuity.
-  - *inflation_offset_operations*: [years] Offset from the period (often year) start to the payment of operational costs.
+  - *social_discount_rate*: [e.g. 0.03 for 3%] The model's time discount rate: a cost or income is weighed by 1 / (1 + social_discount_rate)^t, t the years from the start of the run to the moment it falls. In the same terms as the cost inputs. 0 (default): no time preference (with real inputs, inflation is already in the prices). With nominal inputs, use (1 + inflation) × (1 + social rate) − 1. Not the per-entity `discount_rate` (the investor's WACC).
+  - *discount_offset_investment*: [years] Where in each year the yearly investment payments and the yearly salvage credits fall, between 0 (default, the start of the year; the first payment on the day the capacity comes online) and 1 (the end). The annual payment is sized for that moment, so the payments are worth `invest_cost` at the `discount_rate` whatever the offset; the offset moves what `social_discount_rate` weighs.
+  - *discount_offset_operations*: [years] Where in each year operating and fixed costs are weighed by `social_discount_rate`, between 0 (the start of the year) and 1 (the end): 0.5 (default) the middle of the year, standing for costs spread over the year.
   - *periods_available*: (Optional) Array of periods available for the model. Use this for periods that are in the data, but are not in period_timeset.
   - *max_flow_for_unconstrained_variables*: [MW] Upper bound for capacities and flows that have no other limit: how much capacity an entity with `invest_method` `invest_no_limit` or `invest_retire_no_limit` (or `cumulative_limits` without `cumulative_max_capacity`) can add on top of its `existing` capacity, and the flow on a unit's input or output whose `conversion_flow_coeff` is 0. The value is used as given; with several model entities the largest value is used. Keep it large enough not to limit the real solution and small enough to avoid numerical problems (see [dev/scaling.md](../dev/scaling.md)). Default 1,000,000.
   - *debug*: Instruction set for performing model debugging and testing.
@@ -338,7 +338,7 @@ result labels of that node follow it. Time steps are hours, so the node's *rate*
 | storage state and capacity, `inflow` per time step | MWh | m3 | MWh_th |
 | flows summed over a period (annualized) | MWh/a | m3/a | MWh_th/a |
 | prices, `penalty_up` / `penalty_down`, commodity `price` | CUR/MWh | CUR/m3 | CUR/MWh_th |
-| `invest_cost`, `fixed_cost`, `salvage_value` of a unit whose capacity is on the node | CUR/kW | CUR per 0.001 m3/h | CUR/kW_th |
+| `invest_cost`, `fixed_cost`, `net_salvage_value` of a unit whose capacity is on the node | CUR/kW | CUR per 0.001 m3/h | CUR/kW_th |
 | the same of a storage node | CUR/kWh | CUR per 0.001 m3 | CUR/kWh_th |
 
 The rule: a unit ending in `Wh` drops the `h` for the rate (MWh → MW, MWh_th → MW_th, kWh → kW), any other unit
@@ -346,7 +346,7 @@ gets `/h` (m3 → m3/h, t → t/h). The value is case-sensitive (`mwh` gives `mw
 changes no number. Set the amount unit, not the rate: `m3`, not `m3/h` (FlexTool warns about a value that looks
 like a rate).
 
-**Costs per kW and kWh.** `invest_cost`, `fixed_cost` and `salvage_value` (and the group
+**Costs per kW and kWh.** `invest_cost`, `fixed_cost` and `net_salvage_value` (and the group
 `penalty_capacity_margin`) are entered per kW or kWh, and FlexTool multiplies them by 1000. For a node in another
 unit they are per 0.001 of the rate or the amount. A desalination unit that costs 500 CUR per m3/h of capacity has
 `invest_cost` 0.5 (500 × 0.001); a water tank that costs 20 CUR per m3 has `invest_cost` 0.02. The capacities

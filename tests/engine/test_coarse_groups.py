@@ -166,13 +166,15 @@ def test_explicit_coarse_unit_fine_side(tmp_path_factory, caplog, monkeypatch) -
     no elec_A term at all (block-compatibility filter) — hydrogen from free electricity."""
     from flextool.engine.preprocess.params import _coarse
 
-    monkeypatch.setattr(_coarse, "_WARNED", set())      # the warning is given once per process
-    caplog.set_level(logging.WARNING)
-    step = _last(_lh2(tmp_path_factory, "c_elz", [
+    from tests._support.coded_warnings import capture_coded
+
+    monkeypatch.setattr(_coarse, "_WARNED", set())      # the warning is given once per run
+    with capture_coded() as got:
+        step = _last(_lh2(tmp_path_factory, "c_elz", [
         ["unit", "elz_u", "efficiency", _f(0.7)], ["unit", "elz_u", "existing", _f(300.0)],
-        ["unit", "elz_u", "conversion_method", _s("constant_efficiency")]],
-        [["unit", "elz_u", None], ["unit__inputNode", ["elz_u", "elec_A"], None],
-         ["unit__outputNode", ["elz_u", "h2_A"], None], ["group__unit", ["daily_group", "elz_u"], None]]))
+            ["unit", "elz_u", "conversion_method", _s("constant_efficiency")]],
+            [["unit", "elz_u", None], ["unit__inputNode", ["elz_u", "elec_A"], None],
+             ["unit__outputNode", ["elz_u", "h2_A"], None], ["group__unit", ["daily_group", "elz_u"], None]]))
     pb = build(step.flex_data)
     fine = row_terms(pb, "nodeBalance_eq", "elec_A,y2030,")
     for h in range(1, 169):
@@ -180,8 +182,9 @@ def test_explicit_coarse_unit_fine_side(tmp_path_factory, caplog, monkeypatch) -
         assert coef(row, f"v_flow[elz_u,elec_A,h2_A,y2030,t{h:04d}]") < 0
     day = row_terms(pb, "nodeBalanceCoarse_eq", "h2_A,y2030,t0001")["nodeBalanceCoarse_eq[h2_A,y2030,t0001]"]
     assert sum(1 for c in day if c.startswith("v_flow[elz_u,")) == 24
-    assert any("'elz_u' is listed in group 'daily_group'" in r.message and "elec_A" in r.message
-               for r in caplog.records)
+    assert got.names("W-0507") == ["elz_u, daily_group"]
+    assert "elec_A" in got.detail("W-0507", "elz_u, daily_group")
+    assert len(got.lines("W-0507")) == 1
 
 
 def test_coarse_unit_online_once_per_day(tmp_path_factory) -> None:

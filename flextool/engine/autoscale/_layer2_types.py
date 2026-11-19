@@ -15,7 +15,7 @@ Per :class:`CstrFamily` semantics:
 * ``rhs_type=None`` is a sentinel for *user-supplied composite-LHS
   constraints* (the ``process_constraint_*`` / ``node_balance_fix_*``
   family) and the small number of structural rows whose RHS is
-  identically zero (``dc_flow_eq``, ``fix_v_invest_no_investment_eq``)
+  identically zero (``dc_flow_eq``, ``non_anticipativity_storage_use``)
   — Layer 2 has no per-row scaling to apply there.  The column scaler
   on each LHS variable still propagates through these rows.
 * ``member_class_resolver="group_capacity"`` is the trigger for
@@ -150,6 +150,18 @@ VARIABLE_FAMILIES: dict[str, VarFamily] = {
     "v_invest_n": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_state_unitsize"),
     # flextool/engine/model/core.py _declare_variables
     "v_divest_n": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_state_unitsize"),
+    # flextool/engine/model/_retire_built.py add_variables: the retirement of a model-built cohort and the
+    # model-built capacity retired so far, counts of unitsize like v_divest.
+    "v_divest_built_p": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
+    "v_divest_built_n": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_state_unitsize"),
+    "v_divested_built_p": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
+    "v_divested_built_n": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_state_unitsize"),
+    # flextool/engine/model/_extend.py add_variables: the units of a cohort kept beyond its end of life and the
+    # extended capacity in service, counts of unitsize like v_invest.
+    "v_extend_p": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
+    "v_extend_n": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_state_unitsize"),
+    "v_extended_p": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
+    "v_extended_n": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_state_unitsize"),
 
     # ── Reserve.  DIMENSIONLESS column; ``p_unitsize`` multiplier
     # carries the per-row POWER coefficient.
@@ -253,8 +265,13 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "rp_inter_period_fan_start": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_rp_storage_chain
     "rp_inter_period_max_state": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _eq_storage_start_binding
-    "storage_state_start_binding": CstrFamily(QuantityType.ENERGY),
+    # flextool/engine/model/core.py _eq_rp_chain_ends (the absolute level at the ends of the base-period chain)
+    "rp_inter_period_start_fix": CstrFamily(QuantityType.ENERGY),
+    "rp_inter_period_end_fix": CstrFamily(QuantityType.ENERGY),
+    "rp_inter_period_start_max_state": CstrFamily(QuantityType.ENERGY),
+    "rp_inter_period_start_min_state": CstrFamily(QuantityType.ENERGY),
+    "rp_inter_period_end_match": CstrFamily(QuantityType.ENERGY),
+    "rp_inter_period_reference_value": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_storage_start_binding_cyclic
     "storage_state_start_binding_cyclic_period": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_storage_within_solve_path_end (bind_within_solve, stochastic paths)
@@ -263,6 +280,17 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "storage_state_fan_start": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_storage_end_binding
     "storage_state_end_binding": CstrFamily(QuantityType.ENERGY),
+    # flextool/engine/model/core.py _eq_storage_roll_end (rolling bind_within_solve: anchor and closure)
+    "storage_state_roll_anchor": CstrFamily(QuantityType.ENERGY),
+    "storage_state_roll_close": CstrFamily(QuantityType.ENERGY),
+    "storage_state_roll_anchor_share": CstrFamily(QuantityType.ENERGY),
+    "storage_state_roll_close_share": CstrFamily(QuantityType.ENERGY),
+    "storage_state_roll_match": CstrFamily(QuantityType.ENERGY),
+    "rp_inter_period_start_carry": CstrFamily(QuantityType.ENERGY),
+    "rp_inter_period_start_match": CstrFamily(QuantityType.ENERGY),
+    # flextool/engine/model/core.py _eq_storage_end_match (forward chains whose start the solve decides)
+    "storage_state_end_match": CstrFamily(QuantityType.ENERGY),
+    "storage_state_end_match_share": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_storage_reference_value
     "storage_state_solve_horizon_reference_value": CstrFamily(QuantityType.ENERGY),
 
@@ -336,6 +364,18 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "maxRetired_existing_p": CstrFamily(QuantityType.POWER),
     # flextool/engine/model/core.py _eq_retired_existing
     "maxRetired_existing_n": CstrFamily(QuantityType.ENERGY),
+    # flextool/engine/model/_retire_built.py add_constraints: a cohort retires at most what it has (MW / MWh)
+    "maxDivest_cohort_p": CstrFamily(QuantityType.POWER),
+    "maxDivest_cohort_n": CstrFamily(QuantityType.ENERGY),
+    # flextool/engine/model/_retire_built.py add_constraints: the units retired so far, a count (RHS 0)
+    "divestedBuilt_p": CstrFamily(QuantityType.DIMENSIONLESS),
+    "divestedBuilt_n": CstrFamily(QuantityType.DIMENSIONLESS),
+    # flextool/engine/model/_extend.py add_constraints: a cohort extends at most what it has in service at its end
+    # of life (MW / MWh); the extended units in service, a count (RHS 0)
+    "maxExtend_cohort_p": CstrFamily(QuantityType.POWER),
+    "maxExtend_cohort_n": CstrFamily(QuantityType.ENERGY),
+    "extendedCapacity_p": CstrFamily(QuantityType.DIMENSIONLESS),
+    "extendedCapacity_n": CstrFamily(QuantityType.DIMENSIONLESS),
 
     # Slice D per-path total caps (design §7.2/§14) — one cap row per
     # (entity, scenario-leaf).  Emitted by
@@ -644,11 +684,6 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # as the entity/group total-cap _path families.
     "ladder_tier_cap_cumulative_roll_path": CstrFamily(QuantityType.ENERGY),
 
-    # ── Forbid-invest rows.  RHS = 0 by construction; skip per-row.
-    # _cumulative_invest._eq_fix_no_investment
-    "fix_v_invest_no_investment_eq_p": CstrFamily(None),
-    "fix_v_invest_no_investment_eq_n": CstrFamily(None),
-
     # ── Non-anticipativity (cross-branch equality).  RHS = 0; skip.
     # flextool/engine/model/_non_anticipativity.py:add_dispatch_constraints
     "non_anticipativity_storage_use": CstrFamily(None),
@@ -667,6 +702,12 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "non_anticipativity_invest_n": CstrFamily(None),
     "non_anticipativity_divest_p": CstrFamily(None),
     "non_anticipativity_divest_n": CstrFamily(None),
+    # flextool/engine/model/_retire_built.py add_non_anticipativity (RHS = 0)
+    "non_anticipativity_divest_built_p": CstrFamily(None),
+    "non_anticipativity_divest_built_n": CstrFamily(None),
+    # flextool/engine/model/_extend.py add_non_anticipativity (RHS = 0)
+    "non_anticipativity_extend_p": CstrFamily(None),
+    "non_anticipativity_extend_n": CstrFamily(None),
 
     # ── Profile constraints (per timestep).
     # Node profiles emit in model._eq_state_profiles with names

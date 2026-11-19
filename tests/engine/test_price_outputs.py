@@ -250,7 +250,7 @@ def _slack_cells(steps) -> list[tuple[str, str, str, str, float]]:
 def test_slack_step_price_equals_penalty(tmp_path_factory, case) -> None:
     """At every realized (n,d,t) whose up-slack is in use, one more MWh is one more MWh of slack, so the price is
     penalty_up[n] — in representative periods (rp weights in tw), in every roll (period share of the complete
-    solve, inflation 5 = years represented), with discounting (inflation_rate 0.05 on the four 5-year periods of
+    solve, inflation 5 = years represented), with discounting (social_discount_rate 0.05 on the four 5-year periods of
     dispatch_fullYear_roll) and in each forecast branch (bw 0.25).  The rp and stochastic cases lower one node's
     penalty_up so that its slack is in use at many steps.  Before: negated and × share · tw · bw."""
     if case == "rp":
@@ -261,7 +261,7 @@ def test_slack_step_price_equals_penalty(tmp_path_factory, case) -> None:
         steps, wf = _shared_run(tmp_path_factory, "pr_sl_roll", ROLL)
     elif case == "rolling_discounted":
         steps, wf = _run(tmp_path_factory, "pr_sl_disc", ROLL,
-                         [["model", "flexTool", "inflation_rate", b64(0.05, "float")]])
+                         [["model", "flexTool", "social_discount_rate", b64(0.05, "float")]])
         infl = {}
         for st in steps.values():
             infl.update(dict(utf8(st.flex_data.p_inflation_op.frame).select("d", "value").iter_rows()))

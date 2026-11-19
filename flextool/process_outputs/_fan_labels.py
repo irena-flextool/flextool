@@ -60,3 +60,27 @@ def with_label_rows(frame: "pl.DataFrame | None", branch_of: dict[str, str], per
     keys = [c for c in frame.columns if c != "value"]
     mapped = mapped.unique(subset=keys, keep="first", maintain_order=True)
     return pl.concat([frame.join(mapped, on=keys, how="anti"), mapped], how="vertical")
+
+
+def at_fan_labels(frame: pl.DataFrame, flex_data: "FlexData", decision: str, reports: tuple[str, ...] = (),
+                  value: str = "value") -> pl.DataFrame:
+    """``frame`` (Utf8 period columns) with each row whose ``decision`` period is a forecast-branch period of a fan
+    moved to the fan's label, its ``value`` times the branch's ``pd_branch_weight`` (the expected amount, as the
+    objective weights it), and the branch periods of the ``reports`` columns moved to their labels; rows that land
+    on the same key are summed.  Unchanged for a deterministic solve.  Under recourse a fan's decisions are per
+    branch: this is how the reported costs carry them at the label."""
+    branch_of = fan_branch_labels(flex_data)
+    if not branch_of or frame.height == 0:
+        return frame
+    weights = getattr(flex_data, "pd_branch_weight", None)
+    weight = {}
+    if weights is not None:
+        from flextool.engine.preprocess.params._cohorts import as_names
+        weight = dict(as_names(weights.frame.select("d", "value"), ("d",)).iter_rows())
+    branch = pl.col(decision).is_in(list(branch_of))
+    factor = pl.col(decision).replace_strict({b: float(weight.get(b, 1.0)) for b in branch_of}, default=1.0,
+                                             return_dtype=pl.Float64)
+    moved = frame.with_columns(pl.when(branch).then(pl.col(value) * factor).otherwise(pl.col(value)).alias(value),
+                               *(pl.col(c).replace(branch_of) for c in (decision, *reports)))
+    keys = [c for c in frame.columns if c != value]
+    return moved.group_by(keys, maintain_order=True).agg(pl.col(value).sum()).select(frame.columns)

@@ -10,7 +10,9 @@ is the backup.  The field yield *csp_field_yield* is 1.0 for t0007..t0018 (clear
                       3000 + 2500 + 2400 = 7900, curtailed 500; turbine 3160 MWh_e; coal 4040 MWh
     csp_fixed_design  invested, field = 5 x turbine and tank = 25 x turbine (solar multiple 2, 10 h at the
                       design efficiency 0.4): 100 / 500 / 2500, the dispatch totals of csp_existing,
-                      objective 36.865 + 162.5 M x CRF(7 %, 25) = 50.809209 M CUR
+                      objective 36.865 + 162.5 M x CRF(7 %, 25) / 1.07 = 36.865 + 13.031971 = 49.896971 M CUR
+                      (the yearly payment at the start of each year, the default discount_offset_investment 0,
+                      is sized to be worth the investment cost at 7 %: CRF / (1 + 0.07))
     csp_optimised_design  no ties: the turbine (100 MW_e) and the tank (5000 MWh_th) reach their bounds; the cyclic
                       heat balance needs tank >= 9000 - 4.8 x field and 16.8 x field >= 12 000, and 4.8 MWh_th
                       of tank is cheaper than 1 MW_th of field, so field = (9000 - 5000) / 4.8 = 833.33 MW_th;
@@ -30,7 +32,7 @@ from tests.engine._unit_db import flow, make_db, run, time_map, unitsize, utf8
 
 pytestmark = pytest.mark.solver
 
-FIXED_DESIGN_OBJECTIVE = 50.809209  # M CUR
+FIXED_DESIGN_OBJECTIVE = 49.896971  # M CUR
 BOUNDS = {"csp_turbine": 100.0, "csp_field": 1000.0, "csp_heat": 5000.0}
 FIXED_CHAIN = ["init", "west", "coal", "csp_system", "csp_plant", "csp_invest_common", "csp_fixed_design"]
 _STEPS: dict[str, object] = {}

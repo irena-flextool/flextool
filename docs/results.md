@@ -93,12 +93,40 @@ y-axis is `m3/h` for a water node and `MWh/h` by default. A label without tokens
 ## Costs
 
 - `model` entity `cost_annualized` parameter — M[CUR] (millions of user-chosen currency); annualized total cost broken down by category:
-    - *unit investment & retirement* — M[CUR] cost of investing in unit capacity or salvage from retiring it
-    - *connection investment & retirement* — M[CUR] same for connections
-    - *storage investment & retirement* — M[CUR] same for node states (storages)
+    - *investment* — M[CUR] the capital of new capacity, at its start of operation: its level yearly cost (the
+      `invest_cost` annuity over `payback_time` at `discount_rate`, spread evenly over `lifetime_technical`) for
+      each year it is in service inside the horizon
+    - *replacement* — M[CUR] the same for a later plant of a `reinvest_automatic` chain (the plant that replaces the
+      one before at its end of life, at the values of the period it comes online), when it comes online; a
+      retirement before a replacement comes online gives the replacement's capital back here, in that period
+      (the replacement is never built: for new capacity the line nets to 0 there; for pre-existing capacity it
+      nets against *investment pre-existing*)
+    - *extension* — M[CUR] the extension cost part of a life extension's price, when the extension starts
+    - *retirement* — M[CUR] the contract settlement of the retired plant in service, in the retirement period:
+      the payments of its loan up to then and the balance still owed, less the capital its years in service were
+      charged (0 when `discount_rate` equals the `social_discount_rate`); the replacements of a
+      `reinvest_automatic` plant that the retirement avoids are taken back under *replacement*
+    - *salvage* — M[CUR] the salvage of new capacity (negative for a positive `net_salvage_value`): the salvage
+      credit of a plant (its `net_salvage_value`, levelled over its lifetime, for its years in service inside the
+      horizon) at its end of life, also for a plant of a `reinvest_automatic` chain that is replaced then (a
+      retirement gives back here the credit of the years the plant no longer serves); the salvage value a life
+      extension gives up (the parent's `net_salvage_value` at its end of life, which the extension finances at
+      `discount_rate` over `life_extension_years`: its share inside the horizon), part of the extension's price,
+      when the extension starts; and the salvage value received when capacity is retired, in the retirement
+      period. With a `discount_rate` different from the `social_discount_rate` the salvage given up by an
+      extension and the parent's credit do not cancel, so the period's *salvage* can be positive. `summary_solve.csv` shows the four apart as *Salvage end of life*, *Salvage replaced*,
+      *Salvage extended* and *Salvage economic*; the capacity that leaves service by cause is in the
+      [retirement tables](#capacity-by-cohort-and-retirements)
     - *fixed cost pre-existing* — M[CUR] fixed O&M for pre-existing capacity
-    - *fixed cost invested* — M[CUR] fixed O&M for newly invested capacity
-    - *fixed cost reduction of divestments* — M[CUR] fixed O&M removed by divestments
+    - *investment pre-existing* — M[CUR] the replacement of pre-existing capacity at its end of life
+      (`lifetime_method` *reinvest_automatic*), at the `invest_cost` of the period the replacement comes online;
+      reported in that period. Only where there is one.
+    - *salvage pre-existing* — M[CUR] the salvage credit of pre-existing capacity that may be retired (and of the
+      replacements of *reinvest_automatic* capacity), at its end of life. Only where there is one. Like *fixed
+      cost pre-existing* and *investment pre-existing* it is not in the optimised objective (no decision changes
+      it); a retirement of that capacity gives it back in *salvage* and *replacement*, which are.
+    - *fixed cost invested* — M[CUR] fixed O&M for newly invested capacity, in each period it is paid
+    - *fixed cost reduction of divestments* — M[CUR] fixed O&M removed by divestments, in each period it is saved
     - *commodity cost* / *commodity sales* — M[CUR] cost of buying / revenue from selling commodities
     - *co2* — M[CUR] cost of CO2 emissions caused by commodities with CO2 content, net of the removal credit (negative cost) for flows into the same priced group's node(s)
     - *other operational* — M[CUR] other variable O&M costs
@@ -110,15 +138,21 @@ y-axis is `m3/h` for a water node and `MWh/h` by default. A label without tokens
     - *capacity margin penalty* — M[CUR] cost of not meeting the capacity margin constraint
     - *upward / downward reserve slack penalty* — M[CUR] cost of not meeting the reserve constraint
 
-    The annualized investment & retirement, *fixed cost invested* and *fixed cost reduction of divestments* are
-    the yearly amounts of every vintage and retirement in effect in the period: an investment adds its annuity (the
-    `invest_cost` annuity of the period the capacity starts to operate) and its yearly fixed cost in every period it
-    operates within the run (within its `lifetime`, or every later period with `reinvest_automatic`); a retirement
-    subtracts its salvage annuity in every period from the retirement until `lifetime` later, and the yearly fixed
-    cost of the retired capacity in every period the retirement counts in (until the end of life of the existing
-    capacity). They are reported only for capacity whose investment cost is reported (see the next section). For these
-    columns the annualized value is therefore not the discounted value divided by the period's discount factor,
-    which holds for the other columns.
+    The investment-type categories (*investment* … *salvage pre-existing*) are events: each is reported in the
+    period it happens, at the amount the objective charges for it, so the discounted costs add up to the
+    objective (`summary_solve.csv` has the total as *Total cost counted in the objective*: the calculated total
+    without the pre-existing constants). For one deterministic solve that realizes every period it optimises, the
+    total is the solver objective. The operation of a look-ahead period that no solve realizes is in the solver
+    objective but in no cost table, so with look-ahead periods the total is the realized part of the solver
+    objective. An investment and its salvage are charged inside the horizon only: for
+    capacity whose life ends at or after the end of the horizon, *investment* and *salvage* are the shares of
+    its years in service inside the horizon, and the salvage is reported in the last period (no period holds its
+    end of life). The fixed costs of new and retired capacity are reported in each period they are paid or saved,
+    from the capacity in service ([Capacity by cohort](#capacity-by-cohort-and-retirements)).
+
+    Annualized, every category is its discounted value divided by the period's discount factor (the investment
+    factor for the investment-type categories, the operations factor for the others): an event is spread evenly
+    over the years of the period it happens in, and a fixed cost is its yearly amount.
 
 - `model` entity `cost_t` parameter — [CUR] (currency, not millions) same categories as above but per timestep: the cost incurred during the step, with the step duration and timestep weight applied but not scaled to a full year (no investment / fixed terms). The CSV / parquet output `costs__dt` has the same values and unit.
 - `model` entity `cost_discounted_solve` parameter — M[CUR] costs for the solve considering discounting and years represented (NPV currency)
@@ -141,22 +175,29 @@ as one solve over the same periods with the same decisions would report:
   capacity margin). The forecast branch periods of a stochastic fan are not realized, so their shortfalls and
   penalties stay out of the costs; `capacity_margin__d` has them.
 - **New capacity** is reported in the period where it starts to operate (the decision period without a
-  `construction_lead_time`; during the lead time it is only `in_construction`, at no cost). Its investment cost
-  (the annuity over the years it operates within the run, at the `invest_cost`, `lifetime` and `discount_rate` of
-  that period) and the fixed cost over the same years come once, from the solve that decided it, and are reported
-  only once a solve realizes the period it starts to operate in. Capacity carried from an earlier solve is
+  `construction_lead_time`; during the lead time it is only `in_construction`, at no cost). Its *investment* (its
+  yearly investment cost for each year it is in service within the run, at the `invest_cost`, `payback_time`,
+  `discount_rate` and `lifetime_technical` of that period) and its *salvage* come once, from the solve that
+  decided it, and are reported only once a solve realizes the period it starts to operate in; its *salvage* is
+  reported at its end of life (or the last period of the run). With `reinvest_automatic` each
+  replacement of the plant at its end of life is reported as *replacement* in the period it comes online (its own
+  yearly cost for its years in service, at the values of that period). The fixed cost of new capacity is reported
+  in each period it operates, from the solve that realizes the period. Capacity carried from an earlier solve is
   therefore not charged again as existing capacity.
-- **Retirements** are reported in the retirement period: the salvage annuity over the years from the retirement
-  until `lifetime` later, and the fixed cost saved in the periods the retirement counts in. The fixed cost of existing capacity (*fixed cost pre-existing*) is that of the
-  capacity given in `existing`, aged over its lifetime, in every period of the run, also in the last solve's
-  look-ahead periods that no solve realizes (the fixed cost of new capacity covers them too).
-- **Inside a stochastic fan** the investment cost and the fixed cost of the new capacity that operates in the fan's
-  branch periods are reported, weighted by each branch's probability weight, at the fan's period label of the
-  period the capacity starts to operate in (with or without a `construction_lead_time`, and also without a
-  realization solve). A shared investment (`stochastic_invest_method` none) is one decision whose branch weights
-  sum to 1, so it is reported at its full amount; under `recourse` each forecast's own investment is reported
-  times its branch weight (the expected investment, as in the objective). Retirements in the branch periods of a
-  recourse fan are not reported.
+- **Retirements** are reported as the objective of the retiring solve charges them: *retirement* and *salvage*
+  (*Salvage economic* in `summary_solve.csv`) in the retirement period, the credits given back at the end of life of the plant they belong to, and
+  the fixed cost saved in each period the retirement counts in. The fixed cost of existing capacity (*fixed cost
+  pre-existing*) is that of the capacity given in `existing`, aged over its lifetime, in every period of the run,
+  also in the last solve's look-ahead periods that no solve realizes. Each solve prices a retirement against its
+  own horizon (the credits and yearly prices given back are those of the years it sees), so the settlement of a
+  retirement in a chain can differ from the same retirement in one solve over all the periods.
+- **Inside a stochastic fan** the investment-type costs and the fixed cost of the new capacity of the fan's branch
+  periods are reported, weighted by each branch's probability weight, at the fan's period label (with or without a
+  `construction_lead_time`, and also without a realization solve). A shared investment (`stochastic_invest_method`
+  none) is one decision whose branch weights sum to 1, so it is reported at its full amount; under `recourse` each
+  forecast's own investment and retirement is reported times its branch weight (the expected cost, as in the
+  objective). The operations of the forecast branches are not reported, so for a stochastic solve *Total cost
+  counted in the objective* is the realized run's total, not the solver objective.
 - In a stochastic solve with a realization solve, the investments come from the stochastic solve and the
   operations and the fixed cost of existing capacity from the realization solve. A fan without a realization
   solve reports no operating or penalty costs; the fixed cost of existing capacity is reported in the fan's
@@ -168,8 +209,7 @@ does), so the printed objective of each solve, the cumulative CO2 cap price and 
 printed objectives still cover each solve's own horizon (its look-ahead periods too), so `cost_discounted_total` is
 not the sum of the solves' objectives. The CO2 price of a period is its dual divided by the discount factor of the
 solve that realizes the period. A CSV-dump reload has no run-level cost data: its reported costs are discounted
-from the start of the run with the solve's own factors over the solve's own periods, and its annualized
-investment, retirement and fixed costs of new and retired capacity are 0 (a warning is printed).
+from the start of the run with the solve's own factors over the solve's own periods (a warning is printed).
 
 ## Cost by entity
 
@@ -191,9 +231,9 @@ The categories mirror the system [Costs](#costs) decomposition, restricted to th
 - *other operational* — M[CUR] other variable O&M costs
 - *starts* — M[CUR] start-up costs (units)
 - *ramps* — M[CUR] ramp costs (units with a `ramp_cost`)
-- *investment* / *retirement* — M[CUR] cost of investing in unit / connection capacity or salvage from retiring it (named *storage investment* / *storage retirement* in the `node` table, where the capacity is node-state storage energy)
+- the investment-type categories — M[CUR] *investment*, *replacement*, *extension*, *retirement*, *salvage* and (only for entities with one) *investment pre-existing* / *salvage pre-existing*, as in the system [Costs](#costs), with the same names in the `node` table (where the capacity is node-state storage energy); only for a class with investment-type costs
 - *fixed cost pre-existing* / *fixed cost invested* / *fixed cost reduction of divestments* — M[CUR] fixed O&M for pre-existing, newly invested and divested capacity
-- in the *annualized* tables, *investment*, *retirement*, *fixed cost invested* and *fixed cost reduction of divestments* are the yearly amounts in every period the capacity operates or the retirement applies, as in the system [Costs](#costs)
+- in the *annualized* tables every category is the discounted one divided by the period's discount factor, as in the system [Costs](#costs)
 - *upward slack penalty* / *downward slack penalty* (`node` table only) — M[CUR] cost of involuntary demand reduction / increase at the node
 
 Attribution rules (matching the LP objective):
@@ -207,7 +247,7 @@ These are period-level tables only — there are no per-timestep per-entity cost
 
 ## Prices
 
-- `node` entity `price_t` parameter — [CUR/MWh] the cost of one more MWh of demand at that node and time step (the dual of the node's energy balance; positive when more demand would cost more), for every node that maintains an energy balance. It is in the price base of the cost inputs: the inflation / discounting of the period and the years it represents are removed, and it is not weighted by the timestep weight (`timeset_weights`, representative-period weights) or by the branch probability — in a stochastic solve each forecast branch reports its own price, not its probability-weighted contribution (the cost outputs per step are probability-weighted, so price × flow is not the branch's cost row). A step that the objective does not weigh (e.g. a step that `timeset_weights` leaves out) has no price (empty). A node of a group with a coarser `new_stepduration` (and a `bind_intraperiod_blocks` storage node) has one balance per coarse step (per timeset block); its price is that balance's dual, the same at every time step of the coarse step when the steps have the same weight. Within a coarse step the energy may be moved freely between time steps, so for such a node the hour at which a slack (or any flow that only the coarse balance limits) is reported is one of several equally good choices; with a time-varying penalty the solver picks the cheapest hour. For a storage node the price is the value of stored energy.
+- `node` entity `price_t` parameter — [CUR/MWh] the cost of one more MWh of demand at that node and time step (the dual of the node's energy balance; positive when more demand would cost more), for every node that maintains an energy balance. It is in the price base of the cost inputs: the discount factor of the period and the years it represents are removed, and it is not weighted by the timestep weight (`timeset_weights`, representative-period weights) or by the branch probability — in a stochastic solve each forecast branch reports its own price, not its probability-weighted contribution (the cost outputs per step are probability-weighted, so price × flow is not the branch's cost row). A step that the objective does not weigh (e.g. a step that `timeset_weights` leaves out) has no price (empty). A node of a group with a coarser `new_stepduration` (and a `bind_intraperiod_blocks` storage node) has one balance per coarse step (per timeset block); its price is that balance's dual, the same at every time step of the coarse step when the steps have the same weight. Within a coarse step the energy may be moved freely between time steps, so for such a node the hour at which a slack (or any flow that only the coarse balance limits) is reported is one of several equally good choices; with a time-varying penalty the solver picks the cheapest hour. For a storage node the price is the value of stored energy.
 - table `reserve_prices_dt_ppg` (`group__reserve__upDown`, not in the results database) — [CUR/MWh] the cost of one more MW of reserve requirement held for one hour (in the same price base and with the same weights removed as `price_t`): the sum of the duals of the group's requirement constraints at the step (the timeseries requirement, the dynamic requirement and the large-failure requirement of every failing unit or connection), i.e. the cost of one more MW of every requirement of the group at once. Reported for every group with a requirement. When the requirement is not met it equals `penalty_reserve`.
 - table `co2_price_period_d_g` (`group`, not in the results database) — [CUR/tCO2] shadow price of the per-period CO2 cap (nominal currency, sign-flipped so a binding cap shows positive). In a rolling solve where a period's hours are split across more than one roll, the reported price is the hour-weighted average of the rolls that realize it (weighted by the hours each roll keeps of the period). In a stochastic solve each scenario path reports its own price, not its price times the path's branch probability.
 - table `co2_price_total_d_g` (`group`, not in the results database) — [CUR/tCO2] shadow price of the cumulative CO2 cap, per tonne over the represented years (NPV currency, broadcast across periods)
@@ -305,7 +345,7 @@ For VRE units (units that use an `upper_limit` profile) the model also reports c
 ## Capacity and investment results
 
 - `unit`, `connection`, `node` entities `capacity` parameter — [MW or MWh] decomposed into:
-    - *existing* — capacity assumed at the start of the period
+    - *existing* — capacity assumed at the start of the period: the `existing` capacity in service, less what earlier solves of the run retired of it (a life extension carried from an earlier solve is an extension cohort, see below, not existing capacity)
     - *invested* — capacity that comes online in the period (without a construction lead time, the capacity invested in that period)
     - *in_construction* — capacity decided but not yet operating in the period; always present, empty without a construction lead time
     - *divested* — capacity the model decided to retire at the start of the period
@@ -316,6 +356,39 @@ For VRE units (units that use an `upper_limit` profile) the model also reports c
     Period axis covers every period in which an investment **or** a divestment decision occurs (both the invest-eligible and divest-eligible periods feed into `d_realize_invest`), so divest-only periods are visible even when no new capacity is added.
 
 - `unit`, `connection`, `node` entities `invest_marginal` parameter — [CUR/kW, CUR/kWh for storage nodes, as `invest_cost`] effective dual of the investment decision: zero means the model is at the unconstrained optimum; positive means an active upper bound (per-entity, per-group, period, total or cumulative caps are summed automatically); negative means the entity is not built and is unprofitable to build (the v_invest column's own reduced cost) — this is the ordinary reading for an unbuilt entity, not an artefact; a numerical artefact instead looks like a non-zero value on a *built* (or at-bound) entity, or an inconsistent sign across these regimes, and is worth investigating
+
+## Capacity by cohort and retirements
+
+A *cohort* is capacity that came into service together: the existing capacity of an entity, the capacity of one
+investment decision, a later plant of a `reinvest_automatic` chain (the plant that replaces the one before at its
+end of life) or a life extension. These tables are written when the run has investment, retirement or lifetime
+data (a cohort table); they cover the periods of the capacity tables.
+
+- `unit_cohort_capacity__d.csv` / `connection_cohort_capacity__d.csv` / `node_cohort_capacity__d.csv` (not in the
+  results database) — [MW or MWh] the capacity of each cohort in each period it is in service, net of its
+  retirements so far. Rows:
+    - *cohort* — its name: `existing:<first period>`, `invest:<decision period>`, `gen:<chain>:<k>` (the k-th plant
+      of a `reinvest_automatic` chain, `<chain>` the existing capacity or the investment it renews),
+      `extend:<period>:<cohort>` (a life extension of `<cohort>` starting in `<period>`)
+    - *kind* — *existing* (the existing capacity, and the first plant of its chain), *invested* (an investment,
+      and the first plant of its chain), *replacement* (a later plant of a chain), *extension* (a life extension)
+    - *period_online* — the period the cohort (plant) started to operate in; *period_end_of_life* — the period
+      its life ends at (`end_of_life_method` rounding), empty when it lives to or past the end of the horizon
+    - *period* — the period of the value
+
+  Summed over the cohorts of an entity, the capacity is the *total* of the capacity table.
+- `unit`, `connection`, `node` entities `retirement` parameter (table `unit_retirement__d` /
+  `connection_retirement__d` / `node_retirement__d`) — [MW or MWh] the capacity leaving service at the start of
+  each period, by cause:
+    - *end_of_life* — cohorts reaching the end of their lifetime (and the fall of a period-varying `existing`;
+      a rise is no cause), less the capacity a life extension keeps
+    - *economic* — capacity the model retired (the *divested* of the capacity table)
+    - *replaced* — the capacity of a `reinvest_automatic` plant taken over by its replacement: the capacity
+      stays (as a *replacement* cohort)
+    - *extended* — the capacity kept in service by a life extension: it stays (as an *extension* cohort)
+
+  From one period to the next the *total* capacity changes by *invested* − *end_of_life* − *economic* (plus a
+  rise of a period-varying `existing`).
 
 ## CO2 emissions
 
@@ -468,7 +541,7 @@ When the network contains DC-power-flow connections / nodes (`is_dc_power_flow =
 Slack uses are listed in the [Energy balance in nodes](#energy-balance-in-nodes) section (`Loss of load`, `Excess load` and per-node `slack_up` / `slack_down` parameters with `_t` and annualized variants) and aggregated in [Costs](#costs). Group-level slack tables:
 
 - `group` entity `slack_capacity_margin` parameter — [MW] capacity-margin shortfall in investment periods. It is the shortfall of the solve that decided the investments: in an investment → dispatch chain it is the investment solve's, shown under the investment solve, and its penalty is in the costs (*capacity margin penalty*). The forecast branch periods of a stochastic fan are not realized, so this table and the costs leave out their shortfalls; `capacity_margin__d` has them.
-- `group` entity `capacity_margin` parameter — the capacity margin of every solve with investment periods (`capacity_margin__d`, table `nodeGroup_capacity_margin_d_g`), per solve, group and investment period (look-ahead and forecast branch periods included, not only realized ones) at the binding step `binding_time`, the time step with the largest deficit (requirement − counted; on a group whose row is averaged over coarse steps, the first time step of the coarse step): *margin* [MW] (the `capacity_margin_absolute`, or `capacity_margin_relative` × the peak), *peak_demand* [MW] (the peak demand of the group's nodes over the period's original timeline), *demand* [MW] (at the binding step), *requirement* [MW] (margin + demand), *firm* and *vre* [MW] (the counted capacity of firm units and of VRE units at their profile, with availability), *storage_flow*, *unit_flow*, *connections_net* and *consumption* [MW] (the flows of storage-backed units minus the slack energy of the storage nodes feeding the group, of the other units counted by their flow, of connections and of the group's consumption, signed as in the node balance), *dumped* [MW] (minus the downward slack), *counted* [MW] (their sum), *shortfall* [MW] (max(0, requirement − counted) at the binding step: 0 when the margin holds), *penalty_cost* [M CUR] (shortfall × `penalty_capacity_margin` × 1000 × inflation, as in the costs) and *capacity_price* [CUR/kW/a] (the shadow price of the margin: what one more kW of margin would cost; it equals `penalty_capacity_margin` while there is a shortfall, and is empty for a MIP). In the results database the binding step is not carried (the value is category → solve → period); it is in the CSV and parquet tables.
+- `group` entity `capacity_margin` parameter — the capacity margin of every solve with investment periods (`capacity_margin__d`, table `nodeGroup_capacity_margin_d_g`), per solve, group and investment period (look-ahead and forecast branch periods included, not only realized ones) at the binding step `binding_time`, the time step with the largest deficit (requirement − counted; on a group whose row is averaged over coarse steps, the first time step of the coarse step): *margin* [MW] (the `capacity_margin_absolute`, or `capacity_margin_relative` × the peak), *peak_demand* [MW] (the peak demand of the group's nodes over the period's original timeline), *demand* [MW] (at the binding step), *requirement* [MW] (margin + demand), *firm* and *vre* [MW] (the counted capacity of firm units and of VRE units at their profile, with availability), *storage_flow*, *unit_flow*, *connections_net* and *consumption* [MW] (the flows of storage-backed units minus the slack energy of the storage nodes feeding the group, of the other units counted by their flow, of connections and of the group's consumption, signed as in the node balance), *dumped* [MW] (minus the downward slack), *counted* [MW] (their sum), *shortfall* [MW] (max(0, requirement − counted) at the binding step: 0 when the margin holds), *penalty_cost* [M CUR] (shortfall × `penalty_capacity_margin` × 1000 × the operational discount factor, as in the costs) and *capacity_price* [CUR/kW/a] (the shadow price of the margin: what one more kW of margin would cost; it equals `penalty_capacity_margin` while there is a shortfall, and is empty for a MIP). In the results database the binding step is not carried (the value is category → solve → period); it is in the CSV and parquet tables.
 - `group` entity `capacity_margin_contribution` parameter — [MW] what each unit, connection and node counts in the group's capacity margin at its binding step (`capacity_margin_entity__d`, table `nodeGroup_capacity_margin_entity_d_g`), by class: *firm*, *vre*, *storage*, *storage_slack* (minus the slack energy of a storage node feeding the group, per hour of the step), *unit_by_flow*, *connection*, *consumption* and *dumped* (a node's downward slack; a node that dumped nothing is left out). They add up to the columns of `capacity_margin__d`: *firm* → *firm*, *vre* → *vre*, *storage* and *storage_slack* → *storage_flow*, *unit_by_flow* → *unit_flow*, *connection* → *connections_net*, *consumption* → *consumption*, *dumped* → *dumped*. A row sums to *counted*. A unit that you expect to count but that is missing, or counts by its flow, shows which rule of the [capacity margin](reference/groups.md#the-capacity-margin) applies to it.
 - `group` entity `slack_inertia_t` / `slack_inertia` — [MWs] inertia shortfall, timestep / annualized
 - `group` entity `slack_nonsync_t` / `slack_nonsync` — [MW] non-synchronous-share shortfall, timestep / annualized

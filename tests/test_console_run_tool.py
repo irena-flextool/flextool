@@ -129,3 +129,47 @@ def test_the_tool_output_shows_control_characters(monkeypatch):
     assert err.getvalue() == "node \\u202eevil\n"
     assert log.getvalue() == "unit a\\x1b]0;x\\x07b\n"
     assert sys.stdout is out and sys.stderr is err and handler.formatter is None
+
+
+# --- a console whose encoding cannot write every character (M1) ---
+
+
+@pytest.mark.parametrize("encoding", ["cp1252", "cp437"])
+def test_end_of_run_lines_survive_a_narrow_code_page(monkeypatch, encoding):
+    """A pipe on Windows gets the locale code page: the tally (``×``, ``—``) and a solve summary naming a node in
+    another script must print (escaped) instead of raising ``UnicodeEncodeError`` after the outputs are written."""
+    from flextool import run_warnings
+    from flextool.cli.cmd_run_flextool import print_run_end
+
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding=encoding, errors="strict", newline="\n")
+    monkeypatch.setattr(sys, "stdout", _console._PrintableStream(stream))
+    with pytest.raises(UnicodeEncodeError):
+        print("×—北京", file=stream)
+    stream.seek(0)
+    raw.seek(0)
+    raw.truncate()
+    _console.tolerant_console_encoding()
+    assert stream.errors == "backslashreplace"
+    run_warnings.start_run()
+    try:
+        run_warnings.warn_grouped("W-0001", ["北京"])
+        print_run_end(1.5, '"Solve summary at 2026"\n\nCreated, 北京, p2030, 1\n')
+    finally:
+        run_warnings.start_run()
+    stream.flush()
+    out = raw.getvalue().decode(encoding)
+    assert "--- Full execution time" in out and "--- End of solve summary ---" in out
+    assert "Created, \\u5317\\u4eac, p2030, 1" in out
+    assert "Warnings: 1 kind, 1 case" in out and "W-0001" in out
+
+
+def test_print_run_end_never_raises_on_a_broken_console(monkeypatch):
+    from flextool.cli.cmd_run_flextool import print_run_end
+
+    class Broken(io.StringIO):
+        def write(self, text):
+            raise UnicodeEncodeError("cp1252", text, 0, 1, "cannot")
+
+    monkeypatch.setattr(sys, "stdout", Broken())
+    print_run_end(2.0, "Created, x, p1, 1\n")         # no exception

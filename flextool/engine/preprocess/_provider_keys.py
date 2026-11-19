@@ -32,7 +32,7 @@ Naming convention
   suffix on disk dump.
 * Constant names are uppercased, underscore-separated, prefixed with
   the parent: ``SOLVE_DATA_ACTIVE_TIMELINES``, ``INPUT_TIMELINE``,
-  ``DERIVED_CT_METHOD_OVERRIDES``, ``HANDOFF_REALIZED_INVEST``.
+  ``DERIVED_CT_METHOD_OVERRIDES``, ``HANDOFF_REALIZED_COHORT``.
 * Group constants by parent dir, then alphabetically within the group.
 * New keys: add the constant here first, then use it from the call sites.
 
@@ -60,9 +60,6 @@ SOLVE_DATA_FIX_STORAGE_USAGE = "solve_data/fix_storage_usage"
 SOLVE_DATA_P_ENTITY_PRE_EXISTING = "solve_data/p_entity_pre_existing"
 SOLVE_DATA_P_ENTITY_INVESTED = "solve_data/p_entity_invested"
 SOLVE_DATA_P_ENTITY_DIVESTED = "solve_data/p_entity_divested"
-SOLVE_DATA_P_ENTITY_PERIOD_EXISTING_CAPACITY = (
-    "solve_data/p_entity_period_existing_capacity"
-)
 SOLVE_DATA_P_ROLL_CONTINUE_STATE = "solve_data/p_roll_continue_state"
 # (period, whole) of a rolling_window sub-solve: whether the roll holds every step the complete solve has in the
 # period (_run_model); header-only for a sub-solve that is not a roll.  The bind_intraperiod_blocks blocks of a
@@ -71,6 +68,16 @@ SOLVE_DATA_ROLL_PERIOD_WHOLE = "solve_data/roll_period_whole"
 # (value) one Boolean row: whether the sub-solve's horizon holds the last step of the entire model (_run_model);
 # fix_end / fix_start_end pin the end state there only.
 SOLVE_DATA_STORAGE_SOLVE_AT_MODEL_END = "solve_data/storage_solve_at_model_end"
+# (value) one Boolean row: whether the sub-solve is a representative-period solve whose base-period storage chain ends
+# at the end of the model (it holds the model's last period, _run_model._rp_chain_reaches_model_end), or holds the
+# model's last step; fix_end pins the chain end there (rp_inter_period_end_fix).
+SOLVE_DATA_STORAGE_RP_CHAIN_AT_MODEL_END = "solve_data/storage_rp_chain_at_model_end"
+# (node, kind, value) the horizon-end condition of the bind_within_solve storage nodes of a rolling_window roll
+# that the cascade continues from a carried state (_run_model._anchor_cyclic_in_rolling): kind ``anchor`` (end ≥
+# the carried level, value MWh), ``close`` (end = the instance's start level, value MWh), ``anchor_share`` /
+# ``close_share`` (end ≥ / = storage_state_start × capacity, value null) and ``wrap_end`` (the first roll's wrap
+# pinned at storage_state_end); header-only when none.
+SOLVE_DATA_STORAGE_ROLL_END = "solve_data/storage_roll_end"
 # (value) one Boolean row: True when the sub-solve belongs to a rolling solve whose rolls do not each realize whole
 # periods (RecursiveSolveBuilder._check_period_total_rolls); its constraint_period_method period_total rows are left out.
 SOLVE_DATA_USER_CONSTRAINT_PERIOD_TOTAL_OFF = "solve_data/user_constraint_period_total_off"
@@ -80,9 +87,6 @@ SOLVE_DATA_TIMELINE_MATCHING_MAP = "solve_data/timeline_matching_map"
 SOLVE_DATA_CO2_CUM_REALIZED_TONNES = "solve_data/co2_cum_realized_tonnes"
 SOLVE_DATA_LADDER_CUM_SIM_HOURS = "solve_data/ladder_cum_sim_hours"
 SOLVE_DATA_LADDER_CUM_REALIZED_MWH = "solve_data/ladder_cum_realized_mwh"
-SOLVE_DATA_ED_HISTORY_REALIZED = "solve_data/ed_history_realized"
-SOLVE_DATA_ED_HISTORY_REALIZED_FIRST = "solve_data/ed_history_realized_first"
-SOLVE_DATA_EDD_HISTORY = "solve_data/edd_history"
 
 
 # ---------------------------------------------------------------------------
@@ -154,11 +158,10 @@ DERIVED_CT_METHOD_OVERRIDES = "derived/ct_method_overrides"
 # signal instead of checking the SolveHandoff object directly.
 # ---------------------------------------------------------------------------
 
-HANDOFF_REALIZED_INVEST = "handoff/realized_invest"
-HANDOFF_REALIZED_EXISTING = "handoff/realized_existing"
 HANDOFF_REALIZED_COMMISSION = "handoff/realized_commission"
 HANDOFF_DIVEST_CUMULATIVE = "handoff/divest_cumulative"
-HANDOFF_REALIZED_DIVEST = "handoff/realized_divest"
+HANDOFF_REALIZED_COHORT = "handoff/realized_cohort"
+HANDOFF_REALIZED_RETIRE = "handoff/realized_retire"
 HANDOFF_ROLL_END_STATE = "handoff/roll_end_state"
 HANDOFF_UPWARD_ROLL_END_STATE = "handoff/upward_roll_end_state"
 HANDOFF_ROLL_END_ONLINE = "handoff/roll_end_online"
@@ -202,10 +205,9 @@ def produced_handoff_key(handoff_key: str) -> str:
 # carriers are overridable.
 # ---------------------------------------------------------------------------
 
-OVERRIDE_REALIZED_INVEST = "override/realized_invest"
-OVERRIDE_REALIZED_EXISTING = "override/realized_existing"
 OVERRIDE_DIVEST_CUMULATIVE = "override/divest_cumulative"
-OVERRIDE_REALIZED_DIVEST = "override/realized_divest"
+OVERRIDE_REALIZED_COHORT = "override/realized_cohort"
+OVERRIDE_REALIZED_RETIRE = "override/realized_retire"
 OVERRIDE_ROLL_END_STATE = "override/roll_end_state"
 OVERRIDE_UPWARD_ROLL_END_STATE = "override/upward_roll_end_state"
 OVERRIDE_ROLL_END_ONLINE = "override/roll_end_online"

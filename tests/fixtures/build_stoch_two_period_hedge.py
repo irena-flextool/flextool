@@ -4,22 +4,22 @@ hedged two-stage (mid-horizon reveal) fixture (design
 
 Two 3-step periods ``p2035`` (t0001-t0003) / ``p2040`` (t0004-t0006).  The
 lever that makes hedging valuable: a period-Map ``invest_cost``
-``{p2035: 1, p2040: 3}`` so the FIRST-STAGE (p2035) capacity is cheaper per
-delivered p2040-MW than the recourse (p2040) capacity — under
-``reinvest_automatic`` p2035 capacity is alive at p2040 (unbounded-forward
-windows), so pre-positioning under uncertainty pays off.
+``{p2035: 2, p2040: 6}`` of a plant whose ``lifetime_technical`` (2 years)
+spans both periods, so the FIRST-STAGE (p2035) capacity is cheaper per
+delivered p2040-MW than the recourse (p2040) capacity — the p2035 plant is
+still in service at p2040, so pre-positioning under uncertainty pays off.
 
 Two scenarios drive the WS < RP < EEV proof on IDENTICAL scenario data,
 differing ONLY in WHERE the branches are declared:
 
   * ``hedge``     — reveal at **p2040** (mid-horizon).  ``v_invest[base,
     p2035]`` is a single SHARED first-stage decision (Option B: the shared
-    trunk, NA by construction).  Hand-calc objective **173 250** (RP).
+    trunk, NA by construction).  Hand-calc objective **165 000** (RP).
   * ``hedge_ws``  — reveal at **p2035** (fan-at-first-step, the Slice-D
     wait-and-see topology).  ``v_invest`` is scenario-specific; each
-    scenario builds all-first-stage.  Hand-calc objective **157 500** (WS).
+    scenario builds all-first-stage.  Hand-calc objective **150 000** (WS).
 
-``RP − WS = 15 750 = EVPI > 0`` — a direct behavioural proof that the
+``RP − WS = 15 000 = EVPI > 0`` — a direct behavioural proof that the
 mid-horizon first stage is genuinely shared (§8.3).
 
 Effective demand seen by the investable ``base`` unit (design §8.1: p2035 =
@@ -38,28 +38,29 @@ mechanism note).  A free existing ``wind`` unit with a branch-varying
       - p2040 high:            0.0 → wind  0 → base residual 120 (= D2 high).
       - p2040 low:             0.6 → wind 60 → base residual  60 (= D2 low).
   * unit ``base`` → ``elec`` — the investable peaker (virtual_unitsize 1,
-    invest_total, discount_rate 0.05, lifetime 1 → annuity per MW-period
-    = cost·1000·CRF(0.05,1) = cost·1050; unbounded-forward windows so the
-    p2035 anchor's window is {p2035, p2040} → K1 = 2·1050 = 2100 and the
-    p2040 anchor's window is {p2040} → K2 = 1·1050 = 3150),
+    invest_total, discount_rate 0, lifetime_technical 2 = payback time →
+    straight-line annuity per MW and year = cost·1000 / 2, at every
+    discount_offset_investment; the plant built in p2035 serves p2035 and
+    p2040 (one plant, no replacement inside the horizon) → K1 = 2·(2·1000/2)
+    = 2000, the plant built in p2040 serves p2040 → K2 = 6·1000/2 = 3000),
     ``invest_max_total`` 150 (non-binding; the per-path cap witness §8.3).
 
 **No inflation / no solve-level discount** (design §8.1 F3): the exact
-173 250 golden requires ``inv_factor ≡ 1.0``, i.e. the SOLVE-level
-inflation scalar = 0.  This builder authors NO ``model.inflation_rate``,
-NO ``inflation_offset_investment/operations``, and NO solve-level
+165 000 golden requires ``inv_factor ≡ 1.0``, i.e. the SOLVE-level
+inflation scalar = 0.  This builder authors NO ``model.social_discount_rate``,
+NO ``discount_offset_investment/operations``, and NO solve-level
 ``discount_rate`` — all left at their 0.0 default.  The entity
-``discount_rate = 0.05`` on ``base`` drives ONLY the CRF (the annuity), a
-distinct knob.
+``discount_rate`` on ``base`` drives ONLY the CRF (the annuity), a
+distinct knob (here 0: the straight-line annuity).
 
 Hand calculation (design §8.2), ``x = v_invest[base, p2035]``,
 ``r_s = v_invest[base, p2040_s]``, weights ``w_high = 0.25`` (D2 = 120),
 ``w_low = 0.75`` (D2 = 60):
 
-    RP  = min_x 2100·x + Σ_s w_s·3150·(D2_s − x)^+
+    RP  = min_x 2000·x + Σ_s w_s·3000·(D2_s − x)^+
         → x* = 60 (hedge between 60 and 120, above D1 = 40)
-        → 2100·60 + 0.25·3150·60 = 126 000 + 47 250 = 173 250.
-    WS  = 0.75·(2100·60) + 0.25·(2100·120) = 94 500 + 63 000 = 157 500.
+        → 2000·60 + 0.25·3000·60 = 120 000 + 45 000 = 165 000.
+    WS  = 0.75·(2000·60) + 0.25·(2000·120) = 90 000 + 60 000 = 150 000.
 
 Run:  ~/venv-spi/bin/python tests/fixtures/build_stoch_two_period_hedge.py
 """
@@ -114,14 +115,14 @@ def build() -> dict:
                     "mid-horizon predecessor linkage)"],
     ]
     spec["scenarios"] = [
-        ["hedge", False, "Mid-horizon reveal at p2040 (RP = 173 250)"],
+        ["hedge", False, "Mid-horizon reveal at p2040 (RP = 165 000)"],
         ["hedge_ws", False,
-         "Wait-and-see fan-at-p2035 control (WS = 157 500)"],
+         "Wait-and-see fan-at-p2035 control (WS = 150 000)"],
         ["hedge_storage", False,
          "Mid-horizon reveal + stochastic-group storage node (T-S)"],
         ["hedge_na_window", False,
          "Invest-NA window main mode: fan-at-t0 + "
-         "shared_invest_periods=[p2035] (RP = 173 250)"],
+         "shared_invest_periods=[p2035] (RP = 165 000)"],
         ["hedge_na_divest", False,
          "T-Divest: divest-eligible base under recourse+window — "
          "non_anticipativity_divest_p ties first-period divest too (F2)"],
@@ -248,8 +249,9 @@ def build() -> dict:
     ])
     # Deterministic demand: 120 MW at every step (both periods).
     inflow = _map([(t, -120.0) for t in STEPS])
-    # Period-Map invest_cost: first stage cheap (1), recourse dear (3).
-    invest_cost = _map([("p2035", 1.0), ("p2040", 3.0)])
+    # Period-Map invest_cost of a 2-year plant at discount_rate 0: 1000 a year for a p2035 plant (first stage
+    # cheap), 3000 a year for a p2040 plant (recourse dear).
+    invest_cost = _map([("p2035", 2.0), ("p2040", 6.0)])
 
     spec["parameter_values"] = [
         ["model", "flextool", "solves",
@@ -294,8 +296,8 @@ def build() -> dict:
         ["unit", "base", "invest_method",
          _pack("invest_total", "str"), "base"],
         ["unit", "base", "invest_cost", _pack(invest_cost, "map"), "base"],
-        ["unit", "base", "discount_rate", _pack(0.05, "float"), "base"],
-        ["unit", "base", "lifetime", _pack(1.0, "float"), "base"],
+        ["unit", "base", "discount_rate", _pack(0.0, "float"), "base"],
+        ["unit", "base", "lifetime_technical", _pack(2.0, "float"), "base"],
         ["unit", "base", "invest_max_total", _pack(150.0, "float"),
          "base"],
         ["unit__outputNode", ["base", "elec"], "other_operational_cost",
@@ -318,7 +320,7 @@ def build() -> dict:
         # Layered on ``ws`` (fan-at-t0 recourse): tie v_invest/v_divest at
         # p2035 across branches (shared first stage) while p2040 invests
         # per-branch (recourse), and free operations from t0.  The tie
-        # reproduces the Option-B hedge RP = 173 250 by CONSTRAINT (vs the
+        # reproduces the Option-B hedge RP = 165 000 by CONSTRAINT (vs the
         # mid-horizon ``hedge`` scenario's shared trunk by construction).
         ["solve", "stoch_2p_hedge", "shared_invest_periods",
          _pack({"value_type": "str", "data": ["p2035"]}, "array"),
@@ -337,7 +339,7 @@ def build() -> dict:
         ["unit", "base", "invest_method",
          _pack("invest_retire_total", "str"), "divest"],
         ["unit", "base", "existing", _pack(50.0, "float"), "divest"],
-        ["unit", "base", "salvage_value", _pack(1.0, "float"), "divest"],
+        ["unit", "base", "net_salvage_value", _pack(1.0, "float"), "divest"],
         # ---- invest_none: none composition (T-None) --------------------
         ["solve", "stoch_2p_hedge", "stochastic_invest_method",
          _pack("none", "str"), "invest_none"],

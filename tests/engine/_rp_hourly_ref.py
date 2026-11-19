@@ -88,9 +88,13 @@ def _weights(bases, rep_of_base):
     return {"type": "map", "index_type": "str", "index_name": "base_period", "rank": 1, "data": data}
 
 
-def _common_storage(lh2_method):
+def _common_storage(lh2_method, start_share=None):
     v = [["node", n, "storage_binding_method", lh2_method] for n in LH2]
-    v += [["node", n, "storage_start_end_method", "fix_nothing"] for n in LH2]
+    if start_share is None:
+        v += [["node", n, "storage_start_end_method", "fix_nothing"] for n in LH2]
+    else:
+        v += [["node", n, "storage_start_end_method", "fix_start"] for n in LH2]
+        v += [["node", n, "storage_state_start", start_share] for n in LH2]
     v += [["node", n, "storage_binding_method", "bind_within_timeblock"] for n in BAT]
     v += [["node", n, "storage_start_end_method", "fix_nothing"] for n in BAT]
     return v
@@ -109,14 +113,15 @@ SOLVE = "lh2_rp_invest" + SFX
 PATTERN = [0, 1, 0, 1, 0, 1, 0]
 
 
-def exp1(kind: str, method: str):
-    """kind = 'rp' or 'hourly'; method = lh2 binding method (blended for rp, plain for hourly)."""
+def exp1(kind: str, method: str, start_share: "float | None" = None):
+    """kind = 'rp' or 'hourly'; method = lh2 binding method (blended for rp, plain for hourly); start_share: the lh2
+    nodes' fix_start share (None: fix_nothing)."""
     def f(data):
         src = {}
         for k, p in enumerate(PATTERN):
             src[1 + k] = 1 + p          # days 1-7  <- fixture days 1/2
             src[8 + k] = 3 + p          # days 8-14 <- fixture days 3/4
-        vals = _timeline(14) + _remap(data, src) + _common_storage(method)
+        vals = _timeline(14) + _remap(data, src) + _common_storage(method, start_share)
         ents = []
         if kind == "rp":
             b30 = [_t(d) for d in range(1, 8)]
@@ -141,11 +146,11 @@ def exp1(kind: str, method: str):
     return f
 
 
-def exp2(kind: str, method: str):
+def exp2(kind: str, method: str, start_share: "float | None" = None):
     def f(data):
         src = {1 + k: 1 + p for k, p in enumerate(PATTERN)}     # days 1-7 <- fixture days 1/2 (A B A B ...)
         # lh2 demand: the same in both periods (fixture days 1/2 values; days 3/4 differ in the fixture)
-        vals = _timeline(7) + _remap(data, src, equalise_lh2_to={1: 1, 2: 2}) + _common_storage(method)
+        vals = _timeline(7) + _remap(data, src, equalise_lh2_to={1: 1, 2: 2}) + _common_storage(method, start_share)
         ents = []
         bases = [_t(d) for d in range(1, 8)]
         if kind == "rp":

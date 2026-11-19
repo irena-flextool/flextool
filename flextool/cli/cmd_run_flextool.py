@@ -40,7 +40,7 @@ except (AttributeError, ValueError, OSError):
     pass
 from flextool._safe_text import make_printable
 from flextool._mem_sampler import start_mem_sampler
-from flextool.process_outputs.write_outputs import resolve_output_settings, write_outputs
+from flextool.process_outputs.write_outputs import print_solve_summary, resolve_output_settings, write_outputs
 from flextool import run_record
 from flextool.cli._console import run_tool
 from flextool.cli._timing import TimingRecorder
@@ -145,6 +145,8 @@ def _start_run_record(*, args, run_options, scenario_name, output_location, outp
     handler = rec.warning_handler()
     root = logging.getLogger()
     root.addHandler(handler)
+    from flextool import run_warnings
+    run_warnings.add_cases_listener(rec.add_warning_cases)
     writer = None
     restore_tee = None
     if log_capture == "parent":
@@ -165,6 +167,7 @@ def _start_run_record(*, args, run_options, scenario_name, output_location, outp
         if writer is not None:
             writer.close()
         root.removeHandler(handler)
+        run_warnings.remove_cases_listener(rec.add_warning_cases)
         rec.close()
         run_record.set_active(None)
 
@@ -328,7 +331,7 @@ def _benders_nonconvergence_banner(name, step) -> str:
     bar = "#" * 76
     return (
         f"\n{bar}\n"
-        f"WARNING: decomposed solve {name!r} did NOT meet its convergence "
+        f"Warning: decomposed solve {name!r} did NOT meet its convergence "
         f"tolerance.\n"
         f"{bar}\n"
         f"  Relative gap reached : {_pct(gap)}\n"
@@ -883,7 +886,29 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def print_run_end(full_seconds: float, solve_summary: str | None) -> None:
+    """The end of a run's console output: the full execution time, the whole solve summary (the content of
+    summary_solve.csv, whatever the write methods; *solve_summary* is ``None`` for a failed run) and the tally of
+    the coded warnings (:func:`flextool.run_warnings.tally_lines`).
+
+    The outputs are written by now, so a console that cannot take a line (a closed pipe, an encoding without a
+    character of a node name) only loses the line: the run still records its timings and exit code.
+    """
+    from flextool import run_warnings
+    try:
+        print("\n--- Full execution time %.4s seconds ---------------------------------------" % full_seconds)
+        print("--------------------------------------------------------------------------\n")
+        if solve_summary:
+            print_solve_summary(solve_summary)
+        for line in run_warnings.tally_lines():
+            print(line, flush=True)
+    except (OSError, UnicodeError) as exc:
+        logging.debug("the end-of-run lines could not be printed: %s", exc)
+
+
 def main():
+    from flextool.cli._console import tolerant_console_encoding
+    tolerant_console_encoding()  # a cp1252 / cp437 pipe must not fail a print of a name or of the tally
     parser = build_parser()
     args = parser.parse_args()
     run_options = _run_options_from_args(args)
@@ -1222,6 +1247,7 @@ def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_
         sys.exit(1)
 
     # If successful and requested, write outputs
+    solve_summary = None  # the text of summary_solve.csv (write_outputs), printed at the end of the run
     if return_code == 0:
         t_write_outputs = time.perf_counter()
         # Δ.31 — pass the last step's flex_data + solution so
@@ -1269,7 +1295,7 @@ def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_
                 # ``output_raw/_solve_order.txt`` creation-order manifest.
                 wo_flex_data = last_step.flex_data if last_step else None
                 wo_solution = last_step.solution if last_step else None
-                write_outputs(
+                solve_summary = write_outputs(
                     scenario_name=scenario_name,
                     output_location=output_location,
                     subdir=output_subdir,
@@ -1322,8 +1348,7 @@ def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_
                 shutil.rmtree(raw_dir, ignore_errors=True)
 
     full_seconds = time.perf_counter() - t_total_start
-    print("\n--- Full execution time %.4s seconds ---------------------------------------" % full_seconds)
-    print("--------------------------------------------------------------------------\n")
+    print_run_end(full_seconds, solve_summary if return_code == 0 else None)
     timing_recorder.record('total', seconds=full_seconds, t_start=t_total_start)
 
     # Move timings.csv into the per-scenario output dir alongside

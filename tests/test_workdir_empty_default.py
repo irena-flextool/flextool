@@ -125,7 +125,6 @@ class TestWorkdirEmptyByDefault:
         "p_entity_divested.csv",
         "p_entity_invested.csv",
         "p_entity_pre_existing.csv",
-        "p_entity_period_existing_capacity.csv",
         "period_capacity.csv",
         "scale_the_objective.csv",
     })

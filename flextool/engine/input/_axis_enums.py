@@ -51,6 +51,14 @@ _AXIS_SYNONYMS: dict[str, str] = {
     "d_previous": "d",
     "d_upper": "d",
     "d_back": "d",
+    # Cohort table (``preprocess/params/_cohorts.py``): the decision period of a cohort and the period a
+    # retirement is decided in.
+    "d_build": "d",
+    "d_retire": "d",
+    # Life extension (``preprocess/params/_extend.py``): the period an extension is decided in, and its parent's last
+    # period in service before it.
+    "d_extend": "d",
+    "d_last": "d",
     # ``anchor`` is the cascade column name used in _derived.py
     # during the period__branch overlay (period→anchor rename).  The
     # values are period labels, so the column belongs to the ``d`` axis.
@@ -112,7 +120,7 @@ _AXIS_SYNONYMS: dict[str, str] = {
     # §6b Slice A) — holds period tokens (subset of d).
     "d_other": "d",
     # ``d_first`` — column holding period tokens of "first" periods
-    # (e.g. in ``_lifetime_expired_pairs_lf`` cascade).  Subset of d.
+    # (a solve's first period).  Subset of d.
     "d_first": "d",
     # Output-side timestep column — same vocabulary as cascade "t".
     "time": "t",

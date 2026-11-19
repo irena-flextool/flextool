@@ -108,7 +108,7 @@ def _build_invest_spec(method: str = "none") -> dict:
          "invest"],
         ["unit", "gas_plant", "invest_cost", _pack(50.0, "float"), "invest"],
         ["unit", "gas_plant", "discount_rate", _pack(0.05, "float"), "invest"],
-        ["unit", "gas_plant", "lifetime", _pack(1.0, "float"), "invest"],
+        ["unit", "gas_plant", "lifetime_technical", _pack(1.0, "float"), "invest"],
         ["unit", "gas_plant", "invest_max_total", _pack(5000.0, "float"),
          "invest"],
         ["unit", "gas_plant", "virtual_unitsize", _pack(100.0, "float"),

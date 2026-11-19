@@ -63,7 +63,7 @@ def build_db(tmp_dir: Path, solves: dict[str, dict]) -> str:
         ("unit", "gen", "efficiency", 1.0),
         ("unit", "gen", "invest_method", "invest_no_limit"),
         ("unit", "gen", "invest_cost", 100.0),
-        ("unit", "gen", "lifetime", 1.0),
+        ("unit", "gen", "lifetime_technical", 1.0),
         ("unit", "gen", "discount_rate", 0.0),
         ("unit__outputNode", ("gen", "n"), "other_operational_cost", 1.0),
     ]

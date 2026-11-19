@@ -27,12 +27,12 @@ direct, 500 MW.
 """
 from __future__ import annotations
 
-import logging
 import types
 
 import polars as pl
 import pytest
 
+from tests._support.coded_warnings import capture_coded
 from tests.engine._unit_db import (
     CHP, CHP_CHAIN, COAL, GAS, GAS_ENTITIES, PLANT, PLANT_CHAIN, b64, build,
     cstr_over, demand, flow, gas, no_ratio_constraint, online, run, solve,
@@ -208,44 +208,41 @@ def test_zero_coefficient_adds_no_per_output_row(tmp_path_factory) -> None:
 
 
 def test_all_zero_coefficients_keep_full_floor_and_warn(
-        tmp_path_factory, caplog) -> None:
+        tmp_path_factory) -> None:
     """Every output ``capacity_min_coeff = 0`` used to switch the minimum
     load off; now the full unit floor applies and a warning tells the user
     to lower min_load instead."""
-    caplog.set_level(logging.WARNING)
-    step = _chp(tmp_path_factory, "ml_allzero",
-                [["unit__outputNode", [CHP, k], "capacity_min_coeff",
-                  b64(0.0, "float")] for k in ("west", "heat")]
-                + uc(CHP, 0.4))
+    with capture_coded() as got:
+        step = _chp(tmp_path_factory, "ml_allzero",
+                    [["unit__outputNode", [CHP, k], "capacity_min_coeff",
+                      b64(0.0, "float")] for k in ("west", "heat")]
+                    + uc(CHP, 0.4))
     over = cstr_over(build(step.flex_data), "minFlow_minload_linear")
     assert over is not None and over.filter(pl.col("p") == CHP).height > 0
     total = cflow(step, CHP, "west") + cflow(step, CHP, "heat")
     assert ((total - 0.4 * online(step, CHP)) >= -1e-6).all()
-    assert any("no longer lowers" in r.getMessage() and CHP in r.getMessage()
-               for r in caplog.records)
+    assert CHP in got.names("W-0214")
 
 
-def test_direct_unit_coefficient_no_longer_softens(tmp_path_factory,
-                                                   caplog) -> None:
+def test_direct_unit_coefficient_no_longer_softens(tmp_path_factory) -> None:
     """Direct ``coal_plant`` (500 MW, linear UC, min_load 0.5, prohibitive
     startup cost keeps it online) with ``capacity_min_coeff = 0.5``: in a
     100 MW demand dip it still runs at the full floor 0.5 · 500 = 250 MW
     (the coefficient used to halve it to 125 MW), plus a warning."""
-    caplog.set_level(logging.WARNING)
     dip = "t0010"
-    step = solve(tmp_path_factory, alt="ml_direct_half",
-                 base_chain=PLANT_CHAIN,
-                 values=uc(PLANT, 0.5) + [
-                     ["node", "west", "inflow", time_map({dip: -100.0},
-                                                         -500.0)],
-                     ["unit", PLANT, "startup_cost", b64(1.0e6, "float")],
-                     ["unit__outputNode", [PLANT, "west"],
-                      "capacity_min_coeff", b64(0.5, "float")]])
+    with capture_coded() as got:
+        step = solve(tmp_path_factory, alt="ml_direct_half",
+                     base_chain=PLANT_CHAIN,
+                     values=uc(PLANT, 0.5) + [
+                         ["node", "west", "inflow", time_map({dip: -100.0},
+                                                             -500.0)],
+                         ["unit", PLANT, "startup_cost", b64(1.0e6, "float")],
+                         ["unit__outputNode", [PLANT, "west"],
+                          "capacity_min_coeff", b64(0.5, "float")]])
     out = flow(step, PLANT, COAL, "west")
     assert out[9] == pytest.approx(250.0, rel=1e-6)   # t0010
     assert online(step, PLANT)[9] == pytest.approx(500.0, rel=1e-6)
-    assert any("no longer lowers" in r.getMessage() and PLANT in r.getMessage()
-               for r in caplog.records)
+    assert PLANT in got.names("W-0214")
 
 
 def test_out_of_range_output_coefficient_is_an_error(tmp_path_factory) -> None:

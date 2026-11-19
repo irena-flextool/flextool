@@ -25,7 +25,8 @@ from pathlib import Path
 from spinedb_api import export_data, import_data
 
 from flextool.update_flextool.db_handle import open_database_mapping
-from flextool.update_flextool.db_migration import migrate_repository_database
+from flextool.update_flextool import FLEXTOOL_DB_VERSION
+from flextool.update_flextool.db_migration import RERUNNABLE_HEAD_STEP, migrate_repository_database
 
 from flextool._resources import package_data_path
 from flextool.sqlite_url import sqlite_url_string
@@ -74,8 +75,13 @@ def sync_master_template(*, verify_only: bool = False) -> bool:
         # Step 1: Create DB from current master template
         _create_db_from_template(SPINEDB_SCHEMA, db_path)
 
-        # Step 2: Run all migrations
+        # Step 2: Run all migrations, then the current version's schema step again: entries appended to it after
+        # the template was stamped with this version would otherwise never reach the template.
         migrate_repository_database(str(db_path))
+        head_step = RERUNNABLE_HEAD_STEP.get(FLEXTOOL_DB_VERSION)
+        if head_step is not None:
+            with open_database_mapping(sqlite_url_string(db_path)) as db:
+                head_step(db)
 
         # Step 3: Export migrated DB
         new_data = _export_db_to_json(db_path)

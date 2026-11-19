@@ -60,10 +60,16 @@ categories:
   #   - Startup              → amber / yellow
   #   - Slack / penalties    → reds / magentas (visually alarming)
   costs:
-    # Investment / capex (saturated blues)
-    unit investment & retirement:          '#1f4ea8'   # strong blue
-    connection investment & retirement:    '#3b6fc4'   # medium blue
-    storage investment & retirement:       '#6691d8'   # lighter blue
+    # Investment / capex events (saturated blues)
+    investment:                            '#1f4ea8'   # strong blue
+    replacement:                           '#3b6fc4'   # medium blue
+    extension:                             '#6691d8'   # lighter blue
+    retirement:                            '#0b2e6b'   # navy (the settlement of a retired plant)
+    # Salvage (income: green)
+    salvage:                               '#2e8b57'   # sea green
+    # Objective constants of existing capacity (teal-blue)
+    investment pre-existing:               '#2a6f8f'   # teal-blue
+    salvage pre-existing:                  '#6aa9bf'   # light teal-blue
     # Fixed O&M (teal family — "keep the lights on, recurring")
     fixed cost pre-existing:               '#0f8a7a'   # teal
     fixed cost invested:                   '#3bb0a0'   # brighter teal

@@ -169,13 +169,25 @@ def _silence_if_quiet(wp: WarmProblem) -> None:
     if _benders_quiet():
         wp.set_output_flag(False)
 
-# The four investment/divestment decision variables assembled into a
-# whole-system handoff for the TIER-1 invest->dispatch chain.  Each is
-# declared in ``model/core.py`` over a 2-tuple of dims whose FIRST element is
-# the entity axis ("p" for process / connection vars, "n" for node vars)
-# and whose second is the period axis "d".  ``Var.dims`` is read at
-# runtime to recover the exact entity column name — we do not hard-code it.
-_INVEST_VAR_NAMES = ("v_invest_p", "v_invest_n", "v_divest_p", "v_divest_n")
+# The investment/divestment decision variables assembled into a whole-system
+# handoff for the TIER-1 invest->dispatch chain.  Each is declared over dims
+# whose FIRST element is the entity axis ("p" for process / connection vars,
+# "n" for node vars) and whose last is the period axis "d":
+# ``v_invest`` / ``v_divest`` (existing capacity) over ``(entity, d)``
+# (``model/core.py``), and the retirements of model-built capacity
+# (``model/_retire_built.py``): ``v_divest_built`` per cohort over
+# ``(entity, "cohort", d)`` (the handoff carries them per cohort in
+# ``realized_retire``) and ``v_divested_built`` over ``(entity, d)`` (the
+# built capacity retired so far, read by the solve's capacity results), and the
+# life extensions (``model/_extend.py``): ``v_extend`` per extended cohort over
+# ``(entity, "cohort", d)`` (the handoff carries each as a cohort of its own in
+# ``realized_cohort``) and ``v_extended`` over ``(entity, d)`` (the extended
+# capacity in service, read by the solve's capacity results).
+# ``Var.dims`` is read at runtime to recover the exact key columns — we do
+# not hard-code them.
+_INVEST_VAR_NAMES = ("v_invest_p", "v_invest_n", "v_divest_p", "v_divest_n",
+                     "v_divest_built_p", "v_divest_built_n", "v_divested_built_p", "v_divested_built_n",
+                     "v_extend_p", "v_extend_n", "v_extended_p", "v_extended_n")
 
 # Absolute tolerance below which a non-owner region's invest value for an
 # entity is treated as a numerically-collapsed zero (the expected case for
@@ -857,8 +869,9 @@ class BendersResult:
     # Whole-system, owner-de-duplicated invest/divest decision frames for the
     # TIER-1 invest->dispatch handoff.  Keys are a subset of
     # ``_INVEST_VAR_NAMES``; each value is a long-form frame whose columns
-    # match ``polar_high.Solution.value(name)`` exactly (``(entity_col, "d",
-    # "value")``), so a downstream ``SnapshotSolution`` can expose them to
+    # match ``polar_high.Solution.value(name)`` exactly (the Var's dims, e.g.
+    # ``(entity_col, "d")`` or ``(entity_col, "cohort", "d")``, then
+    # ``"value"``), so a downstream ``SnapshotSolution`` can expose them to
     # ``build_handoff_from_solution``.  UNION of region in-region invest +
     # master trade-connection invest.  Empty dict when the model has no
     # investment.
@@ -1463,8 +1476,9 @@ class _BendersMaster:
 
     def master_invest_frames(self, sol) -> dict[str, pl.DataFrame]:
         """Return every invest/divest decision var PRESENT in the master
-        (``v_invest_p`` / ``v_invest_n`` / ``v_divest_p`` / ``v_divest_n``)
-        as long-form ``(entity, d, value)`` frames in the SAME
+        (``_INVEST_VAR_NAMES``: ``v_invest`` / ``v_divest`` and the built
+        retirements ``v_divest_built`` / ``v_divested_built``, ``_p`` / ``_n``)
+        as long-form frames (the Var's dims, then ``value``) in the SAME
         ``Solution.value`` semantics / unitsize-normalisation FlexTool
         emits — for the TIER-1 invest handoff.  ``{}`` on the hand master
         (no FlexTool invest Vars).
@@ -1808,16 +1822,20 @@ def _resolve_entity_owner(
         m = region_membership.get(region, {})
         for entity in m.get("nodes", set()) | m.get("processes", set()):
             claims.setdefault(entity, []).append(region)
+    shared: list[str] = []
     for entity, claiming in claims.items():
         owner[entity] = claiming[0]
         if len(claiming) > 1:
-            _logger.warning(
-                "Benders invest assembly: entity %r is shared across "
-                "regions %r (no unique owner); assigning deterministic "
-                "owner %r (first in sorted region order).  Shared "
-                "invest-eligible entities are an untested edge case.",
-                entity, claiming, owner[entity],
-            )
+            shared.append(entity)
+            _logger.debug("Benders invest assembly: entity %r is shared across regions %r; owner %r.",
+                          entity, claiming, owner[entity])
+    if shared:   # one line for all of them (the debug log has each)
+        first = shared[0]
+        _logger.warning(
+            "Benders invest assembly: %d entit%s shared across regions (no unique owner), e.g. %r in %r; each "
+            "is given to the first region in sorted order.  Shared invest-eligible entities are an untested "
+            "edge case.", len(shared), "y is" if len(shared) == 1 else "ies are", first, claims[first],
+        )
     return owner
 
 
@@ -1835,7 +1853,8 @@ def _assemble_region_invest_vars(
         Per-region :class:`polar_high.Problem` objects (region-index
         aligned).  Their ``_vars[name].frame`` carries ``(*dims, col_id)``
         and ``_vars[name].dims`` gives the natural dim order
-        (``(entity_col, "d")`` for the invest/divest vars).
+        (``(entity_col, "d")`` for the invest/divest vars,
+        ``(entity_col, "cohort", "d")`` for ``v_divest_built``).
     subproblem_col_values
         Per-region recovered-primal ``col_value`` arrays
         (``Solution.col_value`` of each region's incumbent solve),
@@ -1851,15 +1870,15 @@ def _assemble_region_invest_vars(
     dict[str, pl.DataFrame]
         ``{name: frame}`` for each invest/divest var present in at least
         one region with >=1 owned row.  Each frame's columns exactly match
-        ``polar_high.Solution.value(name)`` — ``(entity_col, "d",
-        "value")`` — so a ``SnapshotSolution`` can serve them via
+        ``polar_high.Solution.value(name)`` — the Var's dims, then
+        ``"value"`` — so a ``SnapshotSolution`` can serve them via
         ``.value(name)``.
     """
     out: dict[str, pl.DataFrame] = {}
     n_regions = len(subproblems)
     for name in _INVEST_VAR_NAMES:
         per_region_kept: list[pl.DataFrame] = []
-        entity_col: str | None = None
+        key_cols: tuple[str, ...] = ()
         for i in range(n_regions):
             pb = subproblems[i]
             var = pb._vars.get(name)
@@ -1875,7 +1894,7 @@ def _assemble_region_invest_vars(
             # ``col_value`` by the Var's ``col_id`` and attach as "value".
             dims = tuple(var.dims)
             ent_col = dims[0]
-            entity_col = ent_col
+            key_cols = dims
             frame = var.frame
             ids = frame["col_id"].to_numpy()
             vals = np.asarray(col_values)[ids]
@@ -1890,21 +1909,23 @@ def _assemble_region_invest_vars(
             # value violates the owner-selection assumption.  Warn, keep
             # only the owner's value.
             value_series = region_frame["value"].to_list()
-            for e, owned, v in zip(entities, owned_mask, value_series):
-                if (not owned) and v is not None and abs(v) > _NONOWNER_NONZERO_ABS_TOL:
-                    _logger.warning(
-                        "Benders invest assembly: non-owner region index "
-                        "%d carries non-zero %s value %.6g for entity %r "
-                        "(expected ~0 for an out-of-region invest var); "
-                        "keeping only the owner's value.",
-                        i, name, v, e,
-                    )
+            stray = [(e, v) for e, owned, v in zip(entities, owned_mask, value_series)
+                     if (not owned) and v is not None and abs(v) > _NONOWNER_NONZERO_ABS_TOL]
+            if stray:   # one line per region and variable (each entity in the debug log)
+                _logger.warning(
+                    "Benders invest assembly: non-owner region index %d carries non-zero %s values for %d "
+                    "entit%s (e.g. %.6g for %r; expected ~0 for an out-of-region invest var); keeping only the "
+                    "owner's values.", i, name, len(stray), "y" if len(stray) == 1 else "ies", stray[0][1],
+                    stray[0][0],
+                )
+                for e, v in stray:
+                    _logger.debug("Benders invest assembly: region %d, %s, entity %r: %.6g", i, name, e, v)
             kept = region_frame.filter(pl.Series("__owned", owned_mask))
             if kept.height > 0:
                 per_region_kept.append(kept)
         if per_region_kept:
             frame = pl.concat(per_region_kept, how="vertical")
-            sort_cols = [c for c in (entity_col, "d") if c in frame.columns]
+            sort_cols = [c for c in key_cols if c in frame.columns]
             if sort_cols:
                 frame = frame.sort(sort_cols, maintain_order=True)
             out[name] = frame
@@ -1942,7 +1963,7 @@ def _assemble_benders_invest_vars(
 
     Returns the same-shaped dict the downstream ``SnapshotSolution`` /
     ``build_handoff_from_solution`` expects (each frame's columns match
-    ``Solution.value(name)`` exactly: ``(entity_col, "d", "value")``).
+    ``Solution.value(name)`` exactly: the Var's dims, then ``"value"``).
     """
     # (a) region in-region invest, owner-de-duplicated, with the cross-region
     # trade connections EXCLUDED (they are the master's, see docstring).
@@ -1973,16 +1994,15 @@ def _assemble_benders_invest_vars(
         if existing is None:
             out[name] = frame
             continue
-        ent_col = frame.columns[0]
+        key_cols = [c for c in existing.columns if c != "value"]
         frame = frame.select(existing.columns)
         merged = pl.concat([existing, frame], how="vertical")
         merged = merged.unique(
-            subset=[ent_col, "d"], keep="first", maintain_order=True
+            subset=key_cols, keep="first", maintain_order=True
         )
-        sort_cols = [c for c in (ent_col, "d") if c in merged.columns]
         out[name] = (
-            merged.sort(sort_cols, maintain_order=True)
-            if sort_cols else merged
+            merged.sort(key_cols, maintain_order=True)
+            if key_cols else merged
         )
     return out
 
@@ -2793,7 +2813,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             )
             _logger.warning(msg)
             # Per-solve loggers are pinned to ERROR inside the cascade: also print the warning.
-            print(f"WARNING: {msg}", flush=True)
+            print(f"Warning: {msg}", flush=True)
 
     # --- Trust-region stabilization (machine-local env; RANK 3, theory §C).
     # ``trust_region_radius`` is an ABSOLUTE box half-width: Δ₀ = radius·1.0 =
@@ -3048,7 +3068,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     trade_flow = _flow_frames(arcs, loop.incumbent_point)
 
     # --- TIER-1 whole-system invest handoff (GAP-a).  Assemble the same-shaped
-    # ``{v_invest_p/v_invest_n/v_divest_p/v_divest_n -> (entity, d, value)}``
+    # ``{_INVEST_VAR_NAMES -> (entity, [cohort,] d, value)}``
     # dict the downstream rolling-dispatch consumes, as the UNION of:
     #   (a) each REGION's in-region invest (owner-de-duplicated so each entity
     #       is claimed exactly once), AND

@@ -118,6 +118,47 @@ def _parse_summary_solver_objective(summary_path: Path) -> float:
     return total
 
 
+def _periods_not_realized(out_dir: Path, raw_dir: Path) -> set[str]:
+    """The periods of ``summary_solve.csv``'s ``Period`` row (every period a solve of the run optimises) that no
+    solve realizes (``output_raw`` ``d_realized_period`` / ``d_realize_invest``): a look-ahead period whose operation
+    the solver objective counts but no cost table reports."""
+    import csv
+    import polars as pl
+    with (out_dir / "summary_solve.csv").open() as f:
+        periods = next((set(row[1:]) for row in csv.reader(f) if row and row[0] == "Period"), set())
+    realized: set[str] = set()
+    for name in ("d_realized_period", "d_realize_invest"):
+        for path in raw_dir.glob(f"{name}__*.parquet"):
+            realized |= set(pl.read_parquet(path)["period"].to_list())
+    return periods - realized
+
+
+def _solver_objectives_and_counted_total(summary_path: Path) -> tuple[list[float], float]:
+    """``(the solver objective of each solve, "Total cost counted in the objective")`` of ``summary_solve.csv``
+    (the solve rows follow its ``"Solve","Objective"`` header up to the first labelled row)."""
+    import csv
+    objectives: list[float] = []
+    counted = None
+    in_solves = False
+    with summary_path.open() as f:
+        for row in csv.reader(f):
+            if not row:
+                continue
+            if row[0] == "Solve":
+                in_solves = True
+                continue
+            if row[0].startswith("Total cost counted in the objective"):
+                counted = float(row[1])
+            if in_solves:
+                if row[0].startswith("Total cost"):
+                    in_solves = False
+                else:
+                    objectives.append(float(row[1]))
+    if counted is None:
+        raise ValueError(f"No 'Total cost counted in the objective' row in {summary_path}")
+    return objectives, counted
+
+
 def _parse_summary_solve_objective(summary_path: Path) -> float:
     """Extract the full-horizon total cost from ``summary_solve.csv``.
 
@@ -475,7 +516,8 @@ def test_obj_decomposition(
     workdir: Path,
 ) -> None:
     """Tier 8 obj-decomposition parity: ``sum(costs_discounted.csv)`` equals the
-    "Total cost (calculated) full horizon (M CUR)" row of ``summary_solve.csv`` to ``1e-6`` relative.
+    "Total cost (calculated) full horizon (M CUR)" row of ``summary_solve.csv`` to ``1e-6`` relative, and for one
+    deterministic solve "Total cost counted in the objective (M CUR)" is the solver objective.
 
     A failure pinpoints the obj writer summing something twice, dropping a term, or getting a sign wrong — the
     diagnostic gap that the golden-CSV comparison cannot localise on its own.  The outputs are the ones
@@ -504,6 +546,14 @@ def test_obj_decomposition(
 
     decomposition_total = _parse_costs_discounted(costs_path)
     obj_total = _parse_summary_solve_objective(summary_path)
+    # One deterministic solve that realizes every period it optimises: the total the objective counts (the
+    # calculated total without the constants of existing capacity) is the solver objective.  A look-ahead period
+    # the solve does not realize is in the objective but in no cost table.
+    objectives, counted = _solver_objectives_and_counted_total(summary_path)
+    if len(objectives) == 1 and "stoch" not in scenario and "stoch" not in db_fixture \
+            and not _periods_not_realized(out_dir, solved / "output_raw"):
+        assert math.isclose(counted, objectives[0], rel_tol=1e-6, abs_tol=1e-6), (
+            f"{scenario}: total counted in the objective {counted!r} != solver objective {objectives[0]!r}")
 
     assert math.isclose(
         decomposition_total, obj_total, rel_tol=1e-6, abs_tol=1e-9

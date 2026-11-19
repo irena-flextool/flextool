@@ -83,8 +83,6 @@ _REQUIRED_PARAM_ATTRS: tuple[str, ...] = (
     "entity_all_capacity",
     "process_startup_cost",
     "entity_fixed_cost",
-    "entity_lifetime_fixed_cost",
-    "entity_lifetime_fixed_cost_divest",
     "node_annual_flow",
     "group_penalty_inertia",
     "group_penalty_non_synchronous",
@@ -93,7 +91,9 @@ _REQUIRED_PARAM_ATTRS: tuple[str, ...] = (
     "group_capacity_margin",
     "entity_annuity",
     "entity_annual_discounted",
-    "entity_annual_divest_discounted",
+    "entity_invest_lines",
+    "entity_divest_lines",
+    "entity_existing_lines",
     "inflation_factor_operations_yearly",
     "inflation_factor_investment_yearly",
     "node_capacity_for_scaling",
@@ -376,7 +376,7 @@ def test_unit_capacity_period_table_includes_invested(tmp_path: Path, scenario_w
 
     This exercises the post-solve derivation
     ``total = existing + cumulative_invested - cumulative_divested``
-    via the FlexData ``edd_invest_set`` indirection — the legacy
+    via the investments in service (``_cohorts.in_service``) — the legacy
     GMPL-phase 3 path produced this row.
     """
     fixture = scenario_workdir("network_coal_wind_battery_invest_cumulative")

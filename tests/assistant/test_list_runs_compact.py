@@ -224,7 +224,11 @@ def test_compare_runs_overview_is_short(mctx) -> None:
 
 def test_compare_inputs_is_short(mctx) -> None:
     """The largest pair of tests.json: 159 values that differ.  Counts by alternative and class are complete; 30
-    rows by default.  Before: 87 rows cut at the character cap, 19 810 characters (about 9 200 tokens)."""
+    rows by default.  Before: 87 rows cut at the character cap, 19 810 characters (about 9 200 tokens).
+
+    Data version 81 moves each ``lifetime`` value to ``lifetime_technical`` only (``payback_time`` stays empty and
+    falls back to it), so the four ``lifetime`` values that differ (battery_invest: node battery and connection
+    battery_inverter; coal_invest: unit coal_plant; wind_invest: unit wind_plant) are still four values."""
     text = _text(mctx, "compare_inputs", scenario_a="5weeks_battery_intraperiod_blocks", scenario_b="test_a_lot")
     out = json.loads(text)
     assert out["total_values"] == 159

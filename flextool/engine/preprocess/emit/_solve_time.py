@@ -10,7 +10,7 @@ Ordering
 The call order carries dependency contracts between sub-emitters
 (e.g. ``per_solve_sets`` produces ``period_in_use_set.csv`` consumed by
 ``period_calculated_params``; ``entity_period_calc_params`` writes
-``pdProcess`` / ``pdNode`` consumed by ``write_p_entity_existing_chain``;
+``pdProcess`` / ``pdNode`` consumed by ``_chain_params.emit_existing_capacity``;
 ``ed_invest`` / ``ed_divest`` are consumed by downstream batches).
 
 Function signature
@@ -63,7 +63,6 @@ def run(
     from flextool.engine.preprocess.emit import _arc_unions as _arc
     from flextool.engine.preprocess.emit import _calc_params as _calc
     from flextool.engine.preprocess.emit import _dispatchers as _disp
-    from flextool.engine.preprocess.emit import _entity_annual
     from flextool.engine.preprocess.emit import _inflow_scaling
     from flextool.engine.preprocess.emit import _leaf_sets as _leaf
     from flextool.engine.preprocess.emit import _lp_scaling
@@ -167,24 +166,22 @@ def run(
     # ── L1 batch 13: period_calculated_params ─────────────────────────
     _period_calc.emit_period_calculated_params(input_dir, solve_data_dir, provider=provider)
     _ck("period_calculated_params")
-    # ── L1 batch 15: pdProcess / pdNode + edEntity_lifetime + ed_fixed_cost
+    # ── L1 batch 15: pdProcess / pdNode + ed_fixed_cost + p_entity_unitsize
     _disp.emit_entity_period_calc_params(input_dir, solve_data_dir, provider=provider)
     _ck("entity_period_calc_params")
-    # ── L1 batch 16: ed_entity_annual family ──────────────────────────
-    _entity_annual.emit_entity_annual_calc_params(input_dir, solve_data_dir, provider=provider)
-    _ck("entity_annual_calc_params")
     # ── L1 batch 17: node-inflow scaling family ───────────────────────
     _inflow_scaling.emit_node_inflow_scaling_params(input_dir, solve_data_dir, provider=provider)
     _ck("node_inflow_scaling_params")
     # ── L1 batch 18: LP-scaling row scalers ───────────────────────────
     _lp_scaling.emit_lp_scaling_params(input_dir, solve_data_dir, provider=provider)
     _ck("lp_scaling_params")
-    # ── L2 batch 26: p_entity_pre_existing (the retirement options of batch 19 read it) ──
+    # ── the existing capacity from the cohorts (the retirement options of the investment sets below read it) ──
     from flextool.engine.preprocess.emit import _chain_params as _chain
-    _chain.emit_p_entity_pre_existing(input_dir, solve_data_dir, provider=provider)
-    _ck("p_entity_pre_existing")
-    # ── L2 batch 19: invest/divest + edd_history ──────────────────────
-    _per_solve.emit_invest_divest_sets(input_dir, solve_data_dir, provider=provider)
+    _chain.emit_existing_capacity(input_dir, solve_data_dir, provider=provider)
+    _ck("existing_capacity")
+    # ── L2 batch 19: invest/divest sets + edd_invest ─────────────────
+    _per_solve.emit_invest_divest_sets(input_dir, solve_data_dir, provider=provider,
+                                       source=state.input_source)
     _ck("invest_divest_sets")
     # ── L2 batch 20: ed_*_period / ed_cumulative_* (needs batch 19) ───
     _period.emit_ed_period_params(input_dir, solve_data_dir, provider=provider)
@@ -216,8 +213,6 @@ def run(
     )
     _ck("process_source_sink_profile_method_connection")
     # ── L4 batches 39-41 ──────────────────────────────────────────────
-    _arc.emit_ed_history_realized_first(input_dir, solve_data_dir, provider=provider)
-    _ck("ed_history_realized_first")
     _arc.emit_peedt(solve_data_dir, provider=provider)
     _ck("peedt")
     # ── L0 batches 42 / 43 ────────────────────────────────────────────
@@ -297,14 +292,6 @@ def run(
     # ── L8 batch 58 ───────────────────────────────────────────────────
     _period.emit_p_positive_negative_inflow(input_dir, solve_data_dir, provider=provider)
     _ck("p_positive_negative_inflow")
-    # ── L6/L7 batch 59: p_entity existing-capacity chain — reads
-    # ``K.HANDOFF_REALIZED_EXISTING`` / ``K.HANDOFF_REALIZED_INVEST``
-    # via the Provider (Phase 2 of provider_consolidation.md retired
-    # the ``prior_handoff`` parameter threading).
-    _chain.emit_p_entity_existing_chain(
-        input_dir, solve_data_dir, provider=provider,
-    )
-    _ck("p_entity_existing_chain")
     # ── L9/L10 batch 60: capacity max chain ───────────────────────────
     _chain.emit_p_entity_capacity_max_chain(input_dir, solve_data_dir, provider=provider)
     _ck("p_entity_capacity_max_chain")

@@ -98,15 +98,14 @@ def _availability_case(tmp_path_factory, alt: str, plant_labels: tuple[str, str]
                          ["unit", CHP, "availability", chp_value]])
 
 
-def test_unnamed_time_map_next_to_period_time_map(tmp_path_factory, capsys) -> None:
+def test_unnamed_time_map_next_to_period_time_map(tmp_path_factory, coded_log) -> None:
     """coal_plant: unnamed period x time availability; coal_chp: unnamed 1-level map over the time steps.
     ≡ the twin with named levels (objective, ``p_process_availability``).  Before: objective 8.68e8 (coal_chp's
     time steps read as periods) instead of 1.73e9.  The note naming both units is printed once."""
     chp = {t: 0.5 for t in TIMESTEPS}
-    capsys.readouterr()
+    coded_log()
     case = _availability_case(tmp_path_factory, "lp_mix_t", ("x", "x"), map1("x", chp))
-    notes = [ln for ln in capsys.readouterr().out.splitlines()
-             if ln.startswith("Note: unit 'availability' has maps without index names")]
+    notes = [ln for ln in coded_log().splitlines() if ln.startswith("W-0515 unit.availability: ")]
     twin = _availability_case(tmp_path_factory, "lp_mix_t_twin", ("period", "time"), map1("time", chp))
     assert case.solution.obj == pytest.approx(twin.solution.obj, rel=1e-9)
     assert field_diff(case.flex_data.p_process_availability, twin.flex_data.p_process_availability) is None
@@ -136,7 +135,7 @@ def test_one_level_map_keyed_by_periods_and_time_steps_is_an_error(tmp_path_fact
 
 
 @pytest.mark.parametrize("named", [False, True], ids=["unnamed", "named"])
-def test_upgrade_marks_unnamed_mixed_depths_and_runs_name_the_time_maps(tmp_path_factory, capsys, named) -> None:
+def test_upgrade_marks_unnamed_mixed_depths_and_runs_name_the_time_maps(tmp_path_factory, coded_log, named) -> None:
     """The database upgrade marks a database with unnamed maps of one and of two levels in one parameter (not
     one whose levels are named); with the marker, a run prints the notice naming coal_chp, whose one-level map
     is now read over time."""
@@ -156,9 +155,9 @@ def test_upgrade_marks_unnamed_mixed_depths_and_runs_name_the_time_maps(tmp_path
         if not named:
             db.commit_session("marker")
     assert (m.BEHAVIOUR_CHANGE_MARKER_PREFIX + "unnamed_maps_read_per_depth" in names) is (not named)
-    capsys.readouterr()
+    coded_log()
     run(tmp_path_factory, url, scen)
-    notices = [ln for ln in capsys.readouterr().out.splitlines() if "are now read per depth" in ln]
+    notices = [ln for ln in coded_log().splitlines() if "are now read per depth" in ln]
     assert len(notices) == (0 if named else 1)
     if not named:
         assert "Affected unit availability values: coal_chp." in notices[0]

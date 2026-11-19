@@ -1,3 +1,5 @@
+import contextlib
+import io
 import os
 from spinedb_api import from_database, to_database, SpineDBAPIError, Asterisk
 from flextool.update_flextool.db_handle import open_database_mapping
@@ -85,6 +87,142 @@ def _import_legacy_timeset_timeline(db, input_path: str) -> None:
             f"({added} (timeset, alternative) pairs) from 'timeblockSet_timeline'."
         )
 
+def _read_table(tabular_reader, input_path, table_name, input_type):
+    """Read one sheet/CSV table with its columns in the spec's layout (``None`` if absent)."""
+    if input_type == 'excel':
+        raw_df, column_types = tabular_reader.read_excel_sheet(input_path, table_name)
+    elif input_type == 'csv':
+        csv_file = os.path.join(input_path, f"{table_name}.csv")
+        if not os.path.exists(csv_file):
+            return None, {}
+        raw_df, column_types = tabular_reader.read_csv_file(csv_file)
+    else:
+        raise ValueError(f"Unknown input_type: {input_type}")
+    if raw_df is not None and not raw_df.empty:
+        raw_df = tabular_reader.normalize_layout(raw_df, table_name)
+    return raw_df, column_types
+
+
+def _model_periods(tabular_reader, input_path, input_type) -> list:
+    """Periods named in the solve_period table, in order of appearance."""
+    layout = tabular_reader.get_table_layout('solve_period')
+    columns = layout.get('columns', [])
+    if 'period' not in columns:
+        return []
+    # The sheet is read again (and its problems reported) when its turn comes.
+    saved_warnings = tabular_reader.warning_count
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            raw_df, _ = _read_table(tabular_reader, input_path, 'solve_period', input_type)
+    except Exception:
+        return []
+    finally:
+        tabular_reader.warning_count = saved_warnings
+    if raw_df is None or raw_df.empty:
+        return []
+    cells = raw_df.iloc[layout['header_row'] + 1:, columns.index('period')].dropna()
+    return list(dict.fromkeys(str(c).strip() for c in cells if str(c).strip()))
+
+
+def _report_unread_sheets(tabular_reader, input_path) -> None:
+    """Warn about workbook sheets with content that no import table reads."""
+    import openpyxl
+
+    from flextool.process_inputs.read_tabular_with_specification import (
+        _NON_DATA_SHEETS, _SHEET_NAME_ALIASES,
+    )
+    known = {name.lower() for name in tabular_reader.get_table_names()}
+    known |= {alias.lower() for aliases in _SHEET_NAME_ALIASES.values() for alias in aliases}
+    known |= {"timeblockset_timeline"}  # read by _import_legacy_timeset_timeline
+    known |= _NON_DATA_SHEETS
+    try:
+        wb = openpyxl.load_workbook(input_path, read_only=True, data_only=True)
+    except Exception:
+        return
+    try:
+        for name in wb.sheetnames:
+            if name.lower() in known:
+                continue
+            has_content = any(
+                cell is not None and str(cell).strip()
+                for row in wb[name].iter_rows(values_only=True) for cell in row
+            )
+            if has_content:
+                tabular_reader.warn(
+                    f"Sheet '{name}' is not part of the import specification; "
+                    f"its contents are not imported."
+                )
+    finally:
+        wb.close()
+
+
+_MODEL_ENTITY = "from_template"  # the model entity the specification import creates
+
+
+def _add_periods_available(db, tabular_reader) -> None:
+    """List the map periods that no solve uses in ``model.periods_available``.
+
+    3.x workbooks often carry period data beyond the periods of their solves
+    (e.g. '_p' sheets to 2050 with solves to 2030).  The old engine ignored
+    such keys; the current one stops on a period key that is not a period of
+    the model unless ``model.periods_available`` lists it.  Every key of a
+    period-indexed map the import wrote that is neither a solve period
+    (``period_timeset``), already available, nor a time step is added, in the
+    order first seen in the workbook.
+    """
+    from spinedb_api import Array
+
+    solve_periods = set()
+    for pv in db.find_parameter_values(entity_class_name="solve",
+                                       parameter_definition_name="period_timeset"):
+        parsed = from_database(pv["value"], pv["type"])
+        solve_periods.update(getattr(parsed, "indexes", []))
+    timesteps = set()
+    for pv in db.find_parameter_values(entity_class_name="timeline",
+                                       parameter_definition_name="timestep_duration"):
+        parsed = from_database(pv["value"], pv["type"])
+        timesteps.update(getattr(parsed, "indexes", []))
+
+    model_values = list(db.find_parameter_values(entity_class_name="model"))
+    model_names = list(dict.fromkeys(pv["entity_byname"] for pv in model_values))
+    if not model_names:
+        model_names = [tuple(e["entity_byname"]) for e in db.find_entities(entity_class_name="model")]
+    model = model_names[0] if model_names else (_MODEL_ENTITY,)
+
+    existing_pv = None
+    for pv in model_values:
+        if pv["entity_byname"] == model and pv["parameter_definition_name"] == "periods_available":
+            existing_pv = pv
+            break
+    available = []
+    if existing_pv is not None:
+        available = list(from_database(existing_pv["value"], existing_pv["type"]).values)
+
+    added = [p for p in tabular_reader.period_keys_seen
+             if p not in solve_periods and p not in available and p not in timesteps]
+    if not added:
+        return
+
+    if existing_pv is not None:
+        alternative = existing_pv["alternative_name"]
+    else:
+        alternatives = [pv["alternative_name"] for pv in model_values if pv["entity_byname"] == model]
+        alternative = "Base" if not alternatives or "Base" in alternatives else alternatives[0]
+    if not db.find_alternatives(name=alternative):
+        db.add_alternative(name=alternative)
+    if not db.find_entities(entity_class_name="model", entity_byname=model):
+        db.add_entity(entity_class_name="model", entity_byname=model)
+    value, type_ = to_database(Array(available + added, index_name="period"))
+    if existing_pv is not None:
+        db.update_item("parameter_value", id=existing_pv["id"], value=value, type=type_)
+    else:
+        db.add_parameter_value(entity_class_name="model", entity_byname=model,
+                               parameter_definition_name="periods_available",
+                               alternative_name=alternative, value=value, type=type_)
+    print(f"\nPeriods with data but in no solve, added to model.periods_available "
+          f"({'/'.join(model)}, alternative '{alternative}'): {', '.join(map(str, added))}")
+
+
 def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_type='excel',
                                migration_follows: bool = False):
     """Write tabular data to FlexTool input database, reading one sheet/file at a time.
@@ -155,22 +293,25 @@ def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_
         except Exception as e:
             raise RuntimeError(f"Failed to purge the input database before writing. {e}")
 
+        if input_type == 'excel':
+            _report_unread_sheets(tabular_reader, input_path)
+
+        # Periods of the model: a period sheet's blank cells are completed
+        # against these (see TabularReader._add_parameters).
+        tabular_reader.model_periods = _model_periods(tabular_reader, input_path, input_type)
+
         # Process each table one at a time
         for table_name in selected_tables:
             print(f"\nProcessing table {table_name + ': ':<30}", end="")
 
-            # Read the sheet/file that contains the data
+            # Read the sheet/file that contains the data, with its columns
+            # located by header name (normalize_layout).
             try:
-                if input_type == 'excel':
-                    raw_df, column_types = tabular_reader.read_excel_sheet(input_path, table_name)
-                elif input_type == 'csv':
-                    csv_file = os.path.join(input_path, f"{table_name}.csv")
-                    if not os.path.exists(csv_file):
-                        print(f"  Warning: CSV file not found: {csv_file}")
-                        continue
-                    raw_df, column_types = tabular_reader.read_csv_file(csv_file)
-                else:
-                    raise ValueError(f"Unknown input_type: {input_type}")
+                if input_type == 'csv' and not os.path.exists(
+                        os.path.join(input_path, f"{table_name}.csv")):
+                    print("Skipping - no CSV file")
+                    continue
+                raw_df, column_types = _read_table(tabular_reader, input_path, table_name, input_type)
 
                 # Skip if sheet not found in the file
                 if raw_df is None:
@@ -183,6 +324,7 @@ def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_
                     continue
 
             except Exception as e:
+                tabular_reader.error_count += 1
                 print(f"  Error reading table '{table_name}': {e}")
                 continue  # Continue to next table on read error
 
@@ -209,6 +351,7 @@ def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_
                 try:
                     (data_df, ent_zip_list, ent_act_zip, scen_array, scen_alt_df) = tabular_reader._extract_data(raw_df, mapping_info, table_options, column_types, table_name, mapping_name)
                 except Exception as e:
+                    tabular_reader.error_count += 1
                     print(
                         f"\n  Error processing sheet '{table_name}', mapping "
                         f"'{mapping_name}': {type(e).__name__}: {e}"
@@ -259,6 +402,8 @@ def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_
         if input_type == 'excel':
             _import_legacy_timeset_timeline(db, input_path)
 
+        _add_periods_available(db, tabular_reader)
+
         # Commit the changes
         try:
             db.commit_session(f"Imported data from mapping '{mapping_name}'")
@@ -268,4 +413,10 @@ def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_
         except Exception as e:
             raise SpineDBAPIError(f"Could not commit data and items based on {mapping_name}: {e}")
 
-    print("\nAll data processed successfully!    (* = No data found for the mapping)")
+    errors, warnings = tabular_reader.error_count, tabular_reader.warning_count
+    if errors or warnings:
+        print(f"\nImport finished with {errors} error(s) (values or mappings not imported) "
+              f"and {warnings} warning(s); see the messages above.    "
+              f"(* = No data found for the mapping)")
+    else:
+        print("\nAll data processed successfully!    (* = No data found for the mapping)")

@@ -20,12 +20,12 @@ Fixture
 -------
 ``tests/data/work_inflation_check/`` — derivative of
 ``wind_battery_invest_lifetime_renew`` with the spine-DB
-``model.inflation_rate`` patched from 0.04 to 0.02 *before*
+``model.social_discount_rate`` patched from 0.04 to 0.02 *before*
 ``runner.write_input``, so flextool's CSV writer and polar_high's
 DB-direct ``p_inflation_op_full_cascade_from_source`` both see the
 same rate-0.02 source.  Built by ``tests/_gen_inflation_check.py``.
 
-Cascade algorithm (per ``flextool/engine/preprocess/params/_npv.py``):
+Cascade algorithm (per ``flextool/engine/preprocess/params/_discount.py``):
 
 For each (period d, year y in ``solve.years_represented``):
 
@@ -34,9 +34,9 @@ For each (period d, year y in ``solve.years_represented``):
   - ``factor_contribution[d, y] = pyr[d, y] × (1 + rate)^(-until[d, y])``
   - ``factor[d] = Σ_y factor_contribution[d, y]``
 
-For the operations cascade ``offset = inflation_offset_operations``
+For the operations cascade ``offset = discount_offset_operations``
 (default 0.5, mid-period); for the investment cascade
-``offset = inflation_offset_investment`` (default 0.0, end-of-prior-period).
+``offset = discount_offset_investment`` (default 0.0, end-of-prior-period).
 The fixture's offsets are at their defaults.
 
 Lifetime cascade for ``ed_entity_annual_discounted`` (per
@@ -63,7 +63,7 @@ from tests._support.load import load_scenario
 pytestmark = pytest.mark.solver
 
 # Phase 3d: ``work_inflation_check`` was a derivative of
-# ``wind_battery_invest_lifetime_renew`` with model.inflation_rate
+# ``wind_battery_invest_lifetime_renew`` with model.social_discount_rate
 # patched from 0.04 to 0.02.  We now expose this as a real scenario in
 # ``tests.json`` (``wind_battery_invest_lifetime_renew_inflation_2pct``,
 # alt chain + ``inflation_2pct``).  ``scenario_run`` runs its cascade
@@ -92,7 +92,7 @@ SCENARIO = "wind_battery_invest_lifetime_renew_inflation_2pct"
 # show enough digits for a reader to verify by hand.
 # ---------------------------------------------------------------------------
 
-R = 0.02                           # patched model.inflation_rate
+R = 0.02                           # patched model.social_discount_rate
 PERIODS = ["p2020", "p2025", "p2030", "p2035"]
 PDY = {"p2020": 0.0, "p2025": 5.0, "p2030": 10.0, "p2035": 15.0}
 OFFSET_OPS = 0.5                   # flextool default (period_calculated_params.py:226)
@@ -121,15 +121,17 @@ def _inv_factor(d: str) -> float:
 def _annuity(invest_cost_eur_per_kw: float,
               discount_rate: float,
               lifetime_years: float) -> float:
-    """Annuity formula per ``flextool/_derived.py:5487-5498``::
+    """The yearly payment of the loan, paid at OFFSET_INV years into each year::
 
-        ann = invest_cost × 1000 × r / (1 - (1/(1+r))^n)
+        ann = invest_cost × 1000 × r / (1 - (1/(1+r))^n) × (1+r)^(OFFSET_INV − 1)
 
+    (at OFFSET_INV 0 the year-end annuity divided by 1 + r, so the payments are worth the invest cost at r).
     Note the 1000× scaling: ``invest_cost`` is EUR/kW but the LP works
     in EUR/MW.
     """
     r, n = discount_rate, lifetime_years
-    return invest_cost_eur_per_kw * 1000.0 * r / (1.0 - (1.0 / (1.0 + r)) ** n)
+    return (invest_cost_eur_per_kw * 1000.0 * r / (1.0 - (1.0 / (1.0 + r)) ** n)
+            * (1.0 + r) ** (OFFSET_INV - 1.0))
 
 
 def _annual_disc_reinvest_automatic(annuity: float, d: str) -> float:
@@ -145,8 +147,8 @@ def _annual_disc_reinvest_automatic(annuity: float, d: str) -> float:
 # Bare-annuity oracle for wind_plant + battery (params from input/p_*.csv):
 #   wind_plant: invest_cost=1000 EUR/kW, discount_rate=0.04, lifetime=5 yr.
 #   battery:   invest_cost=200,           discount_rate=0.05, lifetime=10.
-ANN_WIND = _annuity(1000.0, 0.04, 5.0)        # 224627.11349303348
-ANN_BATT = _annuity(200.0, 0.05, 10.0)        # 25900.91499309131
+ANN_WIND = _annuity(1000.0, 0.04, 5.0)        # 215987.60912791714
+ANN_BATT = _annuity(200.0, 0.05, 10.0)        # 24667.53808865840
 
 
 # ---------------------------------------------------------------------------
@@ -223,19 +225,19 @@ def test_ed_entity_annual_discounted_2pct_hand_derivation(scenario_run):
 
     For (wind_plant, p2020) the expected value is::
 
-        annuity_wind = 1000 × 1000 × 0.04 / (1 - (1/1.04)^5)
-                     = 224627.11349303348
+        annuity_wind = 1000 × 1000 × 0.04 / (1 - (1/1.04)^5) / 1.04
+                     = 215987.60912791714
 
         sum(inv_factor[d_all] for d_all in PERIODS if pdy[d_all] >= 0)
             = inv[p2020] + inv[p2025] + inv[p2030] + inv[p2035]
             ≈ 4.807729 + 4.354508 + 3.944012 + 3.572213
             ≈ 16.678462
 
-        ed[wind_plant, p2020] = 224627.11349 × 16.678462 ≈ 3,746,434.78
+        ed[wind_plant, p2020] = 215987.60913 × 16.678462 ≈ 3,602,341.13
 
-    For (battery, p2020) (annuity = 25900.91499 EUR; same
+    For (battery, p2020) (annuity = 24667.53809 EUR; same
     inv_factor sum because period_in_use is identical):
-        ed[battery, p2020] ≈ 25900.91499 × 16.678462 ≈ 431,987.43
+        ed[battery, p2020] ≈ 24667.53809 × 16.678462 ≈ 411,416.60
 
     Subsequent periods drop the earlier-period terms from the sum.
     """

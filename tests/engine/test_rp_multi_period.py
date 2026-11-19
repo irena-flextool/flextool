@@ -83,9 +83,10 @@ def _total_cost(step) -> float:
 
 
 def test_every_period_gets_rp_weights_without_blended_nodes(tmp_path_factory):
-    """Plain bind_within_solve nodes: y2040's representative steps keep their weights 1.1 / 0.9 (before, every
-    period but the first fell back to 1.0)."""
-    steps = _run(tmp_path_factory, _overlay(_methods("bind_within_solve")))
+    """Plain (not blended) bind_within_timeblock nodes: y2040's representative steps keep their weights 1.1 / 0.9
+    (before, every period but the first fell back to 1.0).  bind_within_timeblock: a plain bind_within_solve is a
+    configuration error on representative periods."""
+    steps = _run(tmp_path_factory, _overlay(_methods("bind_within_timeblock")))
     fd = steps[SOLVE].flex_data
     assert _weights(fd, "y2030") == [1.4, 0.6]
     assert _weights(fd, "y2040") == [1.1, 0.9]
@@ -169,8 +170,18 @@ def test_variant_order_on_two_periods(tmp_path_factory):
     # 16 367 662 856 before c15e1: FA-1 (exact self-discharge of the fixture's 1e-4/h batteries) +2.9e-6 →
     # 16 367 709 994; FA-3 (the bind_within_solve batteries' fix_start pin moved from the end of y2030, mid-horizon,
     # to the end of y2040, the state the first step starts from) +2.8 %: the batteries now end y2040 at the pin and
-    # refill there, competing with y2040's H2 shortfall (the same mechanism as the RP Benders M_rp pin).
-    assert cost["wp"] == pytest.approx(16_820_838_994.0, rel=1e-6)
+    # refill there, competing with y2040's H2 shortfall (the same mechanism as the RP Benders M_rp pin) →
+    # 16 820 838 994. Annuity timing, A = C·ann(r, n)·(1 + r)^(offset − 1): pipe_AB / pipe_BC have r = 0.05 and the
+    # default offset 0, so every v_invest objective coefficient is divided by 1.05 (y2030 14.190491 → 13.514754,
+    # y2040 7.095246 → 6.757377) with the v_invest values unchanged; the investment term 6 522 876 / 1.05 =
+    # 6 212 263, −310 613, and dispatch is unchanged → 16 820 528 381.
+    # 16 820 528 381 → 16 910 567 160 (+0.54 %): the lh2 nodes' fix_start 0.5 now pins the level their y2030 chain
+    # starts from (rp_inter_period_start_fix; the closure holds y2030's cycle there), not a free offset inside
+    # their first block.
+    # 16 910 567 160 → 16 457 293 278 (−2.7 %): the fixture's batteries cycle within each representative day
+    # (bind_within_timeblock; a plain bind_within_solve on representative periods is now a configuration error), so
+    # their whole-solve fix_start pin is gone.
+    assert cost["wp"] == pytest.approx(16_457_293_278.0, rel=1e-6)
 
 
 def test_mixed_variants_in_one_solve(tmp_path_factory):
@@ -206,7 +217,7 @@ def test_mixed_rp_and_non_rp_periods_with_blended_node_raises(tmp_path_factory):
 
 
 def test_mixed_rp_and_non_rp_periods_keep_both_weights(tmp_path_factory):
-    fd = _run(tmp_path_factory, _y2040_plain_timeset("bind_within_solve"))[SOLVE].flex_data
+    fd = _run(tmp_path_factory, _y2040_plain_timeset("bind_within_timeblock"))[SOLVE].flex_data
     assert _weights(fd, "y2030") == [1.4, 0.6]
     assert _weights(fd, "y2040") == [round(2.0 * 48 / 72, 9), round(48 / 72, 9)]
 
@@ -218,7 +229,8 @@ def test_mixed_rp_and_non_rp_periods_keep_both_weights(tmp_path_factory):
 
 def test_stochastic_solve_with_rp_timeset_solves(tmp_path_factory):
     """The forecast branch periods take the timeset of the period they branch from, so each gets its own rp data
-    (item 125; before: a FlexToolConfigError)."""
+    (item 125; before: a FlexToolConfigError).  The reservoir is bind_forward_only_blended_weights: plain
+    bind_forward_only (its default) is a configuration error in a solve on representative periods (Phase 5)."""
     rpw = {"type": "map", "index_type": "str", "index_name": "base_period", "rank": 1,
            "data": [[b, {"type": "map", "index_type": "str", "index_name": "representative_period", "rank": 1,
                          "data": [["t0001", 1.0]]}] for b in ("t0001", "t0025")]}
@@ -226,7 +238,8 @@ def test_stochastic_solve_with_rp_timeset_solves(tmp_path_factory):
     def patch(data):
         return L._overlay(data, name="custom", base="2_day_stochastic_dispatch", values=[
             ["timeset", "2day", "timeset_duration", L._pmap({"t0001": 24.0}, "time")],
-            ["timeset", "2day", "representative_period_weights", rpw]])
+            ["timeset", "2day", "representative_period_weights", rpw],
+            ["node", "hydro_reservoir", "storage_binding_method", "bind_forward_only_blended_weights"]])
     steps = _run(tmp_path_factory, patch, STOCH_JSON)
     fd = list(steps.values())[-1].flex_data
     rp_periods = set(_utf8(fd.rp_block_first)["d"].unique().to_list())
@@ -237,21 +250,14 @@ def test_stochastic_solve_with_rp_timeset_solves(tmp_path_factory):
     assert all(_weights(fd, p) == [1.0] for p in branch_periods)
 
 
-def test_rolling_solve_with_blended_nodes_binds_forward_only(tmp_path_factory, caplog):
-    """A rolling_window solve on representative periods: the blended nodes bind forward only, with one warning
-    (item 126; before: a FlexToolConfigError)."""
-    import logging
-
-    caplog.set_level(logging.WARNING, logger="flextool.engine.solve._run_model")
+def test_rolling_solve_on_representative_periods_is_an_error(tmp_path_factory):
+    """A rolling_window solve on representative periods stops with a configuration error (owner decision, Phase 4;
+    item 126 had made its blended nodes bind forward only, with a warning)."""
     patch = _overlay([["solve", SOLVE, "solve_mode", "rolling_window"],
                       ["solve", SOLVE, "rolling_solve_horizon", 48.0],
                       ["solve", SOLVE, "rolling_solve_jump", 24.0]])
-    steps = _run(tmp_path_factory, patch)
-    assert len(steps) > 1
-    warnings = [r.getMessage() for r in caplog.records if "storage_binding_method is not applied" in r.getMessage()]
-    assert len(warnings) == 1 and "lh2_A, lh2_B, lh2_C" in warnings[0]
-    for step in steps.values():
-        assert step.flex_data.nodeState_rp is None or step.flex_data.nodeState_rp.height == 0
+    with pytest.raises(FlexToolConfigError, match="rolling over representative periods is not supported"):
+        _run(tmp_path_factory, patch)
 
 
 # ---------------------------------------------------------------------------
@@ -263,12 +269,19 @@ def test_rolling_solve_with_blended_nodes_binds_forward_only(tmp_path_factory, c
 @pytest.mark.parametrize("variant", ["ws", "fo", "wp"])
 def test_rp_matches_hourly_reference(tmp_path_factory, exp, variant):
     """Within 1 % of the hourly model of the same days (before: 3–100 % off in ws / fo).  within_period's
-    hourly twin cycles each period with one 168 h bind_within_timeblock block."""
+    hourly twin cycles each period with one 168 h bind_within_timeblock block.
+
+    forward_only runs with fix_start 0.5 on the lh2 nodes: both models then start from the same level before the
+    first step (the RP chain start, rp_inter_period_start_fix; the hourly start term) and end free.  With a free start
+    the two differ by construction: the RP chain starts before its first block, while the hourly forward chain has
+    no state change in its first step (a 24 h coarse step of the lh2 nodes), and both must end at least at their
+    start (the matching end), so the hourly model loses its first day of storage use."""
     fn = H.EXPERIMENTS[exp]
-    rp = _total_cost(_run(tmp_path_factory, fn("rp", H.BLENDED[variant]))[SOLVE])
+    start = 0.5 if variant == "fo" else None
+    rp = _total_cost(_run(tmp_path_factory, fn("rp", H.BLENDED[variant], start))[SOLVE])
     if variant == "wp":
         hourly_patch = H.one_block(fn, "hourly", "bind_within_timeblock")
     else:
-        hourly_patch = fn("hourly", H.PLAIN[variant])
+        hourly_patch = fn("hourly", H.PLAIN[variant], start)
     hourly = _total_cost(_run(tmp_path_factory, hourly_patch)[SOLVE])
     assert rp == pytest.approx(hourly, rel=1e-2), (exp, variant, rp, hourly)

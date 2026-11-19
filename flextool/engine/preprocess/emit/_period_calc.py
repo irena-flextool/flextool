@@ -48,6 +48,7 @@ import polars as pl
 from flextool.engine.input._constants import HOURS_PER_YEAR
 from flextool.engine.preprocess._provider_io import _emit
 from flextool.engine.preprocess.params._branch import branch_periods_inherit_carry
+from flextool.engine.preprocess.params._discount import _INFL_OFFSET_INV_DEFAULT, _INFL_OFFSET_OPS_DEFAULT
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +79,21 @@ def _read_csv(path: Path, columns: list[str],
         {c: [] for c in columns},
         schema={c: pl.Utf8 for c in columns},
     )
+
+
+def scalar_max(csv_path: Path, default: float, *, provider: "object | None" = None) -> float:
+    """The largest value of a ``(key, value)`` scalar CSV of the model (``p_social_discount_rate.csv``,
+    ``p_discount_offset_investment.csv``, ...), ``default`` when it has none."""
+    rows_df = _read_csv(csv_path, ["key", "value"], provider=provider)
+    vals: list[float] = []
+    for v in rows_df["value"].to_list():
+        if v is None or v == "":
+            continue
+        try:
+            vals.append(float(v))
+        except ValueError:
+            continue
+    return max(vals) if vals else default
 
 
 def _read_singles(path: Path,
@@ -281,25 +297,11 @@ def emit_period_calculated_params(
     _emit_keyed(provider, "solve_data/complete_period_share_of_year_calc.csv",
                 ("period", "value"), complete_share)
 
-    def _scalar_max(csv_path: Path, default: float) -> float:
-        rows_df = _read_csv(csv_path, ["key", "value"], provider=provider)
-        vals: list[float] = []
-        for v in rows_df["value"].to_list():
-            if v is None or v == "":
-                continue
-            try:
-                vals.append(float(v))
-            except ValueError:
-                continue
-        return max(vals) if vals else default
-
-    p_inflation = _scalar_max(input_dir / "p_inflation_rate.csv", 0.0)
-    p_infl_offset_investment = _scalar_max(
-        input_dir / "p_inflation_offset_investment.csv", 0.0,
-    )
-    p_infl_offset_operations = _scalar_max(
-        input_dir / "p_inflation_offset_operations.csv", 0.5,
-    )
+    p_inflation = scalar_max(input_dir / "p_social_discount_rate.csv", 0.0, provider=provider)
+    p_infl_offset_investment = scalar_max(input_dir / "p_discount_offset_investment.csv", _INFL_OFFSET_INV_DEFAULT,
+                                          provider=provider)
+    p_infl_offset_operations = scalar_max(input_dir / "p_discount_offset_operations.csv", _INFL_OFFSET_OPS_DEFAULT,
+                                          provider=provider)
 
     global_years_set: dict[str, None] = {}
     for years_list in years_for_period.values():
@@ -320,10 +322,10 @@ def emit_period_calculated_params(
         1.0 / (1.0 + p_inflation) if p_inflation != -1.0 else 1.0
     )
 
-    # The years from the start of the run (``_npv`` "The discount base of a solve's own factors"), when the
+    # The years from the start of the run (``_discount`` "The discount base of a solve's own factors"), when the
     # solve's own count does not give them: a roll or nested sub-solve of a solve that starts after the run
     # start, or fractional years.  None keeps the own count below.
-    from flextool.engine.preprocess.params._npv import notice_discount_from_run_start, year_rows_from_history
+    from flextool.engine.preprocess.params._discount import notice_discount_from_run_start, year_rows_from_history
     history: dict[str, float] = {}
     for d, v in zip(pwh_df["period"].to_list(), pwh_df["value"].to_list()):
         if d and d not in history:

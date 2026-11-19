@@ -2,7 +2,7 @@
 
 Exercises the P2 chain end to end (``commissioning_year_lf`` ->
 ``period_walk_iterator`` commission injection -> availability filters ->
-``edd_invest_set``) against a hand-built source on the design §2.3 uneven
+the investment cohorts' ``invest_alive`` view) against a hand-built source on the design §2.3 uneven
 calendar (seams ``S = {0, 5, 8, 20}``), without invoking the LP.  Pins:
 
 * §7a deterministic lag — the alive (order -> available) set shifts by the
@@ -22,9 +22,9 @@ import math
 import polars as pl
 import pytest
 
+from flextool.engine.preprocess.params._cohorts import invest_alive, invest_cohorts
 from flextool.engine.preprocess.params._existing import (
     commissioning_year_lf,
-    edd_invest_set_lf,
     offered_invest_set,
 )
 
@@ -74,7 +74,7 @@ def _source(*, entity="nuke", lifetime_method="reinvest_automatic",
             {"name": [entity], "value": [lifetime_method]}),
     }
     if life is not None:
-        params[("unit", "lifetime")] = pl.DataFrame(
+        params[("unit", "lifetime_technical")] = pl.DataFrame(
             {"name": [entity], "value": [float(life)]})
     if lead is not None:
         params[("unit", "construction_lead_time")] = pl.DataFrame(
@@ -86,14 +86,14 @@ def _source(*, entity="nuke", lifetime_method="reinvest_automatic",
 
 
 def _alive(source, order="p1", entity="nuke"):
-    """Alive periods of edd_invest_set for (entity, order), with the lag
+    """Alive periods of the investment (entity, order), with the lag
     threaded through commissioning_year_lf exactly as the derive site does."""
-    ed_invest = pl.LazyFrame({"e": [entity], "d": [order]})
+    ed_invest = pl.DataFrame({"e": [entity], "d": [order]})
     commission_lf = commissioning_year_lf(
-        source, "s", ed_invest, PERIODS)
-    edd = edd_invest_set_lf(
-        source, "s", ed_invest, PERIODS, PERIODS,
-        commission_lf=commission_lf).collect()
+        source, "s", ed_invest.lazy(), PERIODS)
+    _, alive = invest_cohorts(
+        source, "s", ed_invest, PERIODS, commission_lf=commission_lf)
+    edd = invest_alive(alive)
     return sorted(edd.filter(pl.col("d_invest") == order)["d"].to_list())
 
 

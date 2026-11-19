@@ -95,7 +95,7 @@ def _names(df, col):
     return sorted(str(x) for x in df.get_column(col).to_list())
 
 
-def test_is_dc_connection_inside_dc_power_flow_group_keeps_the_group_lines(tmp_path_factory, capsys):
+def test_is_dc_connection_inside_dc_power_flow_group_keeps_the_group_lines(tmp_path_factory, coded_log):
     """An is_DC connection inside a dc_power_flow_with_angles group is not a DC power-flow line; the group's
     other lines and its reference_node stay as they are.
 
@@ -114,9 +114,9 @@ def test_is_dc_connection_inside_dc_power_flow_group_keeps_the_group_lines(tmp_p
     _add_marker(url1)
 
     base = _run_one(tmp_path_factory, url0, scen0).flex_data
-    assert "dc_power_flow_with_angles groups" not in capsys.readouterr().out
+    assert "dc_power_flow_with_angles groups" not in coded_log()
     hvdc = _run_one(tmp_path_factory, url1, scen1).flex_data
-    out = capsys.readouterr().out
+    out = coded_log()
 
     base_lines = _names(base.connection_dc_power_flow, "p")
     assert len(base_lines) == 20 and "line_12_13" in base_lines

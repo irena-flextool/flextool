@@ -47,6 +47,7 @@ from lp_snapshot import (  # noqa: E402
     _build_fixture_db,
     _fixture_by_name as _lp_fixture_by_name,
 )
+from flextool.process_outputs.handoff_writers import MIRROR_FILES as _HANDOFF_MIRROR_FILES  # noqa: E402
 
 OUTPUT_CONFIG = REPO / "templates" / "default_plots.yaml"
 
@@ -60,17 +61,9 @@ GATE15: tuple[str, ...] = (
     "stochastic_1_week_rolling_wind", "invest_limits", "conn_exact_flow",
 )
 
-# Mirrors the ``handoff_writers.MIRROR_FILES`` tuple design_163.md §3.4 adds in commit 163-4 — the
-# six solve_data/ write-only handoff-mirror CSVs a run leaves behind.  Hardcoded here (163-0 runs
-# before 163-4 exists); keep in sync with that tuple once it lands.
-MIRROR_FILES: tuple[str, ...] = (
-    "p_entity_divested.csv",
-    "fix_storage_quantity.csv",
-    "fix_storage_usage.csv",
-    "p_roll_continue_state.csv",
-    "period_capacity.csv",
-    "p_entity_period_existing_capacity.csv",
-)
+# The solve_data/ handoff-mirror CSVs a run leaves behind (including the retired ones a work folder from an older
+# version may still hold): the engine's own list.
+MIRROR_FILES: tuple[str, ...] = _HANDOFF_MIRROR_FILES
 
 
 def _fixture_by_name(name: str) -> Fixture:
@@ -267,7 +260,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
                 print(f"{name}: both runs failed identically ({a_txt!r}) — no output to diff")
             continue
         diffs = diff_output_trees(a_dir, b_dir, fx.scenario)
-        # The six handoff mirrors are byte-compared directly (not under output_raw/out/).
+        # The handoff mirrors are byte-compared directly (not under output_raw/out/).
         for mirror in MIRROR_FILES:
             ap, bp = a_dir / "solve_data" / mirror, b_dir / "solve_data" / mirror
             if ap.is_file() != bp.is_file():

@@ -10,7 +10,9 @@ or a deeper one (owner decision Q-c15e-B, with the nested clarification of 2026-
   solves can then send the end storage values to the investment and long-term storage solves as start values");
 * a lower nested level starts from ``fix_start`` at its first appearance (no realised state exists at its level or
   below), and later instances of the level continue from the latest realised state at that level or below; the
-  upper solve supplies only the END of the lower horizon (the nested fix methods).
+  upper solve supplies the END of the lower horizon (the nested fix methods) and, for the nodes it fixes that have
+  no realised state yet, the START the cascade adds to the routed state (``_run_model._borrow_upper_start``:
+  borrowed end ⇒ borrowed start, unless fix_start applies at the model start).
 
 A node with no realised state yet starts from ``fix_start`` (or free).  ``nesting_level`` counts the
 ``contains_solve`` hops above a sub-solve.  An auto-spawned realised-dispatch sibling is at its parent's level and
@@ -120,9 +122,11 @@ class CarryRouter:
         self._entries.append(RealisedEntry(len(self._entries), solve, self.nesting_level(solve), end_step, end,
                                            state, handoff))
 
-    def sources(self, solve: str, first_step: "tuple[str, str] | None") -> list[RealisedEntry]:
+    def sources(self, solve: str, first_step: "tuple[str, str] | None",
+                quiet: "set | frozenset" = frozenset()) -> list[RealisedEntry]:
         """The entries ``solve`` may continue from, oldest first: recorded before it started, at its nesting level
-        or deeper, and realised before its first step in time (when both positions are known)."""
+        or deeper, and realised before its first step in time (when both positions are known).  ``quiet``: nodes
+        the shallower-state warning does not name (they start from the upper solve's plan)."""
         level = self.nesting_level(solve)
         cutoff = self._cutoff.get(solve, len(self._entries))
         first = self._position(*first_step) if first_step is not None else None
@@ -134,20 +138,23 @@ class CarryRouter:
                 key = (solve, entry.solve)
                 if key not in self._warned:
                     self._warned.add(key)
-                    _LOG.warning(
-                        "The state realised by solve '%s' (ending at %s) is not before the start of solve '%s' "
-                        "(%s); it is not carried into it.", entry.solve, entry.end_step, solve, first_step)
+                    from flextool import run_warnings
+                    run_warnings.warn_grouped(
+                        "W-0502", [entry.solve], solve=solve,
+                        details={entry.solve: f"its state ends at {entry.end_step}; solve '{solve}' starts at "
+                                              f"{first_step}"})
                 continue
             out.append(entry)
         if not out:
-            self._warn_shallower(solve, level, cutoff, first, first_step)
+            self._warn_shallower(solve, level, cutoff, first, first_step, quiet)
         return out
 
-    def roll_end_state(self, solve: str, first_step: "tuple[str, str] | None") -> "pl.DataFrame | None":
+    def roll_end_state(self, solve: str, first_step: "tuple[str, str] | None",
+                       quiet: "set | frozenset" = frozenset()) -> "pl.DataFrame | None":
         """``[node, value]`` (MWh, sorted by node): per node the state of the latest entry holding it; None when no
-        entry applies (the sub-solve is the first of its level for every node)."""
+        entry applies (the sub-solve is the first of its level for every node).  ``quiet``: as :meth:`sources`."""
         latest: dict[str, float] = {}
-        for entry in self.sources(solve, first_step):
+        for entry in self.sources(solve, first_step, quiet):
             frame = entry.roll_end_state
             if frame is None:
                 continue
@@ -175,7 +182,8 @@ class CarryRouter:
             out["roll_end_step"] = with_end_position(out["roll_end_step"], self._end_of)
         return out
 
-    def _warn_shallower(self, solve: str, level: int, cutoff: int, first, first_step) -> None:
+    def _warn_shallower(self, solve: str, level: int, cutoff: int, first, first_step,
+                        quiet: "set | frozenset" = frozenset()) -> None:
         """The first sub-solve of a level starts from fix_start although a shallower level realised a state before
         it (a level that first appears later in the model): visible, not changed (owner rule)."""
         shallow = [e for e in self._entries[:cutoff] if e.level < level
@@ -190,11 +198,13 @@ class CarryRouter:
         if key in self._warned:
             return
         self._warned.add(key)
-        nodes = ", ".join(sorted(str(n) for n in entry.roll_end_state["node"].to_list()))
-        _LOG.warning(
-            "Solve '%s' is the first solve of its nesting level: its storage node(s) %s start from "
-            "storage_start_end_method (fix_start) or free, not from the state solve '%s' realised at a higher level "
-            "before it.", solve, nodes, entry.solve)
+        names = sorted(str(n) for n in entry.roll_end_state["node"].to_list() if str(n) not in quiet)
+        if not names:
+            return
+        from flextool import run_warnings
+        run_warnings.warn_grouped("W-0503", names, solve=solve,
+                                  details=f"solve '{solve}': not from the state solve '{entry.solve}' realised at a "
+                                          f"higher level before it")
 
 
 class RoutedCarriers:
@@ -332,6 +342,20 @@ class _TimeIndex:
         branch = str(period) if str(period) in self._anchor else None
         return self._rank[base], root, end, branch
 
+    def span(self, period: str, step: str, duration: float) -> "tuple[int, str, int, int] | None":
+        """``(period rank, base timeline, base index of the step's start, base index after it)``; None when the step
+        cannot be placed (:meth:`end_of`)."""
+        end = self.end_of(period, step, duration)
+        pos = self.position(period, step)
+        if end is None or pos is None:
+            return None
+        return end[0], end[1], pos[1], end[2]
+
+    def hours(self, root: str, start: int, stop: int) -> float:
+        """The hours of the base timeline ``root`` from base index ``start`` up to (not including) ``stop``."""
+        hours = self._hours.get(root) or []
+        return float(sum(hours[max(start, 0):max(stop, 0)]))
+
     def end(self, solve: str) -> "Position | None":
         """``(period rank, base-timeline index after the solve's last step)``: where the sub-solve's horizon ends (the
         latest end over its periods, so a stochastic solve ends with its terminal branches); None when unknown."""
@@ -393,6 +417,34 @@ def reaches_model_end(solves: list, active_time_lists: dict, period_branch_lists
     return [s == tail or (siblings.get(s) == tail and tail is not None) for s in solves]
 
 
+def reaches_solve_end(solves: list, active_time_lists: dict, period_branch_lists: dict, *, complete_solve: dict,
+                      parent_roll: dict, timesets_used_by_solves: dict, timesets__timeline: dict, timelines: dict,
+                      original_timeline: dict) -> list[bool]:
+    """Per sub-solve (by position in ``solves``): whether its horizon holds the last step of its solve instance.
+
+    An instance is the complete solve under one parent sub-solve, ``(complete_solve[s], parent_roll[s])``: the rolls
+    of a rolling solve, or the rolls of one nested instance of it.  Its last step is the latest end over its
+    sub-solves (:meth:`_TimeIndex.end`), as :func:`reaches_model_end` does over the whole run, so every roll whose
+    horizon (look-ahead included) runs to that step reaches it: with a horizon that is not a multiple of the jump
+    two rolls do.  A sub-solve that cannot be placed in time reaches it only when no sub-solve of its instance can
+    be placed and it is the instance's last one.
+    """
+    index = _TimeIndex(solves, active_time_lists, period_branch_lists, complete_solve=complete_solve,
+                       timesets_used_by_solves=timesets_used_by_solves, timesets__timeline=timesets__timeline,
+                       timelines=timelines, original_timeline=original_timeline)
+    key = [(complete_solve.get(s, s), parent_roll.get(s)) for s in solves]
+    ends = [index.end(s) for s in solves]
+    last: dict = {}
+    tail: dict = {}
+    for k, e in zip(key, ends):
+        tail[k] = None
+        if e is not None and (k not in last or e > last[k]):
+            last[k] = e
+    for s, k in zip(solves, key):
+        tail[k] = s
+    return [(e == last[k]) if k in last else (s == tail[k]) for s, k, e in zip(solves, key, ends)]
+
+
 def first_step(active_time_list: dict) -> "tuple[str, str] | None":
     """``(period, step)`` of the first step of a sub-solve's active time list."""
     for period, steps in (active_time_list or {}).items():
@@ -402,4 +454,5 @@ def first_step(active_time_list: dict) -> "tuple[str, str] | None":
 
 
 __all__ = ["STEP_FIELDS", "CarryRouter", "RealisedEntry", "RoutedCarriers", "first_step", "make_position",
-           "make_time_index", "reaches_model_end", "with_end_position", "END_POSITION_COLUMNS"]
+           "make_time_index", "reaches_model_end", "reaches_solve_end", "with_end_position",
+           "END_POSITION_COLUMNS"]

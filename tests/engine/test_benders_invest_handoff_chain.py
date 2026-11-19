@@ -22,7 +22,7 @@ PRODUCTION path:
 3. the live per-iteration LB/UB lines + final valid-bound summary reach
    stdout, and
 4. the TIER-1 invest handoff is DEPOSITED non-empty (the invested pipes
-   carry forward positive capacity in ``handoff.realized_invest``).
+   carry forward positive capacity in ``handoff.realized_cohort``).
 
 After the v62 rename the fixture's authored ``decomposition`` /
 ``decomposition_method`` migrate to ``benders`` / ``benders_regional`` at
@@ -175,9 +175,9 @@ def test_benders_routing_and_handoff_through_orchestrator(
     assert not step.handoff.is_empty(), (
         "step handoff is empty despite a real investing Benders solve"
     )
-    ri = step.handoff.realized_invest
+    ri = step.handoff.realized_cohort
     assert ri is not None and ri.height > 0, (
-        "step handoff.realized_invest is empty/None"
+        "step handoff.realized_cohort is empty/None"
     )
     val_col = ri.columns[-1]
     ent_col = ri.columns[0]
@@ -247,9 +247,9 @@ def test_invest_dispatch_chain_consumes_handoff_under_benders(tmp_path) -> None:
     assert not invest_step.handoff.is_empty(), (
         "invest step handoff is empty despite a real investing Benders solve"
     )
-    ri = invest_step.handoff.realized_invest
+    ri = invest_step.handoff.realized_cohort
     assert ri is not None and ri.height > 0, (
-        "invest step handoff.realized_invest is empty/None"
+        "invest step handoff.realized_cohort is empty/None"
     )
     val_col = ri.columns[-1]
     ent_col = ri.columns[0]

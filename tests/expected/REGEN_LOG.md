@@ -1521,3 +1521,230 @@ Generated with `pytest "tests/test_scenarios.py::test_scenario[<scenario>]" --re
 the regeneration also rewrote the time stamp line of `summary_solve.csv` and the number / header format of some
 other CSVs (`costs__dt.csv`, `node__d.csv`, `node__dt.csv`, `slack__upward__node_state__dt.csv`), which were put
 back to their previous content (copied from a backup taken before the run). The 19 scenarios then pass in compare mode.
+
+## 2026-11-18 — the investment annuity is sized for when it is paid (18 scenarios, #187)
+
+**Context.** The yearly investment payment is now `invest_cost · ann(r, n) · (1 + r)^(inflation_offset_investment − 1)`
+(`flextool/engine/preprocess/_annuity.py`). The default offset 0 places each payment at the start of its year, so
+the year-end annuity `ann(r, n)` made the loan worth `invest_cost · (1 + r)` at the `discount_rate` r; now it is worth
+`invest_cost` (`tests/engine/test_annuity_timing.py`, hand-derived). None of these scenarios sets the offset, so
+every investment cost (and salvage annuity) falls by 1 / (1 + r): 1 / 1.05 (coal_plant, battery, ro_desal), 1 / 1.04
+(wind_plant), 1 / 1.07 (csp units and tank). `tools/lp_snapshot.py`: exactly the v_invest / v_divest cost
+coefficients of the 47 fixtures with an annuity change, by these ratios (nearer 1 where a fixed cost shares the
+coefficient).
+
+**Investment cost only (decisions unchanged; every other CSV and cell identical):** the investment columns of
+`costs_discounted.csv`, `cost_unit_annualized__d.csv`, `cost_unit_discounted__d.csv` (and the storage columns of
+`cost_node_*__d.csv` in `test_a_lot`) scale by the ratios above in `multi_year`, `multi_year_one_solve`,
+`multi_year_one_solve_battery`, `multi_year_one_solve_co2_limit`, `multi_fullYear_battery`,
+`multi_fullYear_battery_nested_24h_invest_one_solve`, `multi_fullYear_battery_nested_multi_invest`,
+`multi_fullYear_battery_nested_sample_invest_one_solve`, `test_a_lot`, `y2020_2029_1x10y`, `y2020_2029_2x5y`
+(e.g. `multi_year_one_solve` unit investment 584.9159 → 562.4192 = × 1 / 1.04; `y2020_2029_*` 221.4396 = coal
+20.9490 + wind 200.4906 → 19.9514 + 192.7794 = 212.7306), `desal_ro_invest` (4.8146 → 4.5853 = × 1 / 1.05),
+`csp_fixed_design` (10.7263 → 10.0246 and 3.2179 → 3.0074 = × 1 / 1.07; summary objective 50.8092 → 49.8970) and
+`csp_optimised_design` (summary objective 43.3526 → 41.9492; investment 21.4526 → 20.0492 = × 1 / 1.07), and
+`multi_year_wind_growth_cap` (summary: investment 267.1018 → 256.4288, the growth caps bind so the capacities do
+not move). The hand-derived `expected_objective` of `desal_ro_invest` (147.003997), `csp_fixed_design` (49.896971)
+and `csp_optimised_design` (41.949186) and the observed one of `y2020_2029_*` (439.245507091) are updated in
+`tests/scenarios.yaml` with their derivations.
+
+**Decisions move (cheaper investment buys more of it):**
+- `5weeks_invest_fullYear_dispatch_coal_wind`: wind_plant invests 8.75 MW (before 0); the dispatch solve's wind
+  output rises by the factor 1.00875 and coal output and commodity cost fall accordingly (`unit_capacity__d`,
+  `unit__outputNode__dt`, `costs__dt`).
+- `multi_year_wind_no_investment`: wind_plant invests 88.11 MW in p2020 (before 72.63; the p2025 decision unchanged); coal output, commodity cost
+  and CO2 (10.776 → 10.7154 Mt) fall; summary objective 5107.70 → 5055.86.
+- `network_coal_wind_battery_invest_cumulative`: wind is cheaper by 1 / 1.04 against coal and battery by 1 / 1.05,
+  so coal invests 205.25 MW in p2030 (before 219.96) and the battery and the west–east line are used more in p2025
+  (`unit_capacity__d`, `unit__outputNode__dt`, `connection__dt`, `node_state__dt`, `costs__dt`).
+
+Generated with `pytest "tests/test_scenarios.py::test_scenario[<scenario>]" --regenerate <scenario>` per scenario.
+The regeneration also rewrote 24 files whose values did not change (number format only: compared with the test's
+own rounding and tolerance); those were put back to their previous content (copied from a backup taken before the
+run). The 18 scenarios then pass in compare mode.
+
+## 2026-11-18 — the replacement of existing reinvest_automatic capacity is reported (8 scenarios, #187)
+
+**Context.** Existing `reinvest_automatic` capacity reaches its end of life and is replaced by a plant at the
+`invest_cost` of the period the replacement comes online (`flextool/engine/preprocess/params/_cohorts.py`
+`chain_rows`, `_npv.existing_replacement_prices`). The replacement is outside the optimised objective (as the fixed
+cost of existing capacity) and reported in its own category, *investment pre-existing* (*storage investment
+pre-existing* in the node tables), in the period it comes online (`tests/engine/test_existing_replacement.py`,
+hand-derived). The LPs of these scenarios do not change (no retirement option of the replaced capacity).
+
+**The one change:** the existing 50 MWh `battery` (lifetime_technical 10, invest_cost 200 CUR/kWh, discount_rate
+5 %, social_discount_rate 4 %, discount_offset_investment 0) is replaced in p2030 and serves p2030 and p2035:
+50 · A · Σ_{y=10..19} 1.04^−y = 50 · 24 667.538 · 5.698608 = 7.028531 M CUR, A = 200 · 1000 · 0.05 / (1 − 1.05^−10)
+/ 1.05. Added: the `investment pre-existing,7.0285` row of `costs_discounted.csv` (`test_a_lot`,
+`multi_fullYear_battery`, `multi_fullYear_battery_nested_24h_invest_one_solve`,
+`multi_fullYear_battery_nested_multi_invest`, `multi_fullYear_battery_nested_sample_invest_one_solve`,
+`multi_year_one_solve_battery`), the `storage investment pre-existing` column of `cost_node_discounted__d.csv`
+(7.0285 at p2030 battery, 0 elsewhere) and `cost_node_annualized__d.csv` (50 · A = 1.2334 M CUR a year in p2030 and
+p2035) of the same scenarios, and in `summary_solve.csv` of `multi_year_wind_growth_cap` and
+`multi_year_wind_no_investment` the line `Investment costs for pre-existing entities (M CUR),7.02853123343` and the
+calculated totals 7.028531 M higher (2050.83204573 → 2057.86057696, 5748.82887544 → 5755.85740667).
+
+Generated with `pytest "tests/test_scenarios.py::test_scenario[<scenario>]" --regenerate <scenario>` per scenario;
+the regeneration also rewrote cells whose values did not change beyond the test's own rounding and tolerance (number
+format, last-digit solver wobble of `costs__dt`, `node_state__dt`, `unit__outputNode__dt`): every cell other than the
+added column, row and line keeps its committed text. The 8 scenarios pass in compare mode.
+
+## 2026-11-18 — built reinvest_automatic capacity can be retired (`network_coal_wind_battery_invest_cumulative`, #187)
+
+**Context.** Capacity the model builds with `lifetime_method` `reinvest_automatic` can now be retired when its
+`invest_method` allows retirement (`cumulative_limits` does); retiring a MW pays the loan of the plant then in
+service, receives its salvage value and avoids every replacement still to come (`_npv.chain_retirement_costs`,
+`tests/engine/test_retire_automatic.py`, hand-derived). `tools/lp_snapshot.py`: this fixture gains the 20 + 10
+`v_divest_built_{p,n}` columns, the 8 + 4 `v_divested_built_{p,n}` and their `maxDivest_cohort` / `divestedBuilt`
+rows (the four other fixtures of the list in the commit likewise), no coefficient of an existing column changes.
+
+**Decisions move (a cheaper way to meet an investment tie):** the user constraint `battery_tie_kW_kWh` (equal, 0)
+ties the invested battery storage to 8 × the invested `battery_inverter` power (invest_cost 0). The 37.5 kW of
+inverter built in p2020 force 300 kWh of battery (invest_cost 200 CUR/kWh, lifetime_technical 10, no salvage value).
+Before, that battery was kept and replaced in p2030 at its invest_cost (the endless annuity); now the model retires
+279.24 kWh of it at once in p2020 (a MW built and retired at once costs its invest_cost once, the build-and-retire
+identity, instead of the whole chain) and the remaining 20.76 kWh at the replacement's start in p2030 (the
+replacement is never bought). The coal investment adjusts (p2030 205.25 → 187.18 MW, p2035 137.00 → 140.95 MW) and the
+dispatch with it (`unit_capacity__d`, `unit__outputNode__dt`, `connection__dt`, `node_state__dt`, `costs__dt`). The
+objective of the LP falls from 9005.0207 to 8977.1335 (scaled MPS units, HiGHS on the snapshot files).
+
+Generated with `pytest "tests/test_scenarios.py::test_scenario[network_coal_wind_battery_invest_cumulative]"
+--regenerate network_coal_wind_battery_invest_cumulative`; the solution moves, so its five files are taken whole. The
+scenario passes in compare mode.
+
+## 2026-11-18 — `tests/model/test_invest_chain_regression.py` follows the annuity sized for when it is paid (#187)
+
+**Context.** The test inlines the dispatch objective and the `p_entity_all_existing` frame of
+`5weeks_invest_fullYear_dispatch_coal_wind`; e561af23 (the investment annuity `invest_cost · ann(r, n) · (1 +
+r)^(offset − 1)`) moved both but did not update them (the `tests/expected/` goldens of this scenario were updated in
+that commit, see its entry above).
+
+**What moved, and why (LP diff `_audit_reports/lp_vintage_base` → `lp_p5_6`):** in the invest solve only the
+`v_invest_p` cost coefficients change: wind_plant 64.011963 → 61.549964 (exactly × 1 / 1.04, its discount_rate),
+coal_plant 63.010287 → 62.390750 (annuity 13.010287 → 12.390750 = × 1 / 1.05 plus the unchanged fixed cost 50). The
+cheaper wind invests 8.75 MW. In the dispatch solve only 144 RHS change (72 `maxFlow` and 72
+`profile_flow_upper_limit` rows of wind_plant), each exactly × 1.00875 = 1008.75 / 1000. Nothing else differs.
+
+**New values:** the dispatch solve's `p_entity_all_existing` of wind_plant is 1008.75 (the invest solve's stays 1000);
+the dispatch objective is the commodity cost of its 72 timesteps scaled to the year: 139 603.75 × 8760 / 72 =
+16 985 122.92 (before 146 350 × 8760 / 72 = 17 805 916.67, the old inlined value), the sums of `commodity_cost` in
+this scenario's `costs__dt.csv` golden after and before e561af23.
+
+## 2026-11-18 — investment-type costs reported by event (cost lines), 44 scenarios (#187)
+
+**Mechanism.** `calc_costs.cost_lines` replaces the class rows *unit / connection / storage investment &
+retirement* (and the node table's *storage investment* / *storage retirement*) by the cost lines of
+`params._cost_lines` (investment, replacement, extension, retirement, salvage end of life / replaced / extended /
+economic; the pre-existing lines where not 0), each in the period its event happens, from `_npv`'s split of the same
+lumps and coefficients (per decision the lines add up to the term to 1e-12, `tests/engine/test_cost_line_split.py`).
+Annualized, a line is its discounted value ÷ the period's investment factor. The LP is untouched (lp_snapshot
+695/695 identical vs `lp_p6_3`).
+
+**Files (regenerated with `--regenerate <scenario>`, one call per scenario; the solutions do not move):**
+- `costs_discounted.csv`, 32 scenarios: shape (class rows → line rows). Check (R3): per scenario, Σ old class rows
+  (+ *investment pre-existing*) = Σ new non-pre-existing line rows, to the 4-decimal rounding (largest gap 1e-4 M,
+  test_a_lot); every other category unchanged; no fixture gains a *salvage pre-existing* row (none has existing
+  capacity with a salvage credit).
+- `cost_unit_{discounted,annualized}__d.csv` (13), `cost_connection_*` (6), `cost_node_*` (6): columns (the lines in
+  place of investment / retirement); discounted values move between periods where a salvage value is set (the
+  salvage at the end of life, not netted into the investment) and to *replacement* where a reinvest_automatic plant
+  is replaced inside the horizon (multi_fullYear_battery family, test_a_lot); annualized investment values change
+  in every investing scenario (the event ÷ the period's factor instead of the yearly annuity of every vintage in
+  service). The non-line columns are unchanged.
+- `summary_solve.csv`, 19 scenarios (text compare): the rows *Investment costs for realized periods*, *Retirement
+  costs / salvage revenue for realized periods* and *Investment costs for pre-existing entities* are replaced by one
+  row per line, and the row *Total cost counted in the objective* is added after the calculated totals; the
+  calculated totals are unchanged.
+
+Files the regeneration rewrote within the compare tolerance but that this change does not touch (`costs__dt`,
+`node__d`, `node__dt`, `node_state__dt`, `slack__upward__node_state__dt`, `unit__outputNode__dt`, `unit_capacity__d`
+of 16 scenarios) were restored to their previous content.
+
+## 2026-11-18 — one *salvage* line in the cost tables; fixed costs of new and retired capacity in each period paid (32 scenarios, #187)
+
+**Mechanism.** (1) Owner decision: the cost tables show the four salvage causes (*salvage end of life / replaced /
+extended / economic*) as one *salvage* line, their sum (`calc_costs.lines_by_period` / `lines_by_entity`,
+`_cost_lines.TABLE_LINES`); `summary_solve.csv` keeps them apart (`r.costLinesByCause_d`). (2) The discounted *fixed
+cost invested* / *fixed cost reduction of divestments* are reported in each period they are paid or saved, from the
+capacity of each cohort in service (`calc_costs.fixed_costs_in_service`: capacity × fixed_cost × the run's operations
+factor × branch weight), no longer as one lump over the capacity's life at its start of operation / retirement
+period. Annualized fixed costs (the yearly amounts) do not change. The LP is untouched (lp_snapshot 695/695
+identical vs `lp_p6_3`).
+
+**Files (regenerated with `--regenerate <scenario>`, one call per scenario; the solutions do not move):**
+- `costs_discounted.csv`, 32 scenarios: shape only (four salvage rows → one *salvage* row = their sum; in every
+  fixture the four were 0). Check: Σ all rows unchanged (largest gap 2e-13), every other row unchanged.
+- `cost_unit_{discounted,annualized}__d.csv` (11 scenarios), `cost_node_*` (6): the four salvage columns → one
+  *salvage* column, their sum, cell by cell. `cost_unit_discounted__d.csv` of `multi_year` (a chain: coal_plant's
+  *fixed cost invested* 63.22 / 142.76 / 0 M in p2025 / p2030 / p2035 → 25.32 / 99.16 / 81.51) and
+  `y2020_2029_2x5y` (80.51 / 0 → 40.25 / 40.25 in p2020 / p2025) move fixed cost invested between periods; per entity
+  the totals over the periods are unchanged (largest gap below the 4-decimal rounding). Every other column, and the
+  `cost_connection_*` tables, unchanged.
+- `summary_solve.csv`: unchanged (the cause rows stay; the fixed-cost totals are the same).
+
+Files the regeneration rewrote that this change does not touch (`costs__dt`, `node__d`, `node_state__dt`,
+`unit__outputNode__dt`, `slack__upward__node_state__dt`, `summary_solve` timestamps; within the 1e-4 compare
+tolerance) were restored to their previous content. All 44 `test_scenario` cases and their `test_obj_decomposition`
+pass.
+
+## 2026-11-18 — the rp lh2 fixture's batteries cycle within each representative day; two re-captured pins (rolling storage carry, Phase 4)
+
+No golden CSV changed.
+
+**Context.** A plain `bind_within_solve` (or `bind_within_period`, `bind_intraperiod_blocks`) storage in a solve on
+representative periods is now a configuration error: it carried the state from one representative day into the
+next without their weights while the flows counted with them, so the solve could deliver energy it never charged
+(`tests/engine/test_rp_storage_guards.py`).  The batteries of `tests/fixtures/lh2_three_region_rp_invest.json` were
+plain `bind_within_solve` in the three representative-period alternatives; `regen_lh2_three_region.py` now gives
+them `bind_within_timeblock` there (one representative day is one timeset block), and the JSON was regenerated
+(only these nine values added).
+
+- `tests/engine/test_benders_phase3b_rp_loop.py`: `_M_RP_EXPECTED` 9 437 466 952.7 → 9 034 135 956.5 (−4.3 %); the
+  Benders loop's upper bound converges to the same value.
+- `tests/engine/test_rp_multi_period.py::test_variant_order_on_two_periods`, `bind_within_period_blended_weights`
+  cost: 16 910 567 160 → 16 457 293 278 (−2.7 %).
+
+## 2026-11-19 — four rolling and nested battery scenarios (rolling storage carry, Phase 3; regenerated in Phase 5)
+
+**Context.** `test_scenario[fullYear_roll]` and the three `multi_fullYear_battery_nested_*` scenarios pass on
+6152569e and fail from 7c7eb7ec (Phase 3 of feat/rolling-storage-carry) on; they were outside the test sets run
+in Phases 3 and 4. Phase 5 does not change them (identical failures on 00d145a1).
+
+- `fullYear_roll/summary_solve.csv`: the battery (`bind_within_timeblock`, which a rolling solve now uses as
+  `bind_within_period`) continues each roll from the realised level and closes each 72-h period at its start
+  level; before, every roll cycled on itself from a free level, so the rolls could use energy never produced. The
+  roll objectives of the rolls that close or anchor change (e.g. roll 5 483.17 → 493.03, roll 35 586.37 → 591.53);
+  the last roll's objective is the one `tests/engine/test_phase_e_g_multi_roll.py` pins (3.484427e8).
+- `multi_fullYear_battery_nested_{24h_invest_one_solve,multi_invest,sample_invest_one_solve}` (cost tables,
+  `node_state__dt`, `unit__outputNode__dt`): the battery is fixed by the 6-h storage solve (`fix_quantity`) above
+  the rolling dispatch (horizon 8 h, jump 4 h). A roll's horizon ends inside a 6-h upper step; it is now fixed at
+  the upper level interpolated at that moment instead of the level at the end of the step (Phase 3, "nested
+  fix_quantity interpolated"), so the battery path and the coal dispatch move; commodity cost 338.87 → 331.97 and
+  233.26 → 228.63. No slack.
+
+**Decision** (agent, pending owner review): accept the regeneration; the old values were the behaviour the
+branch fixes (roll-boundary free energy, and a target taken at the wrong moment).
+
+## 2026-11-18 — the note of *Total cost counted in the objective* in `summary_solve.csv` (19 scenarios, #187)
+
+**Mechanism.** Text only. The note said the row is "the solver objective for one deterministic solve". That holds only
+when the solve realizes every period it optimises: a solve with look-ahead periods has their operation in the solver
+objective but in no cost table, so the row is the realized part of the objective (`test_obj_decomposition` checks
+the equality only for a run whose `Period` row is all realized). The note (`write_outputs.py`) now says so. No number
+moves; the LP is untouched.
+
+**Files.** `summary_solve.csv` of the 19 scenarios that compare it (every golden holding the old note): the one note
+cell replaced by the writer's new text, nothing else changed. Check: the 19 `test_scenario` cases pass (the file is
+compared as text, timestamps stripped).
+
+## 2026-11-19 — merge of feat/invest-retire-vintages (dfd1efed) into feat/rolling-storage-carry
+
+- `fullYear_roll/summary_solve.csv`: regenerated on the merged code. Both branches had changed it (the storage
+  branch the roll objectives and totals, the vintages branch the note of *Total cost counted in the objective*). The
+  regenerated file holds the storage branch's numbers (6165.32086306) and the vintages branch's note; nothing else.
+- `tests/engine/test_rp_multi_period.py::test_variant_order_on_two_periods`: the merged code gives 16 457 293 278,
+  the storage branch's pin. The annuity-timing change (e561af23) is in the merge base, so the storage branch's
+  re-captures already contained it; the vintages branch only brought the pin up to date with it. The comment chain
+  now lists the annuity step (16 820 838 994 → 16 820 528 381) before the storage steps.
+
+**Decision** (agent, pending owner review): accept.

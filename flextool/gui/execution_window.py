@@ -10,6 +10,7 @@ from tkinter import ttk, messagebox
 from flextool.gui._menus import popup_at_pointer
 from flextool.gui.execution_manager import ExecutionManager, JobStatus, JobType
 from flextool.gui.hover_tooltip import attach_tooltip
+from flextool.gui.log_view import SOLVER_BLOCK_STARTS, LogView
 
 #: Hover text of the "Threads per run" setting.
 THREADS_PER_RUN_TIP = (
@@ -21,10 +22,8 @@ THREADS_PER_RUN_TIP = (
 
 logger = logging.getLogger(__name__)
 
-#: A line that opens a solver's log block, which the run output greys until the next phase row: HiGHS' banner and
-#: the line FlexTool prints before a commercial solver's log (``Running <Solver> (<program>)``; the names are the
-#: engine's ``_subprocess_solve._DISPLAY_NAMES``, pinned by a test; the GUI does not import the engine).
-_SOLVER_BLOCK_STARTS = ("Running HiGHS", "Running Gurobi", "Running CPLEX", "Running Xpress", "Running COPT")
+#: A line that opens a solver's log block (see :data:`flextool.gui.log_view.SOLVER_BLOCK_STARTS`).
+_SOLVER_BLOCK_STARTS = SOLVER_BLOCK_STARTS
 
 # Status icons for the scenarios list.
 # Restricted to glyphs that render in the default Windows Tk fonts: the
@@ -119,12 +118,6 @@ class ExecutionWindow(tk.Toplevel):
         # event loop with after() callbacks and starves mouse/keyboard input
         # (the log becomes unselectable / uncopyable while output streams).
         self._refresh_scheduled: bool = False
-        # Log colouring: whether the lines currently streaming belong to a
-        # HiGHS solver-output block (greyed until the next phase-progress
-        # row). Reset whenever the viewed job changes (log re-rendered from
-        # scratch), so the state machine stays in sync with the text widget.
-        self._highs_block_active: bool = False
-
         # ── Font metrics for DPI-aware sizing ────────────────────────
         from flextool.gui.ui_metrics import get_metrics
         _metrics = get_metrics(self)
@@ -459,14 +452,19 @@ class ExecutionWindow(tk.Toplevel):
 
         self._output_text = tk.Text(
             right_frame,
-            wrap="none",
+            wrap="char",
             font=self._mono_font,
         )
         self._output_text.grid(row=0, column=0, sticky="nsew")
         # Keep the widget editable (state='normal') so text selection and
         # Ctrl+C work reliably on all platforms, but block keyboard input.
         self._output_text.bind("<Key>", self._on_key_press)
-        self._configure_log_tags()
+        # Colouring, wrapping (at the window, never below 100 columns),
+        # warning-code links and folded solve-summary rows (log_view.py).
+        # Its state machines restart whenever the viewed job changes (the
+        # log is re-rendered from scratch).
+        self._log_view = LogView(self._output_text)
+        self._log_view.configure_tags()
 
         # Right-click context menu (Copy / Select all) on the log.
         self._output_menu = tk.Menu(self._output_text, tearoff=0)
@@ -775,8 +773,7 @@ class ExecutionWindow(tk.Toplevel):
         # Switching to a different job: clear the text widget and reset its
         # displayed count so all lines are re-inserted from scratch.  The
         # colour state machine restarts with the re-render.
-        self._output_text.delete("1.0", "end")
-        self._highs_block_active = False
+        self._log_view.reset()
         if first_id is not None:
             self._displayed_counts[first_id] = 0
         self._update_output_display()
@@ -794,11 +791,9 @@ class ExecutionWindow(tk.Toplevel):
 
     def _on_copy_log(self) -> None:
         """Copy the current selection (or the whole log if nothing is
-        selected) to the clipboard."""
-        try:
-            text = self._output_text.get("sel.first", "sel.last")
-        except tk.TclError:
-            text = self._output_text.get("1.0", "end-1c")
+        selected) to the clipboard, as the original lines (the fold toggle
+        lines are left out, folded rows are included)."""
+        text = self._log_view.selected_or_all_text()
         if not text:
             return
         self.clipboard_clear()
@@ -823,83 +818,6 @@ class ExecutionWindow(tk.Toplevel):
             return None  # navigation / selection — does not modify the text
         return "break"  # suppress everything else (typing, paste, delete, …)
 
-    @staticmethod
-    def _blend(base16: tuple[int, int, int], target_hex: str, frac: float) -> str:
-        """Blend a theme colour toward ``target_hex`` (:func:`ui_metrics.blend_rgb`)."""
-        from flextool.gui.ui_metrics import blend_rgb
-        return blend_rgb(base16, target_hex, frac)
-
-    def _configure_log_tags(self) -> None:
-        """Configure the colour tags for the log, derived from the widget's
-        live theme colours so they read in both dark and light modes.
-
-        Backgrounds are subtle tints of the real base background (kept light
-        so the text stays readable); foregrounds are pulled partway toward a
-        saturated hue so they stand out on either base.
-        """
-        txt = self._output_text
-        try:
-            base_bg = txt.winfo_rgb(txt.cget("background"))
-            base_fg = txt.winfo_rgb(txt.cget("foreground"))
-        except tk.TclError:
-            return  # colours unavailable (widget not realised) — stay plain
-        # Backgrounds — a faint wash of the base toward the accent hue.
-        txt.tag_configure("cmd", background=self._blend(base_bg, "#ffd000", 0.16))
-        txt.tag_configure("highs", background=self._blend(base_bg, "#808080", 0.14))
-        txt.tag_configure(
-            "solvestart",
-            background=self._blend(base_bg, "#33cc33", 0.18),
-            foreground=self._blend(base_fg, "#4aa3ff", 0.55),
-        )
-        # Foregrounds — readable accent colours on either theme.
-        txt.tag_configure("mem", foreground=self._blend(base_fg, "#4aa3ff", 0.55))
-        txt.tag_configure("warn", foreground=self._blend(base_fg, "#ff3b30", 0.70))
-        # Keep the selection highlight on top of every custom tag — these are
-        # created after the built-in ``sel`` tag and would otherwise out-rank
-        # it, painting their background over the selection so a drag-select
-        # shows no visible highlight.
-        txt.tag_raise("sel")
-
-    def _classify_log_line(self, element: str) -> list[str]:
-        """Return the colour tags for one log *element* (one ``stdout_lines``
-        entry — usually a single visual line, but the command echo is one
-        multi-line element).
-
-        A small state machine tracks the solver-output block (HiGHS' or a
-        commercial solver's, :data:`_SOLVER_BLOCK_STARTS`) so its whole
-        console dump greys out until the next phase-progress row.  A line
-        with "warning" or "error" inside the block stays red as well.
-        """
-        low = element.lower()
-        # Command echo — a multi-line bash block (yellow wash).
-        if "\\\n" in element or element.startswith("systemd-run"):
-            self._highs_block_active = False
-            return ["cmd"]
-        # Phase-progress timer/memory rows (header + data) — these also end
-        # any preceding HiGHS block.
-        if "  |  " in element and (
-            "GB" in element or "MB" in element
-            or "memory" in element or "swap" in element
-        ):
-            self._highs_block_active = False
-            return ["mem"]
-        # New-solve marker (green wash + blue text — same family as the rows).
-        if element.startswith("Solve start:"):
-            self._highs_block_active = False
-            return ["solvestart"]
-        # A solver's console dump opens here and greys until the next phase row.
-        if element.startswith(_SOLVER_BLOCK_STARTS):
-            self._highs_block_active = True
-        tags: list[str] = []
-        if self._highs_block_active:
-            # Whole block greys, blank lines included, so the solver dump
-            # reads as one contiguous panel (the block ends at the next
-            # phase/timer row, after which blanks are regular again).
-            tags.append("highs")
-        if "warning" in low or "error" in low:
-            tags.append("warn")
-        return tags
-
     def _update_output_display(self) -> None:
         """Append new stdout lines for the currently viewed job.
 
@@ -921,36 +839,8 @@ class ExecutionWindow(tk.Toplevel):
         # inserting new text.
         at_bottom = self._output_text.yview()[1] >= 0.99
 
-        # Append only the new lines, tagging each for theme-aware colouring.
-        new_lines = lines[already_shown:]
-        for line in new_lines:
-            # The engine prints a ``total_cost.val = …`` line for CLI/test
-            # consumers that parse stdout; it's redundant in the GUI (the
-            # solver already reports the objective) and lands mid-table, so
-            # drop it from the displayed log. The raw stdout is untouched.
-            if line.startswith("total_cost.val ="):
-                continue
-            was_active = self._highs_block_active
-            tags = self._classify_log_line(line)
-            now_active = self._highs_block_active
-            if "highs" in tags and not line.strip():
-                # In-block blank: grey it provisionally, but mark it pending —
-                # a blank that turns out to be *trailing* (the separator before
-                # the timer table) must revert to regular once the block ends.
-                self._output_text.insert("end", line + "\n", ("highs", "pending_blank"))
-                continue
-            self._output_text.insert("end", line + "\n", tuple(tags))
-            if "highs" in tags:
-                # Real dump content after the blanks → they were internal;
-                # keep them grey, just clear the pending marker.
-                self._output_text.tag_remove("pending_blank", "1.0", "end")
-            elif was_active and not now_active:
-                # This row closed the HiGHS block → any pending blanks were
-                # trailing; strip the grey back off them.
-                ranges = self._output_text.tag_ranges("pending_blank")
-                for k in range(0, len(ranges), 2):
-                    self._output_text.tag_remove("highs", ranges[k], ranges[k + 1])
-                self._output_text.tag_remove("pending_blank", "1.0", "end")
+        # Append only the new lines.
+        self._log_view.append(lines[already_shown:])
         self._displayed_counts[job_id] = new_count
 
         # Auto-scroll only when the user is already at (or near) the bottom

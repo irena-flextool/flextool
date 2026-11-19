@@ -1,23 +1,17 @@
-"""Chain-cluster entity-period parameter writers.
+"""The capacity a solve starts from, and its capacity ceilings, per (entity, period).
 
-Three ``write_*`` helpers emitting the per-(entity, period)
-existing/capacity-max chain that the LP build consumes via
-``p_entity_*_existing_*`` and ``p_entity_*_capacity_*`` parameters:
+* :func:`emit_existing_capacity` — the existing capacity from the cohorts
+  (:func:`._cohort_handoff.existing_capacity`): the run's existing cohort (the user's ``existing`` of each period,
+  in service until its end of life), the investments earlier solves of the run realized (handoff
+  ``realized_cohort``, each in service from its start of operation to its end of life) and their retirements
+  (handoff ``realized_retire``).  One formula for every solve
+  of a run (first, chained, roll, nested sub-solve):
+  ``p_entity_pre_existing``, ``p_entity_all_existing``, ``p_entity_previously_invested_capacity``,
+  ``p_entity_retired_carried``, ``p_entity_invested``.
+* :func:`emit_p_entity_capacity_max_chain` — the capacity ceilings from ``p_entity_all_existing`` and the
+  investment limits.
 
-* :func:`write_p_entity_pre_existing`           (12-branch).
-* :func:`write_p_entity_existing_chain`         (3 live emits).
-* :func:`write_p_entity_capacity_max_chain`     (2 live emits).
-
-The chain-existing / chain-cap-max writers are the most state-dependent
-writers in Phase 1: they straddle the per-solve handoff boundary (prior
-solve's ``realized_existing``/``realized_invest``/``divest_cumulative``
-either as in-memory ``SolveHandoff`` carriers or as CSVs left by the
-parent solve's output writer).  We keep the legacy dict-keyed lookup
-shape — it's already optimal for the per-row access pattern and the
-intricate branching is much easier to verify against the mod source
-when written procedurally.
-
-Byte-for-byte parity with the legacy emitters is the gate.
+The values are rendered by :func:`_ed_value_frame` (``repr``), so a frame round-trips its floats exactly.
 """
 from __future__ import annotations
 
@@ -34,14 +28,10 @@ from flextool.engine.preprocess._provider_io import (
 )
 from flextool.engine.preprocess import _provider_keys as K
 from flextool.engine.preprocess._provider_translators import read_handoff_frame
-from flextool.engine.preprocess.params._derived import (
-    INVEST_METHODS_INVEST_NO_LIMIT,
-    run_start_period,
-)
-from flextool.engine.preprocess.params._retire_existing import retired_carried
+from flextool.engine.preprocess.params._derived import INVEST_METHODS_INVEST_NO_LIMIT
 
 if TYPE_CHECKING:
-    from flextool.engine.solve._handoff import SolveHandoff  # noqa: F401 — retained for legacy callers
+    from flextool.engine.preprocess.params._cohort_handoff import ExistingCapacity
 
 
 def _ed_value_frame(
@@ -223,329 +213,102 @@ def _load_param_value_at(
     return out
 
 
-def _read_solve_first_flag(solve_data_dir: Path,
-                           *, provider: "object | None" = None) -> bool:
-    """Read ``solve_data/p_model.csv`` for the ``solveFirst`` flag."""
-    pm_path = solve_data_dir / "p_model.csv"
-    df = provider.get(_provider_key(pm_path))
-    if df is None:
-        return False
-    for row in df.iter_rows():
-        if len(row) >= 2 and _cell_str(row[0]) == "solveFirst":
-            try:
-                return bool(int(row[1]))
-            except (ValueError, TypeError):
-                return False
-    return False
-
-
 # ---------------------------------------------------------------------------
-# write_p_entity_pre_existing — mod L1886-1895 (12-branch lifetime-method
-# gate × entity-kind × virtual_unitsize trichotomy).
+# The existing capacity of a solve, from the cohorts: the existing cohort of the run, the cohorts earlier solves
+# realized (handoff ``realized_cohort``) and their retirements (handoff ``realized_retire``).
 # ---------------------------------------------------------------------------
 
 
-def _end_of_life(solve_data_dir: Path, *, provider) -> tuple[dict[str, str], dict[str, float], dict[str, float]]:
-    """``(lifetime_method, p_years_d, end_of_life)``: ``end_of_life[e]`` the year (of ``p_years_d``, which covers
-    the period history: years from the start of the run) at which the pre-existing capacity of a reinvest_choice /
-    no_investment entity ends, counted from the start of the run::
-
-        p_years_d[d0] + edEntity_lifetime[e, d0],   d0 = run_start_period(p_years_d)
-    """
-    lifetime_method: dict[str, str] = {
-        e_: m for e_, m in _read_pairs(solve_data_dir / "entity__lifetime_method.csv",
-                                         provider=provider)
-    }
-    p_years_d = _load_e_value_csv(solve_data_dir / "p_years_d.csv",
-                                    provider=provider)
-    ed_lifetime: dict[tuple[str, str], float] = {}
-    for e_, d_, v_ in _read_triples(solve_data_dir / "edEntity_lifetime.csv",
-                                      provider=provider):
-        try:
-            ed_lifetime[(e_, d_)] = float(v_)
-        except ValueError:
-            continue
-    d0 = run_start_period(p_years_d)
-    end_of_life = {e: (0.0 if d0 is None else p_years_d.get(d0, 0.0) + ed_lifetime.get((e, d0), 0.0))
-                   for e, m in lifetime_method.items() if m in ("reinvest_choice", "no_investment")}
-    return lifetime_method, p_years_d, end_of_life
-
-
-def derive_p_entity_pre_existing(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> pl.DataFrame:
-    """Pre-existing capacity per (entity, period) — 12-branch sum where
-    exactly one branch fires per (e, d) given the method/kind/unitsize
-    trichotomy.
-
-    Equivalent simplified form (per legacy docstring):
-
-        method = entity__lifetime_method[e]
-        v_existing = pdProcess[e,'existing',d] if e in process
-                     else pdNode[e,'existing',d] if e in node
-                     else 0
-        v_unit     = p_process[e,'virtual_unitsize'] if e in process
-                     else p_node[e,'virtual_unitsize'] if e in node
-                     else 0
-        if method not in {reinvest_automatic, reinvest_choice, no_investment}: 0
-        elif method ∈ {reinvest_choice, no_investment}
-             and not (p_years_d[d] < p_years_d[d0] + edEntity_lifetime[e, d0]):
-            0      (d0 = run_start_period(p_years_d): the end of life counts from the start of the run)
-        else: v_existing * v_unit  if v_unit > 0  else  v_existing
-              (a virtual_unitsize of 0 or below is ignored; validate_basic_sanity warns)
-
-    Output domain: ``entity × period_in_use``.  Reads pdProcess /
-    pdNode / edEntity_lifetime CSVs that ``write_entity_period_calc_params``
-    has emitted earlier in the same per-solve pass.
-    """
-    process_set = frozenset(_read_singles(input_dir / "process.csv",
-                                            provider=provider))
-    node_set = frozenset(_read_singles(input_dir / "node.csv",
-                                        provider=provider))
-    entities = _read_singles(input_dir / "entity.csv", provider=provider)
-    period_in_use = _read_singles(solve_data_dir / "period_in_use_set.csv",
-                                   provider=provider)
-
-    lifetime_method, p_years_d, end_of_life = _end_of_life(solve_data_dir, provider=provider)
-
-    # pdProcess.csv / pdNode.csv: [entity, param, period, value]; filter to
-    # rows where param == 'existing'.
-    pd_existing_proc = _load_param_value_at(
-        solve_data_dir / "pdProcess.csv",
-        param_col=1, param_value="existing",
-        key_cols=(0, 2), value_col=3,
-        provider=provider,
-    )
-    pd_existing_node = _load_param_value_at(
-        solve_data_dir / "pdNode.csv",
-        param_col=1, param_value="existing",
-        key_cols=(0, 2), value_col=3,
-        provider=provider,
-    )
-
-    # p_process.csv / p_node.csv: [entity, param, value]; filter to
-    # param == 'virtual_unitsize'.
-    p_process_vu = _load_param_value_at(
-        input_dir / "p_process.csv",
-        param_col=1, param_value="virtual_unitsize",
-        key_cols=(0,), value_col=2,
-        provider=provider,
-    )
-    p_node_vu = _load_param_value_at(
-        input_dir / "p_node.csv",
-        param_col=1, param_value="virtual_unitsize",
-        key_cols=(0,), value_col=2,
-        provider=provider,
-    )
-
-    rows: list[tuple[str, str, float]] = []
+def _existing_mw(input_dir: Path, solve_data_dir: Path, entities: list[str], periods: list[str],
+                 *, provider) -> dict[tuple[str, str], float]:
+    """``{(e, d): MW}``: the user's ``existing`` of each period of the solve (``pdProcess`` / ``pdNode``, the map
+    read for this solve), × ``virtual_unitsize`` when it is above 0 (a ``virtual_unitsize`` of 0 or below is
+    ignored; ``validate_basic_sanity`` warns), 0 for an entity that is neither a process nor a node."""
+    process_set = frozenset(_read_singles(input_dir / "process.csv", provider=provider))
+    node_set = frozenset(_read_singles(input_dir / "node.csv", provider=provider))
+    pd_existing_proc = _load_param_value_at(solve_data_dir / "pdProcess.csv", param_col=1, param_value="existing",
+                                            key_cols=(0, 2), value_col=3, provider=provider)
+    pd_existing_node = _load_param_value_at(solve_data_dir / "pdNode.csv", param_col=1, param_value="existing",
+                                            key_cols=(0, 2), value_col=3, provider=provider)
+    p_process_vu = _load_param_value_at(input_dir / "p_process.csv", param_col=1, param_value="virtual_unitsize",
+                                        key_cols=(0,), value_col=2, provider=provider)
+    p_node_vu = _load_param_value_at(input_dir / "p_node.csv", param_col=1, param_value="virtual_unitsize",
+                                     key_cols=(0,), value_col=2, provider=provider)
+    out: dict[tuple[str, str], float] = {}
     for e in entities:
-        method = lifetime_method.get(e, "")
-        is_proc = e in process_set
-        is_node = e in node_set
-        if is_proc:
-            v_unit = p_process_vu.get((e,), 0.0)
-        elif is_node:
-            v_unit = p_node_vu.get((e,), 0.0)
+        if e in process_set:
+            v_unit, given = p_process_vu.get((e,), 0.0), pd_existing_proc
+        elif e in node_set:
+            v_unit, given = p_node_vu.get((e,), 0.0), pd_existing_node
         else:
-            v_unit = 0.0
-        gate_sum = end_of_life.get(e)
-        for d in period_in_use:
-            v: float = 0.0
-            if method in ("reinvest_automatic", "reinvest_choice", "no_investment"):
-                gate_passes = method == "reinvest_automatic" or (
-                    gate_sum is not None and p_years_d.get(d, 0.0) < gate_sum
-                )
-                if gate_passes:
-                    if is_proc:
-                        pd_e = pd_existing_proc.get((e, d), 0.0)
-                    elif is_node:
-                        pd_e = pd_existing_node.get((e, d), 0.0)
-                    else:
-                        pd_e = 0.0
-                    v = pd_e * v_unit if v_unit > 0.0 else pd_e
-            rows.append((e, d, v))
-
-    return _ed_value_frame(rows)
+            continue
+        for d in periods:
+            pd_e = given.get((e, d), 0.0)
+            out[(e, d)] = pd_e * v_unit if v_unit > 0.0 else pd_e
+    return out
 
 
-def emit_p_entity_pre_existing(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider,
-) -> None:
-    """Emit ``p_entity_pre_existing`` to the Provider."""
-    _emit(provider, "solve_data/p_entity_pre_existing.csv",
-          derive_p_entity_pre_existing(input_dir, solve_data_dir,
-                                         provider=provider))
+def solve_run_years(provider, solve_data_dir: Path = Path("solve_data")) -> dict[str, float]:
+    """``{period: run year}`` of the solve on ``provider``: its ``p_years_d`` (history, periods in use and branch
+    periods) on the run calendar (:func:`._run_calendar.run_years`), the years the cohorts compare."""
+    from flextool.engine.preprocess.params._run_calendar import read_run_calendar, run_years
+    p_years_d: dict[str, float] = {}
+    pyd = provider.get(_provider_key(solve_data_dir / "p_years_d.csv"))
+    for d, y in ([] if pyd is None else pyd.select(pyd.columns[0], pyd.columns[-1]).iter_rows()):
+        if _cell_str(d):
+            p_years_d.setdefault(_cell_str(d), float(y))
+    return run_years(p_years_d, read_run_calendar(provider))
 
 
-# ---------------------------------------------------------------------------
-# write_p_entity_existing_chain — mod L1680-1697 (5 cascading entity-capacity
-# params; straddles the per-solve handoff boundary).
-# ---------------------------------------------------------------------------
-
-
-def _load_realized_from_handoff(
-    *, provider: "object | None" = None,
-) -> tuple[dict[tuple[str, str], float], dict[tuple[str, str], float]]:
-    """Resolve ``(realized_existing, realized_invest)`` from the
-    Provider's ``handoff/realized_*`` carriers, populated by the
-    iteration-start translator.
-
-    Returns ``(ppec, ppic)`` where ``ppec`` maps
-    ``(entity, period) → realized_existing`` and ``ppic`` maps
-    ``(entity, period) → realized_invest``.  An empty/None handoff
-    frame yields an empty mapping — the translator pipeline always
-    primes these carriers (header-only frame when no prior handoff
-    exists, populated frame otherwise), so this is the sole source of
-    truth.
-    """
-    ppec: dict[tuple[str, str], float] = {}
-    ppic: dict[tuple[str, str], float] = {}
-    realized_existing = read_handoff_frame(provider, K.HANDOFF_REALIZED_EXISTING)
-    realized_invest = read_handoff_frame(provider, K.HANDOFF_REALIZED_INVEST)
-    if realized_existing is not None:
-        for r in realized_existing.iter_rows(named=True):
-            ppec[(str(r["entity"]), str(r["period"]))] = float(r["value"])
-    if realized_invest is not None:
-        for r in realized_invest.iter_rows(named=True):
-            ppic[(str(r["entity"]), str(r["period"]))] = float(r["value"])
-    return ppec, ppic
-
-
-def _compute_p_entity_existing_chain(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider: "object | None" = None,
-) -> tuple[
-    list[tuple[str, str, float]],  # all_existing rows
-    list[tuple[str, str, float]],  # count rows
-    list[tuple[str, str, int]],    # integer_count rows (legacy emits int repr)
-    list[tuple[str, str, float]],  # previously_invested rows
-]:
-    """Compute the four row-streams emitted by
-    :func:`emit_p_entity_existing_chain` in their canonical
-    (entity-major, period-in-use-minor) order.
-
-    Kept as a single compute so the orchestrator runs it once and funnels
-    each row-stream through :func:`_emit`, so the per-sub-solve
-    ``tests/engine/_flex_data_accumulator.py`` captures the resulting frames.
-    """
-    solve_first = _read_solve_first_flag(solve_data_dir, provider=provider)
+def compute_existing_capacity(input_dir: Path, solve_data_dir: Path,
+                              *, provider) -> "tuple[list[str], list[str], ExistingCapacity]":
+    """``(entities, period_in_use, capacity)``: :func:`._cohort_handoff.existing_capacity` of the solve from the
+    Provider: the run's existing cohorts (:data:`._run_calendar.RUN_EXISTING_COHORT_KEY`, put by ``_run_model``),
+    the solve's ``existing`` map (:func:`_existing_mw`), its period years on the run calendar
+    (:func:`._run_calendar.run_years` of ``p_years_d``), the carried cohorts and retirements (handoff
+    ``realized_cohort`` / ``realized_retire``, an override first) and ``entityDivest``."""
+    from flextool.engine.preprocess.params._cohort_handoff import existing_capacity
+    from flextool.engine.preprocess.params._cohorts import cohort_frame_from_utf8
+    from flextool.engine.preprocess.params._run_calendar import RUN_EXISTING_COHORT_KEY
+    if not provider.has(RUN_EXISTING_COHORT_KEY):
+        raise ValueError("The existing capacity of a solve needs the run's existing cohorts "
+                         f"({RUN_EXISTING_COHORT_KEY}), which the run puts on every sub-solve's Provider.")
     entities = _read_singles(input_dir / "entity.csv", provider=provider)
-    periods_in_use = _read_singles(
-        solve_data_dir / "period_in_use_set.csv", provider=provider,
-    )
-
-    pre_existing = _load_ed_value_csv(
-        solve_data_dir / "p_entity_pre_existing.csv", provider=provider,
-    )
-    unitsize = _load_e_value_csv(
-        solve_data_dir / "p_entity_unitsize.csv", provider=provider,
-    )
-
-    edd_by_ed: dict[tuple[str, str], list[str]] = {}
-    for (e, d_h, d) in _read_triples(
-        solve_data_dir / "edd_history.csv", provider=provider,
-    ):
-        edd_by_ed.setdefault((e, d), []).append(d_h)
-
-    ppec, ppic = _load_realized_from_handoff(provider=provider)
-
-    ed_history_realized: set[tuple[str, str]] = set(ppec.keys())
-    for e_, d_ in _read_pairs(
-        solve_data_dir / "ed_history_realized_first.csv", provider=provider,
-    ):
-        ed_history_realized.add((e_, d_))
-
-    entity_divest = frozenset(_read_singles(
-        solve_data_dir / "entityDivest.csv", provider=provider,
-    ))
-    # The capacity earlier solves retired that still counts in each period: from its decision period until the
-    # end of life of the entity's pre-existing capacity (``realized_divest``, per decision period).
-    _methods, p_years_d, end_of_life = _end_of_life(solve_data_dir, provider=provider)
-    expired = {(e, d) for e, eol in end_of_life.items() for d in periods_in_use if p_years_d.get(d, 0.0) >= eol}
-    realized_divest = read_handoff_frame(provider, K.HANDOFF_REALIZED_DIVEST)
-    retired = retired_carried(
-        [] if realized_divest is None else
-        [(str(r["entity"]), str(r["period"]), float(r["value"])) for r in realized_divest.iter_rows(named=True)],
-        p_years_d, periods_in_use, expired)
-
-    # Entities that appear in the realized-capacity handoff at all.  An
-    # entity ABSENT from this set carried NO realized_existing forward (the
-    # planning solve emitted none — e.g. a no-invest operational model, where
-    # the realized_existing producer's iter_keys is empty).  For such an
-    # entity a continuation solve must fall back to its DB pre-existing
-    # capacity rather than resolve to 0 (OC1 capacity-resolution fix): the
-    # realized handoff ADDS committed invest on top of existing, it must never
-    # ZERO the operational existing.  Byte-parity for invest models: there the
-    # producer emits EVERY entity (seeded with pre_existing on the first
-    # solve), so every capacity-bearing entity is present here and the
-    # fallback never fires.
-    realized_entities: set = {k[0] for k in ed_history_realized}
-    later_existing: dict[tuple[str, str], float] = {}
-    later_invested: dict[tuple[str, str], float] = {}
-    if not solve_first:
-        for e in entities:
-            for d in periods_in_use:
-                tot_e = 0.0
-                tot_i = 0.0
-                for d_h in edd_by_ed.get((e, d), ()):
-                    if (e, d_h) in ed_history_realized:
-                        tot_e += ppec.get((e, d_h), 0.0)
-                        tot_i += ppic.get((e, d_h), 0.0)
-                later_existing[(e, d)] = tot_e
-                later_invested[(e, d)] = tot_i
-
-    all_rows: list[tuple[str, str, float]] = []
-    count_rows: list[tuple[str, str, float]] = []
-    int_count_rows: list[tuple[str, str, int]] = []
-    prev_inv_rows: list[tuple[str, str, float]] = []
-    for e in entities:
-        us = unitsize.get(e, 0.0)
-        for d in periods_in_use:
-            if solve_first:
-                v_all = pre_existing.get((e, d), 0.0)
-            elif e not in realized_entities:
-                # OC1 capacity-resolution fix: no realized_existing was
-                # carried for this entity → use its DB pre-existing capacity
-                # so a dispatch/continuation solve never has LESS than the
-                # plan's operational existing (the no-invest separate_dispatch
-                # case; byte-parity for invest models, see note above).
-                v_all = pre_existing.get((e, d), 0.0)
-                if e in entity_divest:
-                    v_all -= retired.get((e, d), 0.0)
-            else:
-                v_all = later_existing.get((e, d), 0.0)
-                if e in entity_divest:
-                    v_all -= retired.get((e, d), 0.0)
-            all_rows.append((e, d, v_all))
-            cnt = v_all / us if us else 0.0
-            count_rows.append((e, d, cnt))
-            # round() with a single arg returns int in Py3 → legacy emits
-            # ``repr(int)`` (e.g. ``"3"``, not ``"3.0"``).  Preserve.
-            int_count_rows.append((e, d, round(cnt)))
-            v_prev = 0.0 if solve_first else later_invested.get((e, d), 0.0)
-            prev_inv_rows.append((e, d, v_prev))
-
-    return all_rows, count_rows, int_count_rows, prev_inv_rows
+    periods = _read_singles(solve_data_dir / "period_in_use_set.csv", provider=provider)
+    capacity = existing_capacity(
+        entities, periods, solve_run_years(provider, solve_data_dir),
+        cohort_frame_from_utf8(provider.get(RUN_EXISTING_COHORT_KEY)),
+        _existing_mw(input_dir, solve_data_dir, entities, periods, provider=provider),
+        read_handoff_frame(provider, K.HANDOFF_REALIZED_COHORT),
+        read_handoff_frame(provider, K.HANDOFF_REALIZED_RETIRE),
+        _read_singles(solve_data_dir / "entityDivest.csv", provider=provider))
+    return entities, periods, capacity
 
 
-def emit_p_entity_existing_chain(
-    input_dir: Path, solve_data_dir: Path,
-    *, provider,
-) -> None:
-    """Emit ``p_entity_existing_chain`` to the Provider."""
-    all_rows, _count_rows, _int_rows, prev_rows = (
-        _compute_p_entity_existing_chain(
-            input_dir, solve_data_dir, provider=provider,
-        )
-    )
+def emit_existing_capacity(input_dir: Path, solve_data_dir: Path, *, provider) -> None:
+    """Emit the solve's existing capacity (:func:`compute_existing_capacity`), each frame over
+    ``entity × period_in_use`` (entity-major) and its values rendered by :func:`_ed_value_frame`:
+
+    * ``p_entity_pre_existing`` — the existing cohort in service (the user's ``existing`` × virtual_unitsize);
+    * ``p_entity_all_existing`` — the capacity in service at the start of the solve (existing + carried − retired);
+    * ``p_entity_previously_invested_capacity`` — the carried investments in service, less their carried retirements;
+    * ``p_entity_retired_carried`` — the retirements of the existing cohort earlier solves realized that still
+      count (the rows with a retirement, sorted);
+    * ``p_entity_invested`` ``[entity, p_entity_invested]`` — every carried investment of an entity.
+    """
+    entities, periods, cap = compute_existing_capacity(input_dir, solve_data_dir, provider=provider)
+    grid = [(e, d) for e in entities for d in periods]
+    _emit(provider, "solve_data/p_entity_pre_existing.csv", _ed_value_frame([(e, d, cap.pre[(e, d)]) for e, d in grid]))
     _emit(provider, "solve_data/p_entity_all_existing.csv",
-          _ed_value_frame(all_rows))
-    _emit(provider,
-          "solve_data/p_entity_previously_invested_capacity.csv",
-          _ed_value_frame(prev_rows))
+          _ed_value_frame([(e, d, cap.all[(e, d)]) for e, d in grid]))
+    _emit(provider, "solve_data/p_entity_previously_invested_capacity.csv",
+          _ed_value_frame([(e, d, cap.carried[(e, d)]) for e, d in grid]))
+    _emit(provider, "solve_data/p_entity_retired_carried.csv",
+          _ed_value_frame([(e, d, v) for (e, d), v in sorted(cap.retired.items())]))
+    _emit(provider, "solve_data/p_entity_invested.csv",
+          pl.DataFrame({"entity": list(cap.invested), "p_entity_invested": [repr(v) for v in cap.invested.values()]},
+                       schema={"entity": pl.Utf8, "p_entity_invested": pl.Utf8}))
+
 
 
 # ---------------------------------------------------------------------------

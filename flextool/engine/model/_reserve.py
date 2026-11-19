@@ -21,7 +21,7 @@ from polar_high.engine import Var
 
 from flextool.engine.input._axis_enums import rename_to_axis, schema_dtype
 from flextool.engine.preprocess._provider_io import _provider_key
-from flextool.engine.model import _coarse_flows
+from flextool.engine.model import _coarse_flows, _extend, _retire_built
 from flextool.engine.model._common import (
     _connection_procs, _drop_uncapped, _entity_rows, _has_rows, _indirect_input_cap, _utf8_keys, _var_view,
 )
@@ -888,8 +888,8 @@ def add_constraints(b: "_Build") -> None:
 
     # ─── EQ. ─── reserve_process_upward / reserve_process_downward ───────────
     # ─────────────────────────────────────────────────────────────────────────
-    # v_reserve[p,r,ud,n,d,t] − max_share[p,r,ud,n] · c[p,n,d,t] · Σ_{(p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′]
-    #   + max_share[p,r,ud,n] · c[p,n,d,t] · Σ_{(p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′]
+    # v_reserve[p,r,ud,n,d,t] − max_share[p,r,ud,n] · c[p,n,d,t] · invested[p,d]
+    #   + max_share[p,r,ud,n] · c[p,n,d,t] · retired[p,d]
     #   ≤ max_share[p,r,ud,n] · c[p,n,d,t] · existing_count[p,d]
     #   ∀ (p,r,ud,n,d,t) ∈ prundt with ud = up / down (a coarse process: reserve_process_{upward,downward}_coarse,
     #     the row's mean over each coarse step, _coarse_flows.add_cstr: one reserve per step under the step-mean c)
@@ -906,13 +906,13 @@ def add_constraints(b: "_Build") -> None:
     # retired, also for units with online variables).  At an input node the
     # capacity is the input's (_input_capacity_factor).  max_share not
     # authored → no reserve (RHS 0).
-    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
-    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+    # existing capacity counting until its end of life (none for reinvest_automatic).
     max_share = getattr(d, "p_process_reserve_upDown_node_max_share", None)
-    existing = getattr(d, "p_process_existing_count", None)
+    existing = b.cap.existing_count_p
     if max_share is not None and d.prundt.height > 0 and existing is not None:
-        edd_inv_set = getattr(d, "edd_invest_set", None)
-        edd_div_act = getattr(d, "edd_divest_active", None)
+        edd_inv_set = b.cap.alive
+        edd_div_act = b.cap.retired_frame("p")
         for ud_filter, name in (("up", "reserve_process_upward"), ("down", "reserve_process_downward")):
             idx = d.prundt.filter(pl.col("ud") == ud_filter)
             if idx.height == 0:
@@ -934,6 +934,16 @@ def add_constraints(b: "_Build") -> None:
                 if edd_p_div.height > 0:
                     v_div_at = _var_view(b.v_divest_p, f"__at_{name}", {"d": "d_divest"}, to_axis=True)
                     lhs["divest"] = Sum(Where(v_div_at, edd_p_div), over=("d_divest",)) * share
+            built = _retire_built.retired(b, "p")
+            if built is not None:
+                # The model-built capacity retired so far (_retire_built).
+                built_rows = _retire_built.retired_frame(b, "p").join(p_in_idx, on="p", how="inner")
+                if built_rows.height > 0:
+                    lhs["divest_built"] = Where(built, built_rows) * share
+            ext = _extend.capacity_term(b, "p", p_in_idx)
+            if ext is not None:
+                # The extended capacity in service (_extend).
+                lhs["extended_neg"] = -(ext * share)
             _coarse_flows.add_cstr(b, name, over=idx, sense="<=", lhs_terms=lhs, rhs_terms={"max": rhs_param})
 
     _add_connection_reserve_constraints(b)
@@ -1098,8 +1108,8 @@ def _add_connection_reserve_constraints(b: "_Build") -> None:
     # ─── EQ. ─── connection_reserve_up / connection_reserve_down ─────────────
     # ─────────────────────────────────────────────────────────────────────────
     # x_in[p,n,d,t] − s_out[p,n,d,t] · x_out[p,n,d,t] + Σ_r v_reserve[p,r,up,n,d,t]
-    #   − M_in · Σ_{(p,d′,d) ∈ edd_invest_set} v_invest_p[p,d′]
-    #   + M_in · Σ_{(p,d′,d) ∈ edd_divest_active} v_divest_p[p,d′]  ≤  C_in[p,n,d,t]   (up)
+    #   − M_in · invested[p,d]
+    #   + M_in · retired[p,d]  ≤  C_in[p,n,d,t]   (up)
     # x_out[p,n,d,t] − x_in[p,n,d,t] / s_out[p,n,d,t] + Σ_r v_reserve[p,r,down,n,d,t] / s_out[p,n,d,t]
     #   − M_out · Σ v_invest_p[p,d′] + M_out · Σ v_divest_p[p,d′]  ≤  C_out[p,n,d,t]                         (down)
     #   ∀ connection p (process_source_sink \ process_unit) with (p,r,ud,n,d,t) ∈ prundt, ud = up (down)
@@ -1129,8 +1139,8 @@ def _add_connection_reserve_constraints(b: "_Build") -> None:
     # maxFlow_online carry the upward reserve of units only (b.reserve_up_to_sink_units); the profile cap
     # profile_flow_upper_limit keeps the connection's in-arc term (conservative: it does not count stopping the
     # out-flow).
-    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
-    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+    # existing capacity counting until its end of life (none for reinvest_automatic).
     for ud in ("up", "down"):
         sel = d.prundt.filter(pl.col("ud") == ud)
         sel = (sel.with_columns(pl.col("p").cast(pl.Utf8).alias("__p"))
@@ -1208,10 +1218,10 @@ def _add_connection_reserve_constraints(b: "_Build") -> None:
                 mult_vals = (_channel_values(inv_chan, mult_u) if mult_u is not None else None)
                 inv_dom = dom_u.join(inv_chan.select("_p", "_n").unique(), on=["_p", "_n"], how="semi")
                 mult = _pndt_param(inv_dom, mult_vals, 1.0)
-                if b.invest_in_dispatch_p is not None:
-                    built["invest_neg"] = -(b.invest_in_dispatch_p * mult)
-                if b.divest_in_dispatch_p is not None:
-                    built["divest"] = b.divest_in_dispatch_p * mult
+                if b.cap.invested_p is not None:
+                    built["invest_neg"] = -(b.cap.invested_p * mult)
+                if b.cap.retired_p is not None:
+                    built["divest"] = b.cap.retired_p * mult
         _coarse_flows.add_cstr(b, f"connection_reserve_{ud}", over=dom, sense="<=", lhs_terms=built,
                                rhs_terms={"cap": rhs})
 
@@ -1523,8 +1533,8 @@ def _add_storage_energy_constraints(b: "_Build") -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # v_state[n,d,t] · state_unitsize[n]
     #   + Σ_{(p,r,ud,nb,g) ∈ providers_down(n)} v_reserve[p,r,ud,nb,d,t] · unitsize[p] · duration[r,ud,g] / slope[p,d,t]
-    #   + Σ_{(n,d′,d) ∈ ndd_divest_active} v_divest_n[n,d′] · state_unitsize[n]
-    #   − Σ_{(n,d′,d) ∈ edd_invest_set} v_invest_n[n,d′] · state_unitsize[n]
+    #   + retired[n,d] · state_unitsize[n]
+    #   − invested[n,d] · state_unitsize[n]
     #   ≤ state_upper[n,d,t] · state_unitsize[n]
     #   ∀ n ∈ storage nodes of downward providers, (d,t) ∈ dt
     #   providers_down: downward reserve for nb by a process with source nb and sink n ∈ nodeState, or by a
@@ -1532,8 +1542,8 @@ def _add_storage_energy_constraints(b: "_Build") -> None:
     # Downward reserve into storage needs free storage capacity (MWh) for the
     # reserve duration; 1/slope = η converts input to energy stored.  The
     # capacity terms are those of maxState, in MWh.  Same notes as the floor.
-    # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
-    #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
+    # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
+    # existing capacity counting until its end of life (none for reinvest_automatic).
     join_dn = _providers("down", balance_side="source", storage_side="sink")
     if join_dn is not None:
         back_dn = None
@@ -1543,14 +1553,24 @@ def _add_storage_energy_constraints(b: "_Build") -> None:
         slope_dn = _slope_factor(join_dn.select("p").unique(), reciprocal=True, back=back_dn)
         e_dn = Sum(Where(v_res_nb * d.p_unitsize * dur * slope_dn, join_dn), over=("p", "r", "ud", "nb", "g"))
         state_lhs: dict = {"state": v_state * us_n, "energy": e_dn}
-        if b.v_divest_n is not None and d.ndd_divest_active is not None:
+        if b.v_divest_n is not None:
             v_div_n_at = _var_view(b.v_divest_n, "__at_reserve_down_divest", {"d": "d_divest"}, to_axis=True)
-            edd_div_n = _entity_rows(d.ndd_divest_active, "n", d.nodeState, "n")
+            edd_div_n = _entity_rows(b.cap.retired_frame("n"), "n", d.nodeState, "n")
             if edd_div_n.height > 0:
                 state_lhs["divest"] = Sum(Where(v_div_n_at, edd_div_n), over=("d_divest",)) * us_n
-        if b.v_invest_n is not None and d.edd_invest_set is not None:
+        built_n = _retire_built.retired(b, "n")
+        if built_n is not None:
+            # The model-built storage capacity retired so far (_retire_built).
+            built_rows = _entity_rows(_retire_built.retired_frame(b, "n"), "n", d.nodeState, "n")
+            if built_rows.height > 0:
+                state_lhs["divest_built"] = Where(built_n, built_rows) * us_n
+        ext_n = _extend.capacity_term(b, "n", d.nodeState, us_n)
+        if ext_n is not None:
+            # The extended storage capacity in service (_extend).
+            state_lhs["extended_neg"] = -ext_n
+        if b.v_invest_n is not None:
             v_inv_n_at = _var_view(b.v_invest_n, "__at_reserve_down_invest", {"d": "d_invest"}, to_axis=True)
-            edd_inv_n = _entity_rows(d.edd_invest_set, "e", d.nodeState, "n")
+            edd_inv_n = _entity_rows(b.cap.alive, "e", d.nodeState, "n")
             if edd_inv_n.height > 0:
                 state_lhs["invest_neg"] = -(Sum(Where(v_inv_n_at, edd_inv_n), over=("d_invest",)) * us_n)
         over_dn = join_dn.select("n").unique().join(dt, how="cross")

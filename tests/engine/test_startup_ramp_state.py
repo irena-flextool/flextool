@@ -726,7 +726,7 @@ def test_branch_point_shutdown_share_counted_once(tmp_path_factory) -> None:
 
 
 @pytest.mark.parametrize("marker", [True, False], ids=["marker", "no_marker"])
-def test_branch_point_shutdown_notice(tmp_path_factory, capsys, marker) -> None:
+def test_branch_point_shutdown_notice(tmp_path_factory, coded_log, marker) -> None:
     """The mid-horizon branch-point model above: an upgraded database (marker present) prints the behaviour notice
     naming base, the unit whose downward ramp rows meet the branch point; without the marker, nothing."""
     from spinedb_api import DatabaseMapping
@@ -742,9 +742,9 @@ def test_branch_point_shutdown_notice(tmp_path_factory, capsys, marker) -> None:
         with DatabaseMapping(url) as db:
             db.add_item("metadata", name=name, value="77")
             db.commit_session("behaviour-change marker")
-    capsys.readouterr()
+    coded_log()
     run(tmp_path_factory, url, scen)
-    lines = [ln for ln in capsys.readouterr().out.splitlines() if "shut-down share" in ln]
+    lines = [ln for ln in coded_log().splitlines() if "shut-down share" in ln]
     if not marker:
         assert not lines
         return

@@ -12,14 +12,22 @@ cheaper per delivered p2040-MW; a free ``wind`` unit's branch-varying
 must cover (p2035 = 40 shared; p2040 high = 120, low = 60).
 
 Three scenarios on identical scenario data:
-  * ``hedge``         — mid-horizon reveal at p2040 (RP = 173 250).
-  * ``hedge_ws``      — wait-and-see fan-at-p2035 control (WS = 157 500).
+  * ``hedge``         — mid-horizon reveal at p2040 (RP = 165 000).
+  * ``hedge_ws``      — wait-and-see fan-at-p2035 control (WS = 150 000).
   * ``hedge_storage`` — mid-horizon + a stochastic-group storage node
     (``resv``) so the dispatch storage-NA + continuity linkage fire.
 
-Headline (§8.3): WS = 157 500 < RP = 173 250 < EEV = 192 937.5, so
-EVPI = RP − WS = 15 750 > 0 and VSS = EEV − RP = 19 687.5 > 0 — genuine
-hedging value.  The RP ≠ WS gap is a direct behavioural proof that the
+Headline (§8.3): WS = 150 000 < RP = 165 000 < EEV = 183 750, so
+EVPI = RP − WS = 15 000 > 0 and VSS = EEV − RP = 18 750 > 0 — genuine
+hedging value.
+
+Annuity of the investable ``base`` (discount_rate 0, lifetime_technical 2 = its
+payback time): the straight-line annuity A = cost · 1000 / 2 CUR/MW per year,
+at every discount_offset_investment.  The solve has no social_discount_rate, so
+every payment weighs 1.  The plant built in p2035 (cost 2, 1000 a year) is in
+service in p2035 and p2040 (its life spans the horizon: no replacement):
+K1 = 2 · 1000 = 2000; the plant built in p2040 (cost 6) pays once:
+K2 = 3000.  The RP ≠ WS gap is a direct behavioural proof that the
 mid-horizon first stage ``v_invest[base, p2035]`` is genuinely SHARED
 (Option B) — if E0 accidentally fanned p2035 the objective would collapse
 to WS.
@@ -45,11 +53,12 @@ from tests._support.load import load_scenario
 SOLVE = "stoch_2p_hedge"
 
 # Hand-calc headline numbers (design §8).
-RP = 173_250.0    # hedged mid-horizon reveal
-WS = 157_500.0    # wait-and-see (fan-at-p2035)
-EEV = 192_937.5   # deterministic mean-value decision, evaluated
-EVPI = RP - WS    # = 15 750
-VSS = EEV - RP    # = 19 687.5
+# K1 = 2000, K2 = 3000 (module docstring); x* = 60, weights high 0.25 / low 0.75.
+RP = 165_000.0    # 2000·60 + 0.25·3000·(120 − 60) = 120 000 + 45 000
+WS = 150_000.0    # 0.75·(2000·60) + 0.25·(2000·120) = 90 000 + 60 000
+EEV = 183_750.0   # 2000·75 + 0.25·3000·(120 − 75) = 150 000 + 33 750
+EVPI = RP - WS    # = 15 000
+VSS = EEV - RP    # = 18 750
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +335,11 @@ def hedge_resolved(hedge_run):
 
 @pytest.mark.solver
 def test_rp_objective_hand_calc(hedge_wf) -> None:
-    """T-RP (§8.2): the hedged mid-horizon objective is exactly 173 250."""
+    """T-RP (§8.2): the hedged mid-horizon objective is exactly 165 000.
+
+    x* = 60 shared at p2035 (K1 = 2000 per MW), recourse 60 MW at p2040_high
+    (K2 = 3000 per MW, weight 0.25): 2000·60 + 0.25·3000·60 = 120 000 + 45 000.
+    K1 and K2 are the annuity at the default offset 0 (module docstring)."""
     obj = float(
         pl.read_parquet(hedge_wf / "output_raw" / f"v_obj__{SOLVE}.parquet")
         ["objective"][0]
@@ -357,8 +370,10 @@ def test_rp_invest_is_a_genuine_hedge(hedge_resolved) -> None:
 
 @pytest.mark.solver
 def test_ws_objective_and_evpi(hedge_ws_wf, hedge_wf) -> None:
-    """T-WS (§8.2): the wait-and-see control is 157 500, strictly below
-    RP — EVPI = RP − WS = 15 750 > 0.  RP > WS is the behavioural proof
+    """T-WS (§8.2): the wait-and-see control is 150 000, strictly below
+    RP — EVPI = RP − WS = 15 000 > 0.  Each branch builds all its capacity at
+    p2035 (K1 = 2000 < K2 = 3000): 0.75·(2000·60) + 0.25·(2000·120) =
+    90 000 + 60 000.  RP > WS is the behavioural proof
     that the mid-horizon first stage is genuinely SHARED (had E0 fanned
     p2035 the objective would collapse to WS)."""
     ws = float(
@@ -377,9 +392,9 @@ def test_ws_objective_and_evpi(hedge_ws_wf, hedge_wf) -> None:
 def test_eev_and_vss_hand_calc() -> None:
     """T-EEV (§8.2, hand-calc + arithmetic pin): the mean-value decision
     x_EV = 0.75·60 + 0.25·120 = 75; frozen and evaluated with recourse,
-    EEV = 2100·75 + 0.25·3150·(120−75) = 192 937.5.  VSS = EEV − RP =
-    19 687.5 > 0, and WS < RP < EEV strictly."""
-    K1, K2 = 2100.0, 3150.0
+    EEV = 2000·75 + 0.25·3000·(120−75) = 183 750.  VSS = EEV − RP =
+    18 750 > 0, and WS < RP < EEV strictly."""
+    K1, K2 = 2000.0, 3000.0
     x_ev = 0.75 * 60 + 0.25 * 120
     assert x_ev == 75.0
     eev = K1 * x_ev + 0.25 * K2 * (120 - x_ev)

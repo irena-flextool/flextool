@@ -26,11 +26,11 @@ DAY1 = ["d1h0", "d1h1", "d1h2", "d1h3"]
 
 
 def _frames(group_step: float, rp: bool = True, *, steps: list[str] | None = None,
-            realized: list[str] | None = None, rolling: bool = False):
+            realized: list[str] | None = None):
     """Two 4-hour representative days inside one FlexTool period ``y`` (the
     days touch on the step list: d1h0 follows d0h3 within the timeset block),
-    node ``store`` in group ``g``.  ``steps`` / ``realized`` / ``rolling``: a roll holding only ``steps`` and
-    realizing ``realized``."""
+    node ``store`` in group ``g``.  ``steps`` / ``realized``: a sub-solve holding only ``steps`` and realizing
+    ``realized``."""
     steps = DAY0 + DAY1 if steps is None else steps
     dt = pl.DataFrame({"d": ["y"] * len(steps), "t": steps})
     prev = [steps[-1]] + steps[:-1]          # one timeset block: d1h0's predecessor is d0h3
@@ -40,8 +40,7 @@ def _frames(group_step: float, rp: bool = True, *, steps: list[str] | None = Non
         solve_step=1.0, dt=dt, step_duration=dt.with_columns(value=pl.lit(1.0)), dtttdt=dtttdt,
         rp_block_first=pl.DataFrame({"d": ["y", "y"], "t": ["d0h0", "d1h0"]}) if rp else None,
         realized=None if realized is None else pl.DataFrame({"d": ["y"] * len(realized), "t": realized}),
-        balance_nodes=pl.DataFrame({"n": ["store", "other"]}), state_nodes=pl.DataFrame({"n": ["store"]}),
-        rolling=rolling)
+        balance_nodes=pl.DataFrame({"n": ["store", "other"]}), state_nodes=pl.DataFrame({"n": ["store"]}))
 
 
 def _steps(frames) -> dict[str, list[str]]:
@@ -79,26 +78,7 @@ def test_step_straddling_a_representative_seam_raises() -> None:
     assert "does not evenly divide the length of a representative period" in msg
 
 
-@pytest.mark.parametrize("steps, realized, cause", [
-    # The roll realizes up to d1h0, one hour into the second day: its realized end cuts the 2-h step d1h0-d1h1.
-    (DAY0 + DAY1, DAY0 + ["d1h0"], "the realized part of this roll ends at step 'd1h0' (rolling_solve_jump)"),
-    # The roll starts at d0h1 (the previous roll's realized end), one hour into the first day.
-    (DAY0[1:] + DAY1, DAY0[1:] + DAY1, "this roll starts at step 'd0h1'"),
-    # The roll's horizon ends at d1h2, three hours into the second day (it realizes the first day).
-    (DAY0 + DAY1[:3], DAY0, "this roll's horizon ends at step 'd1h2' (rolling_solve_horizon)"),
-], ids=["realized_end", "roll_start", "horizon_end"])
-def test_roll_boundary_inside_a_representative_day_names_the_roll(steps, realized, cause) -> None:
-    """A 2-h step divides the 4-h representative days, so a cut coarse step in a roll is the roll boundary's
-    fault: the error names that boundary, not the representative-period length."""
-    with pytest.raises(FlexToolConfigError) as exc:
-        _frames(2.0, steps=steps, realized=realized, rolling=True)
-    msg = str(exc.value)
-    assert cause in msg
-    assert "does not evenly divide" not in msg
-    assert "'g'" in msg
-
-
 def test_whole_days_in_a_roll_are_not_cut() -> None:
     """Control: a roll that holds and realizes whole representative days cuts no 2-h step."""
-    assert _steps(_frames(2.0, steps=DAY0 + DAY1, realized=DAY0, rolling=True)) == {
+    assert _steps(_frames(2.0, steps=DAY0 + DAY1, realized=DAY0)) == {
         "d0h0": ["d0h0", "d0h1"], "d0h2": ["d0h2", "d0h3"], "d1h0": ["d1h0", "d1h1"], "d1h2": ["d1h2", "d1h3"]}

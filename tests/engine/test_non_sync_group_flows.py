@@ -14,12 +14,12 @@ Every database is a JSON fixture plus an override alternative (canonical how-to 
 """
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 import polars as pl
 import pytest
 
+from tests._support.coded_warnings import capture_coded
 from tests.engine._lp_rows import coef, row_terms
 from tests.engine._unit_db import b64, build, make_db, run, utf8
 
@@ -167,7 +167,9 @@ def test_reverse_flow_into_group_is_infeed(tmp_path_factory) -> None:
 
 def test_howto_battery_connection_inside(tmp_path_factory) -> None:
     """``curtailment``: nodeA_group = {nodeA, battery}, so con_battery is inside and has no term in the rows;
-    the battery no longer cycles to inflate the supply side (objective 6.580699 → 8.788234 × 10⁶)."""
+    the battery no longer cycles to inflate the supply side (objective 6.580699 → 8.788234 × 10⁶).  The battery
+    (bind_forward_only, free start) now ends the solve at least at its start (storage_state_end_match): before, it
+    started full and ended empty, and that free energy was worth the difference (8.788234 → 9.283591 × 10⁶)."""
     from flextool.engine import run_chain_from_db
     from flextool.update_flextool.db_migration import migrate_database
     from flextool.update_flextool.initialize_database import initialize_database
@@ -185,20 +187,21 @@ def test_howto_battery_connection_inside(tmp_path_factory) -> None:
     assert rows
     for row, terms in rows.items():
         assert not [c for c in terms if c.startswith("v_flow[con_battery,")], row
-    assert step.solution.obj == pytest.approx(8_788_234.09095786, rel=1e-7)
+    assert list(row_terms(build(fd), "storage_state_end_match")) == [
+        "storage_state_end_match[battery,first24h,t0001,first24h,t0024]"]
+    assert step.solution.obj == pytest.approx(9_283_591.233815003, rel=1e-7)
 
 
 # ---------------------------------------------------------------------------
 # one-variable connection across the boundary (owner question Q-c15d-B: warning by default)
 
 
-_WARN = "crosses the boundary of group"
 
 
 @pytest.mark.parametrize("case,expect", [
     ("1var_crossing", True), ("regular_crossing", False), ("exact_crossing", False),
     ("1var_inside", False), ("1var_dc_crossing", False)])
-def test_one_variable_crossing_warning(tmp_path_factory, caplog, case: str, expect: bool) -> None:
+def test_one_variable_crossing_warning(tmp_path_factory, case: str, expect: bool) -> None:
     """A one-variable west_north with one end in {west, east} warns once (naming the connection and the group,
     recommending exact); a regular or exact line, a one-variable line with both ends in the group and an is_DC
     one-variable line (its two-way flow tightens the limit) do not."""
@@ -210,12 +213,12 @@ def test_one_variable_crossing_warning(tmp_path_factory, caplog, case: str, expe
         vals.append(["connection", "west_north", "efficiency", b64(1.0, "float")])
     if case == "1var_dc_crossing":
         vals += DC_WN
-    with caplog.at_level(logging.WARNING):
+    with capture_coded() as got:
         _steps(tmp_path_factory, f"ns_w_{case}", ents, vals, NET)
-    hits = [r.getMessage() for r in caplog.records if _WARN in r.getMessage()]
+    hits = [n for call in got.calls if call.code == "W-0104" for n in call.names]
     if expect:
-        assert len(hits) == 1, hits
-        assert "'west_north'" in hits[0] and "'gwe'" in hits[0] and "exact" in hits[0]
+        assert hits == ["west_north, gwe"], hits
+        assert got.detail("W-0104", "west_north, gwe") == "use transfer_method exact"
     else:
         assert not hits, hits
 
@@ -252,16 +255,15 @@ def test_two_groups_joined_by_a_line(tmp_path_factory, dc: bool) -> None:
                 assert [c for c in terms if c.startswith("v_flow[wind_plant,") and c.endswith(f",west,p2020,{t}]")]
 
 
-def test_dc_power_flow_line_crossing_warning(tmp_path_factory, caplog) -> None:
+def test_dc_power_flow_line_crossing_warning(tmp_path_factory) -> None:
     """west_north is a line of a dc_power_flow_with_angles group {west, north} (classified one-variable through
     the group override) and crosses {west, east}: one warning names the line and the group and the loophole,
     without recommending exact (a DC power-flow line has no exact option)."""
     ents, vals = _ns_group("gwe", ["west", "east"], 0.3)
     ents += [["group", "gdc", None], ["group__node", ["gdc", "west"], None], ["group__node", ["gdc", "north"], None]]
     vals = vals + WIND + [["group", "gdc", "transfer_method", b64("dc_power_flow_with_angles", "str")]]
-    with caplog.at_level(logging.WARNING):
+    with capture_coded() as got:
         _steps(tmp_path_factory, "ns_w_dcpf", ents, vals, NET)
-    hits = [r.getMessage() for r in caplog.records if _WARN in r.getMessage()]
-    assert len(hits) == 1, hits
-    assert hits[0].startswith("DC power-flow line 'west_north'") and "'gwe'" in hits[0]
-    assert "exact" not in hits[0]
+    hits = [n for call in got.calls if call.code == "W-0104" for n in call.names]
+    assert hits == ["west_north, gwe"], hits
+    assert got.detail("W-0104", "west_north, gwe") == "a DC power-flow line"

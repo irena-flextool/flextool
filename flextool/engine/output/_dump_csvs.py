@@ -47,6 +47,7 @@ from polar_high import Param
 from flextool.engine.input._axis_enums import rename_to_axis, schema_dtype
 from flextool.engine.input._param_shapes import promote_param_to_dt
 from flextool.engine.preprocess._dump_stamp import write_dump_stamp
+from flextool.engine.preprocess.params._cohorts import invest_alive
 
 if TYPE_CHECKING:
     from flextool.engine.preprocess.flex_data import FlexData
@@ -168,8 +169,6 @@ DIRECT_WRITES: dict[str, tuple[str, str, dict[str, str]]] = {
                        {"n": "node", "d": "period"}),
     "nd_divest_set": ("solve_data", "nd_divest.csv",
                        {"n": "node", "d": "period"}),
-    "edd_invest_set": ("solve_data", "edd_invest.csv",
-                        {"e": "entity", "d_invest": "d_invest", "d": "period"}),
     "e_invest_total": ("solve_data", "e_invest_total.csv",
                         {"e": "entity"}),
     "e_divest_total": ("solve_data", "e_divest_total.csv",
@@ -340,6 +339,11 @@ def dump_csvs(data: "FlexData", workdir: Path | str,
         target_dir = sd_dir if kind == "solve_data" else inp_dir
         _write_frame(f, target_dir / csv_name, rename)
 
+    # ─── edd_invest.csv: the periods each investment is in service (a view of the cohort table) ─
+    alive = invest_alive(getattr(data, "cohort_alive", None))
+    if alive.height > 0:
+        _write_frame(alive, sd_dir / "edd_invest.csv", {"e": "entity", "d_invest": "d_invest", "d": "period"})
+
     # ─── dt set (special: drop value column from p_step_duration) ─
     # ``data.dt`` is the (d, t) set; flextool writes it implicitly via
     # steps_in_use.csv (handled by the p_step_duration write above).
@@ -366,26 +370,6 @@ def dump_csvs(data: "FlexData", workdir: Path | str,
     _write_pdt_sliced(data, sd_dir, heavy_on=heavy_on)
     _write_pd_sliced(data, sd_dir)
     _write_p_input_sliced(data, inp_dir)
-
-    # ─── Capacity / unitsize composites ───────────────────────────────
-    # p_entity_period_existing_capacity.csv has TWO value columns
-    # (existing + invested).  Our p_entity_all_existing carries
-    # the 'all_existing' column; for round-trip we recompute existing =
-    # all_existing - 0 (no prior invest) and invested = 0.  The reader
-    # prefers p_entity_all_existing.csv when it exists, so this is a
-    # stub for compatibility.
-    if data.p_entity_all_existing is not None:
-        f = _frame_of(data.p_entity_all_existing)
-        if f is not None:
-            stub = (f.pipe(rename_to_axis, {"e": "entity", "d": "period"})
-                     .with_columns(
-                         p_entity_period_existing_capacity=pl.col("value"),
-                         p_entity_period_invested_capacity=pl.lit(0.0),
-                     )
-                     .select("entity", "period",
-                             "p_entity_period_existing_capacity",
-                             "p_entity_period_invested_capacity"))
-            stub.write_csv(sd_dir / "p_entity_period_existing_capacity.csv")
 
     # ─── input/ entity-class set + wide-format unitsize  ────────
     # ``input/p_entity_unitsize.csv`` (wide-transposed: ``entity,<e1>,<e2>,…``

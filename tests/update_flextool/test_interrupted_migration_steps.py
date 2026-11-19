@@ -276,27 +276,27 @@ def test_v58_rerun_rehomes_every_membership(tmp_path, monkeypatch, last: bool) -
 
 # ── migrate_database: all or nothing ─────────────────────────────────────────────────────────────────────────────
 
-def _v79_file(tmp_path: Path) -> tuple[Path, str]:
+def _v80_file(tmp_path: Path) -> tuple[Path, str]:
     from tests.db_utils import json_to_db
 
     seed = Path(__file__).resolve().parent / "data" / "v75_seed_stoch_two_period.json"
     url = json_to_db(seed, tmp_path / "db.sqlite")
-    m.migrate_database(url, up_to=79)
+    m.migrate_database(url, up_to=80)
     return tmp_path / "db.sqlite", url
 
 
-def _failing_v80(db) -> None:
-    """Part of the v80 step, committed, then a failure."""
-    m._v80_limit_inf_descriptions(db)
-    m._v80_capacity_margin_rename(db)
-    m._commit_step(db, "v80 part")
+def _failing_v81(db) -> None:
+    """The v81 step, then a failure after it has committed."""
+    m._v81_value_lists(db)
+    m._v81_definitions_part(db)
+    m._commit_step(db, "v81 part")
     raise RuntimeError("step failed")
 
 
 def test_failed_migration_restores_the_file(tmp_path, monkeypatch) -> None:
-    path, url = _v79_file(tmp_path)
+    path, url = _v80_file(tmp_path)
     before = path.read_bytes()
-    monkeypatch.setattr(m, "_migrate_v80_schema_batch", _failing_v80)
+    monkeypatch.setattr(m, "_migrate_v81_schema_batch", _failing_v81)
     with pytest.raises(RuntimeError, match="step failed"):
         m.migrate_database(url)
     assert path.read_bytes() == before
@@ -306,9 +306,9 @@ def test_failed_migration_restores_the_file(tmp_path, monkeypatch) -> None:
 def test_without_backup_the_failed_step_stays_committed(tmp_path, monkeypatch) -> None:
     """``backup=False`` (a caller with its own backup) leaves the file as the failed step left it: the restore above
     is what keeps it whole."""
-    path, url = _v79_file(tmp_path)
+    path, url = _v80_file(tmp_path)
     before = path.read_bytes()
-    monkeypatch.setattr(m, "_migrate_v80_schema_batch", _failing_v80)
+    monkeypatch.setattr(m, "_migrate_v81_schema_batch", _failing_v81)
     with pytest.raises(RuntimeError, match="step failed"):
         m.migrate_database(url, backup=False)
     assert path.read_bytes() != before
@@ -320,7 +320,7 @@ def test_the_window_upgrade_backs_up_once(tmp_path, monkeypatch) -> None:
     from flextool.gui import db_version_check
     from flextool.update_flextool import migration_backup
 
-    path, _ = _v79_file(tmp_path)
+    path, _ = _v80_file(tmp_path)
     before = path.read_bytes()
     copies: list[Path] = []
     real_copy = migration_backup.shutil.copy2
@@ -331,7 +331,7 @@ def test_the_window_upgrade_backs_up_once(tmp_path, monkeypatch) -> None:
         return real_copy(src, dst, *args, **kwargs)
 
     monkeypatch.setattr(migration_backup.shutil, "copy2", counting_copy)
-    monkeypatch.setattr(m, "_migrate_v80_schema_batch", _failing_v80)
+    monkeypatch.setattr(m, "_migrate_v81_schema_batch", _failing_v81)
     was_upgraded, failed, messages = db_version_check.check_and_upgrade_database(path)
     assert failed and not was_upgraded
     assert "restored" in messages[-1]
@@ -366,14 +366,14 @@ def test_interrupt_before_the_rename_keeps_the_original_and_names_it(tmp_path, m
     original."""
     from flextool.update_flextool import migration_backup as mb
 
-    path, url = _v79_file(tmp_path)
+    path, url = _v80_file(tmp_path)
     before = path.read_bytes()
     backup = tmp_path / "db.sqlite.premigration.bak"
 
     def interrupted(src, dst):
         raise KeyboardInterrupt("second Ctrl+C")
 
-    monkeypatch.setattr(m, "_migrate_v80_schema_batch", _failing_v80)
+    monkeypatch.setattr(m, "_migrate_v81_schema_batch", _failing_v81)
     monkeypatch.setattr(mb, "os", _os_with_replace(interrupted))
     with pytest.raises(KeyboardInterrupt):
         m.migrate_database(url)
@@ -392,14 +392,14 @@ def test_interrupt_after_the_rename_leaves_the_original(tmp_path, monkeypatch, c
 
     from flextool.update_flextool import migration_backup as mb
 
-    path, url = _v79_file(tmp_path)
+    path, url = _v80_file(tmp_path)
     before = path.read_bytes()
 
     def replaced_then_interrupted(src, dst):
         os.replace(src, dst)
         raise KeyboardInterrupt("second Ctrl+C")
 
-    monkeypatch.setattr(m, "_migrate_v80_schema_batch", _failing_v80)
+    monkeypatch.setattr(m, "_migrate_v81_schema_batch", _failing_v81)
     monkeypatch.setattr(mb, "os", _os_with_replace(replaced_then_interrupted))
     with pytest.raises(KeyboardInterrupt):
         m.migrate_database(url)
@@ -413,7 +413,7 @@ def test_windows_copy_restore_interrupted_keeps_the_original(tmp_path, monkeypat
     part way through that write leaves the copy, which the console names, and the console said it was a copy."""
     from flextool.update_flextool import migration_backup as mb
 
-    path, url = _v79_file(tmp_path)
+    path, url = _v80_file(tmp_path)
     before = path.read_bytes()
     backup = tmp_path / "db.sqlite.premigration.bak"
 
@@ -425,13 +425,13 @@ def test_windows_copy_restore_interrupted_keeps_the_original(tmp_path, monkeypat
             g.write(f.read(4096))
         raise KeyboardInterrupt("second Ctrl+C")
 
-    def failing_v80_then_copy_breaks(db):
+    def failing_v81_then_copy_breaks(db):
         monkeypatch.setattr(mb.shutil, "copy2", part_copy)
-        _failing_v80(db)
+        _failing_v81(db)
 
     monkeypatch.setattr(mb, "_WINDOWS", True)
     monkeypatch.setattr(mb, "os", _os_with_replace(refused))
-    monkeypatch.setattr(m, "_migrate_v80_schema_batch", failing_v80_then_copy_breaks)
+    monkeypatch.setattr(m, "_migrate_v81_schema_batch", failing_v81_then_copy_breaks)
     with pytest.raises(KeyboardInterrupt):
         m.migrate_database(url)
     printed = capsys.readouterr().out
@@ -447,7 +447,7 @@ def test_no_room_for_the_copy_is_a_clear_error(tmp_path, monkeypatch) -> None:
 
     from flextool.update_flextool import migration_backup as mb
 
-    path, url = _v79_file(tmp_path)
+    path, url = _v80_file(tmp_path)
     before = path.read_bytes()
     real_copy = mb.shutil.copy2
 
@@ -469,7 +469,7 @@ def test_a_kept_copy_is_never_overwritten(tmp_path) -> None:
     written; the message says how to recover it."""
     from flextool.update_flextool import migration_backup as mb
 
-    path, url = _v79_file(tmp_path)
+    path, url = _v80_file(tmp_path)
     before = path.read_bytes()
     backup = tmp_path / "db.sqlite.premigration.bak"
     backup.write_bytes(b"the original of an earlier migration")

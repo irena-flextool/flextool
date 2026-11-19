@@ -9,7 +9,8 @@ deterministic demand 100/130 MW, an existing wind unit whose
 branch-varying ``upper_limit`` profile (high 0.40/0.40, low 0.20/0.10
 through the ``group__unit`` stochastic group) leaves the investable
 ``peaker`` (unitsize 1, invest_cost 1, discount_rate 0.05, lifetime 1 →
-annuity 1050 exactly; unbounded-forward windows 2100/1050) residual
+annuity 1 · 1000 · 0.05 / (1 − 1.05^−1) / 1.05 = 1000 exactly, one payment at
+the start of the year; unbounded-forward windows 2000/1000) residual
 demand high 60/90, low 80/120.  This is a FAN-AT-FIRST reveal (branches
 declared at the first period p2035), so under the forecasts-only model
 the reference forecast owns the real period names; the real-named trunk
@@ -18,11 +19,11 @@ investment fans per forecast onto p2035_high/p2040_high (weight 0.25) and
 p2035_low/p2040_low (weight 0.75).  The objective is the
 probability-weighted expectation:
 
-    0.25·(60·2100 + 30·1050) + 0.75·(80·2100 + 40·1050) = 196 875.
+    0.25·(60·2000 + 30·1000) + 0.75·(80·2000 + 40·1000) = 187 500.
 
 Verified on a driven solve (R3 re-ground): per-forecast invest
 {p2035_high:60, p2040_high:30, p2035_low:80, p2040_low:40}; the phantom
-trunk p2035/p2040 invest 0; objective 196 875.
+trunk p2035/p2040 invest 0; objective 187 500.
 """
 from __future__ import annotations
 
@@ -33,17 +34,17 @@ import pytest
 
 from tests._support.load import clone_provider, load_scenario
 
-OBJECTIVE = 196_875.0
+OBJECTIVE = 187_500.0
 SOLVE = "stoch_2p_inv"
 
 # ed_entity_annual_discounted[peaker, d] (§15.1 step 2) — the annuity is a
 # per-period window property, identical on the phantom trunk and both
-# forecast copies (2100 at the branching period p2035, 1050 at the
+# forecast copies (2000 at the branching period p2035, 1000 at the
 # continuation period p2040).
 # The period labels p2035 / p2040 have no investment under recourse (no column), so no annuity row.
 EXPECTED_ANNU = {
-    "p2035_high": 2100.0, "p2040_high": 1050.0,
-    "p2035_low": 2100.0, "p2040_low": 1050.0,
+    "p2035_high": 2000.0, "p2040_high": 1000.0,
+    "p2035_low": 2000.0, "p2040_low": 1000.0,
 }
 # Forecasts-only weights: period label → 0, forecasts renormalised
 # {high:0.25, low:0.75}.
@@ -157,11 +158,12 @@ def test_recourse_objective_coefficients(_resolved):
 
 @pytest.mark.solver
 def test_recourse_edd_lineage_filtered(_resolved):
-    """§15.2 D3 (the resolved Slice B W6 witness): edd_invest_set pairs
-    only same-leaf (d_invest, d); the cross-leaf pairs are ABSENT."""
+    """The investments in service pair only same-leaf (d_invest, d); the
+    cross-leaf pairs are ABSENT."""
+    from flextool.engine.preprocess.params._cohorts import invest_alive
     data, _sol = _resolved
     rows = {(str(r["d_invest"]), str(r["d"]))
-            for r in data.edd_invest_set.iter_rows(named=True)}
+            for r in invest_alive(data.cohort_alive).iter_rows(named=True)}
     # No pair with a period label as the investment period: it has no investment under recourse.
     assert rows == {
         ("p2035_high", "p2035_high"), ("p2035_high", "p2040_high"),
@@ -201,7 +203,7 @@ def test_recourse_per_path_cap_two_leaf_rows(_resolved):
     210 > 150, and would spuriously bind) is gone.  Each leaf row sums only
     its own periods; the D2 per-leaf-invest test pins the forecast sums to
     90 (high 60+30) and 120 (low 80+40), both ≤ 150 → non-binding, hence
-    objective stays 196 875.  The naive all-``d`` sum 210 asymmetry is the
+    objective stays 187 500.  The naive all-``d`` sum 210 asymmetry is the
     proof the caps are per-path."""
     data, _sol = _resolved
     from flextool.engine import build_flextool
@@ -248,12 +250,9 @@ def test_recourse_handoff_drops_non_realized(_resolved, recourse_run, caplog):
             prior_handoff=last.prior_handoff, flex_data=data,
             provider=provider)
     assert handoff is not None
-    ri = handoff.realized_invest
-    periods = {str(r["period"]) for r in ri.iter_rows(named=True)}
-    # Only real-named trunk periods survive the pre-filter — no branch rows.
-    assert periods == {"p2035", "p2040"}
-    assert not (periods & {"p2035_high", "p2040_high",
-                           "p2035_low", "p2040_low"})
+    # The carried cohorts are the realized trunk decisions only: none here (the committed real-named capacity is
+    # 0; the forecast branches' 210 MW are dropped), so no branch-named decision period is carried.
+    assert handoff.realized_cohort is None
     # The pre-filter debug-logged the dropped branch mass = 210 across all
     # four forecast branch periods.
     msgs = [r.getMessage() for r in caplog.records

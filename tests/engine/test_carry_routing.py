@@ -6,7 +6,6 @@ appearance has none (fix_start); a realised-dispatch sibling starts where its pa
 """
 from __future__ import annotations
 
-import logging
 from types import SimpleNamespace
 
 import polars as pl
@@ -100,25 +99,25 @@ def test_per_node_latest():
     assert frame.rows() == [("x", 3.0), ("y", 2.0)]
 
 
-def test_entry_not_before_the_start_is_not_carried(caplog):
+def test_entry_not_before_the_start_is_not_carried(coded_log):
     """Routing guard: an entry whose realised end is not before the consumer's first step (a re-solve of the same
     time) is not carried, with a warning naming both solves."""
     router = CarryRouter({"a": None, "b": None}, position=_pos)
-    with caplog.at_level(logging.WARNING, logger="flextool.engine.solve._carry_routing"):
-        got = _run(router, ["a", "b"], {"a": (5.0, ("p1", "t48"))}, {"a": ("p1", "t01"), "b": ("p1", "t01")})
+    got = _run(router, ["a", "b"], {"a": (5.0, ("p1", "t48"))}, {"a": ("p1", "t01"), "b": ("p1", "t01")})
     assert got == {"a": None, "b": None}
-    assert any("'a'" in r.getMessage() and "'b'" in r.getMessage() for r in caplog.records)
+    assert "Warning: a realised state ends after solve 'b' starts; not carried ('a') [W-0502]" in coded_log()
 
 
-def test_level_first_appearing_later_warns(caplog):
+def test_level_first_appearing_later_warns(coded_log):
     """y1 (level 0, realised) then I2 (level 0) ⊃ D2 (level 1): I2 continues from y1, D2 is the first of its level
     and starts from fix_start (owner rule) — visible as a warning."""
     router = CarryRouter({"y1": None, "I2": None, "D2": "I2"}, position=_pos)
-    with caplog.at_level(logging.WARNING, logger="flextool.engine.solve._carry_routing"):
-        got = _run(router, ["y1", "I2", "D2"], {"y1": (4.0, ("p1", "t48"))},
-                   {"y1": ("p1", "t01"), "I2": ("p2", "t01"), "D2": ("p2", "t01")})
+    got = _run(router, ["y1", "I2", "D2"], {"y1": (4.0, ("p1", "t48"))},
+               {"y1": ("p1", "t01"), "I2": ("p2", "t01"), "D2": ("p2", "t01")})
     assert got == {"y1": None, "I2": 4.0, "D2": None}
-    assert any("'D2'" in r.getMessage() and "'y1'" in r.getMessage() for r in caplog.records)
+    out = coded_log()
+    assert "Warning: solve 'D2' starts a level: storage not from the higher level ('s') [W-0503]" in out, out
+    assert "solve 'y1' realised" in out
 
 
 def test_registry_is_per_router():

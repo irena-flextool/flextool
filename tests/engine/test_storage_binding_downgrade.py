@@ -11,17 +11,26 @@ import pytest
 
 from tests.engine._lp_rows import row_terms
 from tests.engine._unit_db import build
-from tests.engine.test_bind_within_period import RP_SOLVE, _run, _state_cols, _week168
+from tests.engine.test_bind_within_period import RP_SOLVE, _overlay, _run, _state_cols
 
 
 
 def test_downgraded_within_solve_node_keeps_storage_next_to_plain_within_solve_nodes(tmp_path_factory):
-    """A non-RP solve turns bind_within_solve_blended_weights into bind_within_solve.  The fixture's batteries
-    are plain bind_within_solve in the DB; before, the DB-direct projection of that method replaced the
-    solve's set, so the downgraded lh2 nodes dropped out and their storage had no state chain."""
+    """A non-RP solve turns bind_within_solve_blended_weights into bind_within_solve.  The batteries are set to
+    plain bind_within_solve (the fixture's representative-period alternatives cycle them within each timeblock);
+    before, the DB-direct projection of that method replaced the solve's set, so the downgraded lh2 nodes dropped
+    out and their storage had no state chain."""
+    def week168(method: str):
+        return _overlay("lh2_three_region_rp_invest", [
+            ["solve", RP_SOLVE, "period_timeset",
+             {"type": "map", "index_type": "str", "index_name": "period", "rank": 1,
+              "data": [["y2030", "week168"], ["y2040", "week168"]]}]]
+            + [["node", n, "storage_binding_method", method] for n in ("lh2_A", "lh2_B", "lh2_C")]
+            + [["node", f"battery_{r}", "storage_binding_method", "bind_within_solve"] for r in "ABC"])
+
     down = _run(tmp_path_factory, "lh2_three_region_rp_invest.json",
-                _week168("bind_within_solve_blended_weights"))[RP_SOLVE]
-    plain = _run(tmp_path_factory, "lh2_three_region_rp_invest.json", _week168("bind_within_solve"))[RP_SOLVE]
+                week168("bind_within_solve_blended_weights"))[RP_SOLVE]
+    plain = _run(tmp_path_factory, "lh2_three_region_rp_invest.json", week168("bind_within_solve"))[RP_SOLVE]
     members = sorted(str(n) for n in down.flex_data.storage_bind_within_solve["n"].to_list())
     assert {"lh2_A", "lh2_B", "lh2_C", "battery_A"} <= set(members)
     cols = _state_cols(row_terms(build(down.flex_data), "nodeBalanceCoarse_eq", "lh2_A,y2040,t0001")[

@@ -187,23 +187,20 @@ def compute_storage_and_vre(par, s, v, r) -> None:
         r.potentialVREgen_dt.mul(step_duration, axis=0).groupby('period').sum()
     )
 
-    # storage_usage_dt (for nested model storage fixing)
-    dt_fix_idx = s.dt_fix_storage_timesteps
+    # storage_usage_dt: the net use of each fix_usage storage node (storage_nested_fix_method) in each realised step,
+    # MWh = (flows out of the node − flows into it) × step_duration, the quantity an upper-level fix_usage caps.
+    # Over the realised dispatch steps: the steps of an upper solve's own fix_storage_periods
+    # (s.dt_fix_storage_timesteps) are reported by the lower solves that realise the same steps (the later solve
+    # wins), so the upper solve's planned usage does not reach the outputs; the lower solves' realised usage does.
+    usage_nodes = [n for n in s.node if (n, 'fix_usage') in s.node__storage_nested_fix_method]
+    flow_cols = r.flow_dt.columns
+    sources = flow_cols.get_level_values('source')
+    sinks = flow_cols.get_level_values('sink')
+    duration = par.step_duration.reindex(r.flow_dt.index, fill_value=0.0).to_numpy(dtype=float)
     r_storage_usage = {}
-    for n in s.node:
-        if (n, 'fix_usage') in s.node__storage_nested_fix_method:
-            usage = pd.Series(0.0, index=dt_fix_idx)
-            for col in r.flow_dt.columns:
-                p, source, sink = col
-                if source == n:
-                    usage += (r.flow_dt[col].reindex(dt_fix_idx, fill_value=0) *
-                              par.step_duration.reindex(dt_fix_idx, fill_value=0))
-                if sink == n:
-                    usage -= (r.flow_dt[col].reindex(dt_fix_idx, fill_value=0) *
-                              par.step_duration.reindex(dt_fix_idx, fill_value=0))
-            r_storage_usage[n] = usage
-    r.storage_usage_dt = (
-        pd.DataFrame(r_storage_usage, dtype=float)
-        if r_storage_usage
-        else pd.DataFrame(0.0, index=dt_fix_idx, columns=[])
-    )
+    for n in usage_nodes:
+        out = r.flow_dt.loc[:, sources == n].fillna(0.0).sum(axis=1)
+        into = r.flow_dt.loc[:, sinks == n].fillna(0.0).sum(axis=1)
+        r_storage_usage[n] = (out - into) * duration
+    r.storage_usage_dt = pd.DataFrame(r_storage_usage, index=r.flow_dt.index, columns=usage_nodes, dtype=float)
+    r.storage_usage_dt.columns.name = 'node'

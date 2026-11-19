@@ -17,10 +17,15 @@ with the branches FANNING AT t0 (the ``ws`` alternative), plus:
 
   * ``hedge_na_window`` — fan-at-t0 + ``shared_invest_periods
     =[p2035]`` + ``shared_operation_periods=[]``.  The tie reproduces
-    the Option-B hedge **RP = 173 250** BY CONSTRAINT (§9.3): p2035 invest
+    the Option-B hedge **RP = 165 000** BY CONSTRAINT (§9.3): p2035 invest
     shared across branches, p2040 invest per-branch (recourse).
   * ``hedge_ws`` — the same fan-at-t0 topology with the window UNSET —
-    today's wait-and-see control, **WS = 157 500**.  ``RP − WS = 15 750``.
+    today's wait-and-see control, **WS = 150 000**.  ``RP − WS = 15 000``.
+
+The objectives are investment costs only, at the peaker annuity 1 · 1000 · 0.05 /
+(1 − 1.05^−1) / 1.05 = 1000 CUR/MW per year (one payment at the start of the
+year, the default discount_offset_investment 0); the design's 173 250 / 157 500
+were at the year-end annuity 1050, so each is 1000 / 1050 of it.
   * ``hedge_na_divest`` — ``base`` made ``invest_retire_total`` + existing
     50 so ``v_divest`` exists; the divest ties fire too (F2).
   * ``hedge_na_none`` — the window set on a ``stochastic_invest_method
@@ -37,9 +42,9 @@ from tests._support.load import load_scenario
 
 SOLVE = "stoch_2p_hedge"
 
-RP = 173_250.0    # main mode (window = [p2035]) — shared first stage
-WS = 157_500.0    # wait-and-see control (window unset)
-EVPI = RP - WS    # = 15 750
+RP = 165_000.0    # main mode (window = [p2035]) — shared first stage
+WS = 150_000.0    # wait-and-see control (window unset)
+EVPI = RP - WS    # = 15 000
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +127,7 @@ def na_divest_resolved(na_divest_run):
 
 @pytest.mark.solver
 def test_main_objective_hand_calc(na_window_wf) -> None:
-    """T-Main (§9.2): the main-mode objective is exactly 173 250 — the
+    """T-Main (§9.2): the main-mode objective is exactly 165 000 — the
     shared first stage costed once at full weight.  This is the FIRST test
     to fire the cross-Enum invest-NA guard join (§4.2, R3)."""
     obj = float(
@@ -153,8 +158,8 @@ def test_main_invest_shared_first_stage(na_window_resolved) -> None:
 
 @pytest.mark.solver
 def test_ws_control_and_evpi_gap(na_ws_wf, na_window_wf) -> None:
-    """T-WS (§9.2): the window-unset control is 157 500 (today's
-    wait-and-see), strictly below RP.  The gap RP − WS = 15 750 proves
+    """T-WS (§9.2): the window-unset control is 150 000 (today's
+    wait-and-see), strictly below RP.  The gap RP − WS = 15 000 proves
     the tie genuinely shares the first stage (a dropped tie collapses
     RP → WS)."""
     ws = float(
@@ -301,7 +306,7 @@ def test_registry_has_four_invest_families() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Investment marginals of a recourse fan (item 266 review F1)
+# Investment marginals of a recourse fan
 # ---------------------------------------------------------------------------
 
 
@@ -309,9 +314,10 @@ def test_registry_has_four_invest_families() -> None:
 def test_recourse_fan_invest_marginals_stay_on_forecast_branches(tmp_path, monkeypatch) -> None:
     """Under ``stochastic_invest_method = recourse`` the fan's ``v_invest`` columns are on the forecast branch
     periods, so its reduced costs are read on the dispatch axis, not the investment axis with the fan's period
-    labels (item 266 read the investment duals on the investment axis; on a fan that put 0 rows at the labels
+    labels (read on the investment axis, a fan's investment duals put 0 rows at the labels
     p2035 / p2040, dropped the p2040_low reduced cost and wrote a ``unit_invest_marginal__d`` of -0 rows with an
-    empty solve label).  1050 is the p2040_low reduced cost the parquet held before item 266."""
+    empty solve label).  1000 is the p2040_low reduced cost: its annuity 1 · 1000 · 0.05 / (1 − 1.05^−1) / 1.05 (the
+    parquet once held 1050, the year-end annuity)."""
     from pathlib import Path
 
     from flextool.engine import run_chain_from_db
@@ -340,7 +346,7 @@ def test_recourse_fan_invest_marginals_stay_on_forecast_branches(tmp_path, monke
 
     duals = pl.read_parquet(wf / "output_raw" / f"v_dual_invest_unit__{SOLVE}.parquet")
     by_period = dict(zip(duals["period"], duals["base"]))
-    assert by_period["p2040_low"] == pytest.approx(1050.0, rel=1e-6), duals
+    assert by_period["p2040_low"] == pytest.approx(1000.0, rel=1e-6), duals
     # No 0-filled rows at the fan's period labels.
     assert not {"p2035", "p2040"} & set(by_period), duals
     # Nothing is invested, and no marginal table of -0 rows with an empty solve label is written.

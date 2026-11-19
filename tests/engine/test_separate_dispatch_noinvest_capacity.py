@@ -3,19 +3,13 @@ OPERATIONAL ``existing`` capacity, even with NO investment.
 
 A ``dispatch_realization_method=separate_dispatch`` solve auto-spawns a
 deterministic realized-dispatch SIBLING that consumes the parent's committed
-capacity.  That capacity is sourced from the invest→dispatch handoff
-(``realized_existing``); for a NO-INVEST model the planning solve emits an
-EMPTY ``realized_existing`` carrier, so the sibling used to resolve its
-capacity to ZERO → ``p_process_existing_count = 0`` → the unit could not
-dispatch → all demand went unserved (VOLL) / a commitment pin was infeasible.
+capacity.  Its capacity is the existing cohort (the user's ``existing``) plus the investments carried in the
+handoff (``realized_cohort``); for a NO-INVEST model nothing is carried, and the sibling must still see the
+existing capacity — before the cohort handoff it resolved to ZERO → ``p_process_existing_count = 0`` → the unit
+could not dispatch → all demand went unserved (VOLL) / a commitment pin was infeasible.
 
-The fix (``_chain_params._compute_p_entity_existing_chain``): a
-continuation/dispatch solve that carries NO ``realized_existing`` row for an
-entity falls back to that entity's DB ``pre_existing`` capacity — the handoff
-ADDS committed invest on top of existing, it never ZEROES the operational
-existing.  Byte-parity for invest models (there the producer emits every
-entity, so the fallback never fires — see ``test_stoch_t0_online_tie.py``,
-which still passes byte-identical).
+``_chain_params.emit_existing_capacity`` gives every solve ``existing + carried − retired``, so the carried
+investments add to the existing capacity and never replace it.
 
 Fixture (``separate_dispatch_noinvest.json``, built from JSON per CLAUDE.md
 invariant 3): a fan-at-first stochastic separate_dispatch solve on ``p2035``
@@ -104,7 +98,7 @@ def chain(tmp_path_factory):
 @pytest.mark.solver
 def test_sibling_resolves_operational_existing_capacity(chain):
     """THE FIX: the sibling resolves peaker's operational ``existing``
-    (2 units, 100 MW), NOT 0 — the no-invest realized-existing fallback."""
+    (2 units, 100 MW), NOT 0 — the existing cohort with nothing carried."""
     steps, _ = chain
     fd = steps[SIBLING].flex_data
     assert fd.p_process_existing_count is not None, (

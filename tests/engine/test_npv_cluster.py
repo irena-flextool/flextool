@@ -1,7 +1,7 @@
 """Δ.5 — Cluster A (annual integration / NPV) parity tests.
 
 Per-fixture parity check that the new lazy-polars NPV helpers in
-``flextool.engine.preprocess.params._npv`` produce frame-equal output
+``flextool.engine.preprocess.params._npv`` / ``_discount`` / ``_fixed_costs`` produce frame-equal output
 (modulo column ordering) vs the eager ``ed_entity_annual_family_from_source``
 helper in ``flextool.engine.preprocess.params._derived`` — which itself is
 parity-clean against flextool's CSV-side reference output (gated by
@@ -29,6 +29,8 @@ import math
 import polars as pl
 import pytest
 
+from flextool.engine.preprocess.params import _discount as discount
+from flextool.engine.preprocess.params import _fixed_costs as fixed_costs
 from flextool.engine.preprocess.params import _npv as npv
 from flextool.engine.preprocess.params._derived import (
     _read_active_solve,
@@ -37,6 +39,7 @@ from flextool.engine.preprocess.params._derived import (
     _periodAll_from_source,
     _read_period_with_history,
 )
+from flextool.engine.preprocess.params._existing import INVEST_NOT_ALLOWED
 from tests._support.load import ScenarioRun, clone_provider, load_scenario
 
 
@@ -157,12 +160,12 @@ def test_npv_lazy_vs_eager_parity(
     period_with_history = (_read_period_with_history(work, provider=provider)
                               or list(period_in_use))
     # The solve's years from the start of the run, as apply_npv passes them (a later solve of a chain, item 242).
-    year_rows = npv.solve_year_rows(work, provider, reader, active_solve, list(period_universe))
+    year_rows = discount.solve_year_rows(work, provider, reader, active_solve, list(period_universe))
     # Compute lazy variants.
-    lazy_infl = npv.p_inflation_op_from_source(
+    lazy_infl = discount.p_inflation_op_from_source(
         reader, active_solve, period_in_use, period_universe, provider=provider, year_rows=year_rows)
-    lazy_fc = npv.p_ed_fixed_cost_from_source(reader, period_with_history)
-    lazy_ann = lazy_div = lazy_lfc = lazy_lfcd = None
+    lazy_fc = fixed_costs.p_ed_fixed_cost_from_source(reader, period_with_history)
+    lazy_ann = lazy_lfc = lazy_lfcd = None
     # Mirror apply_npv's no_invest short-circuit so the lazy path
     # matches the eager loader's gate.
     ed_invest = getattr(data_eager, "ed_invest_set", None)
@@ -175,13 +178,10 @@ def test_npv_lazy_vs_eager_parity(
         lazy_ann = npv.ed_entity_annual_discounted_from_source(
             reader, active_solve,
             period_invest, period_in_use, period_universe, year_rows=year_rows)
-        lazy_div = npv.ed_entity_annual_divest_discounted_from_source(
-            reader, active_solve,
-            period_invest, period_in_use, period_universe, year_rows=year_rows)
-        lazy_lfc = npv.ed_lifetime_fixed_cost_from_source(
+        lazy_lfc = fixed_costs.ed_lifetime_fixed_cost_from_source(
             reader, active_solve,
             period_with_history, period_in_use, period_universe, year_rows=year_rows)
-        lazy_lfcd = npv.ed_lifetime_fixed_cost_divest_from_source(
+        lazy_lfcd = fixed_costs.ed_lifetime_fixed_cost_divest_from_source(
             reader, active_solve,
             period_invest, period_in_use, period_universe, year_rows=year_rows)
 
@@ -195,9 +195,6 @@ def test_npv_lazy_vs_eager_parity(
         ("ed_entity_annual_discounted",
          _param_frame(data_eager.ed_entity_annual_discounted),
          _param_frame(lazy_ann), ("e", "d")),
-        ("ed_entity_annual_divest_discounted",
-         _param_frame(data_eager.ed_entity_annual_divest_discounted),
-         _param_frame(lazy_div), ("e", "d")),
         ("ed_lifetime_fixed_cost",
          _param_frame(data_eager.ed_lifetime_fixed_cost),
          _param_frame(lazy_lfc), ("e", "d")),
@@ -247,8 +244,11 @@ def _inv_factor(d: str) -> float:
 def _annuity(invest_cost_eur_per_kw: float,
                    discount_rate: float,
                    lifetime_years: float) -> float:
+    """The yearly payment of a loan of invest_cost taken when the capacity comes online, paid at OFFSET_INV years
+    into each service year: the year-end annuity sized by (1 + r)^(OFFSET_INV − 1), so the loan is worth
+    invest_cost at the discount_rate (at OFFSET_INV 0 the year-end annuity divided by 1 + r)."""
     r, n = discount_rate, lifetime_years
-    return invest_cost_eur_per_kw * 1000.0 * r / (1.0 - (1.0 / (1.0 + r)) ** n)
+    return invest_cost_eur_per_kw * 1000.0 * r / (1.0 - (1.0 / (1.0 + r)) ** n) * (1.0 + r) ** (OFFSET_INV - 1.0)
 
 
 ANN_WIND = _annuity(1000.0, 0.04, 5.0)
@@ -289,7 +289,7 @@ def test_npv_lazy_p_inflation_op_2pct(scenario_run):
                                           provider=provider)
     period_universe = _periodAll_from_source(
         reader, active_solve, workdir=work, provider=provider)
-    p_infl = npv.p_inflation_op_from_source(
+    p_infl = discount.p_inflation_op_from_source(
         reader, active_solve, period_in_use, period_universe)
     assert p_infl is not None
     for d in PERIODS_INFL:
@@ -329,25 +329,13 @@ def test_npv_lazy_ed_entity_annual_discounted_2pct(scenario_run):
 # discount_rate 0 is 0 %, a missing rate is the 5 % default (both annuity paths)
 # ---------------------------------------------------------------------------
 #
-# invest_cost 1000 CUR/kW, lifetime 20 a.  Hand values:
-#   r = 0          → 1000·1000/20                 = 50 000 CUR/MW/a (straight line);
-#   r missing/0.05 → 1e6·0.05/(1 − 1.05^−20)      = 80 242.58719 CUR/MW/a.
+# invest_cost 1000 CUR/kW, lifetime_technical 20 a (no payback_time: the annuity is over 20 a), the default
+# discount_offset_investment 0 (each payment at the start of its year, so sized by (1 + r)^(0 − 1)).  Hand values:
+#   r = 0          → 1000·1000/20                          = 50 000 CUR/MW/a (straight line);
+#   r missing/0.05 → 1e6·0.05/(1 − 1.05^−20) / 1.05        = 80 242.58719 / 1.05 = 76 421.51161 CUR/MW/a.
 
 ANN_R0 = 50_000.0
-ANN_R5 = 80_242.58719
-
-
-class _Lookup:
-    """Duck-typed ``PdLookup`` (``get`` / ``has``) over a ``{(e, param): value}`` dict."""
-
-    def __init__(self, values: dict[tuple[str, str], float]) -> None:
-        self._v = values
-
-    def get(self, e: str, param: str, d: str) -> float:
-        return self._v.get((e, param), 0.0)
-
-    def has(self, e: str, param: str, d: str) -> bool:
-        return (e, param) in self._v
+ANN_R5 = 76_421.51161
 
 
 def _lazy_annuity(disc: float | None, life: float | None, cost: float = 1000.0) -> float:
@@ -361,46 +349,36 @@ def _lazy_annuity(disc: float | None, life: float | None, cost: float = 1000.0) 
     if disc is not None:
         params[("unit", "discount_rate")] = frame(disc)
     if life is not None:
-        params[("unit", "lifetime")] = frame(life)
+        params[("unit", "lifetime_technical")] = frame(life)
     src = InMemoryReader({"unit": pl.DataFrame({"name": ["u"]})}, params,
                          defaults={("unit", "discount_rate"): 0.05})
     ed = pl.LazyFrame({"e": ["u"], "d": ["p2020"]})
-    out = npv._per_method_annuity_lf(src, ed, "invest_cost", npv._INVEST_NOT_ALLOWED).collect()
+    out = npv._per_method_annuity_lf(src, ed, "invest_cost", INVEST_NOT_ALLOWED).collect()
     return float(out["ann"][0])
 
 
-def _emit_annuity(disc: float | None, life: float | None, cost: float = 1000.0) -> float:
-    from flextool.engine.preprocess.emit._entity_annual import _annuity
-
-    values = {("u", "invest_cost"): cost}
-    if disc is not None:
-        values[("u", "discount_rate")] = disc
-    if life is not None:
-        values[("u", "lifetime")] = life
-    return _annuity(_Lookup(values), "u", "p2020", "invest_cost")
-
-
-@pytest.mark.parametrize("path", [_lazy_annuity, _emit_annuity], ids=["lazy", "emit"])
+@pytest.mark.parametrize("path", [_lazy_annuity], ids=["lazy"])
 @pytest.mark.parametrize("disc, expected", [(0.0, ANN_R0), (None, ANN_R5), (0.05, ANN_R5)],
                          ids=["zero", "missing", "explicit_5pct"])
 def test_annuity_discount_rate(path, disc, expected) -> None:
     assert math.isclose(path(disc, 20.0), expected, rel_tol=1e-9), (path.__name__, disc)
 
 
-@pytest.mark.parametrize("path", [_lazy_annuity, _emit_annuity], ids=["lazy", "emit"])
+@pytest.mark.parametrize("path", [_lazy_annuity], ids=["lazy"])
 def test_annuity_without_lifetime_is_an_error(path) -> None:
     from flextool.engine.input._solve_state import FlexToolConfigError
 
-    with pytest.raises(FlexToolConfigError, match="lifetime is missing or not above 0 where invest_cost is not 0: "
-                                                  "'u' in period p2020"):
+    with pytest.raises(FlexToolConfigError,
+                       match="payback_time is missing or not above 0 where invest_cost is not 0: 'u' in period p2020"):
         path(0.05, None)
     assert path(0.05, None, cost=0.0) == 0.0
 
 
 def test_annuity_factor_small_rate_is_the_straight_line() -> None:
-    from flextool.engine.preprocess._annuity import annuity_factor, annuity_factor_expr
+    from flextool.engine.preprocess._annuity import annuity_factor
 
-    assert annuity_factor(0.0, 20.0) == 1 / 20
-    assert math.isclose(annuity_factor(1e-12, 20.0), 1 / 20, rel_tol=1e-9)
-    got = pl.select(annuity_factor_expr(pl.lit(1e-12), pl.lit(20.0))).item()
-    assert math.isclose(got, 1 / 20, rel_tol=1e-9)
+    def factor(r: float) -> float:
+        return pl.select(annuity_factor(pl.lit(r), pl.lit(20.0), 0.0)).item()
+
+    assert factor(0.0) == 1 / 20
+    assert math.isclose(factor(1e-12), 1 / 20, rel_tol=1e-9)

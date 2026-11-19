@@ -9,6 +9,10 @@ and cover three silent-no-op cases (v58 vocabulary):
 * ``group.print_indicators: yes`` with no ``group__node`` row
 * ``flowGroup.flow_aggregator`` set to a non-``none`` method with no
   ``flowGroup__unit__node`` or ``flowGroup__connection__node`` row
+
+plus the double-counting guard.  They are coded warnings (W-0002, W-0001, W-0003 of
+``flextool.run_warnings``): one line per case naming how many groups and the first, the
+full list in the ``flextool.warnings`` debug log.
 """
 from __future__ import annotations
 
@@ -18,6 +22,7 @@ from pathlib import Path
 import pytest
 from spinedb_api import DatabaseMapping
 
+from flextool import run_warnings
 from flextool.input_derivation._validators import validate_group_output_memberships
 
 # Parameter names whose class is ``flowGroup`` (the v58 carve-out); every
@@ -136,14 +141,16 @@ def _build_db(tmp_path: Path, parameter_values: list[tuple[str, str, str]],
     return url
 
 
-def _run_validation(url: str, caplog) -> list[logging.LogRecord]:
+def _run_validation(url: str, caplog, level: int = logging.WARNING) -> list[logging.LogRecord]:
+    """The records of the ``flextool.warnings`` logger at *level* or above (DEBUG adds the full lists)."""
     logger = logging.getLogger("test_group_output_warnings")
-    caplog.set_level(logging.WARNING, logger=logger.name)
+    caplog.set_level(level, logger=run_warnings.LOGGER_NAME)
+    run_warnings.start_run()
     with DatabaseMapping(url) as db:
         db.fetch_all("entity")
         db.fetch_all("parameter_value")
         validate_group_output_memberships(db, logger)
-    return [r for r in caplog.records if r.name == logger.name]
+    return [r for r in caplog.records if r.name == run_warnings.LOGGER_NAME and r.levelno >= level]
 
 
 def test_print_dispatch_missing_group_node(
@@ -184,8 +191,7 @@ def test_flow_aggregator_missing_flow_members(
     )
     records = _run_validation(url, caplog)
     msgs = [r.getMessage() for r in records]
-    assert any("gNoFlows" in m and "flow_aggregator" in m
-               and "flowGroup__unit__node" in m for m in msgs), msgs
+    assert msgs == ["Warning: flowGroup has flow_aggregator but no flow members ('gNoFlows') [W-0001]"], msgs
 
 
 def test_flow_aggregator_none_does_not_warn(
@@ -220,10 +226,11 @@ def test_overlap_double_count_warning(
             ],
         },
     )
-    records = _run_validation(url, caplog)
+    records = _run_validation(url, caplog, logging.DEBUG)
     msgs = [r.getMessage() for r in records]
-    assert any("u1" in m and "nA" in m and "fgA" in m and "fgB" in m
-               and "double counting" in m for m in msgs), msgs
+    assert [m for m in msgs if m.startswith("Warning")] == [
+        "Warning: flow is in several dispatch-plot flowGroups (counted twice) ('u1, nA') [W-0003]"], msgs
+    assert "W-0003 u1, nA: in flowGroups fgA, fgB" in msgs, msgs        # the flowGroups go to the debug log
 
 
 def test_overlap_standalone_only_no_warning(
@@ -247,7 +254,7 @@ def test_overlap_standalone_only_no_warning(
     )
     records = _run_validation(url, caplog)
     msgs = [r.getMessage() for r in records]
-    assert not any("double-counted" in m for m in msgs), msgs
+    assert not any("W-0003" in m for m in msgs), msgs
 
 
 def test_no_warnings_when_memberships_match(
@@ -270,3 +277,23 @@ def test_no_warnings_when_memberships_match(
     )
     records = _run_validation(url, caplog)
     assert records == [], [r.getMessage() for r in records]
+
+
+def test_several_groups_give_one_line_per_case(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Three groups with print_dispatch and no nodes, two flowGroups without flows: one line each, naming how
+    many and the first; the full lists are in the debug log."""
+    url = _build_db(
+        tmp_path,
+        parameter_values=[(g, "print_dispatch", "yes") for g in ("g3", "g1", "g2")]
+        + [("fgB", "flow_aggregator", "both"), ("fgA", "flow_aggregator", "standalone_aggregator_only")],
+        memberships={},
+    )
+    msgs = [r.getMessage() for r in _run_validation(url, caplog, logging.DEBUG)]
+    assert [m for m in msgs if m.startswith("Warning")] == [
+        "Warning: group has print_dispatch: yes but no group__node members (3 cases, e.g. 'g1') [W-0002]",
+        "Warning: flowGroup has flow_aggregator but no flow members (2 cases, e.g. 'fgA') [W-0001]",
+    ], msgs
+    assert "W-0002 all cases: g1; g2; g3" in msgs, msgs
+    assert "W-0001 fgB: flow_aggregator: both" in msgs, msgs

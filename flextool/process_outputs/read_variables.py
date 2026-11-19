@@ -373,9 +373,22 @@ def _read_from_parquet(parquet_dir: Path) -> SimpleNamespace:
     v.q_capacity_margin = _read("vq_capacity_margin", ("group",), has_time=False)
     v.invest = _read("v_invest", ("entity",), has_time=False)
     v.divest = _read("v_divest", ("entity",), has_time=False)
+    # The retirements of model-built capacity (empty frames without retirable built capacity): units retired in a
+    # period, units retired so far counting in it and their objective term by cost line and report period (CUR;
+    # read_highs_solution write_v_divest_built).
+    v.divest_built = _read("v_divest_built", ("entity",), has_time=False)
+    v.divested_built = _read("v_divested_built", ("entity",), has_time=False)
+    v.divest_built_lines = _read("v_divest_built_lines", ("entity", "line", "period_report"), has_time=False)
+    # The life extensions (empty frames without an extension option): units extended in a period (starting to
+    # operate there), extended units in service, and their objective term by cost line and report period (CUR;
+    # read_highs_solution write_v_extend).
+    v.extend = _read("v_extend", ("entity",), has_time=False)
+    v.extended = _read("v_extended", ("entity",), has_time=False)
+    v.extend_lines = _read("v_extend_lines", ("entity", "line", "period_report"), has_time=False)
     # The branch-weighted investment of a stochastic fan's branch periods at its label (recourse; empty frame
     # without the parquet): the reported investment costs inside a fan.
     v.invest_fan = _read("v_invest_fan", ("entity",), has_time=False)
+    v.divest_fan = _read("v_divest_fan", ("entity",), has_time=False)
     # Commodity price ladder (#57): tier purchase, period-only (no time).  Column order matches the
     # VariableSpec's ``col_names + trailing_col_names`` (commodity, node, tier).
     v.trade = _read("v_trade", ("commodity", "node", "tier"), has_time=False)
@@ -411,6 +424,11 @@ def _read_from_parquet(parquet_dir: Path) -> SimpleNamespace:
 
     v.capacity_margin_report = read_capacity_margin_parts(parquet_dir, REPORT_PREFIX, solve_order)
     v.capacity_margin_entity = read_capacity_margin_parts(parquet_dir, ENTITY_PREFIX, solve_order)
+    # The capacity of each cohort per period (engine.output._cohort_capacity): a long polars frame, each period
+    # from the last solve that holds it; None without a cohort table.
+    from flextool.engine.output._cohort_capacity import read_cohort_capacity
+
+    v.cohort_capacity = read_cohort_capacity(parquet_dir, solve_order)
     # The reserve requirement of each reserve group (engine.output._reserve_report): long polars frames over the
     # realized steps, a step from the last solve that realizes it; None without a reserve requirement.
     from flextool.engine.output._reserve_report import PROVIDER_PREFIX, REPORT_PREFIX as RESERVE_PREFIX

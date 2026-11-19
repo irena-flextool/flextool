@@ -113,7 +113,6 @@ _DOCUMENTED_OUT_OF_SCOPE_SOLVE_DATA: frozenset[str] = frozenset({
     # already captured them but the post-solve overwrite path lands
     # them on disk.  See test_phase_e_c::test_phase_e_d_universal_csv_free_run
     # for the same whitelist.
-    "p_entity_period_existing_capacity.csv",
     "p_entity_invested.csv",
     "p_entity_divested.csv",
     "p_entity_period_invested_capacity.csv",
@@ -165,7 +164,6 @@ _DOCUMENTED_OUT_OF_SCOPE_SOLVE_DATA: frozenset[str] = frozenset({
     # Reserve / chain-cumulative carriers (test_phase_e_c notes them
     # as still landing on disk under csv-free mode for some fixtures).
     "ed_history.csv",
-    "edd_history.csv",
 })
 
 # ``input/`` is entirely out-of-scope for Phase E gating — the legacy

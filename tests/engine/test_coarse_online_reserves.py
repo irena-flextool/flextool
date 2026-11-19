@@ -26,8 +26,8 @@ import pytest
 
 from tests.engine._lp_rows import row_bounds, row_terms
 from tests.engine._unit_db import (
-    BASE_FIXTURE_JSON, FLEXTOOL_ROOT, RunCache, b64, build, is_realization, last_stochastic, make_db, run, utf8,
-    without_realization,
+    BASE_FIXTURE_JSON, FLEXTOOL_ROOT, RunCache, b64, build, is_realization, last_stochastic, make_db,
+    record_roll_carry, replay_roll_carry, run, utf8, without_realization,
 )
 from tests.engine.test_coarse_flows import (
     LH2, LH2_COARSE, LH2_RP, STOCH, _chain, _coarse_procs, _f, _forecasts, _keys, _s, _stoch_values,
@@ -173,6 +173,13 @@ def _add_ties(pb, fd) -> None:
         pb.add_cstr(f"tie_{name}", over=over, sense="==", lhs_terms=lhs, rhs_terms={})
 
 
+def _recorded_carry(monkeypatch) -> list:
+    """Record the roll-end carry of the next (coarse) run, solved here, not taken from the module's shared runs
+    (:func:`tests.engine._unit_db.record_roll_carry`)."""
+    monkeypatch.setitem(_STATE, "tied", True)
+    return record_roll_carry(monkeypatch)
+
+
 def _tied_fine(monkeypatch) -> None:
     """Build every solve fine (the model ignores processCoarse) with the coarse steps tied (:func:`_add_ties`).
     The tie rows are a test device outside the autoscale registry: not strict there."""
@@ -229,11 +236,16 @@ def test_coarse_online_equals_tied_fine_model(tmp_path_factory, monkeypatch, cas
     in a single solve, a rolling solve (72 h / 48 h: the units online and the 30-h minimum times carried across the
     roll), a representative-period invest solve, with integer units online and with a min_load_efficiency section.
     The start-ups are counted once per day (the coarse model starts units; a representative day is one coarse
-    step that wraps to itself, so it has none)."""
+    step that wraps to itself, so it has none).  Rolling: the lh2 level a roll ends with is not unique, and the next
+    roll continues from it, so the tied model replays the coarse model's roll-end carry (each roll compared from
+    the same start)."""
     kind = "integer" if case == "integer" else "linear"
+    carry = _recorded_carry(monkeypatch) if case == "rolling" else None
     coarse = _uc_case(tmp_path_factory, case, f"co_tie_{case}")
     assert all("liquefier_A" in _coarse_procs(s.flex_data) for s in without_realization(coarse).values())
     _tied_fine(monkeypatch)
+    if carry is not None:
+        replay_roll_carry(monkeypatch, carry)
     tied = _uc_case(tmp_path_factory, case, f"co_tie_{case}_fine")
     assert len(coarse) == len(tied)
     assert _total_objective(coarse) == pytest.approx(_total_objective(tied), rel=1e-9)
@@ -815,7 +827,9 @@ def test_coarse_reserves_equal_tied_fine_model(tmp_path_factory, monkeypatch, ca
     """lh2 with reserves (above) and liquefier_A's units online: the coarse model has the objective of the hourly
     model with every coarse-process flow, units online and reserve tied over each day (start-ups 0 after a day's
     first hour), in a single, a rolling and a representative-period invest solve: averaged rows with parameters
-    constant within a day are the fine rows, and the requirement is checked every hour in both."""
+    constant within a day are the fine rows, and the requirement is checked every hour in both.  Rolling: the tied
+    model replays the coarse model's roll-end carry (the lh2 level at a roll end is not unique)."""
+    carry = _recorded_carry(monkeypatch) if case == "rolling" else None
     coarse = _lh2_res_case(tmp_path_factory, f"co_res_tie_{case}", case)
     held = 0.0
     for s in without_realization(coarse).values():
@@ -823,6 +837,8 @@ def test_coarse_reserves_equal_tied_fine_model(tmp_path_factory, monkeypatch, ca
         held += float(s.solution.value("v_reserve")["value"].sum())
     assert held > 1e-6
     _tied_fine(monkeypatch)
+    if carry is not None:
+        replay_roll_carry(monkeypatch, carry)
     tied = _lh2_res_case(tmp_path_factory, f"co_res_tie_{case}_fine", case)
     assert len(coarse) == len(tied)
     assert _total_objective(coarse) == pytest.approx(_total_objective(tied), rel=1e-9)

@@ -44,6 +44,12 @@ class QuantityType(Enum):
 
 
 PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
+    ('age_at_model_start', 'connection'): QuantityType.DURATION,
+    # [years] Age of the existing capacity at the start of the model; shortens its end of life. Constant.
+    ('age_at_model_start', 'node'): QuantityType.DURATION,
+    # [years] Age of the existing capacity at the start of the model; shortens its end of life. Constant.
+    ('age_at_model_start', 'unit'): QuantityType.DURATION,
+    # [years] Age of the existing capacity at the start of the model; shortens its end of life. Constant.
     ('annual_flow', 'node'): QuantityType.ENERGY,
     # [MWh] Annual flow in energy units (always positive, the sign of inflow defines in/out). Inflow time series can be scaled to match annual flo...
     ('availability', 'connection'): QuantityType.FRACTION,
@@ -60,6 +66,12 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Benders relative optimality-gap convergence threshold. Solver-algorithm knob, never an LP coefficient.
     ('benders_in_out_weight', 'solve'): QuantityType.DIMENSIONLESS,
     # Benders in-out separation stabilization weight (lambda). Solver-algorithm knob, never an LP coefficient.
+    ('build_year', 'connection'): QuantityType.DIMENSIONLESS,
+    # [year] Calendar year the existing capacity was built (age = model.start_year - build_year). Constant.
+    ('build_year', 'node'): QuantityType.DIMENSIONLESS,
+    # [year] Calendar year the existing capacity was built (age = model.start_year - build_year). Constant.
+    ('build_year', 'unit'): QuantityType.DIMENSIONLESS,
+    # [year] Calendar year the existing capacity was built (age = model.start_year - build_year). Constant.
     ('candidate_precapacity_to_avoid_big_m', 'group'): QuantityType.POWER,
     # [MW] Small pre-existing capacity assigned to investment candidate connections in DC power flow groups that have zero existing capacity. This...
     ('capacity_margin_absolute', 'group'): QuantityType.POWER,
@@ -205,6 +217,10 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [hours] A time delay between the input node and the output node - works only with one-way connections (or units). Either a constant indicati...
     ('delay', 'unit'): QuantityType.DURATION,
     # [hours] A time delay between the input nodes and the output nodes. Either a constant indicating the time difference in hours or a map of tim...
+    ('discount_offset_investment', 'model'): QuantityType.DURATION,
+    # [years] Where in each year the yearly investment payments and the yearly salvage credits fall (0 start, 1 end).
+    ('discount_offset_operations', 'model'): QuantityType.DURATION,
+    # [years] Where in each year operating and fixed costs are weighed by social_discount_rate. Default 0.5.
     ('discount_rate', 'connection'): QuantityType.FRACTION,
     # [e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model...
     ('discount_rate', 'node'): QuantityType.FRACTION,
@@ -217,6 +233,12 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [factor] Efficiency of the unit at full load: outputs / inputs, each flow weighted by its conversion_flow_coeff (default 1, giving plain sum...
     ('efficiency_at_min_load', 'unit'): QuantityType.FRACTION,
     # [e.g. 0.4 means 40%] Efficiency of a min_load_efficiency unit at its minimum load. Fuel use is a straight line from minimum load (this effic...
+    ('end_of_life_method', 'connection'): QuantityType.DIMENSIONLESS,
+    # [choice] How an end of life is rounded to a period start (closest_seam / previous_seam / next_seam).
+    ('end_of_life_method', 'node'): QuantityType.DIMENSIONLESS,
+    # [choice] How an end of life is rounded to a period start (closest_seam / previous_seam / next_seam).
+    ('end_of_life_method', 'unit'): QuantityType.DIMENSIONLESS,
+    # [choice] How an end of life is rounded to a period start (closest_seam / previous_seam / next_seam).
     ('energy_margin_multiplier', 'node'): QuantityType.DIMENSIONLESS,
     # [factor] Multiplier applied to this node's inflow in the investment solve only, when energy_margin_method = 'inflow_multiplier'. Offsets rep...
     ('energy_margin', 'node'): QuantityType.DIMENSIONLESS,
@@ -264,11 +286,10 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('inertia_limit', 'group'): QuantityType.INERTIA,
     # [MWs] Minimum synchronous inertia in the group. Used only when has_inertia is yes. No value means no requirement. Constant or period.
     ('inflation_offset_investment', 'model'): QuantityType.DURATION,
-    # [years] Offset for when investment costs occur within a year. Default 0 (beginning of year).
     ('inflation_offset_operations', 'model'): QuantityType.DURATION,
-    # [years] Offset for when operational costs occur within a year. Default 0.5 (middle of year).
     ('inflation_rate', 'model'): QuantityType.FRACTION,
-    # [e.g. 0.02 for 2%] Model-wide inflation rate applied to all future costs. When inputs are in real (constant-price) terms, set to 0. When inp...
+    # Pre-v82 names of discount_offset_investment / discount_offset_operations / social_discount_rate, carried during
+    # the migration window (renamed by db_migration v82).
     ('inflow', 'node'): QuantityType.ENERGY,
     # [MWh] Inflow into the node (negative is outflow). Constant or time.
     ('inflow_method', 'node'): QuantityType.DIMENSIONLESS,
@@ -348,11 +369,15 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('large_failure_ratio', 'reserve__upDown__unit__node'): QuantityType.FRACTION,
     # [factor] With a large_failure method, the reserve must cover the loss of this unit's flow times this ratio. Its own reserve does not count. ...
     ('lifetime', 'connection'): QuantityType.DURATION,
-    # [years] Used to calculate annuity together with interest rate. Constant or period.
     ('lifetime', 'node'): QuantityType.DURATION,
-    # [years] Used to calculate annuity together with interest rate. Constant or period.
     ('lifetime', 'unit'): QuantityType.DURATION,
-    # [years] Used to calculate annuity together with interest rate. Constant or period.
+    # Pre-v81 name of lifetime_technical, carried during the migration window (renamed by db_migration v81).
+    ('lifetime_technical', 'connection'): QuantityType.DURATION,
+    # [years] Technical lifetime: how long the capacity operates; its end depends on lifetime_method.
+    ('lifetime_technical', 'node'): QuantityType.DURATION,
+    # [years] Technical lifetime: how long the storage capacity operates. Constant or period.
+    ('lifetime_technical', 'unit'): QuantityType.DURATION,
+    # [years] Technical lifetime: how long the capacity operates; its end depends on lifetime_method.
     ('lifetime_method', 'connection'): QuantityType.DIMENSIONLESS,
     # Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the en...
     ('lifetime_method', 'node'): QuantityType.DIMENSIONLESS,
@@ -525,12 +550,34 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Hours (Required if rolling_window solve). How long into the future the roll sees
     ('rolling_solve_jump', 'solve'): QuantityType.DURATION,
     # Hours, (Required if rolling_window solve). Interval between the start points of the rolls. Should be smaller than the horizon
+    ('net_salvage_value', 'connection'): QuantityType.PRICE_PER_CAPACITY,
+    # [CUR/kW] Net salvage value: scrap value minus decommissioning cost, received once when capacity is retired.
+    ('net_salvage_value', 'node'): QuantityType.PRICE_PER_STORAGE,
+    # [CUR/kWh] Net salvage value of retired storage capacity. Constant or period.
+    ('net_salvage_value', 'unit'): QuantityType.PRICE_PER_CAPACITY,
+    # [CUR/kW] Net salvage value: scrap value minus decommissioning cost, received once when capacity is retired.
+    ('life_extension_cost', 'connection'): QuantityType.PRICE_PER_CAPACITY,
+    # [CUR/kW] One-off cost of keeping capacity in service for life_extension_years beyond its end of life.
+    ('life_extension_cost', 'node'): QuantityType.PRICE_PER_STORAGE,
+    # [CUR/kWh] One-off cost of keeping storage capacity in service for life_extension_years beyond its end of life.
+    ('life_extension_cost', 'unit'): QuantityType.PRICE_PER_CAPACITY,
+    # [CUR/kW] One-off cost of keeping capacity in service for life_extension_years beyond its end of life.
+    ('life_extension_years', 'connection'): QuantityType.DURATION,
+    # [years] How long capacity can be kept in service beyond the end of its lifetime_technical.
+    ('life_extension_years', 'node'): QuantityType.DURATION,
+    # [years] How long storage capacity can be kept in service beyond the end of its lifetime_technical.
+    ('life_extension_years', 'unit'): QuantityType.DURATION,
+    # [years] How long capacity can be kept in service beyond the end of its lifetime_technical.
+    ('payback_time', 'connection'): QuantityType.DURATION,
+    # [years] Years over which invest_cost is annualized with discount_rate. No value: lifetime_technical.
+    ('payback_time', 'node'): QuantityType.DURATION,
+    # [years] Years over which invest_cost is annualized with discount_rate. No value: lifetime_technical.
+    ('payback_time', 'unit'): QuantityType.DURATION,
+    # [years] Years over which invest_cost is annualized with discount_rate. No value: lifetime_technical.
     ('salvage_value', 'connection'): QuantityType.PRICE_PER_CAPACITY,
-    # [CUR/kW] Salvage value for retiring capacity. Constant or period.
     ('salvage_value', 'node'): QuantityType.PRICE_PER_STORAGE,
-    # [CUR/kWh] Salvage value of the storage. Constant or period.
     ('salvage_value', 'unit'): QuantityType.PRICE_PER_CAPACITY,
-    # [CUR/kW] Salvage value of the unit. Constant or period.
+    # Pre-v81 name of net_salvage_value, carried during the migration window (renamed by db_migration v81).
     ('scaling', 'solve'): QuantityType.DIMENSIONLESS,
     # Numerical scaling of this solve's LP. full (default): FlexTool rescales variables, constraints and costs and sets the solver's scaling. basi...
     ('self_discharge_loss', 'node'): QuantityType.FRACTION,
@@ -571,6 +618,10 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Sequence of solves in the model. Array.
     ('small_number_threshold', 'model'): QuantityType.DIMENSIONLESS,
     # Config scalar: LP coefficients/RHS below this magnitude are floored to 0. Not an LP coefficient itself.
+    ('social_discount_rate', 'model'): QuantityType.FRACTION,
+    # [-] e.g. 0.03 means 3% per year. The model's time discount rate: weighs a cost by 1 / (1 + rate)^years.
+    ('start_year', 'model'): QuantityType.DIMENSIONLESS,
+    # [year] Calendar year the first period of the model's first solve starts (build_year's reference).
     ('startup_cost', 'connection'): QuantityType.PRICE_PER_CAPACITY,
     # [CUR/MW] Cost of starting up one MW of capacity. Constant or period.
     ('startup_cost', 'unit'): QuantityType.PRICE_PER_CAPACITY,
@@ -679,7 +730,7 @@ QUANTITY_UNITS: dict[QuantityType, frozenset[str]] = {
     QuantityType.DURATION: frozenset({"[hours]", "[years]"}),
     QuantityType.RAMP_RATE: frozenset({"[share of capacity per minute]"}),
     QuantityType.DIMENSIONLESS: frozenset({
-        "[choice]", "[yes/no]", "[name]", "[text]", "[count]", "[version number]", "[p.u.]",
+        "[choice]", "[yes/no]", "[name]", "[text]", "[count]", "[version number]", "[p.u.]", "[year]",
         "[unit of the constraint per MW]", "[unit of the constraint per MWh]", "[unit of the constraint per unit online]",
         "[the constraint's own unit]",
     }),

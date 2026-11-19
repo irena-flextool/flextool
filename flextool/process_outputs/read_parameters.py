@@ -197,6 +197,28 @@ def _pdX_per_entity(
     return out
 
 
+def _lines_per_entity(frame: "pl.DataFrame | None", *, solve_name: str, flex_data: "FlexData",
+                      decision: str) -> pd.DataFrame:
+    """A cost-line frame ``[e, d, line, d_report, value]`` in pandas wide format: rows ``(solve, <decision>, line,
+    period_report)``, columns entity.  Inside a stochastic fan the lines are at the fan's label: a recourse
+    branch's decision rows also at the label (:mod:`._fan_labels`), every report period of a branch at its label."""
+    from flextool.process_outputs._fan_labels import fan_branch_labels, recourse_branch_labels, with_label_rows
+
+    names = ("solve", decision, "line", "period_report")
+    if frame is None or frame.height == 0:
+        idx = pd.MultiIndex.from_arrays([[], [], [], []], names=list(names))
+        out = pd.DataFrame(index=idx, dtype=float)
+        out.columns = pd.Index([], dtype="object", name="entity")
+        return out
+    branch_of = fan_branch_labels(flex_data)
+    if branch_of:
+        frame = (frame.with_columns(pl.col("d_report").replace(branch_of))
+                      .group_by("e", "d", "line", "d_report", maintain_order=True).agg(pl.col("value").sum()))
+    frame = with_label_rows(frame, recourse_branch_labels(flex_data), ("d",))
+    return wide_per_entity(with_solve_column(frame, solve_name), row_dims=("solve", "d", "line", "d_report"),
+                           col_dim="e", row_names=names, col_name="entity")
+
+
 def _ramp_cost_by_period(flex_data: "FlexData") -> "object | None":
     """``p_ramp_cost_arc`` (p, source, sink) repeated over the periods of the solve, as a Param
     ``(p, source, sink, d)`` (the cost is constant; the period key keeps it solve-keyed like
@@ -694,6 +716,8 @@ def _entity_all_capacity(
                 v_invest[e, d_inv] * unitsize[e]
               - sum over (e, d_dv) in ed_divest with years[d_dv] <= years[d] of
                 v_divest[e, d_dv] * unitsize[e]
+              - v_divested_built[e, d] * unitsize[e]   (the model-built capacity retired so far)
+              + v_extended[e, d] * unitsize[e]         (the capacity extended beyond its end of life)
     """
     # Collect base existing — start from p_entity_all_existing if
     # available; else fall back to a (entity × period) zero frame
@@ -780,24 +804,11 @@ def _entity_all_capacity(
     divest = (pl.concat(divest_pieces, how="vertical") if divest_pieces
               else pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8, "value": pl.Float64}))
 
-    # invest contribution per (e, d) — by edd_invest indirection
-    if (flex_data.edd_invest_set is not None
-            and flex_data.edd_invest_set.height > 0):
-        edd = flex_data.edd_invest_set.lazy()
-        cols = flex_data.edd_invest_set.columns
-        # canonical: (e, d_invest, d) — rename if dim names differ
-        rename = {}
-        if cols[0] not in ("e", "entity"):
-            rename[cols[0]] = "e"
-        elif cols[0] == "entity":
-            rename["entity"] = "e"
-        if len(cols) > 1 and cols[1] != "d_invest":
-            rename[cols[1]] = "d_invest"
-        if len(cols) > 2 and cols[2] != "d":
-            rename[cols[2]] = "d"
-        if rename:
-            edd = edd.rename(rename)
-        edd = edd.with_columns(
+    # invest contribution per (e, d) — the investments in service in d (the cohort table's view)
+    from flextool.engine.preprocess.params._cohorts import in_service
+    frames = in_service(flex_data)
+    if frames.alive.height > 0:
+        edd = frames.alive.lazy().with_columns(
             pl.col("e").cast(pl.Utf8),
             pl.col("d_invest").cast(pl.Utf8),
             pl.col("d").cast(pl.Utf8),
@@ -817,47 +828,20 @@ def _entity_all_capacity(
             schema={"e": pl.Utf8, "d": pl.Utf8, "invested": pl.Float64},
         ).lazy()
 
-    # divest contribution per (e, d) — for each (e, d_dv) in ed_divest_set,
-    # apply v_divest[e, d_dv] * unitsize[e] to every period d with
-    # years[d_dv] <= years[d].
-    if (flex_data.p_period_share is not None
-            and flex_data.p_period_share.frame.height > 0):
-        # We don't have years_from_start_d directly, but the divest
-        # carry-forward is monotone over period order; we approximate
-        # by using period name ordering (lexicographic).  For
-        # production fidelity we want years_from_start_d — get it from
-        # the timeline.  Instead rely on edd_divest_active which
-        # already gives the active (d_divest, d) pairs.
-        pass
-
+    # divest contribution per (e, d) — the retirements of the process / storage-node options (entity column
+    # ``p`` / ``n``) counting in d.
     def _normalize_divest_active(df: pl.DataFrame) -> pl.LazyFrame:
-        """``(e, d_divest, d)`` Utf8, from a frame whose entity column is
-        named ``p`` (process divest) or ``n`` (storage-node divest)."""
-        lf = df.lazy()
-        cols = df.columns
-        # canonical: (e, d_divest, d).  edd_divest_active / ndd_divest_active
-        # use ``p`` / ``n`` for the entity dim — rename to ``e``.
-        rename = {}
-        if cols[0] not in ("e", "entity"):
-            rename[cols[0]] = "e"
-        elif cols[0] == "entity":
-            rename["entity"] = "e"
-        if len(cols) > 1 and cols[1] != "d_divest":
-            rename[cols[1]] = "d_divest"
-        if len(cols) > 2 and cols[2] != "d":
-            rename[cols[2]] = "d"
-        if rename:
-            lf = lf.rename(rename)
-        return lf.with_columns(
-            pl.col("e").cast(pl.Utf8),
+        """``(e, d_divest, d)`` Utf8, from a frame whose entity column (the first) is ``p`` or ``n``."""
+        return df.lazy().select(
+            pl.col(df.columns[0]).cast(pl.Utf8).alias("e"),
             pl.col("d_divest").cast(pl.Utf8),
             pl.col("d").cast(pl.Utf8),
         )
 
     _divest_active_frames = [
         _normalize_divest_active(frame)
-        for frame in (flex_data.edd_divest_active, flex_data.ndd_divest_active)
-        if frame is not None and frame.height > 0
+        for frame in (frames.retired_p, frames.retired_n)
+        if frame.height > 0
     ]
     if _divest_active_frames:
         edd_dv = (pl.concat(_divest_active_frames, how="vertical")
@@ -910,18 +894,41 @@ def _entity_all_capacity(
     # explicit coalesce on the join keys.  Every input has already
     # been normalised to Utf8 ``e`` / ``d`` above (so Enum-typed
     # populated frames don't clash with the Utf8 empty fallbacks).
+    # The model-built capacity retired so far, counting in d (``v_divested_built``, already per (e, d)).
+    built_pieces = [f for f in (_try_value("v_divested_built_p"), _try_value("v_divested_built_n")) if f.height > 0]
+    built_contrib = (
+        pl.concat(built_pieces, how="vertical").lazy()
+          .join(unitsize_lf, on="e", how="inner")
+          .select("e", "d", divested_built=pl.col("value") * pl.col("unitsize"))
+        if built_pieces else
+        pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8, "divested_built": pl.Float64}).lazy()
+    )
+    # The capacity extended beyond its end of life, in service in d (``v_extended``, per (e, d)).
+    ext_pieces = [f for f in (_try_value("v_extended_p"), _try_value("v_extended_n")) if f.height > 0]
+    ext_contrib = (
+        pl.concat(ext_pieces, how="vertical").lazy()
+          .join(unitsize_lf, on="e", how="inner")
+          .select("e", "d", extended=pl.col("value") * pl.col("unitsize"))
+        if ext_pieces else
+        pl.DataFrame(schema={"e": pl.Utf8, "d": pl.Utf8, "extended": pl.Float64}).lazy()
+    )
     j1 = existing_lf.join(
         invest_contrib, on=["e", "d"], how="full", coalesce=True,
     )
-    j2 = j1.join(divest_contrib, on=["e", "d"], how="full", coalesce=True)
+    j2 = (j1.join(divest_contrib, on=["e", "d"], how="full", coalesce=True)
+            .join(built_contrib, on=["e", "d"], how="full", coalesce=True)
+            .join(ext_contrib, on=["e", "d"], how="full", coalesce=True))
     combined = (
         j2.with_columns(
             existing=pl.col("existing").fill_null(0.0),
             invested=pl.col("invested").fill_null(0.0),
             divested=pl.col("divested").fill_null(0.0),
+            divested_built=pl.col("divested_built").fill_null(0.0),
+            extended=pl.col("extended").fill_null(0.0),
         )
         .with_columns(
-            total=pl.col("existing") + pl.col("invested") - pl.col("divested"),
+            total=pl.col("existing") + pl.col("invested") - pl.col("divested") - pl.col("divested_built")
+            + pl.col("extended"),
         )
         .filter(pl.col("e").is_not_null() & pl.col("d").is_not_null())
         .select("e", "d", "total")
@@ -1100,11 +1107,11 @@ def _build_p_process_per_arc(
 
 def _build_entity_universe(flex_data: "FlexData") -> list[str]:
     """Build the densify entity universe for the (entity, period) wide
-    frames (``entity_fixed_cost`` / ``entity_lifetime_fixed_cost*``).
+    frames (``entity_fixed_cost``, ``entity_annual_discounted``, ...).
 
-    ``calc_costs.py:cost_entity_fixed_invested`` indexes those frames by
-    ``v.invest.columns`` / ``v.divest.columns`` — the cross-solve column
-    union — so every column they reach must be present.  The returned
+    The cost calculations index those frames by ``v.invest.columns`` /
+    ``v.divest.columns`` — the cross-solve column union — so every column
+    they reach must be present.  The returned
     list is the order-preserving, de-duplicated union of:
 
     * ``nodeBalance`` nodes,
@@ -1120,9 +1127,8 @@ def _build_entity_universe(flex_data: "FlexData") -> list[str]:
     ``v.divest`` carry the cross-solve union.  An entity that is
     invest-eligible in some other roll (e.g. ``CaboVerde_wind``) is
     otherwise absent from every step's universe and so missing from the
-    concatenated ``entity_lifetime_fixed_cost`` columns, raising
-    ``KeyError`` when ``calc_costs`` indexes by ``v.invest.columns``
-    (calc_costs.py:168).  Densifying over the carrier's full entity list
+    concatenated columns, raising ``KeyError`` when ``calc_costs`` indexes
+    by ``v.invest.columns``.  Densifying over the carrier's full entity list
     zero-fills those cells, matching the legacy CSV path's full-universe
     coverage.
     """
@@ -1242,10 +1248,8 @@ def read_parameters(
     p = SimpleNamespace()
 
     # Entity universe — used to densify the (entity, period) wide frames
-    # so downstream consumers like
-    # ``calc_costs.py:cost_entity_fixed_invested`` find every invest
-    # entity in ``par.entity_lifetime_fixed_cost.columns`` (the legacy
-    # CSV path emitted zero-filled rows for every entity).
+    # so the cost calculations find every invest entity in their columns
+    # (the legacy CSV path emitted zero-filled rows for every entity).
     _entity_universe = _build_entity_universe(flex_data)
 
     # ─── Write-once static params (entity-level scalars / per-arc tables) ──
@@ -1479,7 +1483,7 @@ def read_parameters(
     # populated by ``_derived.apply_derived_a`` from
     # ``solve.years_represented``).  ``years_from_start_d`` is still
     # defaulted to 0.0 (used only for divest carry-forward; the active
-    # divest cascade uses ``edd_divest_active`` directly).
+    # divest cascade uses the retirement periods of ``_cohorts.in_service``).
     if (flex_data.p_period_share is not None
             and flex_data.p_period_share.frame.height > 0):
         # p_period_share is (d,) → use d set as the period axis.
@@ -1525,13 +1529,27 @@ def read_parameters(
         densify_entities=_entity_universe,
     )
 
-    # entity_pre_existing — distinct from entity_all_existing on
-    # multi-solve runs (``pre_existing`` is the same as ``all_existing``
-    # on first solve; differs only when prior solves invested).  We
-    # use ``p_entity_previously_invested_capacity`` if available, else
-    # fall back to ``entity_all_existing`` minus the previously
-    # invested.  Single-solve: identical to entity_all_existing.
-    if (flex_data.p_entity_previously_invested_capacity is not None
+    # entity_pre_existing — the existing capacity column of the capacity tables: the existing cohort in
+    # service less the retirements of it earlier solves realized (``p_entity_pre_existing −
+    # p_entity_retired_carried``), without the carried investments and life extensions (a carried life
+    # extension is an extension cohort of its own).  Without the cohort fields (a csv-dump reload):
+    # ``entity_all_existing`` minus ``p_entity_previously_invested_capacity`` (the carried investments in
+    # service, net of their own carried retirements).  Single solve: identical to entity_all_existing.
+    if getattr(flex_data, "p_entity_pre_existing", None) is not None:
+        from polar_high import Param  # local import — Param is heavy
+        from flextool.engine.input._axis_enums import align_join_dtypes  # local: flextool.engine loads polar_high
+        pre_lf = flex_data.p_entity_pre_existing.frame.lazy()
+        carried = getattr(flex_data, "p_entity_retired_carried", None)
+        if carried is not None and carried.frame.height > 0:
+            pre_lf, ret_lf = align_join_dtypes(pre_lf, carried.frame.lazy().rename({"value": "ret"}), ["e", "d"])
+            pre_lf = (pre_lf.join(ret_lf, on=["e", "d"], how="left")
+                            .with_columns(value=pl.col("value") - pl.col("ret").fill_null(0.0)))
+        p.entity_pre_existing = _pdX_per_entity(
+            Param(("e", "d"), pre_lf.select("e", "d", "value").collect()), solve_name=solve_name,
+            entity_dim="e", col_name="entity", flex_data=flex_data,
+            densify_entities=_entity_universe,
+        )
+    elif (flex_data.p_entity_previously_invested_capacity is not None
             and flex_data.p_entity_previously_invested_capacity.frame.height > 0):
         # Subtract from p_entity_all_existing if both populated.
         all_lf = flex_data.p_entity_all_existing.frame.lazy() if (
@@ -1612,25 +1630,10 @@ def read_parameters(
         col_dims=("p", "source", "sink"), col_names=("process", "source", "sink"),
     )
 
-    # entity_fixed_cost / entity_lifetime_fixed_cost / entity_lifetime_fixed_cost_divest.
-    # Densify across the full entity universe — calc_costs.py:154-155
-    # indexes these by ``v.invest.columns`` / ``v.divest.columns``,
-    # which can include any entity.
+    # entity_fixed_cost — densified across the full entity universe (calc_costs prices the capacity of every
+    # entity in service with it).
     p.entity_fixed_cost = _pdX_per_entity(
         flex_data.p_ed_fixed_cost, solve_name=solve_name,
-        entity_dim="e", col_name="entity", flex_data=flex_data,
-        densify_entities=_entity_universe,
-    )
-    # The reported costs read the run-level lumps (discounted from the start of the run over the run's
-    # periods, ``_npv`` "Run-level fields of the reported costs"); a csv-dump reload carries only the
-    # per-solve lumps.
-    p.entity_lifetime_fixed_cost = _pdX_per_entity(
-        _with_fan_label_rows(_run_field(flex_data, "ed_lifetime_fixed_cost"), flex_data), solve_name=solve_name,
-        entity_dim="e", col_name="entity", flex_data=flex_data,
-        densify_entities=_entity_universe,
-    )
-    p.entity_lifetime_fixed_cost_divest = _pdX_per_entity(
-        _run_field(flex_data, "ed_lifetime_fixed_cost_divest"), solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
         densify_entities=_entity_universe,
     )
@@ -1682,7 +1685,7 @@ def read_parameters(
         entity_dim="g", col_name="group", flex_data=flex_data,
     )
 
-    # entity_annuity / entity_annual_discounted / entity_annual_divest_discounted.
+    # entity_annuity / entity_annual_discounted / entity_divest_salvage.
     # entity_annuity is undiscounted; we use discounted as a stand-in
     # (only consumed in debug mode; the legacy distinction is preserved
     # for compatibility).
@@ -1696,22 +1699,18 @@ def read_parameters(
         entity_dim="e", col_name="entity", flex_data=flex_data,
         densify_entities=_entity_universe,
     )
-    p.entity_annual_divest_discounted = _pdX_per_entity(
-        _run_field(flex_data, "ed_entity_annual_divest_discounted"), solve_name=solve_name,
-        entity_dim="e", col_name="entity", flex_data=flex_data,
-        densify_entities=_entity_universe,
-    )
-
-    # The undiscounted yearly annuities (CUR/MW/yr) of the investment decisions (the invest cost at the start of
-    # operation) and of the retirements (the salvage value): the annualized investment and retirement costs.
-    p.entity_annuity_yearly = _pdX_per_entity(
-        _with_fan_label_rows(getattr(flex_data, "ed_annuity", None), flex_data), solve_name=solve_name,
-        entity_dim="e", col_name="entity", flex_data=flex_data,
-    )
-    p.entity_divest_annuity_yearly = _pdX_per_entity(
-        getattr(flex_data, "ed_divest_annuity", None), solve_name=solve_name,
-        entity_dim="e", col_name="entity", flex_data=flex_data,
-    )
+    # The cost lines (CUR per MW, ``_npv`` / ``params._cost_lines``) of a MW of each investment decision (the run
+    # lump split by event) and of each retirement of existing capacity (rows (solve, period_decision, line,
+    # period_report)), and of a MW of existing capacity in a period (rows (solve, period, line, period_report): the
+    # pre-existing constants): the reported investment-type costs, each line in the period it happens.
+    p.entity_invest_lines = _lines_per_entity(getattr(flex_data, "edl_invest_lines_run", None), solve_name=solve_name,
+                                              flex_data=flex_data, decision="period_decision")
+    p.entity_divest_lines = _lines_per_entity(getattr(flex_data, "edl_divest_lines", None), solve_name=solve_name,
+                                              flex_data=flex_data, decision="period_decision")
+    existing = [f for f in (getattr(flex_data, "edl_existing_credit_lines", None),
+                            getattr(flex_data, "edl_existing_replacement_lines", None)) if f is not None]
+    p.entity_existing_lines = _lines_per_entity(pl.concat(existing, how="vertical_relaxed") if existing else None,
+                                                solve_name=solve_name, flex_data=flex_data, decision="period")
 
     # inflation factors — Series((solve, period)).  The reported costs discount from the start of the run
     # (``p_inflation_*_run``); ``inflation_factor_operations_solve`` is the solve's own factor, the one its

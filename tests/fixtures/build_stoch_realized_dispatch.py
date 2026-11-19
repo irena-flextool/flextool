@@ -243,7 +243,7 @@ def build() -> dict:
          _pack("invest_total", "str"), "base"],
         ["unit", "peaker", "invest_cost", _pack(1.0, "float"), "base"],
         ["unit", "peaker", "discount_rate", _pack(0.05, "float"), "base"],
-        ["unit", "peaker", "lifetime", _pack(1.0, "float"), "base"],
+        ["unit", "peaker", "lifetime_technical", _pack(1.0, "float"), "base"],
         ["unit", "peaker", "invest_max_total", _pack(150.0, "float"),
          "base"],
         ["unit__outputNode", ["peaker", "elec"], "other_operational_cost",

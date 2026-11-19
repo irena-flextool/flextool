@@ -147,7 +147,8 @@ def test_constant_cap_reaches_p_entity_max_units(tmp_path_factory, param, inv_me
 def test_constant_next_to_map_in_one_class(tmp_path_factory):
     """A constant on one unit and a period map on another unit of the same class."""
     wind = [method("wind", "invest_period"), ["unit", "wind", "invest_cost", S(1.0)],
-            ["unit", "wind", "lifetime", S(1.0)], ["unit", "wind", "discount_rate", S(0.05)],
+            ["unit", "wind", "lifetime_technical", S(1.0)],
+            ["unit", "wind", "discount_rate", S(0.05)],
             ["unit", "wind", "invest_max_period", M(5)]]
     common = [method("peaker", "invest_period")] + wind
     mixed = _solve(tmp_path_factory, common + [["unit", "peaker", "invest_max_period", S(20)]], DET)
@@ -177,8 +178,8 @@ def test_silent_x_index_map(tmp_path_factory, param, inv_method):
 
 # (id, invest_method, shape-independent values, (class, entity, parameter, value), checked field, field entity
 #  column, entity, group entities, group invest_method)
-# A divest variable needs existing capacity (the salvage_value only sets its annuity).
-RETIRABLE = [["unit", "peaker", "existing", S(100)], ["unit", "peaker", "salvage_value", S(1.0)]]
+# A divest variable needs existing capacity (the net_salvage_value only sets its annuity).
+RETIRABLE = [["unit", "peaker", "existing", S(100)], ["unit", "peaker", "net_salvage_value", S(1.0)]]
 
 FAMILY = [
     ("invest_min_period", "invest_period", [["unit", "peaker", "invest_max_period", M(50)]],

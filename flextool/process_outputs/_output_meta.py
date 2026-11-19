@@ -40,7 +40,7 @@ class Semantics(str, Enum):
     PER_PERIOD = "per_period"        # summed over the period, as-sampled (NOT scaled to a year).
     ANNUALIZED = "annualized"        # scaled to a full-year equivalent (÷ period_share_of_year).
     HORIZON = "horizon"              # undiscounted total over the represented horizon (×years_represented).
-    DISCOUNTED = "discounted"        # NPV over the horizon (inflation + years_represented).
+    DISCOUNTED = "discounted"        # NPV over the horizon (discount factor + years_represented).
     AVERAGE = "average"              # time-average over the period (÷ period_hours).
     RATIO = "ratio"                  # dimensionless (share, capacity factor).
     COUNT = "count"                  # event count (e.g. start-ups), annualized.
@@ -115,13 +115,16 @@ MONEY_PERSTEP = Transform(
 )
 MONEY_ANNUAL = Transform(
     "M CUR/a", Semantics.ANNUALIZED,
-    "Cost, scaled from the sampled timeline to a full-year equivalent.",
-    algebra="Σ cost_dt / period_share / 1e6",
+    "Cost, scaled from the sampled timeline to a full-year equivalent; an investment-type category is its "
+    "discounted event divided by the period's investment discount factor (the event spread evenly over the "
+    "period's years).",
+    algebra="Σ cost_dt / period_share / 1e6;  investment-type: discounted / investment_discount_factor",
 )
 MONEY_DISCOUNTED = Transform(
     "M CUR", Semantics.DISCOUNTED,
-    "Net present cost over the horizon (inflation × years_represented applied).",
-    algebra="annual_cost · inflation_factor · years_represented",
+    "Net present cost over the horizon (discount factor × years_represented applied); the investment-type "
+    "categories in the period the event happens, at the amount the objective charges.",
+    algebra="annual_cost · discount_factor · years_represented",
 )
 COST_ENTITY_ANNUAL = Transform(
     "M CUR/a", Semantics.ANNUALIZED,
@@ -131,7 +134,10 @@ COST_ENTITY_ANNUAL = Transform(
                 "rather than summed system-wide. Fuel/commodity cost is "
                 "attributed to the consuming process (the unit/connection that "
                 "draws the commodity, not the source node); CO2 cost is summed "
-                "over every priced group the process touches. Summing a "
+                "over every priced group the process touches. The "
+                "investment-type categories are events (in the period they "
+                "happen), annualized as the discounted value divided by the "
+                "period's investment discount factor. Summing a "
                 "category over all entities reproduces the system summary "
                 "(annualized_costs_d_p).",
     algebra="Σ entity_cost_dt / period_share / 1e6",
@@ -144,10 +150,12 @@ COST_ENTITY_DISCOUNTED = Transform(
                 "entity rather than summed system-wide. Fuel/commodity cost is "
                 "attributed to the consuming process (the unit/connection that "
                 "draws the commodity, not the source node); CO2 cost is summed "
-                "over every priced group the process touches. Summing a "
+                "over every priced group the process touches. The "
+                "investment-type categories are reported in the period the "
+                "event happens, at the amount the objective charges. Summing a "
                 "category over all entities reproduces the system summary "
                 "(costs_discounted_d_p).",
-    algebra="annual_entity_cost · inflation_factor · years_represented",
+    algebra="annual_entity_cost · discount_factor · years_represented",
 )
 EMISSION_ANNUAL = Transform(
     "t/a", Semantics.ANNUALIZED,
@@ -239,6 +247,44 @@ CAPACITY_MWH = Transform(
     algebra="total = existing + invested − divested (cumulative; in_construction excluded)",
     template="{A}",
 )
+COHORT_CAPACITY_MW = Transform(
+    "MW", Semantics.LEVEL,
+    "Capacity of one cohort in service in the period (a stock that holds over the period).",
+    description="Capacity of each block of capacity that came into service together (a cohort: the existing "
+                "capacity, an investment decision, a later plant of a reinvest_automatic chain, a life extension) "
+                "in each period it is in service, net of its retirements so far; kind says which, period_online the "
+                "period it started to operate in and period_end_of_life the period its life ends at (empty at or "
+                "past the end of the horizon). Summed over the cohorts of an entity it is the capacity table's "
+                "total.",
+    algebra="capacity[c,d] = size[c,d] − retired so far[c,d]",
+    template="{R}",
+)
+COHORT_CAPACITY_MWH = Transform(
+    "MWh", Semantics.LEVEL,
+    "Storage capacity of one cohort in service in the period (a stock).",
+    description="Storage capacity of each cohort of a storage node in each period it is in service, net of its "
+                "retirements so far (see the unit table).",
+    algebra="capacity[c,d] = size[c,d] − retired so far[c,d]",
+    template="{A}",
+)
+RETIRED_CAPACITY_MW = Transform(
+    "MW", Semantics.PER_PERIOD,
+    "Capacity leaving service at the start of the period, by cause; sums over periods.",
+    description="Capacity leaving service at the start of each period: end_of_life (a cohort reaching the end "
+                "of its lifetime, or a fall of a period-varying existing capacity), economic (retired by the "
+                "model), replaced (a reinvest_automatic plant taken over by its replacement: the capacity "
+                "stays) and extended (kept in service by a life extension: the capacity stays, as an extension "
+                "cohort).",
+    algebra="end_of_life = Σ capacity leaving − extended; economic = Σ retired in the period",
+    template="{R}",
+)
+RETIRED_CAPACITY_MWH = Transform(
+    "MWh", Semantics.PER_PERIOD,
+    "Storage capacity leaving service at the start of the period, by cause; sums over periods.",
+    description="Storage capacity leaving service at the start of each period, by cause (see the unit table).",
+    algebra="end_of_life = Σ capacity leaving − extended; economic = Σ retired in the period",
+    template="{A}",
+)
 STORAGE_STATE = Transform(
     "MWh", Semantics.LEVEL,
     "Stored energy at the timestep (state of charge).",
@@ -251,7 +297,7 @@ PRICE_ENERGY = Transform(
     description="Nodal energy price — the shadow price (dual) of the node "
                 "balance constraint: the marginal system cost of one more unit "
                 "of the commodity at that node and timestep, in CUR/MWh in the "
-                "price base of the cost inputs (inflation and the years the "
+                "price base of the cost inputs (the operational discount factor and the years the "
                 "period represents removed; not weighted by timestep weight or "
                 "branch probability; empty where the objective does not weigh "
                 "the step). For a storage "
@@ -263,7 +309,7 @@ PRICE_ENERGY = Transform(
                 "charge and discharge sides by the round-trip efficiency, and "
                 "be shifted by end-of-horizon, rolling and inter-period "
                 "(blended-weight) storage linking.",
-    algebra="σ·dual(node_balance) / s / (timestep_weight · inflation / period_share · branch_weight)",
+    algebra="σ·dual(node_balance) / s / (timestep_weight · operational_discount_factor / period_share · branch_weight)",
     template="CUR/{A}",
 )
 ENERGY_HORIZON = Transform(
@@ -282,13 +328,13 @@ EMISSION_MT = Transform(
 )
 FACTOR = Transform(
     "", Semantics.RATIO,
-    "Dimensionless discount / inflation factor.",
+    "Dimensionless discount factor (operational or investment).",
 )
 INVEST_COST_DISCOUNTED = Transform(
     "CUR/MW", Semantics.DISCOUNTED,
     "Discounted investment cost per MW of capacity (per MWh for storage nodes): the yearly annuity summed "
-    "with the inflation factors over the years of the lifetime inside the horizon.",
-    algebra="annuity · Σ inflation_factor over the lifetime window",
+    "with the investment discount factors over the years of the lifetime inside the horizon.",
+    algebra="annuity · Σ investment_discount_factor over the lifetime window",
     template="CUR/{R}", node_template="CUR/{A}",
 )
 YEARS = Transform(
@@ -304,13 +350,13 @@ PRICE_RESERVE = Transform(
     "CUR/MW", Semantics.PRICE,
     "Reserve price (dual of the reserve balance) — CUR per MW of reserve held "
     "for one hour (CUR/MWh).",
-    algebra="dual(reserve_balance) / s / (step_duration · timestep_weight · inflation / period_share "
+    algebra="dual(reserve_balance) / s / (step_duration · timestep_weight · operational_discount_factor / period_share "
             "· branch_weight)",
 )
 PRICE_CO2 = Transform(
     "CUR/t", Semantics.PRICE,
     "CO2 price (shadow price of the CO2 cap).",
-    algebra="−dual(co2_max_period) / s / inflation",
+    algebra="−dual(co2_max_period) / s / operational_discount_factor",
 )
 # Investment duals carry the same convention as invest_cost: CUR/kW for
 # units & connections (CUR/kWh for storage nodes).
@@ -385,14 +431,14 @@ CAPACITY_MARGIN_MW = Transform(
 )
 CAPACITY_MARGIN_PENALTY = Transform(
     "M CUR", Semantics.DISCOUNTED,
-    "Penalty of the capacity-margin shortfall: shortfall · penalty_capacity_margin · 1000 · inflation / 1e6, "
+    "Penalty of the capacity-margin shortfall: shortfall · penalty_capacity_margin · 1000 · operational discount factor / 1e6, "
     "priced once per period.",
-    algebra="shortfall · penalty_capacity_margin · 1000 · inflation_op / 1e6",
+    algebra="shortfall · penalty_capacity_margin · 1000 · operational_discount_factor / 1e6",
 )
 CAPACITY_MARGIN_PRICE = Transform(
     "CUR/kW/a", Semantics.PRICE,
     "Shadow price of the capacity margin (equals penalty_capacity_margin while there is a shortfall).",
-    algebra="Σₜ dual(capacityMargin) · inv_group_cap / s / (1000 · inflation_op · branch_weight)",
+    algebra="Σₜ dual(capacityMargin) · inv_group_cap / s / (1000 · operational_discount_factor · branch_weight)",
 )
 # Sentinel: an output that is a pure membership/index set (no measures).
 DIMENSION_TABLE = Transform(
@@ -524,6 +570,7 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     "nodeGroup_flows_dt_gpe": ENERGY_PERSTEP,
     "node_inflow__dt": ENERGY_PERSTEP,
     "node_state_dt_e": STORAGE_STATE,
+    "node_storage_usage_dt_e": ENERGY_PERSTEP,
     # VRE shares + curtailment/potential.  NOTE: the *_d_ee curtailment and
     # potential are SUM-ONLY over the sample (per_period), NOT annualized —
     # unlike unit_outputNode_d_ee (see Task #4 / Stage-1 finding).
@@ -550,6 +597,12 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     "unit_capacity_ed_p": CAPACITY_MW,
     "connection_capacity_ed_p": CAPACITY_MW,
     "node_capacity_ed_p": CAPACITY_MWH,
+    "unit_cohort_capacity_ed_p": COHORT_CAPACITY_MW,
+    "connection_cohort_capacity_ed_p": COHORT_CAPACITY_MW,
+    "node_cohort_capacity_ed_p": COHORT_CAPACITY_MWH,
+    "unit_retirement_ed_p": RETIRED_CAPACITY_MW,
+    "connection_retirement_ed_p": RETIRED_CAPACITY_MW,
+    "node_retirement_ed_p": RETIRED_CAPACITY_MWH,
     # Costs / factors
     "costs_discounted_p_": MONEY_DISCOUNTED,
     "discountFactors_d_p": FACTOR,
@@ -621,12 +674,33 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
 
 # Per-(output, column) formula overrides — only where a bespoke derivation
 # string helps more than the transform's generic tooltip.
+#: The event each investment-type cost line reports (per MW of the decision, × its MW; @ the period it is reported in).
+_COST_LINE_FORMULAS: dict[str, str] = {
+    "investment": "a_cap · Σ_service investment_discount_factor  @ start of operation",
+    "replacement": "a_cap[g] · Σ_service(g) investment_discount_factor of a later reinvest_automatic plant  "
+                   "@ its online period",
+    "extension": "extension cost part of a_cap[x] · Σ_service(x) investment_discount_factor  @ the extension's start",
+    "retirement": "pay · Σ paid years + D(d) · loan balance − a_cap · Σ_service investment_discount_factor  "
+                  "@ retirement period d",
+    "salvage": "−a_salv · Σ_service investment_discount_factor @ end of life (last period past the horizon; a "
+               "reinvest_automatic plant's at its replacement; with the credits a retirement gives back) "
+               "+ the salvage part of an extension's price @ its start − D(d) · net_salvage_value[d] · 1000 "
+               "@ retirement period d",
+    "investment pre-existing": "existing · a_cap[g] · investment_discount_factor of the replacement of existing "
+                               "capacity  @ its online period",
+    "salvage pre-existing": "−existing · a_salv · investment_discount_factor of existing capacity  @ its end of life",
+}
 FORMULA_OVERRIDE: dict[tuple[str, str], str] = {
     ("annualized_costs_d_p", "commodity_cost"):
         "Σₜ(costs__dt.commodity_cost) / complete_period_share_of_year / 1e6",
+    **{("costs_discounted_d_p", line): formula + " / 1e6" for line, formula in _COST_LINE_FORMULAS.items()},
+    **{("annualized_costs_d_p", line): "(" + formula + ") / investment_discount_factor[d] / 1e6"
+       for line, formula in _COST_LINE_FORMULAS.items()},
 }
 
 DOCS_ANCHOR: dict[str, str] = {
+    **{f"{c}_{t}_ed_p": "results.html#capacity-by-cohort-and-retirements"
+       for c in ("unit", "connection", "node") for t in ("cohort_capacity", "retirement")},
     "annualized_costs_d_p": "results.html#costs",
     "costs_dt_p": "results.html#costs",
     "cost_unit_annualized_d_ec": "results.html#cost-by-entity",
@@ -710,6 +784,8 @@ _DT = ("period", "time")
 _D = ("period",)
 _CATEGORY_PART = (("category", "part"),)
 _PARAMETER_QUANTITY = (("parameter", "quantity"),)
+_COHORT_PARTS = ("cohort", "kind", "period_online", "period_end_of_life")
+_COHORT_KINDS = tuple((level, "part") for level in _COHORT_PARTS)
 _PARAM_QUANTITY = (("param", "quantity"),)
 _RESERVE_QUANTITY = (("reserve", "quantity"), ("updown", "quantity"))
 _NODE_CATEGORY = (("category", "quantity"),)              # signed balance terms: their sum is the net (about 0)
@@ -723,16 +799,18 @@ OUTPUT_DESCRIPTION: dict[str, str] = {
     # Costs
     "costs_dt_p": "Operational and penalty costs incurred in each time step by cost category, in currency (not "
                   "millions), with the step duration and timestep weight applied and not scaled to a year.",
-    "annualized_costs_d_p": "Total cost of each period by cost category, scaled to a full year of operation, "
-                            "including the yearly investment, retirement and fixed costs.",
+    "annualized_costs_d_p": "Total cost of each period by cost category, scaled to a full year of operation: the "
+                            "investment-type categories (investment, replacement, retirement, salvage …) are their "
+                            "discounted event divided by the period's investment discount factor.",
     "costs_discounted_d_p": "Cost of each period by cost category, discounted and multiplied by the years the "
-                            "period represents (the net present value the objective counts).",
+                            "period represents (the net present value the objective counts); the investment-type "
+                            "categories in the period the event happens.",
     "costs_discounted_p_": "Discounted cost by cost category, totalled over all periods of the run.",
     "cost_unit_annualized_d_ec": "Annualized cost of each unit and period by cost category; summed over units, "
                                  "connections and nodes it gives the system annualized costs.",
     "cost_connection_annualized_d_ec": "Annualized cost of each connection and period by cost category.",
-    "cost_node_annualized_d_ec": "Annualized cost of each node and period by cost category (storage investment "
-                                 "and retirement, fixed costs, balance slack penalties).",
+    "cost_node_annualized_d_ec": "Annualized cost of each node and period by cost category (the investment-type "
+                                 "cost lines of its storage, fixed costs, balance slack penalties).",
     "cost_unit_discounted_d_ec": "Discounted cost of each unit and period by cost category; summed over units, "
                                  "connections and nodes it gives the system discounted costs.",
     "cost_connection_discounted_d_ec": "Discounted cost of each connection and period by cost category.",
@@ -793,6 +871,9 @@ OUTPUT_DESCRIPTION: dict[str, str] = {
                            "mean of the two step durations), the divisor of the ramp histogram's rate; empty "
                            "where the ramp envelope row is empty.",
     "node_state_dt_e": "Stored energy of each storage node at each time step.",
+    "node_storage_usage_dt_e": "Net use of each storage node with storage_nested_fix_method fix_usage in each "
+                               "realised time step: the flows out of the node minus the flows into it, times the "
+                               "step duration (the quantity an upper-level fix_usage caps).",
     "node_inflow__dt": "Inflow of each node in each time step as given to the model (demand is negative).",
     "node_prices_dt_e": "Price of energy at each balanced node and time step: the cost of one more unit of demand "
                         "there (the dual of the node balance), in the price base of the cost inputs.",
@@ -864,6 +945,18 @@ OUTPUT_DESCRIPTION: dict[str, str] = {
                                 "divested and the total in service.",
     "node_capacity_ed_p": "Storage capacity of each storage node in each period: existing, invested, in "
                           "construction, divested and the total in service.",
+    "unit_cohort_capacity_ed_p": "Capacity of each cohort of each unit (the existing capacity, each investment, "
+                                 "each replacement plant, each life extension) in each period it is in service.",
+    "connection_cohort_capacity_ed_p": "Capacity of each cohort of each connection in each period it is in "
+                                       "service.",
+    "node_cohort_capacity_ed_p": "Storage capacity of each cohort of each storage node in each period it is in "
+                                 "service.",
+    "unit_retirement_ed_p": "Capacity of each unit leaving service at the start of each period, by cause: end of "
+                            "life, economic retirement, replaced, extended.",
+    "connection_retirement_ed_p": "Capacity of each connection leaving service at the start of each period, by "
+                                  "cause.",
+    "node_retirement_ed_p": "Storage capacity of each storage node leaving service at the start of each period, by "
+                            "cause.",
     "dual_invest_effective_unit_d_e": "Marginal value of one more unit of capacity of each investable unit in "
                                       "each period (positive: more capacity would lower the cost).",
     "dual_invest_effective_connection_d_e": "Marginal value of one more unit of capacity of each investable "
@@ -982,6 +1075,7 @@ OUTPUT_DIMS: dict[str, OutputDims] = {
     "transition_hours_dt": OutputDims(_DT, ("param",), kinds=_PARAM_QUANTITY),
     "node_d_ep": OutputDims(_D, ("node", "category"), "node_dt_ep", _NODE_CATEGORY),
     "node_state_dt_e": OutputDims(_DT, ("node",)),
+    "node_storage_usage_dt_e": OutputDims(_DT, ("node",)),
     "node_inflow__dt": OutputDims(_DT, ("node",)),
     "node_prices_dt_e": OutputDims(("solve", "period", "time"), ("node",)),
     "node_slack_up_dt_e": OutputDims(_DT, ("node",), "node_slack_up_d_e"),
@@ -1022,6 +1116,11 @@ OUTPUT_DIMS: dict[str, OutputDims] = {
     "unit_capacity_ed_p": OutputDims(("unit", "period"), ("parameter",), kinds=_PARAMETER_QUANTITY),
     "connection_capacity_ed_p": OutputDims(("connection", "period"), ("parameter",), kinds=_PARAMETER_QUANTITY),
     "node_capacity_ed_p": OutputDims(("node", "period"), ("parameter",), kinds=_PARAMETER_QUANTITY),
+    **{f"{c}_cohort_capacity_ed_p": OutputDims((c, *_COHORT_PARTS, "period"), ("parameter",),
+                                               kinds=_COHORT_KINDS + _PARAMETER_QUANTITY)
+       for c in ("unit", "connection", "node")},
+    **{f"{c}_retirement_ed_p": OutputDims((c, "period"), ("cause",), kinds=(("cause", "part"),))
+       for c in ("unit", "connection", "node")},
     "dual_invest_effective_unit_d_e": OutputDims(_D, ("entity",)),
     "dual_invest_effective_connection_d_e": OutputDims(_D, ("entity",)),
     "dual_invest_effective_node_d_e": OutputDims(_D, ("entity",)),
@@ -1522,6 +1621,7 @@ UNIT_SOURCE: dict[str, UnitSource] = {
     "nodeGroup_ramp_envelope_dt_gp": UnitSource("group", _U.GROUP_MEMBERS),
     "node_d_ep": UnitSource("node", _U.NODE),
     "node_state_dt_e": UnitSource("node", _U.NODE),
+    "node_storage_usage_dt_e": UnitSource("node", _U.NODE),
     "node_inflow__dt": UnitSource("node", _U.NODE),
     "node_prices_dt_e": UnitSource("node", _U.NODE),
     "node_slack_up_dt_e": UnitSource("node", _U.NODE),
@@ -1546,6 +1646,12 @@ UNIT_SOURCE: dict[str, UnitSource] = {
     "unit_capacity_ed_p": UnitSource("unit", _U.CAPACITY_SIDE, row=True),
     "connection_capacity_ed_p": UnitSource("connection", _U.CONNECTION_ENDS, row=True),
     "node_capacity_ed_p": UnitSource("node", _U.NODE, row=True),
+    "unit_cohort_capacity_ed_p": UnitSource("unit", _U.CAPACITY_SIDE, row=True),
+    "connection_cohort_capacity_ed_p": UnitSource("connection", _U.CONNECTION_ENDS, row=True),
+    "node_cohort_capacity_ed_p": UnitSource("node", _U.NODE, row=True),
+    "unit_retirement_ed_p": UnitSource("unit", _U.CAPACITY_SIDE, row=True),
+    "connection_retirement_ed_p": UnitSource("connection", _U.CONNECTION_ENDS, row=True),
+    "node_retirement_ed_p": UnitSource("node", _U.NODE, row=True),
     "dual_invest_effective_unit_d_e": UnitSource("entity", _U.CAPACITY_SIDE),
     "dual_invest_effective_connection_d_e": UnitSource("entity", _U.CONNECTION_ENDS),
     "dual_invest_effective_node_d_e": UnitSource("entity", _U.NODE),

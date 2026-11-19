@@ -607,6 +607,27 @@
       ]
     ],
     [
+      "end_of_life_methods",
+      [
+        "ImNsb3Nlc3Rfc2VhbSI=",
+        "str"
+      ]
+    ],
+    [
+      "end_of_life_methods",
+      [
+        "InByZXZpb3VzX3NlYW0i",
+        "str"
+      ]
+    ],
+    [
+      "end_of_life_methods",
+      [
+        "Im5leHRfc2VhbSI=",
+        "str"
+      ]
+    ],
+    [
       "energy_margin_methods",
       [
         "Im5vbmUi",
@@ -917,7 +938,7 @@
     [
       "lifetime_methods",
       [
-        "Im5vX2ludmVzdG1lbnQi",
+        "Im5vX3JlaW52ZXN0bWVudCI=",
         "str"
       ]
     ],
@@ -1852,6 +1873,17 @@
     ],
     [
       "connection",
+      "age_at_model_start",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Age of the existing capacity at the start of the model. Its end of life is lifetime_technical minus the age from the model start, rounded to a period start by end_of_life_method; with lifetime_method reinvest_automatic the existing capacity reaches its end of life (its age less the replacements before the model start) and is then replaced. Give age_at_model_start or build_year, not both. No value: new at the model start. Constant, 0 or more.",
+      "retirement"
+    ],
+    [
+      "connection",
       "availability",
       [
         "MS4w",
@@ -1860,6 +1892,17 @@
       null,
       "[-] e.g. 0.9 means 90%. Fraction of capacity available for connection flows. Constant, period, time or period+time.",
       "basics"
+    ],
+    [
+      "connection",
+      "build_year",
+      [
+        null,
+        null
+      ],
+      null,
+      "[year] Calendar year the existing capacity was built: its age at the model start is model.start_year minus build_year. Needs model.start_year and must not be after it. Not with age_at_model_start. Constant.",
+      "retirement"
     ],
     [
       "connection",
@@ -1990,7 +2033,7 @@
         "float"
       ],
       null,
-      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime: annuity = invest_cost x r / (1 - (1 + r)^-lifetime). 0 gives the straight-line annuity invest_cost / lifetime. No value means 0.05. Must be 0 or above. Constant or period.",
+      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. In the same terms as the cost inputs: a real rate for inputs in real prices, a nominal rate for nominal inputs. Not the model's social_discount_rate, which weighs costs over time. Used to annualize investment costs over the payback time, sized so that the yearly payments are worth invest_cost at this rate when the capacity starts to operate: annuity = invest_cost x r / (1 - (1 + r)^-payback_time) x (1 + r)^(discount_offset_investment - 1). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -2003,6 +2046,17 @@
       null,
       "[-] e.g. 0.9 means 90%. Efficiency of the connection. Constant, period, time or period+time.",
       "basics"
+    ],
+    [
+      "connection",
+      "end_of_life_method",
+      [
+        "ImNsb3Nlc3Rfc2VhbSI=",
+        "str"
+      ],
+      "end_of_life_methods",
+      "[choice] How the end of life of capacity (start of operation plus lifetime_technical; existing capacity: lifetime_technical minus its age, from the model start) is rounded to a period start. closest_seam (default): the nearer start, a tie goes to the later one. next_seam: the start at or after it (operates to the end of the period its life ends in; the rounding of FlexTool 4.5 and earlier). previous_seam: the start at or before it (gone for that whole period; for capacity-adequacy studies, which must not count capacity past its life). The yearly investment cost is paid for each year in service. An end of life after the model horizon keeps the capacity to the end. Used with every lifetime_method (with reinvest_automatic it sets when each plant is replaced).",
+      "retirement"
     ],
     [
       "connection",
@@ -2034,7 +2088,7 @@
         null
       ],
       null,
-      "[CUR/kW] Overnight investment cost of new capacity. It is paid as an annuity over the years the capacity operates. Construction time costs with their interest must be included here. Constant or period: the value of the period when the capacity is built (comes online) is used.",
+      "[CUR/kW] Overnight investment cost of new capacity. It is annualized over payback_time with discount_rate; with lifetime_method reinvest_choice or no_reinvestment that annuity is spread evenly over lifetime_technical and paid for each year the capacity is in service (with reinvest_automatic: each replacement at the invest_cost of the period it comes online, for its years in service). Construction time costs with their interest must be included here. Constant or period: the value of the period when the capacity is built (comes online) is used.",
       "investment"
     ],
     [
@@ -2105,13 +2159,24 @@
     ],
     [
       "connection",
-      "lifetime",
+      "life_extension_cost",
       [
         null,
         null
       ],
       null,
-      "[years] Operating lifetime. It starts when the capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Required when the connection invests or retires with a cost (invest_cost, salvage_value), and when lifetime_method is reinvest_choice or no_investment (also for existing capacity without investment). Constant or period.",
+      "[CUR/kW] One-off cost of keeping capacity in service for life_extension_years beyond the end of its lifetime_technical, paid when the extension starts: at the end of life (rounded by end_of_life_method). The model decides how much of the capacity still in service at its end of life to extend, at most all of it; no invest_method is needed, but the period the extension starts in must be an invest_period of the solve. The extension is priced as a plant of its own: life_extension_cost plus the net_salvage_value the capacity would have received at its end of life (given up: it stays in the plant), financed at discount_rate over life_extension_years, less the net_salvage_value received at the extended end of life, paid as a level yearly cost for each year in service, with the fixed_cost of each year. With lifetime_method reinvest_choice it competes with new capacity; with no_reinvestment it is the only way to keep the capacity after its end of life. Not with reinvest_automatic, whose capacity is replaced at its end of life (an input error). An extension is never extended again. Extended capacity can be retired when invest_method allows retirement, and counts as capacity, not as investment, in the investment limits. Give both life_extension_cost and life_extension_years, or neither. Constant or period: the value of the period the extension starts in is used.",
+      "investment"
+    ],
+    [
+      "connection",
+      "life_extension_years",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] How long capacity can be kept in service beyond the end of its lifetime_technical for life_extension_cost (see there): the extended end of life is the end of life plus life_extension_years, rounded by end_of_life_method; the extension is financed over these years at discount_rate. Give both life_extension_cost and life_extension_years, or neither. Must be above 0. Constant or period: the value of the period the extension starts in is used.",
       "investment"
     ],
     [
@@ -2122,8 +2187,30 @@
         "str"
       ],
       "lifetime_methods",
-      "[choice] Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost without further model choice. Choice of reinvestment removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built.",
+      "[choice] What happens when capacity reaches the end of its lifetime_technical. reinvest_automatic (default): the plant is replaced, without a model choice, by a plant at the invest_cost, discount_rate, payback_time, lifetime_technical and net_salvage_value of the period the replacement comes online, and so on to the end of the model horizon (existing capacity too, free without an invest_cost); each plant pays its own level yearly cost for its years in service, and retiring the capacity avoids the replacements still to come. reinvest_choice: the capacity retires at the end of its lifetime_technical and the model decides how much new capacity to build. no_reinvestment: the capacity retires at the end of its lifetime_technical; investment is possible only during the first technical lifetime from the model start, and the capacity is not rebuilt. The investment cost of a plant is paid as a level yearly cost of its lifetime_technical (the annuity over payback_time spread over it, its net_salvage_value netted in) for each year it is in service.",
       "investment"
+    ],
+    [
+      "connection",
+      "lifetime_technical",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Technical lifetime: how long the capacity operates. It starts when the capacity starts to operate: with a construction lead time, after the construction. Its end is rounded to a period start by end_of_life_method; for existing capacity it counts from the model start minus age_at_model_start (or model.start_year - build_year). What happens at its end depends on lifetime_method: reinvest_automatic replaces the capacity (to the end of the model horizon), reinvest_choice retires it, no_reinvestment retires it and allows investment only during the first technical lifetime from the model start. Without payback_time, invest_cost is annualized over it. Required when the connection invests or retires with a cost (invest_cost, net_salvage_value) and has no payback_time, and when lifetime_method is reinvest_choice or no_reinvestment (also for existing capacity without investment). Constant or period: the value of the period when the capacity comes online is used, for existing capacity that of the first period.",
+      "investment"
+    ],
+    [
+      "connection",
+      "net_salvage_value",
+      [
+        null,
+        null
+      ],
+      null,
+      "[CUR/kW] Net salvage value: scrap value minus decommissioning cost, negative when decommissioning costs more than the scrap is worth. A retirement of existing capacity receives it in full at the start of the retirement period (the investment in existing capacity is sunk). The value at the end of life is a level yearly credit over the lifetime at discount_rate (with reinvest_automatic for each plant of the chain; a replacement without an invest_cost keeps it): it lowers the yearly cost of new capacity, existing capacity holds it over its service years, and a retirement gives the credits back. Constant or period: the value of the period the salvage happens in, after the last period the last value.",
+      "retirement"
     ],
     [
       "connection",
@@ -2135,6 +2222,17 @@
       null,
       "[CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, period, time or period+time.",
       "basics"
+    ],
+    [
+      "connection",
+      "payback_time",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor): with discount_rate it sets the size of the yearly investment cost. With lifetime_method reinvest_choice or no_reinvestment the present value of the annuity (discounted at the model social_discount_rate) is spread evenly over lifetime_technical and paid for each year the capacity is in service: with discount_rate equal to social_discount_rate payback_time changes nothing (a whole number of years), below it a shorter payback_time costs more. With reinvest_automatic each plant (the first one and each replacement) is priced the same way, at the values of the period it comes online. No value: lifetime_technical. Must be above 0. Constant or period: the value of the period when the capacity comes online is used.",
+      "investment"
     ],
     [
       "connection",
@@ -2189,17 +2287,6 @@
       ],
       null,
       "[MW] Smallest required total retirement over all solves. Investments and existing capacity do not change it. Constant.",
-      "retirement"
-    ],
-    [
-      "connection",
-      "salvage_value",
-      [
-        null,
-        null
-      ],
-      null,
-      "[CUR/kW] Salvage value for retiring capacity. Constant or period.",
       "retirement"
     ],
     [
@@ -2628,7 +2715,7 @@
         "float"
       ],
       null,
-      "[CUR/kW/a] Penalty for violating the capacity margin constraint. Uses operational discounting (not annualized over lifetime like investment costs), so the value is not directly comparable to annualized investment costs. Constant or period.",
+      "[CUR/kW/a] Penalty for violating the capacity margin constraint. Uses operational discounting (not annualized over a payback time like investment costs), so the value is not directly comparable to annualized investment costs. Constant or period.",
       "investment"
     ],
     [
@@ -2765,35 +2852,24 @@
     ],
     [
       "model",
-      "inflation_offset_investment",
+      "discount_offset_investment",
       [
         "MC4w",
         "float"
       ],
       null,
-      "[years] Offset for when investment costs occur within a year. Default 0 (beginning of year).",
+      "[years] Where in each year the yearly investment payments and the yearly salvage credits fall, counted from the start of the year, between 0 and 1: 0 (default) the start, 1 the end. The loan over payback_time is sized so that, at the entity's discount_rate, its payments are worth invest_cost when the capacity starts to operate, at any offset; the salvage credits are sized the same way. The offset moves the payments and credits that social_discount_rate weighs. No effect when both rates are 0. Constant.",
       "model"
     ],
     [
       "model",
-      "inflation_offset_operations",
+      "discount_offset_operations",
       [
         "MC41",
         "float"
       ],
       null,
-      "[years] Offset for when operational costs occur within a year. Default 0.5 (middle of year).",
-      "model"
-    ],
-    [
-      "model",
-      "inflation_rate",
-      [
-        null,
-        null
-      ],
-      null,
-      "[-] e.g. 0.02 means 2% per year. Model-wide inflation rate applied to all future costs. When inputs are in real (constant-price) terms, set to 0. When inputs are in nominal terms, set to expected inflation. Default: 0 (real inputs).",
+      "[years] Where in each year operating and fixed costs are weighed by social_discount_rate, counted from the start of the year, between 0 and 1: 0.5 (default) the middle of the year, standing for costs spread over the year. No effect when social_discount_rate is 0. Constant.",
       "model"
     ],
     [
@@ -2842,6 +2918,17 @@
     ],
     [
       "model",
+      "social_discount_rate",
+      [
+        null,
+        null
+      ],
+      null,
+      "[-] e.g. 0.03 means 3% per year. The model's time discount rate: a cost or income is weighed by 1 / (1 + social_discount_rate)^t, with t the years from the start of the run to the moment it falls (its year plus discount_offset_investment or discount_offset_operations). Give it in the same terms as the cost inputs. 0 (default): no time preference; a cost in a later period weighs the same as now (with real-price inputs, inflation is already in the prices). Above 0: later costs and incomes weigh less (the planner's preference for now over later); with nominal inputs, use the combined rate (1 + inflation) x (1 + social rate) - 1. Not the discount_rate of a unit, connection or node: that is the investor's rate (WACC), which turns invest_cost into yearly payments. Constant.",
+      "model"
+    ],
+    [
+      "model",
       "solves",
       [
         null,
@@ -2853,14 +2940,36 @@
     ],
     [
       "model",
+      "start_year",
+      [
+        null,
+        null
+      ],
+      null,
+      "[year] The calendar year in which the first period of the model's first solve starts. Used by build_year (age = start_year - build_year).",
+      "model"
+    ],
+    [
+      "model",
       "version",
       [
-        "ODAuMA==",
+        "ODIuMA==",
         "float"
       ],
       null,
       "[version number] Contains database version information.",
       "model"
+    ],
+    [
+      "node",
+      "age_at_model_start",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Age of the existing storage capacity at the start of the model. Its end of life is lifetime_technical minus the age from the model start, rounded to a period start by end_of_life_method; with lifetime_method reinvest_automatic the existing storage capacity reaches its end of life (its age less the replacements before the model start) and is then replaced. Give age_at_model_start or build_year, not both. No value: new at the model start. Constant, 0 or more.",
+      "retirement"
     ],
     [
       "node",
@@ -2883,6 +2992,17 @@
       null,
       "[-] e.g. 0.9 means 90%. Fraction of capacity available for storage. Constant, period, time, period+time or stochastic time.",
       "basics"
+    ],
+    [
+      "node",
+      "build_year",
+      [
+        null,
+        null
+      ],
+      null,
+      "[year] Calendar year the existing storage capacity was built: its age at the model start is model.start_year minus build_year. Needs model.start_year and must not be after it. Not with age_at_model_start. Constant.",
+      "retirement"
     ],
     [
       "node",
@@ -3002,8 +3122,19 @@
         "float"
       ],
       null,
-      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime: annuity = invest_cost x r / (1 - (1 + r)^-lifetime). 0 gives the straight-line annuity invest_cost / lifetime. No value means 0.05. Must be 0 or above. Constant or period.",
+      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. In the same terms as the cost inputs: a real rate for inputs in real prices, a nominal rate for nominal inputs. Not the model's social_discount_rate, which weighs costs over time. Used to annualize investment costs over the payback time, sized so that the yearly payments are worth invest_cost at this rate when the capacity starts to operate: annuity = invest_cost x r / (1 - (1 + r)^-payback_time) x (1 + r)^(discount_offset_investment - 1). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
+    ],
+    [
+      "node",
+      "end_of_life_method",
+      [
+        "ImNsb3Nlc3Rfc2VhbSI=",
+        "str"
+      ],
+      "end_of_life_methods",
+      "[choice] How the end of life of storage capacity (start of operation plus lifetime_technical; existing storage capacity: lifetime_technical minus its age, from the model start) is rounded to a period start. closest_seam (default): the nearer start, a tie goes to the later one. next_seam: the start at or after it (operates to the end of the period its life ends in; the rounding of FlexTool 4.5 and earlier). previous_seam: the start at or before it (gone for that whole period; for capacity-adequacy studies, which must not count capacity past its life). The yearly investment cost is paid for each year in service. An end of life after the model horizon keeps the storage capacity to the end. Used with every lifetime_method (with reinvest_automatic it sets when each plant is replaced).",
+      "retirement"
     ],
     [
       "node",
@@ -3090,7 +3221,7 @@
         null
       ],
       null,
-      "[CUR/kWh] Overnight investment cost of new storage capacity. It is paid as an annuity over the years the storage capacity operates. Construction time costs with their interest must be included here. Constant or period: the value of the period when the storage capacity is built (comes online) is used.",
+      "[CUR/kWh] Overnight investment cost of new storage capacity. It is annualized over payback_time with discount_rate; with lifetime_method reinvest_choice or no_reinvestment that annuity is spread evenly over lifetime_technical and paid for each year the storage capacity is in service (with reinvest_automatic: each replacement at the invest_cost of the period it comes online, for its years in service). Construction time costs with their interest must be included here. Constant or period: the value of the period when the storage capacity is built (comes online) is used.",
       "investment"
     ],
     [
@@ -3161,13 +3292,24 @@
     ],
     [
       "node",
-      "lifetime",
+      "life_extension_cost",
       [
         null,
         null
       ],
       null,
-      "[years] Operating lifetime. It starts when the storage capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the storage capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Required when the node invests or retires with a cost (invest_cost, salvage_value), and when lifetime_method is reinvest_choice or no_investment (also for existing capacity without investment). Constant or period.",
+      "[CUR/kWh] One-off cost of keeping storage capacity in service for life_extension_years beyond the end of its lifetime_technical, paid when the extension starts: at the end of life (rounded by end_of_life_method). The model decides how much of the storage capacity still in service at its end of life to extend, at most all of it; no invest_method is needed, but the period the extension starts in must be an invest_period of the solve. The extension is priced as a plant of its own: life_extension_cost plus the net_salvage_value the capacity would have received at its end of life (given up: it stays in the plant), financed at discount_rate over life_extension_years, less the net_salvage_value received at the extended end of life, paid as a level yearly cost for each year in service, with the fixed_cost of each year. With lifetime_method reinvest_choice it competes with new capacity; with no_reinvestment it is the only way to keep the capacity after its end of life. Not with reinvest_automatic, whose capacity is replaced at its end of life (an input error). An extension is never extended again. Extended capacity can be retired when invest_method allows retirement, and counts as capacity, not as investment, in the investment limits. Give both life_extension_cost and life_extension_years, or neither. Constant or period: the value of the period the extension starts in is used.",
+      "investment"
+    ],
+    [
+      "node",
+      "life_extension_years",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] How long storage capacity can be kept in service beyond the end of its lifetime_technical for life_extension_cost (see there): the extended end of life is the end of life plus life_extension_years, rounded by end_of_life_method; the extension is financed over these years at discount_rate. Give both life_extension_cost and life_extension_years, or neither. Must be above 0. Constant or period: the value of the period the extension starts in is used.",
       "investment"
     ],
     [
@@ -3178,8 +3320,30 @@
         "str"
       ],
       "lifetime_methods",
-      "[choice] Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost without further model choice. Choice of reinvestment removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built.",
+      "[choice] What happens when capacity reaches the end of its lifetime_technical. reinvest_automatic (default): the plant is replaced, without a model choice, by a plant at the invest_cost, discount_rate, payback_time, lifetime_technical and net_salvage_value of the period the replacement comes online, and so on to the end of the model horizon (existing capacity too, free without an invest_cost); each plant pays its own level yearly cost for its years in service, and retiring the capacity avoids the replacements still to come. reinvest_choice: the capacity retires at the end of its lifetime_technical and the model decides how much new capacity to build. no_reinvestment: the capacity retires at the end of its lifetime_technical; investment is possible only during the first technical lifetime from the model start, and the capacity is not rebuilt. The investment cost of a plant is paid as a level yearly cost of its lifetime_technical (the annuity over payback_time spread over it, its net_salvage_value netted in) for each year it is in service.",
       "investment"
+    ],
+    [
+      "node",
+      "lifetime_technical",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Technical lifetime: how long the storage capacity operates. It starts when the storage capacity starts to operate: with a construction lead time, after the construction. Its end is rounded to a period start by end_of_life_method; for existing capacity it counts from the model start minus age_at_model_start (or model.start_year - build_year). What happens at its end depends on lifetime_method: reinvest_automatic replaces the storage capacity (to the end of the model horizon), reinvest_choice retires it, no_reinvestment retires it and allows investment only during the first technical lifetime from the model start. Without payback_time, invest_cost is annualized over it. Required when the node invests or retires with a cost (invest_cost, net_salvage_value) and has no payback_time, and when lifetime_method is reinvest_choice or no_reinvestment (also for existing capacity without investment). Constant or period: the value of the period when the storage capacity comes online is used, for existing storage capacity that of the first period.",
+      "investment"
+    ],
+    [
+      "node",
+      "net_salvage_value",
+      [
+        null,
+        null
+      ],
+      null,
+      "[CUR/kWh] Net salvage value: scrap value minus decommissioning cost, negative when decommissioning costs more than the scrap is worth. A retirement of existing capacity receives it in full at the start of the retirement period (the investment in existing capacity is sunk). The value at the end of life is a level yearly credit over the lifetime at discount_rate (with reinvest_automatic for each plant of the chain; a replacement without an invest_cost keeps it): it lowers the yearly cost of new storage capacity, existing storage capacity holds it over its service years, and a retirement gives the credits back. Constant or period: the value of the period the salvage happens in, after the last period the last value.",
+      "retirement"
     ],
     [
       "node",
@@ -3191,6 +3355,17 @@
       "node_type",
       "[choice] Role of this node in the LP.  'commodity' = price-exposed source/sink with no balance constraint (e.g. fuel imports, no storage); 'balance' = energy balance maintained every timestep (default); 'storage' = balance plus a state variable (battery, reservoir); 'balance_within_period' = balance aggregated over the whole period (e.g. an annual gas budget).",
       "basics"
+    ],
+    [
+      "node",
+      "payback_time",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor): with discount_rate it sets the size of the yearly investment cost. With lifetime_method reinvest_choice or no_reinvestment the present value of the annuity (discounted at the model social_discount_rate) is spread evenly over lifetime_technical and paid for each year the capacity is in service: with discount_rate equal to social_discount_rate payback_time changes nothing (a whole number of years), below it a shorter payback_time costs more. With reinvest_automatic each plant (the first one and each replacement) is priced the same way, at the values of the period it comes online. No value: lifetime_technical. Must be above 0. Constant or period: the value of the period when the storage capacity comes online is used.",
+      "investment"
     ],
     [
       "node",
@@ -3282,17 +3457,6 @@
     ],
     [
       "node",
-      "salvage_value",
-      [
-        null,
-        null
-      ],
-      null,
-      "[CUR/kWh] Salvage value of the storage. Constant or period.",
-      "retirement"
-    ],
-    [
-      "node",
       "self_discharge_loss",
       [
         null,
@@ -3310,7 +3474,7 @@
         "str"
       ],
       "storage_binding_methods",
-      "[choice] Choice how the storage state will be maintained over discontinuous timelines. Seven cycle-scope methods (the state-continuity family): 'bind_within_timeblock' cycles state within each timeblock (cycle closes at block boundaries); 'bind_within_period' cycles within each FlexTool period and chains blocks inside the period; 'bind_within_solve' cycles across the whole solve horizon; 'bind_forward_only' (default) chains state forward across the solve with no end-to-start closure; 'bind_within_solve_blended_weights' is the representative-period variant of bind_within_solve (RP weighting + solve-level cycle closure); 'bind_within_period_blended_weights' is the RP variant of bind_within_period (per-period RP weighting, each period closes independently); 'bind_forward_only_blended_weights' is the RP variant of bind_forward_only (RP weighting, no cycle closure). One additional value, 'bind_intraperiod_blocks', is structurally an aggregation method rather than a cycle-scope method: state is held constant within each block and the block-total flow is balanced at the boundary. Silent-degrade behaviour: any '*_blended_weights' method on a node in a solve whose active timeset has no representative_period_weights is automatically downgraded to the corresponding non-RP variant for that solve, so the same storage entity can drive an RP investment solve and a chronological dispatch solve back-to-back. Separate parameters (e.g. 'storage_state_start') can force additional bindings. By default, storage start state is bound to 0. In a stochastic solve each forecast branch uses the representative periods of its period, and the blended_weights methods work per branch. In a rolling_window solve on representative periods the blended_weights methods are not applied: those nodes bind forward only (bind_forward_only), with a warning.",
+      "[choice] How the storage state is kept over discontinuous timelines and from roll to roll. 'bind_within_timeblock' cycles the state within each timeblock; 'bind_within_period' cycles within each FlexTool period (blocks chain inside the period); 'bind_within_solve' cycles over the whole solve; 'bind_forward_only' (default) chains the state forward with no closure (where the solve chooses the start, the model ends at least at it). 'bind_within_solve_blended_weights', 'bind_within_period_blended_weights' and 'bind_forward_only_blended_weights' are the representative-period variants: the cycle or chain runs on the base-period chain of the chronological level, where storage_state_start, storage_state_end and use_reference_value act; in a solve whose timesets have no representative_period_weights a blended method is used as its plain variant. 'bind_intraperiod_blocks' is an aggregation method: the state is held constant within each block, the block-total flow is balanced and the blocks of a period loop. In a rolling_window solve without representative periods a cycle is closed over the rolls: a roll that starts inside the solve or period continues it from the level realised by the previous roll and ends its part at least at that level, and the roll(s) holding its end end it at the level it started from; such a solve uses bind_within_timeblock as bind_within_period and needs a continuous timeline (a period with several timeblocks is a configuration error). A rolling solve on representative periods is a configuration error, and so is bind_forward_only (also the default), bind_within_solve, bind_within_period or bind_intraperiod_blocks in a solve on representative periods (use a blended method or bind_within_timeblock). storage_start_end_method fixes the start and the end of the whole model.",
       "storage"
     ],
     [
@@ -3321,7 +3485,7 @@
         "str"
       ],
       "storage_nested_fix_method",
-      "[choice] Used in nested solve sequences. Set this storage as a long term storage, which end state is passed to the lower level solves as a target. *Fix_price* requires `storage_state_reference_price`",
+      "[choice] Used in nested solve sequences: makes this storage a long-term storage whose planned level the upper-level solve hands to the lower-level solves it contains (at the steps of its fix_storage_periods). fix_quantity: the lower solve's state at the end of its horizon is the upper level at that moment (interpolated inside an upper step). fix_usage: the lower solve's net use of the storage is at most the upper solve's, counted from the start of the period (less what its earlier rolls used; an upper step that the horizon cuts counts pro rata). fix_price: the lower solve values its end state at the upper solve's price; requires storage_state_reference_price. A lower solve whose end is fixed this way starts from the upper solve's planned level where neither a realised level nor fix_start applies.",
       "storage"
     ],
     [
@@ -3398,7 +3562,7 @@
         "str"
       ],
       null,
-      "[text] Unit of measure of this node's amounts, e.g. m3, t, MWh_th (default MWh). A label only: FlexTool converts nothing. Flows into and out of the node, and the capacity of a unit whose output is this node (of a connection when both of its nodes have this unit), are rates in this unit per hour (MWh \u2192 MW, m3 \u2192 m3/h); storage state, storage capacity and inflow per time step are amounts (m3); annual results are per year (m3/a); prices and penalty_up/down are CUR per this unit. The per-kW costs (invest_cost, fixed_cost, salvage_value) of a unit whose capacity is in this unit, and the per-kWh costs of this node's storage, are per 0.001 of the rate or amount: 500 CUR per m3/h of capacity is entered as 0.5, and 20 CUR per m3 of storage as 0.02. An efficiency into or out of this node is output units per input unit (e.g. m3/MWh).",
+      "[text] Unit of measure of this node's amounts, e.g. m3, t, MWh_th (default MWh). A label only: FlexTool converts nothing. Flows into and out of the node, and the capacity of a unit whose output is this node (of a connection when both of its nodes have this unit), are rates in this unit per hour (MWh \u2192 MW, m3 \u2192 m3/h); storage state, storage capacity and inflow per time step are amounts (m3); annual results are per year (m3/a); prices and penalty_up/down are CUR per this unit. The per-kW costs (invest_cost, fixed_cost, net_salvage_value) of a unit whose capacity is in this unit, and the per-kWh costs of this node's storage, are per 0.001 of the rate or amount: 500 CUR per m3/h of capacity is entered as 0.5, and 20 CUR per m3 of storage as 0.02. An efficiency into or out of this node is output units per input unit (e.g. m3/MWh).",
       "basics"
     ],
     [
@@ -3975,6 +4139,17 @@
     ],
     [
       "unit",
+      "age_at_model_start",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Age of the existing capacity at the start of the model. Its end of life is lifetime_technical minus the age from the model start, rounded to a period start by end_of_life_method; with lifetime_method reinvest_automatic the existing capacity reaches its end of life (its age less the replacements before the model start) and is then replaced. Give age_at_model_start or build_year, not both. No value: new at the model start. Constant, 0 or more.",
+      "retirement"
+    ],
+    [
+      "unit",
       "availability",
       [
         "MS4w",
@@ -3983,6 +4158,17 @@
       null,
       "[-] e.g. 0.9 means 90%. Fraction of capacity available for flows from/to the unit. For online units, the online variable is multiplied by the availability. Constant, period, time, period+time or stochastic time.",
       "basics"
+    ],
+    [
+      "unit",
+      "build_year",
+      [
+        null,
+        null
+      ],
+      null,
+      "[year] Calendar year the existing capacity was built: its age at the model start is model.start_year minus build_year. Needs model.start_year and must not be after it. Not with age_at_model_start. Constant.",
+      "retirement"
     ],
     [
       "unit",
@@ -4124,7 +4310,7 @@
         "float"
       ],
       null,
-      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime: annuity = invest_cost x r / (1 - (1 + r)^-lifetime). 0 gives the straight-line annuity invest_cost / lifetime. No value means 0.05. Must be 0 or above. Constant or period.",
+      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. In the same terms as the cost inputs: a real rate for inputs in real prices, a nominal rate for nominal inputs. Not the model's social_discount_rate, which weighs costs over time. Used to annualize investment costs over the payback time, sized so that the yearly payments are worth invest_cost at this rate when the capacity starts to operate: annuity = invest_cost x r / (1 - (1 + r)^-payback_time) x (1 + r)^(discount_offset_investment - 1). 0 gives the straight-line annuity invest_cost / payback_time. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -4148,6 +4334,17 @@
       null,
       "[-] Output / input at minimum load, like efficiency (e.g. 0.4; may be above 1). Efficiency of a min_load_efficiency unit at its minimum load. Fuel use is a straight line from minimum load (this efficiency) to full load (efficiency). Has no effect when min_load is 0: the efficiency at zero output is not defined. No value: efficiency applies at minimum load too. Constant, period, time or period+time. Used by min_load_efficiency units only.",
       "basics"
+    ],
+    [
+      "unit",
+      "end_of_life_method",
+      [
+        "ImNsb3Nlc3Rfc2VhbSI=",
+        "str"
+      ],
+      "end_of_life_methods",
+      "[choice] How the end of life of capacity (start of operation plus lifetime_technical; existing capacity: lifetime_technical minus its age, from the model start) is rounded to a period start. closest_seam (default): the nearer start, a tie goes to the later one. next_seam: the start at or after it (operates to the end of the period its life ends in; the rounding of FlexTool 4.5 and earlier). previous_seam: the start at or before it (gone for that whole period; for capacity-adequacy studies, which must not count capacity past its life). The yearly investment cost is paid for each year in service. An end of life after the model horizon keeps the capacity to the end. Used with every lifetime_method (with reinvest_automatic it sets when each plant is replaced).",
+      "retirement"
     ],
     [
       "unit",
@@ -4179,7 +4376,7 @@
         null
       ],
       null,
-      "[CUR/kW] Overnight investment cost of new capacity. It is paid as an annuity over the years the capacity operates. Construction time costs with their interest must be included here. Constant or period: the value of the period when the capacity is built (comes online) is used.",
+      "[CUR/kW] Overnight investment cost of new capacity. It is annualized over payback_time with discount_rate; with lifetime_method reinvest_choice or no_reinvestment that annuity is spread evenly over lifetime_technical and paid for each year the capacity is in service (with reinvest_automatic: each replacement at the invest_cost of the period it comes online, for its years in service). Construction time costs with their interest must be included here. Constant or period: the value of the period when the capacity is built (comes online) is used.",
       "investment"
     ],
     [
@@ -4239,13 +4436,24 @@
     ],
     [
       "unit",
-      "lifetime",
+      "life_extension_cost",
       [
         null,
         null
       ],
       null,
-      "[years] Operating lifetime. It starts when the capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Required when the unit invests or retires with a cost (invest_cost, salvage_value), and when lifetime_method is reinvest_choice or no_investment (also for existing capacity without investment). Constant or period.",
+      "[CUR/kW] One-off cost of keeping capacity in service for life_extension_years beyond the end of its lifetime_technical, paid when the extension starts: at the end of life (rounded by end_of_life_method). The model decides how much of the capacity still in service at its end of life to extend, at most all of it; no invest_method is needed, but the period the extension starts in must be an invest_period of the solve. The extension is priced as a plant of its own: life_extension_cost plus the net_salvage_value the capacity would have received at its end of life (given up: it stays in the plant), financed at discount_rate over life_extension_years, less the net_salvage_value received at the extended end of life, paid as a level yearly cost for each year in service, with the fixed_cost of each year. With lifetime_method reinvest_choice it competes with new capacity; with no_reinvestment it is the only way to keep the capacity after its end of life. Not with reinvest_automatic, whose capacity is replaced at its end of life (an input error). An extension is never extended again. Extended capacity can be retired when invest_method allows retirement, and counts as capacity, not as investment, in the investment limits. Give both life_extension_cost and life_extension_years, or neither. Constant or period: the value of the period the extension starts in is used.",
+      "investment"
+    ],
+    [
+      "unit",
+      "life_extension_years",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] How long capacity can be kept in service beyond the end of its lifetime_technical for life_extension_cost (see there): the extended end of life is the end of life plus life_extension_years, rounded by end_of_life_method; the extension is financed over these years at discount_rate. Give both life_extension_cost and life_extension_years, or neither. Must be above 0. Constant or period: the value of the period the extension starts in is used.",
       "investment"
     ],
     [
@@ -4256,7 +4464,18 @@
         "str"
       ],
       "lifetime_methods",
-      "[choice] Choice how the investments behave after unit runs out of lifetime. Automatic reinvestment causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost without further model choice. Choice of reinvestment removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built.",
+      "[choice] What happens when capacity reaches the end of its lifetime_technical. reinvest_automatic (default): the plant is replaced, without a model choice, by a plant at the invest_cost, discount_rate, payback_time, lifetime_technical and net_salvage_value of the period the replacement comes online, and so on to the end of the model horizon (existing capacity too, free without an invest_cost); each plant pays its own level yearly cost for its years in service, and retiring the capacity avoids the replacements still to come. reinvest_choice: the capacity retires at the end of its lifetime_technical and the model decides how much new capacity to build. no_reinvestment: the capacity retires at the end of its lifetime_technical; investment is possible only during the first technical lifetime from the model start, and the capacity is not rebuilt. The investment cost of a plant is paid as a level yearly cost of its lifetime_technical (the annuity over payback_time spread over it, its net_salvage_value netted in) for each year it is in service.",
+      "investment"
+    ],
+    [
+      "unit",
+      "lifetime_technical",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Technical lifetime: how long the capacity operates. It starts when the capacity starts to operate: with a construction lead time, after the construction. Its end is rounded to a period start by end_of_life_method; for existing capacity it counts from the model start minus age_at_model_start (or model.start_year - build_year). What happens at its end depends on lifetime_method: reinvest_automatic replaces the capacity (to the end of the model horizon), reinvest_choice retires it, no_reinvestment retires it and allows investment only during the first technical lifetime from the model start. Without payback_time, invest_cost is annualized over it. Required when the unit invests or retires with a cost (invest_cost, net_salvage_value) and has no payback_time, and when lifetime_method is reinvest_choice or no_reinvestment (also for existing capacity without investment). Constant or period: the value of the period when the capacity comes online is used, for existing capacity that of the first period.",
       "investment"
     ],
     [
@@ -4302,6 +4521,28 @@
       "minimum_time_methods",
       "[choice] Choice between minimum up- and downtimes (none, min_downtime, min_uptime, both). Setting this to anything other than 'none' will activate online variables (at least linear) for the unit. Default: none (no minimum time constraints).",
       "tech_advanced"
+    ],
+    [
+      "unit",
+      "net_salvage_value",
+      [
+        null,
+        null
+      ],
+      null,
+      "[CUR/kW] Net salvage value: scrap value minus decommissioning cost, negative when decommissioning costs more than the scrap is worth. A retirement of existing capacity receives it in full at the start of the retirement period (the investment in existing capacity is sunk). The value at the end of life is a level yearly credit over the lifetime at discount_rate (with reinvest_automatic for each plant of the chain; a replacement without an invest_cost keeps it): it lowers the yearly cost of new capacity, existing capacity holds it over its service years, and a retirement gives the credits back. Constant or period: the value of the period the salvage happens in, after the last period the last value.",
+      "retirement"
+    ],
+    [
+      "unit",
+      "payback_time",
+      [
+        null,
+        null
+      ],
+      null,
+      "[years] Years over which invest_cost is annualized with discount_rate (the annuity factor): with discount_rate it sets the size of the yearly investment cost. With lifetime_method reinvest_choice or no_reinvestment the present value of the annuity (discounted at the model social_discount_rate) is spread evenly over lifetime_technical and paid for each year the capacity is in service: with discount_rate equal to social_discount_rate payback_time changes nothing (a whole number of years), below it a shorter payback_time costs more. With reinvest_automatic each plant (the first one and each replacement) is priced the same way, at the values of the period it comes online. No value: lifetime_technical. Must be above 0. Constant or period: the value of the period when the capacity comes online is used.",
+      "investment"
     ],
     [
       "unit",
@@ -4356,17 +4597,6 @@
       ],
       null,
       "[MW] Smallest required total retirement over all solves. Investments and existing capacity do not change it. Constant.",
-      "retirement"
-    ],
-    [
-      "unit",
-      "salvage_value",
-      [
-        null,
-        null
-      ],
-      null,
-      "[CUR/kW] Salvage value of the unit. Constant or period.",
       "retirement"
     ],
     [
@@ -4729,6 +4959,12 @@
     ],
     [
       "connection",
+      "age_at_model_start",
+      "float",
+      0
+    ],
+    [
+      "connection",
       "availability",
       "float",
       0
@@ -4744,6 +4980,12 @@
       "availability",
       "map",
       2
+    ],
+    [
+      "connection",
+      "build_year",
+      "float",
+      0
     ],
     [
       "connection",
@@ -4867,6 +5109,12 @@
     ],
     [
       "connection",
+      "end_of_life_method",
+      "str",
+      0
+    ],
+    [
+      "connection",
       "existing",
       "float",
       0
@@ -4951,13 +5199,25 @@
     ],
     [
       "connection",
-      "lifetime",
+      "life_extension_cost",
       "float",
       0
     ],
     [
       "connection",
-      "lifetime",
+      "life_extension_cost",
+      "map",
+      1
+    ],
+    [
+      "connection",
+      "life_extension_years",
+      "float",
+      0
+    ],
+    [
+      "connection",
+      "life_extension_years",
       "map",
       1
     ],
@@ -4966,6 +5226,30 @@
       "lifetime_method",
       "str",
       0
+    ],
+    [
+      "connection",
+      "lifetime_technical",
+      "float",
+      0
+    ],
+    [
+      "connection",
+      "lifetime_technical",
+      "map",
+      1
+    ],
+    [
+      "connection",
+      "net_salvage_value",
+      "float",
+      0
+    ],
+    [
+      "connection",
+      "net_salvage_value",
+      "map",
+      1
     ],
     [
       "connection",
@@ -4984,6 +5268,18 @@
       "other_operational_cost",
       "map",
       2
+    ],
+    [
+      "connection",
+      "payback_time",
+      "float",
+      0
+    ],
+    [
+      "connection",
+      "payback_time",
+      "map",
+      1
     ],
     [
       "connection",
@@ -5026,18 +5322,6 @@
       "retire_min_total",
       "float",
       0
-    ],
-    [
-      "connection",
-      "salvage_value",
-      "float",
-      0
-    ],
-    [
-      "connection",
-      "salvage_value",
-      "map",
-      1
     ],
     [
       "connection",
@@ -5503,19 +5787,13 @@
     ],
     [
       "model",
-      "inflation_offset_investment",
+      "discount_offset_investment",
       "float",
       0
     ],
     [
       "model",
-      "inflation_offset_operations",
-      "float",
-      0
-    ],
-    [
-      "model",
-      "inflation_rate",
+      "discount_offset_operations",
       "float",
       0
     ],
@@ -5545,13 +5823,31 @@
     ],
     [
       "model",
+      "social_discount_rate",
+      "float",
+      0
+    ],
+    [
+      "model",
       "solves",
       "array",
       1
     ],
     [
       "model",
+      "start_year",
+      "float",
+      0
+    ],
+    [
+      "model",
       "version",
+      "float",
+      0
+    ],
+    [
+      "node",
+      "age_at_model_start",
       "float",
       0
     ],
@@ -5590,6 +5886,12 @@
       "availability",
       "map",
       3
+    ],
+    [
+      "node",
+      "build_year",
+      "float",
+      0
     ],
     [
       "node",
@@ -5680,6 +5982,12 @@
       "discount_rate",
       "map",
       1
+    ],
+    [
+      "node",
+      "end_of_life_method",
+      "str",
+      0
     ],
     [
       "node",
@@ -5827,13 +6135,25 @@
     ],
     [
       "node",
-      "lifetime",
+      "life_extension_cost",
       "float",
       0
     ],
     [
       "node",
-      "lifetime",
+      "life_extension_cost",
+      "map",
+      1
+    ],
+    [
+      "node",
+      "life_extension_years",
+      "float",
+      0
+    ],
+    [
+      "node",
+      "life_extension_years",
       "map",
       1
     ],
@@ -5845,9 +6165,45 @@
     ],
     [
       "node",
+      "lifetime_technical",
+      "float",
+      0
+    ],
+    [
+      "node",
+      "lifetime_technical",
+      "map",
+      1
+    ],
+    [
+      "node",
+      "net_salvage_value",
+      "float",
+      0
+    ],
+    [
+      "node",
+      "net_salvage_value",
+      "map",
+      1
+    ],
+    [
+      "node",
       "node_type",
       "str",
       0
+    ],
+    [
+      "node",
+      "payback_time",
+      "float",
+      0
+    ],
+    [
+      "node",
+      "payback_time",
+      "map",
+      1
     ],
     [
       "node",
@@ -5950,18 +6306,6 @@
       "retire_min_total",
       "float",
       0
-    ],
-    [
-      "node",
-      "salvage_value",
-      "float",
-      0
-    ],
-    [
-      "node",
-      "salvage_value",
-      "map",
-      1
     ],
     [
       "node",
@@ -6433,6 +6777,12 @@
     ],
     [
       "unit",
+      "age_at_model_start",
+      "float",
+      0
+    ],
+    [
+      "unit",
       "availability",
       "float",
       0
@@ -6454,6 +6804,12 @@
       "availability",
       "map",
       3
+    ],
+    [
+      "unit",
+      "build_year",
+      "float",
+      0
     ],
     [
       "unit",
@@ -6607,6 +6963,12 @@
     ],
     [
       "unit",
+      "end_of_life_method",
+      "str",
+      0
+    ],
+    [
+      "unit",
       "existing",
       "float",
       0
@@ -6685,13 +7047,25 @@
     ],
     [
       "unit",
-      "lifetime",
+      "life_extension_cost",
       "float",
       0
     ],
     [
       "unit",
-      "lifetime",
+      "life_extension_cost",
+      "map",
+      1
+    ],
+    [
+      "unit",
+      "life_extension_years",
+      "float",
+      0
+    ],
+    [
+      "unit",
+      "life_extension_years",
       "map",
       1
     ],
@@ -6700,6 +7074,18 @@
       "lifetime_method",
       "str",
       0
+    ],
+    [
+      "unit",
+      "lifetime_technical",
+      "float",
+      0
+    ],
+    [
+      "unit",
+      "lifetime_technical",
+      "map",
+      1
     ],
     [
       "unit",
@@ -6742,6 +7128,30 @@
       "minimum_time_method",
       "str",
       0
+    ],
+    [
+      "unit",
+      "net_salvage_value",
+      "float",
+      0
+    ],
+    [
+      "unit",
+      "net_salvage_value",
+      "map",
+      1
+    ],
+    [
+      "unit",
+      "payback_time",
+      "float",
+      0
+    ],
+    [
+      "unit",
+      "payback_time",
+      "map",
+      1
     ],
     [
       "unit",
@@ -6790,18 +7200,6 @@
       "retire_min_total",
       "float",
       0
-    ],
-    [
-      "unit",
-      "salvage_value",
-      "float",
-      0
-    ],
-    [
-      "unit",
-      "salvage_value",
-      "map",
-      1
     ],
     [
       "unit",
@@ -7336,7 +7734,7 @@
     [
       "unit",
       "peaker",
-      "lifetime",
+      "lifetime_technical",
       [
         "MS4w",
         "float"

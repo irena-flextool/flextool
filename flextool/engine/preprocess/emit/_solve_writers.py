@@ -15,8 +15,7 @@ This module owns the ~36 ``emit_*`` functions that build the
   ``realized_dispatch``, ``fix_storage_timesteps``.
 * Branch: ``period__branch``,
   ``solve_branch_weight``, ``solve_branch__time_branch``.
-* Empty / seed: ``p_entity_invested``, ``p_entity_divested``,
-  ``p_entity_period_existing_capacity``, the three
+* Empty / seed: ``p_entity_invested``, ``p_entity_divested``, the three
   rolling-accumulator seeds, the four fix-storage seeds.
 * Headers / timesets: header-only seeds, ``timesets_in_use``,
   ``timesets__timeline``.
@@ -832,14 +831,6 @@ def emit_empty_investment_file(
                    _empty_frame(("entity", "p_entity_invested")))
     _emit(provider, "solve_data/p_entity_divested.csv",
                    _empty_frame(("entity", "p_entity_divested")))
-    _emit(
-        provider, "solve_data/p_entity_period_existing_capacity.csv",
-        _empty_frame((
-            "entity", "period",
-            "p_entity_period_existing_capacity",
-            "p_entity_period_invested_capacity",
-        )),
-    )
 
 
 def emit_empty_storage_fix_file(

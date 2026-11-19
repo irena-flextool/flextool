@@ -28,8 +28,8 @@ def test_derivation_rule_matches_registry():
     assert set(PERIOD_TIME_PARAMS) == expected
 
 
-def test_count_is_66_split_22_dual_1_time_only_42_period_only_1_period_map_only():
-    assert len(PERIOD_TIME_PARAMS) == 66
+def test_count_is_81_split_22_dual_1_time_only_57_period_only_1_period_map_only():
+    assert len(PERIOD_TIME_PARAMS) == 81
     # 22 dual-axis: 21 with the full 2-D shape (incl. node.energy_margin_adder, which has no time-only map) +
     # commodity.price (two 1-D).
     dual_2d = {k for k, v in PARAM_ALLOWED_SHAPES.items()
@@ -44,11 +44,15 @@ def test_count_is_66_split_22_dual_1_time_only_42_period_only_1_period_map_only(
     # 1 time-only: the per-timestep weight map of a timeset.
     time_only = {k for k, v in PARAM_ALLOWED_SHAPES.items() if set(v) == {Shape.MAP_TIME}}
     assert time_only == {("timeset", "timeset_weights")}
-    # 42 period-only (incl. group cumulative_{max,min}_capacity, capacity_margin_relative, the user-constraint
-    # constant and unit__inputNode.startup_energy): exactly {SCALAR, MAP_PERIOD}.
+    # 57 period-only (incl. group cumulative_{max,min}_capacity, capacity_margin_relative, the user-constraint
+    # constant, unit__inputNode.startup_energy and the entities' lifetime_technical / payback_time /
+    # discount_rate / life_extension_cost / life_extension_years): exactly {SCALAR, MAP_PERIOD}.
     period_only = {k for k, v in PARAM_ALLOWED_SHAPES.items()
                    if set(v) == {Shape.SCALAR, Shape.MAP_PERIOD}}
-    assert len(period_only) == 42
+    assert len(period_only) == 57
+    for cls in ("unit", "node", "connection"):
+        assert {(cls, "lifetime_technical"), (cls, "payback_time"), (cls, "discount_rate"),
+                (cls, "life_extension_cost"), (cls, "life_extension_years")} <= period_only
     assert ("group", "capacity_margin_relative") in period_only
     assert ("unit__inputNode", "startup_energy") in period_only
     # 1 period map only (no constant): the years each period of a solve represents.
@@ -70,6 +74,11 @@ def test_facet_and_scalar_str_shapes_excluded():
         ("unit", "invest_method"),
         ("connection", "invest_method"),
         ("unit", "piecewise_linear_efficiency"),
+        # Constants (SCALAR only) and a scalar string: the age of existing capacity, its build year, the model's
+        # start year and the rounding of an end of life.
+        *((cls, name) for cls in ("node", "unit", "connection")
+          for name in ("age_at_model_start", "build_year", "end_of_life_method")),
+        ("model", "start_year"),
     }
     for key in excluded:
         assert key not in PERIOD_TIME_PARAMS
@@ -110,8 +119,8 @@ def test_known_dual_axis_members_present():
         ("unit", "invest_cost"),
         ("node", "invest_cost"),
         ("connection", "invest_cost"),
-        ("unit", "salvage_value"),
-        ("node", "salvage_value"),
-        ("connection", "salvage_value"),
+        ("unit", "net_salvage_value"),
+        ("node", "net_salvage_value"),
+        ("connection", "net_salvage_value"),
     ]:
         assert key in PERIOD_TIME_PARAMS

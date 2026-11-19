@@ -155,7 +155,7 @@ def test_tier_without_quantity_is_unlimited(tmp_path_factory) -> None:
 
 @pytest.mark.parametrize("labels,marked", [(["01", "02", "03"], True), (["1", "2", "3"], False)],
                          ids=["relabelled", "plain"])
-def test_upgrade_marks_relabelled_ladders_and_runs_name_them(tmp_path_factory, capsys, labels, marked) -> None:
+def test_upgrade_marks_relabelled_ladders_and_runs_name_them(tmp_path_factory, coded_log, labels, marked) -> None:
     """The database upgrade marks a database whose ladder has a tier label earlier releases read as another tier
     (``01``), not one with plain whole-number labels; with the marker, a run prints the notice naming coal."""
     from spinedb_api import DatabaseMapping
@@ -174,9 +174,9 @@ def test_upgrade_marks_relabelled_ladders_and_runs_name_them(tmp_path_factory, c
         if marked:
             db.commit_session("marker")
     assert (m.BEHAVIOUR_CHANGE_MARKER_PREFIX + "ladder_tier_labels_as_written" in names) is marked
-    capsys.readouterr()
+    coded_log()
     run_chain_from_db(url, tag, work_folder=work / "w", warm=False)
-    out = capsys.readouterr().out
+    out = coded_log()
     notices = [ln for ln in out.splitlines() if "tier labels are now kept as written" in ln]
     assert len(notices) == (1 if marked else 0)
     if marked:

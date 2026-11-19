@@ -17,6 +17,7 @@ from __future__ import annotations
 import pytest
 
 from flextool.engine.input._solve_state import FlexToolConfigError
+from tests._support.coded_warnings import capture_coded
 from tests.engine._unit_db import PLANT_CHAIN, b64, make_db, run
 
 NETWORK_CHAIN = ["init", "west", "coal", "wind", "network"]
@@ -96,7 +97,7 @@ def test_invest_min_period_above_a_constant_max_is_an_error_per_period(tmp_path_
     url, scen = make_db(tmp_path_factory, alt="b170_period", base_chain=PLANT_CHAIN, values=[
         ["unit", "coal_plant", "invest_method", b64("invest_period", "str")],
         ["unit", "coal_plant", "invest_cost", _f(400.0)],
-        ["unit", "coal_plant", "lifetime", _f(30.0)],
+        ["unit", "coal_plant", "lifetime_technical", _f(30.0)],
         ["unit", "coal_plant", "invest_min_period", _map([["p2020", 200.0]])],
         ["unit", "coal_plant", "invest_max_period", _f(100.0)]])
     with pytest.raises(FlexToolConfigError) as err:
@@ -130,31 +131,33 @@ def test_cumulative_min_above_max_in_a_shared_period_is_an_error(tmp_path_factor
         "problem is infeasible. Lower cumulative_min_capacity or raise cumulative_max_capacity."), msg
 
 
-def test_zero_lifetime_of_an_investing_unit_is_an_error(tmp_path_factory) -> None:
-    msg = _error(tmp_path_factory, "b170_life", [
+@pytest.mark.parametrize("name", ["lifetime_technical", "payback_time"])
+def test_zero_lifetime_of_an_investing_unit_is_an_error(tmp_path_factory, name) -> None:
+    msg = _error(tmp_path_factory, f"b170_life_{name}", [
         ["unit", "coal_plant", "invest_method", b64("invest_no_limit", "str")],
-        ["unit", "coal_plant", "lifetime", _f(0.0)]])
-    assert ("unit 'coal_plant' lifetime = 0 (alternative 'b170_life'): lifetime must be above 0 when the unit can "
-            "invest or retire; with 0 the investment is charged for no years. Give the lifetime in years.") in msg
+        ["unit", "coal_plant", name, _f(0.0)]])
+    assert (f"unit 'coal_plant' {name} = 0 (alternative 'b170_life_{name}'): {name} must be above 0 when the unit "
+            f"can invest or retire; with 0 the investment is charged for no years. Give the {name} in years.") in msg
 
 
-def test_zero_lifetime_without_investment_is_silent(tmp_path_factory) -> None:
-    _validate(*make_db(tmp_path_factory, alt="b170_life_off", base_chain=PLANT_CHAIN,
-                       values=[["unit", "coal_plant", "lifetime", _f(0.0)]]))
+@pytest.mark.parametrize("name", ["lifetime_technical", "payback_time"])
+def test_zero_lifetime_without_investment_is_silent(tmp_path_factory, name) -> None:
+    _validate(*make_db(tmp_path_factory, alt=f"b170_life_off_{name}", base_chain=PLANT_CHAIN,
+                       values=[["unit", "coal_plant", name, _f(0.0)]]))
 
 
 def test_negative_discount_rate_is_an_error(tmp_path_factory) -> None:
     """Before v79 a discount_rate ≤ 0 was read as 5 %; 0 is now 0 % and a negative rate is refused."""
     msg = _error(tmp_path_factory, "le_disc_neg", [["unit", "coal_plant", "discount_rate", _f(-0.01)]])
     assert ("unit 'coal_plant' discount_rate = -0.01 (alternative 'le_disc_neg'): discount_rate must be 0 or above "
-            "(0 gives the straight-line annuity invest_cost / lifetime).") in msg, msg
+            "(0 gives the straight-line annuity invest_cost / payback_time).") in msg, msg
 
 
 def test_zero_discount_rate_is_silent(tmp_path_factory) -> None:
     _validate(*make_db(tmp_path_factory, alt="le_disc_zero", base_chain=PLANT_CHAIN, values=[
         ["unit", "coal_plant", "invest_method", b64("invest_no_limit", "str")],
         ["unit", "coal_plant", "invest_cost", _f(400.0)],
-        ["unit", "coal_plant", "lifetime", _f(30.0)],
+        ["unit", "coal_plant", "lifetime_technical", _f(30.0)],
         ["unit", "coal_plant", "discount_rate", _f(0.0)]]))
 
 
@@ -162,8 +165,8 @@ def test_investing_unit_with_a_cost_needs_a_lifetime(tmp_path_factory) -> None:
     msg = _error(tmp_path_factory, "le_life_missing", [
         ["unit", "coal_plant", "invest_method", b64("invest_no_limit", "str")],
         ["unit", "coal_plant", "invest_cost", _f(400.0)]])
-    assert ("unit 'coal_plant' has no lifetime, but it can invest (invest_method invest_no_limit) and has an "
-            "invest_cost. Give the lifetime in years.") in msg, msg
+    assert ("unit 'coal_plant' has no lifetime_technical, but it can invest (invest_method invest_no_limit) and has "
+            "an invest_cost. Give the lifetime_technical in years.") in msg, msg
 
 
 def test_bounded_lifetime_method_with_existing_needs_a_lifetime(tmp_path_factory) -> None:
@@ -171,8 +174,9 @@ def test_bounded_lifetime_method_with_existing_needs_a_lifetime(tmp_path_factory
     the capacity would be gone in every period."""
     msg = _error(tmp_path_factory, "le_life_bounded", [
         ["unit", "coal_plant", "lifetime_method", b64("reinvest_choice", "str")]])
-    assert ("unit 'coal_plant' has no lifetime, but its lifetime_method is reinvest_choice and it has existing "
-            "capacity, so its capacity ends after the lifetime. Give the lifetime in years.") in msg, msg
+    assert ("unit 'coal_plant' has no lifetime_technical, but its lifetime_method is reinvest_choice and it has "
+            "existing capacity, so its capacity ends after the lifetime. Give the lifetime_technical in "
+            "years.") in msg, msg
 
 
 @pytest.mark.parametrize("alt, values", [
@@ -181,85 +185,81 @@ def test_bounded_lifetime_method_with_existing_needs_a_lifetime(tmp_path_factory
                                    ["unit", "coal_plant", "invest_cost", _f(400.0)]]),
     ("le_life_invest_period_total_salvage", [
         ["unit", "coal_plant", "invest_method", b64("invest_period_total", "str")],
-        ["unit", "coal_plant", "salvage_value", _f(100.0)]]),
+        ["unit", "coal_plant", "net_salvage_value", _f(100.0)]]),
 ])
 def test_lifetime_not_needed_is_silent(tmp_path_factory, alt, values) -> None:
     """The default reinvest_automatic without investment, a retiring unit with a stray invest_cost (its
-    annuity uses salvage_value), and an invest_period_total unit with existing capacity and a stray
-    salvage_value (it cannot retire) need no lifetime."""
+    annuity uses net_salvage_value), and an invest_period_total unit with existing capacity and a stray
+    net_salvage_value (it cannot retire) need no lifetime."""
     _validate(*make_db(tmp_path_factory, alt=alt, base_chain=PLANT_CHAIN,
                        values=values or [["unit", "coal_plant", "efficiency", _f(0.4)]]))
 
 
-@pytest.mark.parametrize("alt, values, chain, expected", [
+@pytest.mark.parametrize("alt, values, chain, code, name, cls, detail", [
     ("b170_avail_pct", [["unit", "coal_plant", "availability", _f(95.0)]], PLANT_CHAIN,
-     "Warning: unit 'coal_plant' availability = 95 (alternative 'b170_avail_pct'): values above 1.5 look like "
-     "percentages; availability is a share (0.95, not 95)."),
+     "W-0226", "coal_plant", "unit", "availability = 95 (alternative 'b170_avail_pct')"),
     ("b170_conn_gain", [["connection", "west_east", "efficiency", _f(1.1)]], NETWORK_CHAIN,
-     "Warning: connection 'west_east' efficiency = 1.1 (alternative 'b170_conn_gain'): a connection efficiency "
-     "above 1 creates energy on the way."),
+     "W-0222", "west_east", "connection", "efficiency = 1.1 (alternative 'b170_conn_gain')"),
     ("b170_vus", [["unit", "coal_plant", "virtual_unitsize", _f(0.0)]], PLANT_CHAIN,
-     "Warning: unit 'coal_plant' virtual_unitsize = 0 (alternative 'b170_vus'): virtual_unitsize must be above 0; "
-     "the value is ignored (the entity is one unit of its capacity)."),
+     "W-0224", "coal_plant", "unit", "virtual_unitsize = 0 (alternative 'b170_vus')"),
 ])
-def test_likely_unit_mistakes_warn(tmp_path_factory, capsys, alt, values, chain, expected) -> None:
-    _validate(*make_db(tmp_path_factory, alt=alt, values=values, base_chain=chain))
-    assert expected in capsys.readouterr().out
+def test_likely_unit_mistakes_warn(tmp_path_factory, alt, values, chain, code, name, cls, detail) -> None:
+    with capture_coded() as got:
+        _validate(*make_db(tmp_path_factory, alt=alt, values=values, base_chain=chain))
+    assert got.names(code, cls=cls) == [name]
+    assert got.detail(code, name) == detail
 
 
-_ANTI_UNIT = ("a negative capacity makes an anti-energy unit (its flows run the other way). If you did not mean "
-              "that, use 0 or more. Combined with a profile, min_load or invest / retire limits it can make the "
-              "problem infeasible.")
-
-
-def test_negative_existing_of_a_unit_warns_and_the_run_continues(tmp_path_factory, capsys) -> None:
+def test_negative_existing_of_a_unit_warns_and_the_run_continues(tmp_path_factory) -> None:
     """Anti-energy units are supported (the anti_energy_plant example), so a warning, not an error."""
-    run(tmp_path_factory, *make_db(tmp_path_factory, alt="b170_anti", base_chain=PLANT_CHAIN,
-                                   values=[["unit", "coal_plant", "existing", _f(-50.0)]]))
-    assert ("Warning: unit 'coal_plant' existing = -50 (alternative 'b170_anti'): " + _ANTI_UNIT
-            ) in capsys.readouterr().out
+    with capture_coded() as got:
+        run(tmp_path_factory, *make_db(tmp_path_factory, alt="b170_anti", base_chain=PLANT_CHAIN,
+                                       values=[["unit", "coal_plant", "existing", _f(-50.0)]]))
+    assert got.names("W-0223", cls="unit") == ["coal_plant"]
+    assert got.detail("W-0223", "coal_plant") == "existing = -50 (alternative 'b170_anti')"
 
 
-def test_negative_existing_in_a_period_map_names_the_period(tmp_path_factory, capsys) -> None:
-    _validate(*make_db(tmp_path_factory, alt="b170_anti_map", base_chain=PLANT_CHAIN,
-                       values=[["unit", "coal_plant", "existing", _map([["p2020", -50.0]])]]))
-    assert ("Warning: unit 'coal_plant' existing = -50 (alternative 'b170_anti_map', at p2020): " + _ANTI_UNIT
-            ) in capsys.readouterr().out
+def test_negative_existing_in_a_period_map_names_the_period(tmp_path_factory) -> None:
+    with capture_coded() as got:
+        _validate(*make_db(tmp_path_factory, alt="b170_anti_map", base_chain=PLANT_CHAIN,
+                           values=[["unit", "coal_plant", "existing", _map([["p2020", -50.0]])]]))
+    assert got.detail("W-0223", "coal_plant") == "existing = -50 (alternative 'b170_anti_map', at p2020)"
 
 
-def test_negative_existing_of_a_node_warns(tmp_path_factory, capsys) -> None:
-    _validate(*make_db(tmp_path_factory, alt="b170_node_neg", base_chain=PLANT_CHAIN,
-                       values=[["node", "west", "existing", _f(-10.0)]]))
-    assert ("Warning: node 'west' existing = -10 (alternative 'b170_node_neg'): a negative capacity gives the node a "
-            "negative storage capacity. If you did not mean that, use 0 or more. Combined with storage state limits "
-            "or invest / retire limits it can make the problem infeasible.") in capsys.readouterr().out
+def test_negative_existing_of_a_node_warns(tmp_path_factory) -> None:
+    with capture_coded() as got:
+        _validate(*make_db(tmp_path_factory, alt="b170_node_neg", base_chain=PLANT_CHAIN,
+                           values=[["node", "west", "existing", _f(-10.0)]]))
+    assert got.names("W-0223", cls="node") == ["west"]
+    assert got.detail("W-0223", "west") == "existing = -10 (alternative 'b170_node_neg')"
 
 
-def test_negative_existing_of_a_connection_warns(tmp_path_factory, capsys) -> None:
-    _validate(*make_db(tmp_path_factory, alt="b170_conn_neg", base_chain=NETWORK_CHAIN,
-                       values=[["connection", "west_east", "existing", _f(-100.0)]]))
-    assert ("Warning: connection 'west_east' existing = -100 (alternative 'b170_conn_neg'): a negative capacity "
-            "gives the connection a negative transfer capacity. If you did not mean that, use 0 or more. Combined "
-            "with invest / retire limits it can make the problem infeasible.") in capsys.readouterr().out
+def test_negative_existing_of_a_connection_warns(tmp_path_factory) -> None:
+    with capture_coded() as got:
+        _validate(*make_db(tmp_path_factory, alt="b170_conn_neg", base_chain=NETWORK_CHAIN,
+                           values=[["connection", "west_east", "existing", _f(-100.0)]]))
+    assert got.names("W-0223", cls="connection") == ["west_east"]
+    assert got.detail("W-0223", "west_east") == "existing = -100 (alternative 'b170_conn_neg')"
 
 
-def test_zero_existing_is_silent(tmp_path_factory, capsys) -> None:
-    _validate(*make_db(tmp_path_factory, alt="b170_ex0", base_chain=PLANT_CHAIN, values=[
-        ["unit", "coal_plant", "existing", _f(0.0)], ["node", "west", "existing", _f(0.0)]]))
-    assert "Warning" not in capsys.readouterr().out
+def test_zero_existing_is_silent(tmp_path_factory) -> None:
+    with capture_coded() as got:
+        _validate(*make_db(tmp_path_factory, alt="b170_ex0", base_chain=PLANT_CHAIN, values=[
+            ["unit", "coal_plant", "existing", _f(0.0)], ["node", "west", "existing", _f(0.0)]]))
+    assert "W-0223" not in got.codes()
 
 
-def test_negative_virtual_unitsize_is_ignored(tmp_path_factory, capsys) -> None:
+def test_negative_virtual_unitsize_is_ignored(tmp_path_factory) -> None:
     """The warning says "ignored": the unit is one unit of its existing capacity (unitsize 200, capacity 200), not
     200 units of -5 MW (an anti-energy unit of -1000 MW, which the cascade made of any non-zero value)."""
     import polars as pl
 
     from tests.engine._unit_db import utf8
 
-    steps = run(tmp_path_factory, *make_db(tmp_path_factory, alt="b170_vu_neg", base_chain=PLANT_CHAIN, values=[
-        ["unit", "coal_plant", "existing", _f(200.0)], ["unit", "coal_plant", "virtual_unitsize", _f(-5.0)]]))
-    assert ("Warning: unit 'coal_plant' virtual_unitsize = -5 (alternative 'b170_vu_neg'): virtual_unitsize must be "
-            "above 0; the value is ignored (the entity is one unit of its capacity).") in capsys.readouterr().out
+    with capture_coded() as got:
+        steps = run(tmp_path_factory, *make_db(tmp_path_factory, alt="b170_vu_neg", base_chain=PLANT_CHAIN, values=[
+            ["unit", "coal_plant", "existing", _f(200.0)], ["unit", "coal_plant", "virtual_unitsize", _f(-5.0)]]))
+    assert got.detail("W-0224", "coal_plant") == "virtual_unitsize = -5 (alternative 'b170_vu_neg')"
     fd = next(iter(steps.values())).flex_data
     unitsize = utf8(fd.p_unitsize.frame).filter(pl.col("p") == "coal_plant")["value"].to_list()
     capacity = utf8(fd.p_entity_all_existing.frame).filter(pl.col("e") == "coal_plant")["value"].to_list()
@@ -267,23 +267,23 @@ def test_negative_virtual_unitsize_is_ignored(tmp_path_factory, capsys) -> None:
     assert capacity == [200.0]
 
 
-def test_profile_entered_as_percent_warns(tmp_path_factory, capsys) -> None:
+def test_profile_entered_as_percent_warns(tmp_path_factory) -> None:
     """``warn_profiles_as_percent`` runs after the parameter read (on the reader's profile frames)."""
-    run(tmp_path_factory, *make_db(tmp_path_factory, alt="b170_wind_pct", base_chain=["init", "west", "wind"],
-                                   values=[["profile", "wind_profile", "profile",
-                                            _map([["t0001", 0.3], ["t0002", 35.0]])]]))
-    assert ("Warning: profile 'wind_profile' = 35 (alternative 'b170_wind_pct', at t0002) limits a unit flow "
-            "(upper_limit or fixed): values above 1.5 look like percentages; the profile is a share of the capacity "
-            "(0.35, not 35).") in capsys.readouterr().out
+    with capture_coded() as got:
+        run(tmp_path_factory, *make_db(tmp_path_factory, alt="b170_wind_pct", base_chain=["init", "west", "wind"],
+                                       values=[["profile", "wind_profile", "profile",
+                                                _map([["t0001", 0.3], ["t0002", 35.0]])]]))
+    assert got.names("W-0307") == ["wind_profile"]
+    assert got.detail("W-0307", "wind_profile") == "35 (alternative 'b170_wind_pct', at t0002)"
 
 
-def test_shares_slightly_above_one_are_silent(tmp_path_factory, capsys) -> None:
+def test_shares_slightly_above_one_are_silent(tmp_path_factory) -> None:
     """Measured or reanalysis capacity factors reach a little above 1 (rounding, over-performance)."""
-    run(tmp_path_factory, *make_db(tmp_path_factory, alt="b170_cf", base_chain=["init", "west", "wind"], values=[
-        ["profile", "wind_profile", "profile", _map([["t0001", 0.3], ["t0002", 1.0235]])],
-        ["unit", "coal_plant", "availability", _f(1.2)]]))
-    out = capsys.readouterr().out
-    assert "look like percentages" not in out and "wind_profile" not in out, out
+    with capture_coded() as got:
+        run(tmp_path_factory, *make_db(tmp_path_factory, alt="b170_cf", base_chain=["init", "west", "wind"], values=[
+            ["profile", "wind_profile", "profile", _map([["t0001", 0.3], ["t0002", 1.0235]])],
+            ["unit", "coal_plant", "availability", _f(1.2)]]))
+    assert "W-0307" not in got.codes() and "W-0226" not in got.codes(), got.codes()
 
 
 def test_errors_of_the_input_checks_come_in_one_message(tmp_path_factory) -> None:
@@ -304,3 +304,45 @@ def test_errors_of_the_input_checks_come_in_one_message(tmp_path_factory) -> Non
         "remove the link."
         "\n\n" + PREFIX + "unit 'coal_plant' efficiency = 0 (alternative 'b170_all'): efficiency must be above 0 "
         "(0 gives no output, a negative value pays the unit to run). Use a fraction such as 0.4.")
+
+
+# ---------------------------------------------------------------------------
+# The age of existing capacity: age_at_model_start, or model.start_year − build_year
+
+
+@pytest.mark.parametrize("alt, values, expected", [
+    ("age_both", [["unit", "coal_plant", "age_at_model_start", _f(3.0)],
+                  ["unit", "coal_plant", "build_year", _f(2017.0)],
+                  ["model", "flexTool", "start_year", _f(2020.0)]],
+     "unit 'coal_plant' has both age_at_model_start 3 and build_year 2017: give one of them (alternative "
+     "'age_both')."),
+    ("age_no_start", [["unit", "coal_plant", "build_year", _f(2017.0)]],
+     "unit 'coal_plant' has build_year 2017 but the model has no start_year: give model.start_year, or use "
+     "age_at_model_start (alternative 'age_no_start')."),
+    ("age_negative", [["unit", "coal_plant", "age_at_model_start", _f(-2.0)]],
+     "unit 'coal_plant' age_at_model_start = -2: the age must be 0 or more (alternative 'age_negative')."),
+    ("age_built_late", [["unit", "coal_plant", "build_year", _f(2025.0)],
+                        ["model", "flexTool", "start_year", _f(2020.0)]],
+     "unit 'coal_plant' build_year 2025 is after model.start_year 2020: capacity built after the model start is "
+     "an investment (alternative 'age_built_late')."),
+])
+def test_existing_age_errors(tmp_path_factory, alt, values, expected) -> None:
+    msg = _error(tmp_path_factory, alt, values)
+    assert msg == PREFIX + expected, msg
+
+
+def test_model_start_years_must_agree(tmp_path_factory) -> None:
+    url, scen = make_db(tmp_path_factory, alt="age_two_starts", base_chain=PLANT_CHAIN, values=[
+        ["model", "flexTool", "start_year", _f(2020.0)], ["model", "other", "start_year", _f(2025.0)]],
+        entities=[["model", "other", None]])
+    with pytest.raises(FlexToolConfigError) as err:
+        _validate(url, scen)
+    assert str(err.value) == PREFIX + (
+        "model.start_year differs between the models of the scenario: flexTool 2020 (alternative 'age_two_starts'), "
+        "other 2025 (alternative 'age_two_starts'); give the models one start year.")
+
+
+def test_age_and_build_year_with_a_start_year_are_silent(tmp_path_factory) -> None:
+    _validate(*make_db(tmp_path_factory, alt="age_ok", base_chain=PLANT_CHAIN, values=[
+        ["unit", "coal_plant", "build_year", _f(2017.0)], ["unit", "coal_chp", "age_at_model_start", _f(0.0)],
+        ["model", "flexTool", "start_year", _f(2020.0)]]))

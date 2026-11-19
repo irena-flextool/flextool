@@ -33,7 +33,7 @@ There methods can be combined by setting the `co2_method` to *price_period*, *pr
 - a carbon-free *clean_plant* (`existing` 500 MW, `conversion_method` *none*), turned on in this alternative, with a `unit__outputNode` (*clean_plant*, *west*) and no input; its `other_operational_cost` of 80 CUR/MWh is on that flow;
 - `co2_method` *period* on the group *co2_limit*, whose member is *coal_market*.
 
-The objectives below assume no `inflation_rate` (0).
+The objectives below assume no `social_discount_rate` (0).
 
 **The trajectories.** Each trajectory alternative sets `co2_max_period` on *co2_limit* as a period map [tCO2/a]:
 

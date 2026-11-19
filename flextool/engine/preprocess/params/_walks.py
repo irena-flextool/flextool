@@ -23,8 +23,8 @@ Algorithm
 ---------
 
 The walk implements the per-(e, d) "integrate over lifetime window"
-pattern shared by Cluster A (NPV / lifetime fixed cost) and Cluster B
-(``edd_history`` / ``edd_invest_set``) derivations.
+pattern shared by Cluster A (NPV / lifetime fixed cost), the cohort table
+(:mod:`._cohorts`) and the construction lead time.
 
 For each (e, d) anchor pair, walk every ``d_all`` ∈ ``period_in_use``
 and collect those that match the window predicate:
@@ -32,14 +32,7 @@ and collect those that match the window predicate:
 * :data:`WindowMethod.BOUNDED` —
   ``pdy[d_all] ∈ [pdy[d], pdy[d] + life[e, d])``.
 * :data:`WindowMethod.UNBOUNDED_FORWARD` —
-  ``pdy[d_all] ≥ pdy[d]``.
-* :data:`WindowMethod.STRICT_LOOKBACK_BOUNDED` —
-  ``pdy[d_all] > pdy[d]`` AND ``pdy[d_all] < pdy[d] + life[e, d]``
-  (used by Cluster B's ``edd_invest_lookback_set`` for bounded
-  ``reinvest_choice`` / ``no_investment`` entities).
-* :data:`WindowMethod.STRICT_LOOKBACK_UNBOUNDED` —
-  ``pdy[d_all] > pdy[d]`` (no lifetime cap; for unbounded
-  ``reinvest_automatic`` entities in Cluster B's lookback walk).
+  ``pdy[d_all] ≥ pdy[d]`` (also the start of the window of an investment cohort, :mod:`._cohorts`).
 
 The aggregation is configurable: callers can either pass a per-d_all
 weight column to sum (``factor_side``: ``"inv"`` / ``"ops"`` →
@@ -67,7 +60,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from flextool.engine.input._axis_enums import rename_to_axis
+from flextool.engine.input._axis_enums import align_join_dtypes, rename_to_axis
 
 if TYPE_CHECKING:
     from flextool.engine.input._input_source import InputSource
@@ -79,29 +72,16 @@ class WindowMethod(enum.Enum):
     Members:
 
     * ``BOUNDED`` — ``pdy[d_all] ∈ [pdy[d], pdy[d] + life[e, d])``.
-      Used by Cluster A's ``reinvest_choice`` / ``no_investment`` cohort
+      Used by Cluster A's ``reinvest_choice`` / ``no_reinvestment`` cohort
+      (the investment price and the fixed cost over the years in service)
       and by Cluster A's divest-side NPV (always bounded, raw lifetime).
     * ``UNBOUNDED_FORWARD`` — ``pdy[d_all] ≥ pdy[d]``.  Used by
-      Cluster A's ``reinvest_automatic`` cohort.
-    * ``STRICT_LOOKBACK_BOUNDED`` — ``pdy[d] < pdy[d_all] < pdy[d] +
-      life[e, d]``.  Used by Cluster B's
-      ``edd_invest_lookback_set`` walk where the invest is treated as
-      having taken effect strictly *before* the dispatch period.
-    * ``BOUNDED_INCLUSIVE_LOOKBACK`` — ``pdy[d_all] >= pdy[d]`` AND
-      ``pdy[d_all] < pdy[d] + life[e, d]``.  Used by Cluster B's
-      ``edd_history`` triple set: the (e, d_history, d) triple is
-      kept when ``d_history`` ≤ ``d`` and within the lifetime window
-      (the "history → current" cascade in
-      ``invest_divest_sets.py:241-248``).  Note: this is the same as
-      :data:`BOUNDED` semantically; we expose it as a separate name so
-      that the call site is self-documenting.
+      Cluster A's ``reinvest_automatic`` cohort and by the investment
+      cohorts of :mod:`._cohorts` (the start of their window).
     """
 
     BOUNDED = "bounded"
     UNBOUNDED_FORWARD = "unbounded_forward"
-    STRICT_LOOKBACK_BOUNDED = "strict_lookback_bounded"
-    STRICT_LOOKBACK_UNBOUNDED = "strict_lookback_unbounded"
-    BOUNDED_INCLUSIVE_LOOKBACK = "bounded_inclusive_lookback"
 
 
 def _assert_lineage_castable(lineage: pl.DataFrame,
@@ -165,7 +145,7 @@ def _apply_lineage_filter(
 
     ``anchor_col`` / ``dall_col`` parametrise the walk-side column
     names so the one helper also serves the non-walker pair-former
-    ``edd_divest_active_from_source`` (``(d_divest, d)`` frame —
+    :func:`._cohorts.forward_pairs` (``(d_retire, d)`` frame —
     Slice B design §7.0); both resolve to the d-axis vocabulary.
     """
     lin = (lineage.lazy()
@@ -208,7 +188,7 @@ def period_walk_iterator(
     source
         ``InputSource`` for the cluster's data (used to read
         ``p_years_d`` / yearly inflation factors via lazy helpers
-        in ``_npv``).
+        in ``_discount``).
     active_solve
         Active solve name for ``p_years_d`` resolution.
     ed_lf
@@ -268,7 +248,7 @@ def period_walk_iterator(
         without lead times) leaves ``yr_avail ≡ yr_d``.
     year_rows
         Optional ``[d, width, base]`` years of the solve from the start of the run
-        (:func:`._npv.solve_year_rows`), forwarded to the inflation factors of ``factor_side``.  ``None`` (a
+        (:func:`._discount.solve_year_rows`), forwarded to the inflation factors of ``factor_side``.  ``None`` (a
         solve that starts the run with whole-year widths) keeps the solve's own count.
 
     Returns
@@ -319,17 +299,10 @@ def period_walk_iterator(
         return ed_lf.select("e", "d").with_columns(
             factor=pl.lit(0.0, dtype=pl.Float64))
 
-    bounded_methods = {
-        WindowMethod.BOUNDED,
-        WindowMethod.STRICT_LOOKBACK_BOUNDED,
-        WindowMethod.BOUNDED_INCLUSIVE_LOOKBACK,
-    }
-    if window_method in bounded_methods and life_lf is None:
+    if window_method != WindowMethod.UNBOUNDED_FORWARD and life_lf is None:
         raise ValueError(
             f"life_lf is required for window_method={window_method.value}"
         )
-    # STRICT_LOOKBACK_UNBOUNDED is permitted with life_lf=None
-    # (the strict-lookback predicate doesn't reference lifetime).
 
     # Anchor years.
     pyd_anchor = pyd_lf.pipe(rename_to_axis, {"d": "d", "yr": "yr_d"})
@@ -341,18 +314,16 @@ def period_walk_iterator(
     # Cast ``d_all`` to match ``ed_lf.d``'s dtype, then push the same
     # dtype onto ``pyd_anchor.d`` / ``pyd_all.d_all`` so every join key
     # is consistent.
+    # ``align_join_dtypes`` prefers the Enum side, so a Utf8 ``ed_lf`` meets
+    # an Enum ``pyd_anchor`` (axis-Enum mode) on the Enum as well.
     ed_d_dtype = ed_lf.collect_schema().get("d", pl.Utf8)
     piu_lf = pl.LazyFrame({"d_all": period_in_use}).with_columns(
         pl.col("d_all").cast(ed_d_dtype, strict=False))
-    if ed_d_dtype != pl.Utf8:
-        pyd_anchor = pyd_anchor.with_columns(
-            pl.col("d").cast(ed_d_dtype, strict=False))
-        pyd_all = pyd_all.with_columns(
-            pl.col("d_all").cast(ed_d_dtype, strict=False))
+    walk = ed_lf.select("e", "d").join(piu_lf, how="cross")
+    walk, pyd_anchor = align_join_dtypes(walk, pyd_anchor, ["d"])
+    walk, pyd_all = align_join_dtypes(walk, pyd_all, ["d_all"])
 
-    walk = (ed_lf
-              .select("e", "d")
-              .join(piu_lf, how="cross")
+    walk = (walk
               .join(pyd_anchor, on="d", how="left")
               .join(pyd_all, on="d_all", how="left")
               .with_columns(
@@ -422,22 +393,7 @@ def period_walk_iterator(
 
     if window_method == WindowMethod.UNBOUNDED_FORWARD:
         walk = walk.filter(pl.col("yr_dall") >= pl.col("yr_avail"))
-    elif window_method == WindowMethod.STRICT_LOOKBACK_UNBOUNDED:
-        walk = walk.filter(pl.col("yr_dall") > pl.col("yr_avail"))
-    elif window_method == WindowMethod.STRICT_LOOKBACK_BOUNDED:
-        # Align life_lf's dim-column dtypes to walk's before joining.
-        walk_schema = walk.collect_schema()
-        life_lf = life_lf.with_columns(
-            pl.col("e").cast(walk_schema.get("e", pl.Utf8), strict=False),
-            pl.col("d").cast(walk_schema.get("d", pl.Utf8), strict=False))
-        walk = (walk
-                  .join(life_lf, on=["e", "d"], how="left")
-                  .with_columns(life=pl.col("life").fill_null(0.0))
-                  .filter(pl.col("yr_dall") > pl.col("yr_avail"))
-                  .filter(pl.col("yr_dall")
-                          < pl.col("yr_avail") + pl.col("life"))
-                )
-    else:  # BOUNDED / BOUNDED_INCLUSIVE_LOOKBACK
+    else:  # BOUNDED
         walk_schema = walk.collect_schema()
         life_lf = life_lf.with_columns(
             pl.col("e").cast(walk_schema.get("e", pl.Utf8), strict=False),
@@ -463,7 +419,7 @@ def period_walk_iterator(
                   .unique())
 
     # Inflation factor sum.
-    from flextool.engine.preprocess.params._npv import _inflation_factors_lf
+    from flextool.engine.preprocess.params._discount import _inflation_factors_lf
     factors_lf = _inflation_factors_lf(
         source, active_solve, period_universe, provider=provider, year_rows=year_rows)
     if factor_side == "inv":
@@ -480,9 +436,10 @@ def period_walk_iterator(
         factor_dall = factor_dall.with_columns(
             pl.col("d_all").cast(ed_d_dtype, strict=False))
 
-    return (walk
+    walk = (walk
               .join(factor_dall, on="d_all", how="left")
-              .with_columns(factor=pl.col("factor").fill_null(1.0))
+              .with_columns(factor=pl.col("factor").fill_null(1.0)))
+    return (walk
               .group_by(["e", "d"])
               .agg(pl.col("factor").sum().alias("factor")))
 

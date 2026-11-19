@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+from flextool.engine.preprocess.params._cost_lines import COST_LINES
+
 from tests.perturbation._harness import (
     _parse_costs_discounted_by_category,
     assert_obj_changed_by,
@@ -45,9 +47,7 @@ def test_perturb_inflation_op_scales_all_dispatch_costs(
         "fixed cost pre-existing",
         "fixed cost invested",
         "fixed cost reduction of divestments",
-        "unit investment & retirement",
-        "connection investment & retirement",
-        "storage investment & retirement",
+        *COST_LINES,
         "capacity margin penalty",
     )
     for cat in non_scaling_categories:

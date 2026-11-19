@@ -511,10 +511,11 @@
   # in wind_plant: 0.3132 MW at p2020. Locked to observed full-horizon
   # total cost — operational + invest + divest + fixed (pre-existing,
   # invested, divested), same as the 2x5y variant since both cover the
-  # same 10-year horizon. Decomposition: 46.005522 commodity + 221.4396
-  # unit invest + 100 fixed pre-existing + 80.5094 fixed invested
-  # = 447.9545.
-  expected_objective: 447.954518702
+  # same 10-year horizon. Decomposition: 46.005522 commodity + 212.7306
+  # unit invest (coal 20.9490 / 1.05 + wind 200.4906 / 1.04: the annuities
+  # paid at year starts) + 100 fixed pre-existing + 80.5094 fixed invested
+  # = 439.2455.
+  expected_objective: 439.245507091
   expected_objective_tolerance: 1.0e-4
   time_budget_seconds: 10.0
 
@@ -530,7 +531,7 @@
     - cost_node_discounted__d.csv
   # 2x5y split of the same 10-year horizon as y2020_2029_1x10y; same
   # full-horizon objective since the underlying economics are identical.
-  expected_objective: 447.954518702
+  expected_objective: 439.245507091
   expected_objective_tolerance: 1.0e-4
   time_budget_seconds: 10.0
 
@@ -906,7 +907,7 @@
 
 # --- How-to: emission trajectories (docs/how_to/emissions.md) ---
 # Chain init, west, coal, co2_trajectory_system, <trajectory>: four periods
-# p2020..p2035 on the 2-day timeset, years_represented 5 each, inflation_rate
+# p2020..p2035 on the 2-day timeset, years_represented 5 each, social_discount_rate
 # 0; constant 300 MW demand; coal_plant 50 CUR/MWh emitting 0.34 / 0.4 =
 # 0.85 t/MWh_e; clean_plant 500 MW at 80 CUR/MWh, no emissions.
 # Unconstrained coal = 300 MW -> 255 t/h -> 2 233 800 t/a.  With a binding
@@ -989,12 +990,13 @@
     - unit_capacity__d.csv
     - costs_discounted.csv
   # ro_desal (250 m3/MWh_e: 0.2 CUR/m3 against 0.857843 for MED) is invested
-  # to its 2000 m3/h limit (annuity 30 000 x CRF(5 %, 20) = 2 407.28 CUR per
-  # m3/h and year against a saving of 5 764).  RO 2000 m3/h (8 MW), MED 1000
-  # (heat 83.33, bp_chp power 41.67), coal_plant 266.33: operation
-  # 16 257.843 CUR/h -> 142.418706, plus the RO annuity 2000 x 30 000 x
-  # 0.0802426 = 4.814555 -> 147.233261.
-  expected_objective: 147.233261
+  # to its 2000 m3/h limit (annuity 30 000 x CRF(5 %, 20) / 1.05 = 2 292.65 CUR
+  # per m3/h and year, paid at year starts (discount_offset_investment 0),
+  # against a saving of 5 764).  RO 2000 m3/h (8 MW), MED 1000 (heat 83.33,
+  # bp_chp power 41.67), coal_plant 266.33: operation 16 257.843 CUR/h ->
+  # 142.418706, plus the RO annuity 2000 x 30 000 x 0.0802426 / 1.05 =
+  # 4.585291 -> 147.003997.
+  expected_objective: 147.003997
   expected_objective_tolerance: 1.0e-5
   time_budget_seconds: 10.0
 
@@ -1057,8 +1059,9 @@
   # Invested, tied by field = 5 x turbine and tank = 25 x turbine: the turbine
   # bound binds, so 100 MW_e / 500 MW_th / 2500 MWh_th and the dispatch of
   # csp_existing (36.865) plus the annuities (100 x 500 + 500 x 150 + 2500 x
-  # 15) x 1000 x CRF(7 %, 25) = 162.5 M x 0.0858105 = 13.944209 -> 50.809209.
-  expected_objective: 50.809209
+  # 15) x 1000 x CRF(7 %, 25) / 1.07 (paid at year starts) = 162.5 M x
+  # 0.0858105 / 1.07 = 13.031971 -> 49.896971.
+  expected_objective: 49.896971
   expected_objective_tolerance: 1.0e-5
   time_budget_seconds: 10.0
 
@@ -1072,8 +1075,9 @@
   # bounds and the tank bound sets the field: (9000 - 5000) / 4.8 = 833.33
   # MW_th.  Turbine 4800 MWh_e in the 48 h (every hour), coal 2400 MWh:
   # 120 000 x 182.5 = 21.9 M; annuities (100 x 500 + 833.33 x 150 + 5000 x 15)
-  # x 1000 x CRF(7 %, 25) = 250 M x 0.0858105 = 21.452629 -> 43.352629.
-  expected_objective: 43.352629
+  # x 1000 x CRF(7 %, 25) / 1.07 (paid at year starts) = 250 M x 0.0858105 /
+  # 1.07 = 20.049186 -> 41.949186.
+  expected_objective: 41.949186
   expected_objective_tolerance: 1.0e-5
   time_budget_seconds: 10.0
 

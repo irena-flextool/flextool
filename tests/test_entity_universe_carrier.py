@@ -2,14 +2,14 @@
 the solve-invariant ``p_all_entity_unitsize`` carrier — including invest
 candidates absent from THIS sub-solve's per-step sets.
 
-``read_parameters`` densifies ``entity_lifetime_fixed_cost`` /
-``entity_lifetime_fixed_cost_divest`` over ``_build_entity_universe``.
+``read_parameters`` densifies its (entity, period) frames (``entity_fixed_cost``,
+``entity_annual_discounted``, ...) over ``_build_entity_universe``.
 That universe used to be built only from the current sub-solve's
 ``nodeBalance`` / ``process_source_sink`` / ``ed_invest_set`` /
 ``ed_divest_set``.  But ``v.invest`` / ``v.divest`` carry the
 cross-solve column union: an entity that is invest-eligible in some
 OTHER roll (e.g. ``CaboVerde_wind``) is absent from every step's
-universe, so the concatenated ``entity_lifetime_fixed_cost`` columns
+universe, so the concatenated columns of those frames
 miss it and ``calc_costs`` (which indexes by ``v.invest.columns``)
 raises ``KeyError``.  Sibling of the ``entity_unitsize`` carrier fix
 (896263be); see ``test_entity_unitsize_invariant.py``.
@@ -60,7 +60,7 @@ def test_universe_includes_carrier_only_entity():
     universe = _build_entity_universe(_fake_flex_data(with_carrier=True))
     assert "CaboVerde_wind" in universe, (
         "invest candidate present only in p_all_entity_unitsize must still "
-        "land in the densify universe so entity_lifetime_fixed_cost covers it"
+        "land in the densify universe so the (entity, period) frames cover it"
     )
     # Per-solve sources still contribute, and there are no duplicates.
     assert {"Aruba_elec", "Aruba_coal", "Aruba_coal_src"} <= set(universe)
