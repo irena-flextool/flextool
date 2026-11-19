@@ -678,7 +678,7 @@ _MARKER = "flextool_behaviour_change:coarse_process_flows"
 
 
 @pytest.mark.parametrize("marker", [True, False], ids=["marker", "no_marker"])
-def test_behaviour_notice(tmp_path_factory, capsys, marker) -> None:
+def test_behaviour_notice(tmp_path_factory, coded_log, marker) -> None:
     """An upgraded database (marker present) prints one notice naming each coarse process whose results can
     change and why (here hpipe's varying cost and src's varying efficiency; src2 is exact and not named).
     Without the marker, nothing."""
@@ -693,9 +693,9 @@ def test_behaviour_notice(tmp_path_factory, capsys, marker) -> None:
         with DatabaseMapping(url) as db:
             db.add_item("metadata", name=_MARKER, value="77")
             db.commit_session("behaviour-change marker")
-    capsys.readouterr()
+    coded_log()
     run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"))
-    lines = [ln for ln in capsys.readouterr().out.splitlines() if "one flow per coarse step" in ln]
+    lines = [ln for ln in coded_log.notices() if "one flow per coarse step" in ln]
     if not marker:
         assert not lines
         return
