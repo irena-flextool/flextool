@@ -1822,16 +1822,20 @@ def _resolve_entity_owner(
         m = region_membership.get(region, {})
         for entity in m.get("nodes", set()) | m.get("processes", set()):
             claims.setdefault(entity, []).append(region)
+    shared: list[str] = []
     for entity, claiming in claims.items():
         owner[entity] = claiming[0]
         if len(claiming) > 1:
-            _logger.warning(
-                "Benders invest assembly: entity %r is shared across "
-                "regions %r (no unique owner); assigning deterministic "
-                "owner %r (first in sorted region order).  Shared "
-                "invest-eligible entities are an untested edge case.",
-                entity, claiming, owner[entity],
-            )
+            shared.append(entity)
+            _logger.debug("Benders invest assembly: entity %r is shared across regions %r; owner %r.",
+                          entity, claiming, owner[entity])
+    if shared:   # one line for all of them (the debug log has each)
+        first = shared[0]
+        _logger.warning(
+            "Benders invest assembly: %d entit%s shared across regions (no unique owner), e.g. %r in %r; each "
+            "is given to the first region in sorted order.  Shared invest-eligible entities are an untested "
+            "edge case.", len(shared), "y is" if len(shared) == 1 else "ies are", first, claims[first],
+        )
     return owner
 
 
@@ -1905,15 +1909,17 @@ def _assemble_region_invest_vars(
             # value violates the owner-selection assumption.  Warn, keep
             # only the owner's value.
             value_series = region_frame["value"].to_list()
-            for e, owned, v in zip(entities, owned_mask, value_series):
-                if (not owned) and v is not None and abs(v) > _NONOWNER_NONZERO_ABS_TOL:
-                    _logger.warning(
-                        "Benders invest assembly: non-owner region index "
-                        "%d carries non-zero %s value %.6g for entity %r "
-                        "(expected ~0 for an out-of-region invest var); "
-                        "keeping only the owner's value.",
-                        i, name, v, e,
-                    )
+            stray = [(e, v) for e, owned, v in zip(entities, owned_mask, value_series)
+                     if (not owned) and v is not None and abs(v) > _NONOWNER_NONZERO_ABS_TOL]
+            if stray:   # one line per region and variable (each entity in the debug log)
+                _logger.warning(
+                    "Benders invest assembly: non-owner region index %d carries non-zero %s values for %d "
+                    "entit%s (e.g. %.6g for %r; expected ~0 for an out-of-region invest var); keeping only the "
+                    "owner's values.", i, name, len(stray), "y" if len(stray) == 1 else "ies", stray[0][1],
+                    stray[0][0],
+                )
+                for e, v in stray:
+                    _logger.debug("Benders invest assembly: region %d, %s, entity %r: %.6g", i, name, e, v)
             kept = region_frame.filter(pl.Series("__owned", owned_mask))
             if kept.height > 0:
                 per_region_kept.append(kept)

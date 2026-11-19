@@ -1723,23 +1723,29 @@ def _warn_unknown_gurobi_parameters(
     solve_name: str,
     logger: logging.Logger | None,
 ) -> None:
-    """One warning per ``Unknown parameter: '<name>' (ignored)`` line of ``gurobi_cl``, naming where the
-    parameter was set.  Gurobi solves on without it.  The line is part of Gurobi's console log, so it is not
-    seen when the log is off (``LogToConsole 0`` / ``OutputFlag 0``)."""
-    names = dict.fromkeys(_GUROBI_UNKNOWN_PARAMETER.findall(output))
+    """One warning for the ``Unknown parameter: '<name>' (ignored)`` lines of ``gurobi_cl``, naming each parameter
+    and where it was set; each parameter is named once per run (every roll of a rolling solve passes the same
+    options).  Gurobi solves on without them.  The lines are part of Gurobi's console log, so they are not seen
+    when the log is off (``LogToConsole 0`` / ``OutputFlag 0``)."""
+    from flextool.engine._behaviour_changes import mark_once
+
+    names = [n for n in dict.fromkeys(_GUROBI_UNKNOWN_PARAMETER.findall(output))
+             if mark_once(("gurobi_unknown_parameter", n))]
     if not names:
         return
     from flextool.engine.solve._solver_dispatch import commercial_option_key
 
     layers = {commercial_option_key("gurobi", k): v for k, v in (option_layers or {}).items()}
     log = logger or logging.getLogger(__name__)
+    listed = []
     for name in names:
         where = layers.get(commercial_option_key("gurobi", name))
-        log.warning(
-            "Gurobi does not know the parameter %r%s and solved solve %s without it. Check the spelling "
-            "against the Gurobi parameter list.",
-            name, f" (set in {where})" if where else "", solve_name,
-        )
+        listed.append(f"{name!r}" + (f" (set in {where})" if where else ""))
+    log.warning(
+        "Gurobi does not know the parameter%s %s and solved solve %s without %s. Check the spelling against the "
+        "Gurobi parameter list.", "s" if len(names) > 1 else "", ", ".join(listed), solve_name,
+        "them" if len(names) > 1 else "it",
+    )
 
 
 # ---------------------------------------------------------------------------

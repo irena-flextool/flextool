@@ -70,7 +70,7 @@ def _run(tmp_path_factory, branches: tuple[str, str]):
 
 
 def _warnings(text: str) -> list[str]:
-    return [ln for ln in text.splitlines() if "is also the name of a period" in ln]
+    return [ln for ln in text.splitlines() if "(stochastic_branches) named like" in ln]
 
 
 def test_branch_named_like_a_period_warns_once_and_runs(tmp_path_factory, capsys) -> None:

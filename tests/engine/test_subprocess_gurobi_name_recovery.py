@@ -749,16 +749,23 @@ def test_cplex_aborted_mip_is_rejected_naming_the_status() -> None:
 
 
 def test_gurobi_unknown_parameter_is_a_warning_naming_its_layer(tmp_path, monkeypatch, caplog) -> None:
+    """One warning naming the parameter and its layer, once per run: the next roll of the solve passes the same
+    options and adds no line."""
+    from flextool.engine import _behaviour_changes
+
+    _behaviour_changes.start_run(None)
     _gurobi(_write_fake_gurobi(tmp_path, _SOL_20, stdout="Unknown parameter: 'MIPGapp' (ignored)\n"), monkeypatch)
     with caplog.at_level(logging.WARNING):
-        _solve_commercial_subprocess(
-            _cost_lp(["A", "B", "C"]), "gurobi", options={"MIPGapp": "0.01"}, solve_name="unit",
-            logger=logging.getLogger("t"), work_folder=None,
-            option_layers={"MIPGapp": "solver_arguments of solve unit"},
-        )
+        for roll in ("unit_roll_1", "unit_roll_2"):
+            _solve_commercial_subprocess(
+                _cost_lp(["A", "B", "C"]), "gurobi", options={"MIPGapp": "0.01"}, solve_name=roll,
+                logger=logging.getLogger("t"), work_folder=None,
+                option_layers={"MIPGapp": "solver_arguments of solve unit"},
+            )
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1
     assert "MIPGapp" in warnings[0] and "solver_arguments of solve unit" in warnings[0]
+    _behaviour_changes.start_run(None)
 
 
 def test_flags_reach_gurobi_and_set_the_watchdog(tmp_path, monkeypatch) -> None:

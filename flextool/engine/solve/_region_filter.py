@@ -2320,8 +2320,7 @@ def _warn_integer_region(region: str, rdata: FlexData) -> None:
                "valid for a mixed-integer subproblem; the decomposition may stop at a wrong solution. Set "
                "reduce_unit_detail_method = integers (or a level that contains it) on the solve to solve the "
                "regions as LPs, or use startup_method linear and a non-exact transfer method in decomposed regions.")
-        _logger.warning(msg)
-        print(f"Warning: {msg}", flush=True)
+        _logger.warning(f"Warning: {msg}")   # the console handler prints it (once; no extra print)
 
 
 def split(

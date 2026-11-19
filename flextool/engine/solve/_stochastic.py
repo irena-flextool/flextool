@@ -475,16 +475,20 @@ class StochasticSolver:
         from flextool.engine import _behaviour_changes
         for c in complete:
             colliding = sorted({str(row[1]) for row in stochastic_branches[c] if str(row[1]) in periods})
-            for branch in colliding:
-                own = sorted({str(row[0]) for row in stochastic_branches[c] if str(row[1]) == branch})
-                _behaviour_changes.warn_once(
-                    ("stochastic_branch_named_like_period", c, branch),
-                    f"Warning: solve {c!r} has a stochastic forecast branch {branch!r} (stochastic_branches, "
-                    f"in period(s) {', '.join(repr(p) for p in own)}), and {branch!r} is also the name of a "
-                    f"period of the run. FlexTool keeps them apart (the branch's periods are named "
-                    f"<period>_{branch}), but results and messages that name the branch or the period are easy "
-                    f"to confuse; give the branch a name that is not a period name.",
-                )
+            fresh = [b for b in colliding if _behaviour_changes.mark_once(("stochastic_branch_named_like_period", c, b))]
+            if not fresh:
+                continue
+            # One line per solve, however many of its branches collide.
+            listed = ", ".join(
+                f"{branch!r} (in period(s) "
+                f"{', '.join(repr(p) for p in sorted({str(row[0]) for row in stochastic_branches[c] if str(row[1]) == branch}))})"
+                for branch in fresh)
+            many = len(fresh) > 1
+            print(f"Warning: solve {c!r} has stochastic forecast branch{'es' if many else ''} {listed} "
+                  f"(stochastic_branches) named like {'periods' if many else 'a period'} of the run. FlexTool "
+                  f"keeps them apart (a branch's periods are named <period>_<branch>), but results and messages "
+                  f"that name the branch or the period are easy to confuse; give the branch a name that is not a "
+                  f"period name.", flush=True)
 
     def _warn_unfanned_cohorts(
         self,

@@ -58,12 +58,6 @@ def reset_warnings() -> None:
     _WARNED.clear()
 
 
-def _warn_once(msg: str) -> None:
-    if msg not in _WARNED:
-        _WARNED.add(msg)
-        _LOG.warning(msg)
-
-
 def ordered_sum(frame: pl.DataFrame, keys: list[str], order: str,
                 values: tuple[str, ...] = ("value",)) -> pl.DataFrame:
     """``(keys…, values…)``: ``frame``'s ``values`` columns summed per ``keys`` in ``order`` (and key) order, with
@@ -261,22 +255,30 @@ def _rp_misaligned_message(g: str, gstep: float, d: str, cur: list[str]) -> str:
 
 
 def coarse_membership_warnings(process_group: list[tuple[str, str]], process_nodes: dict[str, set[str]],
-                               node_group: dict[str, str], groups: dict[str, float]) -> list[str]:
-    """Warnings for units / connections listed in a coarse group (Q-c15-A): listing has no effect on time
-    resolution (flows and online status stay at the solve's step).  Warned where it would have mattered:
-    the process touches a node outside that group."""
-    out: list[str] = []
+                               node_group: dict[str, str], groups: dict[str, float]) -> dict[tuple[str, str], str]:
+    """The units / connections listed in a coarse group (Q-c15-A), where the listing would have mattered (the
+    process touches a node outside that group): ``{(process, group): detail}``.  Listing has no effect on time
+    resolution (flows and online status stay at the solve's step); :func:`warn_coarse_membership` warns."""
+    out: dict[tuple[str, str], str] = {}
     for g, p in sorted(set(process_group)):
         if g not in groups:
             continue
         outside = sorted(n for n in process_nodes.get(p, set()) if node_group.get(n) != g)
         if outside:
-            out.append(
-                f"{p!r} is listed in group {g!r} (new_stepduration {groups[g]:g} h) and connects to node(s) "
-                f"{outside} outside that group.  Listing a unit or connection in a new_stepduration group has no "
-                "effect on time resolution: its flows and online status stay at the solve's time step, and each "
-                "coarse node sums the flows over its coarse step.")
+            out[(p, g)] = (f"{p!r} is listed in group {g!r} (new_stepduration {groups[g]:g} h) and connects to "
+                           f"node(s) {outside} outside that group")
     return out
+
+
+def warn_coarse_membership(found: dict[tuple[str, str], str], solve: str = "") -> None:
+    """One coded line (W-0507) for the *found* listings of :func:`coarse_membership_warnings`, each listing once
+    per run (every roll of a solve finds the same)."""
+    fresh = {key: text for key, text in found.items() if f"W-0507 {key}" not in _WARNED}
+    if not fresh:
+        return
+    _WARNED.update(f"W-0507 {key}" for key in fresh)
+    from flextool import run_warnings
+    run_warnings.warn_grouped("W-0507", list(fresh), details=fresh)
 
 
 def _info_once(msg: str) -> None:

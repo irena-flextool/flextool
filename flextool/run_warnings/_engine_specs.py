@@ -133,6 +133,22 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
         ),
     ),
     WarningSpec(
+        code="W-0507",
+        message="unit or connection in a new_stepduration group links nodes outside it; no effect",
+        title="Unit or connection listed in a coarse group",
+        topic=_SOLVES,
+        body=(
+            "The unit or connection (named with the group) is listed in a group that has a `new_stepduration` "
+            "longer than the solve's time step, and it connects to node(s) outside that group. Listing a unit or "
+            "connection in such a group has no effect on time resolution: its flows and online status stay at "
+            "the solve's time step, and each coarse node sums the flows over its coarse step. The debug log names "
+            "the nodes outside the group.\n\n"
+            "**How to fix:** usually nothing; remove the unit or connection from the group "
+            "(`group__unit` / `group__connection`) to silence the warning. Only the nodes of a group get its "
+            "time step."
+        ),
+    ),
+    WarningSpec(
         code="W-0510",
         message="annual_flow is above what peak_inflow can reach",
         title="annual_flow above the reach of peak_inflow",
