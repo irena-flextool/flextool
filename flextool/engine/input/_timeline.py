@@ -433,14 +433,14 @@ class TimelineConfig:
 
         - A block whose start is not a step of the timeline → :class:`FlexToolConfigError` (with a
           case-insensitive suggestion). Before this check, such a block was skipped without a word.
-        - A block that runs past the end of the timeline → a warning; the expansion cuts it at the end of the
-          timeline, as before. ``warned`` is the set of the warnings already printed in this run: a run passes
+        - A block that runs past the end of the timeline → warning W-0517 (one line per code and call); the expansion cuts it
+          at the end of the timeline, as before. ``warned`` is the set of the warnings already printed in this run: a run passes
           the same set to each of its construction sites (``run_chain_from_db`` → ``FlexToolRunner``), so a
           warning is printed once per run, and a new run (any entry point) starts with a new set. Without it,
           every call prints its warnings (no state is kept between calls or runs).
           On a representative-period timeset (one with ``representative_period_weights``) the block cannot be
           cut (the base-period mapping needs whole blocks) → error.
-        - A block length that is not a whole number of time steps → a warning (the expansion uses the whole
+        - A block length that is not a whole number of time steps → warning W-0516 (the expansion uses the whole
           part, as before).
         - A used timeset with blocks whose timeline has no steps (not a timeline of the scenario) → error.
 
@@ -451,7 +451,7 @@ class TimelineConfig:
             for _period, ts in pairs:
                 solve_of.setdefault(ts, solve_name)
         errors: list[str] = []
-        warnings: list[tuple[tuple, str]] = []
+        warnings: list[tuple[tuple, str, tuple, str]] = []  # (dedupe key, code, (timeset, block start), detail)
         for ts, solve_name in solve_of.items():
             blocks = self.timeset_durations.get(ts)
             if not blocks:
@@ -477,10 +477,8 @@ class TimelineConfig:
                 n = int(float(count))
                 if float(count) != n:
                     warnings.append((
-                        (ts, "fraction", start, float(count)),
-                        f"Warning: timeset {ts!r} (solve {solve_name!r}): the block starting {str(start)!r} has "
-                        f"length {float(count):g}, which is not a whole number of time steps; {n} time steps "
-                        "are used."))
+                        (ts, "fraction", start, float(count)), "W-0516", (ts, str(start)),
+                        f"solve '{solve_name}': length {float(count):g}; {n} time steps are used"))
                 idx = index_of.get(start)
                 if idx is None:
                     hint = lower.get(str(start).lower())
@@ -500,20 +498,23 @@ class TimelineConfig:
                         "representative-period block cannot be cut: shorten the block or start it earlier.")
                     continue
                 warnings.append((
-                    (ts, timeline_id, start, n),
-                    f"Warning: timeset {ts!r} (solve {solve_name!r}): the block starting {str(start)!r} has {n} time "
-                    f"steps, but timeline {timeline_id!r} has only {left} from {str(start)!r} (to {str(steps[-1])!r}); "
-                    f"the last {n - left} are not used."))
+                    (ts, timeline_id, start, n), "W-0517", (ts, str(start)),
+                    f"solve '{solve_name}': {n} time steps, but timeline '{timeline_id}' has only {left} from "
+                    f"'{start}' (to '{steps[-1]}'); the last {n - left} are not used"))
         if errors:
             shown = errors[:5]
             more = f" (+{len(errors) - 5} more)" if len(errors) > 5 else ""
             raise FlexToolConfigError("timeset_duration: " + " ".join(shown) + more)
-        for key, text in warnings:
+        from flextool import run_warnings
+        by_code: dict[str, dict[tuple, str]] = {}
+        for key, code, name, detail in warnings:
             if warned is not None:
                 if key in warned:
                     continue
                 warned.add(key)
-            print(text, flush=True)
+            by_code.setdefault(code, {})[name] = detail
+        for code, found in by_code.items():
+            run_warnings.warn_grouped(code, list(found), details=found)
 
     def inherit_solve_copies(self, solve_config: "SolveConfig") -> None:
         """Give each solve of a 2-D period map (``solve_config.map2d_duplicate_of``) the ``new_stepduration`` of

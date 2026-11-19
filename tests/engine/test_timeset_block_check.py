@@ -3,7 +3,7 @@
 ``TimelineConfig.validate_timeset_blocks`` checks the original blocks of the timesets the model's solves use,
 before any expansion (the ``new_stepduration`` aggregation included):
 - a block that starts off the timeline -> error (before: the block was skipped without a word);
-- a block that runs past the end of the timeline -> one warning per run; the block is cut at the end of the
+- a block that runs past the end of the timeline -> one warning (W-0517) per run; the block is cut at the end of the
   timeline, as before (on a representative-period timeset -> error, the block cannot be cut);
 - a timeset that no solve of the model uses is not checked.
 
@@ -20,11 +20,32 @@ import logging
 
 import pytest
 
+from flextool import run_warnings
 from flextool.engine.input._solve_state import FlexToolConfigError
 from tests.engine._unit_db import BASE_FIXTURE_JSON, PLANT_CHAIN, b64, make_db, run
 
-LATE_WARNING = ("Warning: timeset '2day' (solve 'y2020_2day_dispatch'): the block starting 't0030' has 48 time "
-                "steps, but timeline 'y2020' has only 43 from 't0030' (to 't0072'); the last 5 are not used.")
+LATE_WARNING = "Warning: timeset block runs past the end of its timeline; cut there ('2day, t0030') [W-0517]"
+LATE_DETAIL = ("W-0517 2day, t0030: solve 'y2020_2day_dispatch': 48 time steps, but timeline 'y2020' has only 43 "
+               "from 't0030' (to 't0072'); the last 5 are not used")
+
+
+@pytest.fixture
+def capsys(caplog):
+    """The coded warning lines (and their debug details) of the test, in place of the console (the name keeps the
+    tests as they were: ``capsys.readouterr().out`` is the text of the ``flextool.warnings`` records so far)."""
+    caplog.set_level(logging.DEBUG, logger=run_warnings.LOGGER_NAME)
+
+    class _Reader:
+        seen = 0
+
+        def readouterr(self):
+            records = [r for r in caplog.records if r.name == run_warnings.LOGGER_NAME]
+            new, self.seen = records[self.seen:], len(records)
+
+            class _Out:
+                out = "".join(r.getMessage() + "\n" for r in new)
+            return _Out()
+    return _Reader()
 
 
 def _blocks(blocks: dict[str, float], timeset: str = "2day") -> list:
@@ -52,14 +73,14 @@ def test_block_past_the_end_warns_and_is_cut(tmp_path_factory, capsys) -> None:
     url, scen = _db(tmp_path_factory, "b222_late", [_blocks({"t0030": 48.0})])
     steps = run(tmp_path_factory, url, scen)
     out = capsys.readouterr().out
-    assert out.count(LATE_WARNING) == 1, out
+    assert out.count(LATE_WARNING) == 1 and out.count(LATE_DETAIL) == 1, out
     st = list(steps.values())[-1]
     assert st.flex_data.dt.height == 43
 
 
 def test_block_that_fits_exactly_passes(tmp_path_factory, capsys) -> None:
     _check(*_db(tmp_path_factory, "b222_exact", [_blocks({"t0025": 48.0})]))
-    assert "Warning: timeset" not in capsys.readouterr().out
+    assert "W-051" not in capsys.readouterr().out
 
 
 def test_block_start_in_wrong_case_is_an_error(tmp_path_factory) -> None:
@@ -83,8 +104,9 @@ def test_only_the_block_off_the_timeline_is_named(tmp_path_factory) -> None:
 
 def test_fractional_block_length_warns(tmp_path_factory, capsys) -> None:
     _check(*_db(tmp_path_factory, "b222_frac", [_blocks({"t0001": 47.5})]))
-    assert ("Warning: timeset '2day' (solve 'y2020_2day_dispatch'): the block starting 't0001' has length 47.5, "
-            "which is not a whole number of time steps; 47 time steps are used.") in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "Warning: timeset block length is not a whole number of time steps ('2day, t0001') [W-0516]" in out
+    assert "W-0516 2day, t0001: solve 'y2020_2day_dispatch': length 47.5; 47 time steps are used" in out
 
 
 def test_each_run_in_one_process_warns_once(tmp_path_factory, capsys) -> None:
@@ -98,7 +120,7 @@ def test_each_run_in_one_process_warns_once(tmp_path_factory, capsys) -> None:
 def test_timeset_no_solve_uses_is_not_checked(tmp_path_factory, capsys) -> None:
     # ``5weeks`` is not a timeset of y2020_2day_dispatch
     _check(*_db(tmp_path_factory, "b222_unused", [_blocks({"x9999": 4.0, "t0070": 10.0}, "5weeks")]))
-    assert "Warning: timeset" not in capsys.readouterr().out
+    assert "W-051" not in capsys.readouterr().out
 
 
 def test_new_stepduration_warns_once_before_the_aggregation(tmp_path_factory, capsys) -> None:
@@ -137,6 +159,7 @@ def test_coal_wind_min_uptime_fixture_warns(tmp_path_factory, capsys) -> None:
     migrate_database(url)
     _check(url, "coal_wind_min_uptime")
     out = capsys.readouterr().out
-    assert out.count(
-        "Warning: timeset '2day' (solve 'y2020_2day_dispatch'): the block starting 't0001' has 168 time steps, "
-        "but timeline 'y2020' has only 72 from 't0001' (to 't0072'); the last 96 are not used.") == 1, out
+    assert out.count("Warning: timeset block runs past the end of its timeline; cut there ('2day, t0001') "
+                     "[W-0517]") == 1, out
+    assert ("W-0517 2day, t0001: solve 'y2020_2day_dispatch': 168 time steps, but timeline 'y2020' has only 72 "
+            "from 't0001' (to 't0072'); the last 96 are not used") in out

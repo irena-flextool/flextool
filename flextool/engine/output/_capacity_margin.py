@@ -10,13 +10,9 @@ live, :func:`write_capacity_margin_report` evaluates the solve's capacity-margin
   forecast branch periods included), not filtered to the realized periods: :func:`read_capacity_margin_parts`
   concatenates them in solve order without dedup, so an invest solve's shortfall stays under its own name when a
   dispatch solve realizes the period;
-* prints one line per group and period whose shortfall is above ``1e-6 · group_capacity_for_scaling``::
-
-      capacity margin shortfall: solve <s>, group <g>, period <d>: <X> MW at <t> (penalty <Y> M CUR)
-
-  The solve name tells a look-ahead period of one investment solve from the same period of the next.
-
-  ``print(flush=True)``: the solve site's logger output does not reach the console.
+* warns (W-0530, one line per solve) about the groups and periods whose shortfall is above
+  ``1e-6 · group_capacity_for_scaling``; the debug log has ``<group>, <period>: <X> MW at <t> (penalty <Y> M CUR)``
+  for each.  The solve name tells a look-ahead period of one investment solve from the same period of the next.
 """
 from __future__ import annotations
 
@@ -37,21 +33,21 @@ ENTITY_PREFIX = "capacity_margin_entity"
 SHORTFALL_TOLERANCE = 1e-6
 
 
-def shortfall_lines(summary: pl.DataFrame, gcs: "pl.DataFrame | None") -> list[str]:
-    """The run-log lines of the rows of ``summary`` (:func:`capacity_margin_report`) whose shortfall is above
-    ``SHORTFALL_TOLERANCE · gcs`` (``gcs`` ``(group, period, gcs)``; 1 where it has no row)."""
+def shortfalls(summary: pl.DataFrame, gcs: "pl.DataFrame | None") -> "dict[tuple[str, str], str]":
+    """``{(group, period): "<X> MW at <t> (penalty <Y> M CUR)"}`` of the rows of ``summary``
+    (:func:`capacity_margin_report`) whose shortfall is above ``SHORTFALL_TOLERANCE · gcs`` (``gcs``
+    ``(group, period, gcs)``; 1 where it has no row)."""
     if summary.height == 0:
-        return []
+        return {}
     rows = summary
     if gcs is not None and gcs.height > 0:
         rows = rows.join(gcs, on=["group", "period"], how="left")
     else:
         rows = rows.with_columns(gcs=pl.lit(None, dtype=pl.Float64))
     rows = rows.filter(pl.col("shortfall") > SHORTFALL_TOLERANCE * pl.col("gcs").fill_null(1.0))
-    return [f"capacity margin shortfall: solve {r['solve']}, group {r['group']}, period {r['period']}: "
-            f"{r['shortfall']:.6g} MW at "
-            f"{r['binding_time']} (penalty {r['penalty_cost']:.6g} M CUR)"
-            for r in rows.iter_rows(named=True)]
+    return {(str(r["group"]), str(r["period"])):
+            f"{r['shortfall']:.6g} MW at {r['binding_time']} (penalty {r['penalty_cost']:.6g} M CUR)"
+            for r in rows.iter_rows(named=True)}
 
 
 def write_capacity_margin_report(sol: "Solution", flex_data, *, output_dir: Path, solve_name: str,
@@ -79,8 +75,10 @@ def write_capacity_margin_report(sol: "Solution", flex_data, *, output_dir: Path
         frame = frame.collect() if isinstance(frame, pl.LazyFrame) else frame
         gcs = frame.select(pl.col("g").cast(pl.Utf8).alias("group"), pl.col("d").cast(pl.Utf8).alias("period"),
                            pl.col("value").cast(pl.Float64).alias("gcs"))
-    for line in shortfall_lines(summary, gcs):
-        print(line, flush=True)
+    found = shortfalls(summary, gcs)
+    if found:
+        from flextool import run_warnings
+        run_warnings.warn_grouped("W-0530", list(found), solve=solve_name, details=found)
     return summary, entity
 
 

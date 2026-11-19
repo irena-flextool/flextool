@@ -51,9 +51,13 @@ def _strict_autoscale(monkeypatch):
 
 @pytest.fixture(scope="module")
 def chain_run(tmp_path_factory):
-    """``(work folder, csv folder, captured stdout)`` of the invest → dispatch chain and its written outputs."""
+    """``(work folder, csv folder, captured stdout and coded warnings, the debug lines included)`` of the invest →
+    dispatch chain and its written outputs."""
     import contextlib
     import io
+    import logging
+
+    from flextool import run_warnings
 
     from flextool.engine import run_chain_from_db
     from flextool.process_outputs.write_outputs import write_outputs
@@ -66,8 +70,17 @@ def chain_run(tmp_path_factory):
     url, scen = make_db(tmp_path_factory, alt="item85", values=values, base_chain=CHAIN, entities=entities)
     work = tmp_path_factory.mktemp("item85_w")
     out = io.StringIO()
-    with contextlib.redirect_stdout(out):
-        steps = run_chain_from_db(url, scen, work_folder=work)
+    handler = logging.StreamHandler(out)
+    warnings_logger = logging.getLogger(run_warnings.LOGGER_NAME)
+    level = warnings_logger.level
+    warnings_logger.addHandler(handler)
+    warnings_logger.setLevel(logging.DEBUG)
+    try:
+        with contextlib.redirect_stdout(out):
+            steps = run_chain_from_db(url, scen, work_folder=work)
+    finally:
+        warnings_logger.removeHandler(handler)
+        warnings_logger.setLevel(level)
     assert list(steps) == [INVEST, DISPATCH]
     last = next(reversed(steps.values()))
     write_outputs(scen, output_location=str(work / "out"), subdir=scen,
@@ -131,9 +144,9 @@ def test_the_entity_breakdown_sums_to_the_left_hand_side(chain_run) -> None:
 
 def test_the_run_log_names_the_shortfall(chain_run) -> None:
     _, _, stdout = chain_run
-    lines = [ln for ln in stdout.splitlines() if ln.startswith("capacity margin shortfall")]
-    assert lines == [f"capacity margin shortfall: solve {INVEST}, group cm, period p2020: 50 MW at t0037 "
-                     "(penalty 50 M CUR)"]
+    lines = [ln for ln in stdout.splitlines() if "W-0530" in ln]
+    assert lines == [f"Warning: capacity margin not met in solve '{INVEST}'; penalty paid ('cm, p2020') [W-0530]",
+                     "W-0530 cm, p2020: 50 MW at t0037 (penalty 50 M CUR)"]
 
 
 def test_a_coarse_row_is_evaluated_per_coarse_step(tmp_path_factory) -> None:

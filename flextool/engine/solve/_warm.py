@@ -481,8 +481,7 @@ def _apply_warm_updates(warm: WarmProblem,
     blocker = _reuse_blocker(prior, nxt)
     if blocker is not None:
         raise _IncompatibleUpdate(
-            f"FlexData field {blocker!r} differs between sub-solves; the "
-            f"live LP is reused only for an identical sub-solve")
+            f"FlexData field {blocker!r} differs from the previous sub-solve")
     return 0
 
 

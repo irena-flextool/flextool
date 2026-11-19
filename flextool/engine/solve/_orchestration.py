@@ -58,7 +58,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
-from flextool import run_record
+from flextool import run_record, run_warnings
 from flextool.engine.solve._acceptance import (
     classify_acceptance,
     highs_objective_bound_warning,
@@ -163,6 +163,40 @@ def _format_solver_args_line(
     body = ", ".join(f"{k}={translated.get(k, effective_options[k])}" for k in order)
     label = f"Solver args ({solver})" if solver else "Solver args"
     return f"{label}: {body}"
+
+
+#: The last ``Solver args`` line printed in this process's current run (:func:`_print_solver_args`).
+_SOLVER_ARGS_PRINTED: dict[str, str | None] = {"line": None}
+
+
+def _reset_solver_args_echo() -> None:
+    """A new run prints its first ``Solver args`` line again."""
+    _SOLVER_ARGS_PRINTED["line"] = None
+
+
+def _print_solver_args(line: str | None) -> None:
+    """Right before a solver runs: print the coded warnings gathered so far for the sub-solve
+    (:func:`flextool.run_warnings.flush`, so they precede the solver's output), then the ``Solver args`` line —
+    once per run, and again only when it changes (the rolls and solves of a run mostly share their options).
+    The line stays whole (it may pass 100 characters: the GUI wraps it), so it can be copied as is."""
+    run_warnings.flush()
+    if not line or line == _SOLVER_ARGS_PRINTED["line"]:
+        return
+    _SOLVER_ARGS_PRINTED["line"] = line
+    print(line, flush=True)
+
+
+def _log_cold_rebuild(logger: logging.Logger, logged: set, solve: str, reason: str) -> None:
+    """The warm LP reuse of a roll fell back to a cold rebuild (*reason*: the first FlexData field that differs).
+    The normal outcome for every roll of a rolling solve (``dt`` shifts), so one INFO line per complete solve and
+    reason; the other rolls go to the debug log."""
+    base = re.sub(r"_roll_\d+$", "", solve)
+    key = (base, reason)
+    if key in logged:
+        logger.debug("warm reuse fell back to a cold rebuild for %s: %s", solve, reason)
+        return
+    logged.add(key)
+    logger.info("Warm LP reuse not possible in solve '%s': %s (the LP is rebuilt)", base, reason)
 
 
 def _highs_echo_translations(
@@ -3352,6 +3386,13 @@ def _drive_cascade(
                     reset_global_axis_enums(token)
 
         def run(self, complete_solve_name: str) -> int:
+            """One sub-solve (a roll, or a whole solve), with its coded warnings gathered: each code prints one
+            line for the sub-solve, before the solver runs (:func:`_print_solver_args`) or when it ends; the
+            solve-scoped codes (``solve=``) print once per complete solve."""
+            with run_warnings.collecting():
+                return self._run_one(complete_solve_name)
+
+        def _run_one(self, complete_solve_name: str) -> int:
             _phase_prof("run_enter")
             # Slice D Guard 1 (authoritative): validate the RAW authored
             # stochastic_invest_method for any solve that RUNS — including
@@ -3834,10 +3875,9 @@ def _drive_cascade(
                         # The normal outcome for every roll (``dt`` shifts),
                         # so INFO, not WARNING.  The message names the first
                         # differing FlexData field.
-                        state.logger.info(
-                            "warm reuse fell back to COLD REBUILD for %s "
-                            "(re-runs pre-solve autoscale traversal): %s",
-                            complete_solve_name, _warm_exc,
+                        _log_cold_rebuild(
+                            state.logger, self.__dict__.setdefault("_cold_rebuild_logged", set()),
+                            complete_solve_name, str(_warm_exc),
                         )
                 if not warm_used:
                     # Drop the previous WarmProblem BEFORE the new build on
@@ -4121,7 +4161,9 @@ def _drive_cascade(
                 # under ``keep_solver=True``.  No extra kwarg required.
                 # Blank line so HiGHS' "Running HiGHS …" banner (and the
                 # grey solver-output block in the GUI) separates from the
-                # scaling/LP-build rows above it.
+                # scaling/LP-build rows above it.  The sub-solve's coded
+                # warnings gathered so far print before it.
+                run_warnings.flush()
                 print("", flush=True)
                 # Echo the effective solver options right before HiGHS'
                 # own banner: the full merged, post-precedence set the
@@ -4141,8 +4183,7 @@ def _drive_cascade(
                         self._warm_problem.problem, _eff_touched, complete_solve_name,
                     ),
                 )
-                if _sa_line:
-                    print(_sa_line, flush=True)
+                _print_solver_args(_sa_line)
                 _t_solve_start = (
                     time.perf_counter() if _phase_timing else 0.0
                 )
@@ -4599,7 +4640,9 @@ def _drive_cascade(
                 _ranges_for_l1 = _autoscale_ranges_post or _autoscale_ranges_pre
                 # Blank line so HiGHS' "Running HiGHS …" banner (and the
                 # grey solver-output block in the GUI) separates from the
-                # scaling/LP-build rows above it.
+                # scaling/LP-build rows above it.  The sub-solve's coded
+                # warnings gathered so far print before it.
+                run_warnings.flush()
                 print("", flush=True)
                 # Echo the effective solver options right before HiGHS'
                 # own banner: the full merged, post-precedence set the
@@ -4616,8 +4659,7 @@ def _drive_cascade(
                 # their native names (``Solver args (gurobi): ...``), from the
                 # same resolved list ``run_one_solve`` hands to the CLI
                 # (``_sa_line`` is computed above, before the scaling guard).
-                if _sa_line:
-                    print(_sa_line, flush=True)
+                _print_solver_args(_sa_line)
                 _phase_prof("solve_start")
                 if _horizon_on:
                     # Before the solve: it releases ``pb._cstrs``.
@@ -5466,6 +5508,7 @@ def run_chain_from_db(
     # Behaviour-change notices fire only for an upgraded database's markers; each entity once per run.
     from flextool.engine import _behaviour_changes
     _behaviour_changes.start_run(_behaviour_changes.read_markers_from_url(db_url))
+    _reset_solver_args_echo()
 
     if work_folder is None:
         work_folder = Path(tempfile.mkdtemp(prefix="flextool_run_chain_"))
