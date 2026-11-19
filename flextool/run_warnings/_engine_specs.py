@@ -116,6 +116,23 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
         ),
     ),
     WarningSpec(
+        code="W-0506",
+        message="rolls of solve '{solve}' realize the same {steps} time steps ({periods}); the later is kept",
+        title="Rolls of a rolling solve realize the same dispatch",
+        topic=_SOLVES,
+        entityless=True,
+        body=(
+            "Two rolls of the same rolling solve realize dispatch in the same time steps of the named periods. "
+            "Each roll should realize only the time steps up to the start of the next roll (`rolling_jump`); here "
+            "a roll realizes time steps that a later roll realizes again, and the later roll's results are kept. "
+            "The line counts the time steps and periods over all pairs of rolls; the debug log names each pair "
+            "and period.\n\n"
+            "**How to fix:** check the solve's `rolling_jump`, `rolling_horizon` and `rolling_duration`, and its "
+            "`realized_periods`: each roll should realize only the `rolling_jump` time steps before the next "
+            "roll starts."
+        ),
+    ),
+    WarningSpec(
         code="W-0510",
         message="annual_flow is above what peak_inflow can reach",
         title="annual_flow above the reach of peak_inflow",

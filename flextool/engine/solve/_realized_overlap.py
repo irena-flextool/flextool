@@ -150,13 +150,11 @@ def _plural(n: int, noun: str) -> str:
 
 def _pairs(records, key) -> "dict[tuple[str, str], list]":
     """``{(earlier, later): [record, ...]}`` with the rolls ``<solve>_roll_<k>`` of a rolling solve counted as
-    ``<solve>`` (one line per pair of complete solves, whatever levels and rolls the overlaps came from)."""
+    ``<solve>`` (one line per pair of complete solves, whatever levels and rolls the overlaps came from).  Two
+    rolls of one solve give the pair ``(solve, solve)``."""
     out: dict[tuple[str, str], list] = {}
     for record in records:
-        pair = key(record)
-        if pair[0] == pair[1]:
-            continue
-        out.setdefault(pair, []).append(record)
+        out.setdefault(key(record), []).append(record)
     return out
 
 
@@ -194,6 +192,12 @@ def warn_realized_dispatch_overlaps(
                       ov.timesteps_dropped)
         periods = len(dict.fromkeys(ov.period for ov in records))
         steps = sum(ov.timesteps_dropped for ov in records)
+        if earlier == later:   # two rolls of one rolling solve (a rolling_jump / horizon mix-up)
+            run_warnings.warn_grouped("W-0506", steps=steps, periods=_plural(periods, "period"), solve=earlier,
+                                      details=", ".join(f"{ov.earlier_solve} / {ov.later_solve} {ov.period}: "
+                                                        f"{ov.timesteps_dropped}" for ov in records))
+            n += 1
+            continue
         run_warnings.warn_grouped("W-0500", [(earlier, later)], steps=steps, periods=_plural(periods, "period"),
                                   details={(earlier, later): ", ".join(f"{ov.period}: {ov.timesteps_dropped}"
                                                                        for ov in records)})
@@ -290,6 +294,8 @@ def warn_realized_invest_overlaps(
     log = logger if logger is not None else _MODULE_LOGGER
     n = 0
     for (earlier, later), records in _pairs(overlaps, lambda ov: (ov.earlier_solve, ov.later_solve)).items():
+        if earlier == later:
+            continue
         periods = list(dict.fromkeys(ov.period for ov in records))
         log.debug("Solves '%s' and '%s' both list %s in realized_invest_periods.", earlier, later,
                   ", ".join(periods))

@@ -183,11 +183,22 @@ def test_one_warning_line_per_pair_with_the_periods_counted(caplog):
 def test_rolls_count_as_their_solve(caplog):
     """The overlaps of the rolls of a nested rolling solve with its parent make one line (every level)."""
     overlaps = [DispatchOverlap("invest", f"dispatch_roll_{k}", "p2020", 24) for k in range(5)]
-    overlaps.append(DispatchOverlap("dispatch_roll_1", "dispatch_roll_2", "p2020", 3))  # within one solve: none
     with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
         assert warn_realized_dispatch_overlaps(overlaps) == 1
     (msg,) = _warnings(caplog)
     assert "the same 120 time steps (1 period)" in msg and "('invest, dispatch')" in msg
+
+
+def test_rolls_of_one_solve_that_overlap_get_their_own_line(caplog):
+    """Two rolls of one rolling solve realizing the same steps (a rolling_jump / horizon mix-up) are not dropped
+    silently: one W-0506 line for the solve."""
+    overlaps = [DispatchOverlap("dispatch_roll_1", "dispatch_roll_2", "p2020", 3),
+                DispatchOverlap("dispatch_roll_2", "dispatch_roll_3", "p2020", 3)]
+    with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
+        assert warn_realized_dispatch_overlaps(overlaps) == 1
+    (msg,) = _warnings(caplog)
+    assert msg == ("Warning: rolls of solve 'dispatch' realize the same 6 time steps (1 period); the later is kept "
+                   "[W-0506]")
 
 
 def test_later_solve_that_does_not_realize_the_period_claims_nothing():
