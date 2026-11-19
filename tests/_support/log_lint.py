@@ -7,8 +7,16 @@ the ``<run>`` scope), drops what is not FlexTool's own text (the solver's consol
 lines; the solve summary at the end of a run, ``--- Solve summary ---`` ... ``--- End of solve summary ---``,
 which is the content of ``summary_solve.csv``, a table, not messages) and reports
 
+Inside the solver's block FlexTool's own lines are still linted: those starting with :data:`FLEXTOOL_PREFIXES`
+(HiGHS writes ``WARNING:`` in capitals; a commercial solver's own ``Warning:`` lines would be linted too, but the
+lint scenarios run HiGHS).
+
 * **repeats**: a line template (:func:`template`: quoted names → ``<n>``, numbers → ``<x>``) that appears more
-  than :data:`MAX_REPEATS` times within one solve (a per-entity warning that should be one aggregated line);
+  than :data:`MAX_REPEATS` times within one solve (a per-entity warning that should be one aggregated line); a
+  coded line (``[W-dddd]``) more than :data:`MAX_CODED_REPEATS` times (once per solve and *fmt*: the helper
+  aggregates, so a second identical template is a site that bypasses it);
+* **nameless**: a coded line without its ``('<name>')`` / ``(<N> cases, e.g. '<name>')`` part whose code is not
+  registered ``entityless`` (a warning that names nothing: an empty name list, or a site that forgot the names);
 * **long lines**: a FlexTool line longer than :data:`MAX_LINE` characters once quoted names are shortened to
   ``'<n>'`` and paths and URLs to ``<path>`` (:func:`measured`: the user's names and folders are as long as they
   are; the limit is on FlexTool's own text).
@@ -26,12 +34,18 @@ from flextool.console_markers import SOLVE_SUMMARY_END, SOLVE_SUMMARY_START, SOL
 from flextool.run_warnings import complete_solve
 
 MAX_REPEATS = 3
+MAX_CODED_REPEATS = 1
 MAX_LINE = 100
+#: FlexTool's own message prefixes, linted also inside the solver's block.
+FLEXTOOL_PREFIXES = ("Warning:", "Note:", "Error:")
 
 SUMMARY_START, SUMMARY_END = SOLVE_SUMMARY_START, SOLVE_SUMMARY_END
 _SOLVE_START = re.compile(r"^Solve start: (.+?), \d+/\d+\s*$")
 # A timing / memory row (or its header): cells separated by "|" with a size or the word "memory".
 _SIZE = re.compile(r"\d+(?:\.\d+)? ?[kMGT]B\b")
+_CODED = re.compile(r"\[(W-\d{4})\]\s*$")
+# The names part of a coded line: ('<name>') or (<N> cases, e.g. '<name>'), right before the code.
+_NAMES_PART = re.compile(r"\((?:\d+ cases, e\.g\. )?'[^']*'\) \[W-\d{4}\]\s*$")
 _QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
 _NUMBER = re.compile(r"(?<![A-Za-z_])[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|(?<=[A-Za-z_])\d+")
 # An absolute path or a URL (sqlite:///..., https://..., /tmp/..., C:\...).
@@ -58,6 +72,8 @@ class LintResult:
     repeats: dict[tuple[str, str], int] = field(default_factory=dict)
     #: ``[(template, length)]`` of the FlexTool lines longer than MAX_LINE (:func:`measured`), one per template.
     long_lines: list[tuple[str, int]] = field(default_factory=list)
+    #: ``[line]`` of the coded lines without a name whose code is not ``entityless``.
+    nameless: list[str] = field(default_factory=list)
 
 
 def flextool_lines(log: str) -> list[tuple[str, str]]:
@@ -83,22 +99,33 @@ def flextool_lines(log: str) -> list[tuple[str, str]]:
             continue
         if line.startswith(SOLVER_BLOCK_STARTS):
             in_solver = True
-        if in_solver or not line.strip():
+        if (in_solver and not line.lstrip().startswith(FLEXTOOL_PREFIXES)) or not line.strip():
             continue
         out.append((solve, line))
     return out
 
 
-def lint(log: str, max_repeats: int = MAX_REPEATS, max_line: int = MAX_LINE) -> LintResult:
+def lint(log: str, max_repeats: int = MAX_REPEATS, max_line: int = MAX_LINE,
+         max_coded_repeats: int = MAX_CODED_REPEATS) -> LintResult:
+    from flextool.run_warnings import WARNINGS
+
     result = LintResult()
     counts: Counter[tuple[str, str]] = Counter()
+    coded: set[tuple[str, str]] = set()
     long_seen: dict[str, int] = {}
     for solve, line in flextool_lines(log):
         tmpl = template(line)
         counts[(solve, tmpl)] += 1
+        code = _CODED.search(line)
+        if code is not None:
+            coded.add((solve, tmpl))
+            spec = WARNINGS.get(code.group(1))
+            if spec is not None and not spec.entityless and not _NAMES_PART.search(line):
+                result.nameless.append(line)
         length = len(measured(line))
         if length > max_line:
             long_seen[tmpl] = max(length, long_seen.get(tmpl, 0))
-    result.repeats = {key: n for key, n in counts.items() if n > max_repeats}
+    result.repeats = {key: n for key, n in counts.items()
+                      if n > (max_coded_repeats if key in coded else max_repeats)}
     result.long_lines = sorted(long_seen.items())
     return result

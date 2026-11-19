@@ -134,7 +134,7 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
     ),
     WarningSpec(
         code="W-0507",
-        message="unit or connection in a new_stepduration group links nodes outside it; no effect",
+        message="unit or connection in a new_stepduration group links nodes outside it",
         title="Unit or connection listed in a coarse group",
         topic=_SOLVES,
         body=(

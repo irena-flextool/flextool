@@ -328,8 +328,9 @@ def test_a_note_shows_without_logging_configured(monkeypatch, capsys):
 def test_the_tally_counts_the_uncoded_warnings_too(records):
     """m11: an uncoded ``logging.warning`` is not in the code list, but the tally says there were others."""
     logging.getLogger("flextool.test.uncoded").warning("an uncoded one")
-    assert run_warnings.tally_lines() == ["Warnings: plus 1 other warning (no code; see the log above)"]
+    assert run_warnings.tally_lines() == ["Other warnings (no code): 1, see the log above"]
     run_warnings.warn_grouped("W-0001", ["a"])
     logging.getLogger("flextool.test.uncoded").error("another")
-    assert run_warnings.tally_lines()[0] == (
-        "Warnings: 1 kind, 1 case — W-0001 ×1; plus 2 other warnings (no code; see the log above)")
+    assert run_warnings.tally_lines() == ["Warnings: 1 kind, 1 case — W-0001 ×1",
+                                          f"Warnings explained: {WARNINGS_DOCS_URL}",
+                                          "Other warnings (no code): 2, see the log above"]

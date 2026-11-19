@@ -4,11 +4,13 @@ Runs a set of cheap test scenarios through ``cmd_run_flextool`` (a subprocess: t
 and the run log get it, HiGHS' output included) and lints each log with ``tests/_support/log_lint.py``:
 
 * no FlexTool line template (quoted names → ``<n>``, numbers → ``<x>``) more than 3 times within one solve
-  (a per-entity message must be one aggregated line: ``flextool.run_warnings.warn_grouped``);
+  (a per-entity message must be one aggregated line: ``flextool.run_warnings.warn_grouped``), and no coded
+  template more than once;
+* no coded line without a name unless its code is registered ``entityless``;
 * no FlexTool line longer than 100 characters (quoted names shortened to ``'<n>'``, paths and URLs to ``<path>``);
 * every ``[W-dddd]`` code is in the registry, and a run with coded warnings ends with the tally.
 
-The solver's own console block is not linted.  The known offenders are allow-listed below (:data:`KNOWN_REPEATS`,
+The solver's own console block is not linted, except FlexTool's ``Warning:`` / ``Note:`` / ``Error:`` lines in it.  The known offenders are allow-listed below (:data:`KNOWN_REPEATS`,
 :data:`KNOWN_LONG`) — each entry is a regular expression matched against the line template.
 TODO(P3): convert the sites behind these entries and delete the entries; ``test_allow_list_has_no_stale_entries``
 fails when an entry no longer matches anything, so a fixed site's entry cannot linger.
@@ -52,9 +54,12 @@ KNOWN_LONG: list[tuple[str, str]] = [
     # Kept on one line on purpose: it is printed once per run (again only when it changes), it is the option list
     # a user copies into solver_arguments or compares between runs, and tests of every solver match it whole.
     (r"^Solver args: ", "the solver's whole option list, once per run (copyable as is; the GUI wraps it)"),
+    (r"\[W-0541\]$", "the owner's wording, quoting the HiGHS warnings it explains; once per run"),
 ]
 # Entries that only the slow scenarios exercise (the stale check skips them when those did not run).
 SLOW_ONLY: set[str] = set()
+# Entries for lines that only some solver modes print (no scenario has to show them; never stale).
+OPTIONAL: set[str] = {r"\[W-0541\]$"}
 
 _CODE = re.compile(r"\[(W-\d{4})\]")
 _LOGS: dict[str, str] = {}
@@ -126,6 +131,14 @@ def test_log_has_no_long_lines(_runner, scenario):
 
 @pytest.mark.solver
 @pytest.mark.parametrize("scenario", _PARAMS)
+def test_coded_lines_name_what_they_are_about(_runner, scenario):
+    """A coded line without ``('<name>')`` is a warning about nothing (B1: an empty name list), unless its code
+    names no entity by design (``entityless`` in the registry)."""
+    assert lint(_runner(scenario)).nameless == []
+
+
+@pytest.mark.solver
+@pytest.mark.parametrize("scenario", _PARAMS)
 def test_codes_are_registered_and_tallied(_runner, scenario):
     log = _runner(scenario)
     codes = [c for _, line in flextool_lines(log) if not line.startswith("Warnings: ")
@@ -133,6 +146,7 @@ def test_codes_are_registered_and_tallied(_runner, scenario):
     assert set(codes) <= set(WARNINGS), sorted(set(codes) - set(WARNINGS))
     warned = [c for c in codes if WARNINGS[c].severity == "warning"]
     tally = [line for line in log.splitlines() if line.startswith("Warnings: ")]
+    assert len([line for line in log.splitlines() if line.startswith("Other warnings (no code): ")]) <= 1
     if warned:
         assert len(tally) == 1 and all(f"{c} ×" in tally[0] for c in set(warned)), tally
         assert "Warnings explained: https://" in log
@@ -157,7 +171,8 @@ def test_allow_list_has_no_stale_entries(_runner):
                 _allowed(tmpl, KNOWN_REPEATS)
             for tmpl, _length in result.long_lines:
                 _allowed(tmpl, KNOWN_LONG)
-    stale = [p for p, _ in KNOWN_REPEATS + KNOWN_LONG if p not in _USED and (ran_slow or p not in SLOW_ONLY)]
+    stale = [p for p, _ in KNOWN_REPEATS + KNOWN_LONG
+             if p not in _USED and p not in OPTIONAL and (ran_slow or p not in SLOW_ONLY)]
     assert not stale, "allow-list entries that match nothing any more (delete them):\n" + "\n".join(stale)
 
 
@@ -201,6 +216,27 @@ Created, a, p3, 1
 Created, a, p4, 1
 --- End of solve summary ---
 """
+
+
+def test_lint_reads_flextool_lines_in_the_solver_block_and_coded_repeats():
+    """m6: FlexTool's own lines inside the solver block are linted; m7: a coded template twice in a solve is a
+    repeat; B1: a coded line without a name is reported unless its code is entityless."""
+    log = "\n".join([
+        "Solve start: dispatch, 1/1",
+        "Running HiGHS 1.15.1 (git hash: 04024d7): Copyright (c) 2026 under MIT licence terms",
+        "WARNING: HiGHS' own line",
+        "Warning: flowGroup has flow_aggregator but no flow members ('a') [W-0001]",
+        "Warning: flowGroup has flow_aggregator but no flow members ('b') [W-0001]",
+        "Warning: flowGroup has flow_aggregator but no flow members [W-0001]",
+        "Note: solve 'dispatch' optimal by HiGHS at up to 1.2x its relative tolerances [W-0540]",
+        "Solver                       2.06s (+0.05) |   190 MB (+0.9) |    18.1 GB (+0) |       1 MB (+0)",
+    ])
+    lines = [line for _, line in flextool_lines(log)]
+    assert "WARNING: HiGHS' own line" not in lines and len(lines) == 4
+    result = lint(log)
+    assert result.repeats == {("dispatch", "Warning: flowGroup has flow_aggregator but no flow members (<n>) "
+                                           "[W-<x>]"): 2}
+    assert result.nameless == ["Warning: flowGroup has flow_aggregator but no flow members [W-0001]"]
 
 
 def test_lint_splits_solves_and_skips_the_solver_block():

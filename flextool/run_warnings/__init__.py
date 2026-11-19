@@ -39,8 +39,9 @@ Run
 :func:`start_run` forgets what earlier runs printed (called by ``_behaviour_changes.start_run`` at the start of
 every engine run).  :func:`tally_lines` gives the end-of-run summary that ``cmd_run_flextool`` prints::
 
-    Warnings: 2 kinds, 15 cases — W-0004 ×12, W-0001 ×3; plus 2 other warnings (no code; see the log above)
+    Warnings: 2 kinds, 15 cases — W-0004 ×12, W-0001 ×3
     Warnings explained: https://irena-flextool.github.io/flextool/reference/warnings/
+    Other warnings (no code): 2, see the log above
 """
 from __future__ import annotations
 
@@ -391,16 +392,18 @@ def uncoded_count() -> int:
 
 
 def tally_lines() -> list[str]:
-    """The end-of-run summary: ``Warnings: <k> kinds, <n> cases — W-0004 ×12, ...`` (and ``; plus <m> other
-    warnings`` when uncoded ones were logged) and the docs link; ``[]`` when the run had no warning."""
+    """The end-of-run summary: ``Warnings: <k> kinds, <n> cases — W-0004 ×12, ...`` and the docs link, then
+    ``Other warnings (no code): <m>, see the log above`` when uncoded ones were logged; ``[]`` when the run had
+    no warning."""
     counts = tally()
     other = uncoded_count()
-    plus = f"plus {other} other warning{'s' if other != 1 else ''} (no code; see the log above)" if other else ""
-    if not counts:
-        return [f"Warnings: {plus}"] if other else []
-    total = sum(counts.values())
-    kinds = len(counts)
-    listed = ", ".join(f"{code} ×{n}" for code, n in counts.items())
-    return [f"Warnings: {kinds} kind{'s' if kinds != 1 else ''}, {total} case{'s' if total != 1 else ''} — {listed}"
-            + (f"; {plus}" if plus else ""),
-            f"Warnings explained: {WARNINGS_DOCS_URL}"]
+    out: list[str] = []
+    if counts:
+        total = sum(counts.values())
+        kinds = len(counts)
+        listed = ", ".join(f"{code} ×{n}" for code, n in counts.items())
+        out += [f"Warnings: {kinds} kind{'s' if kinds != 1 else ''}, {total} case{'s' if total != 1 else ''} — "
+                f"{listed}", f"Warnings explained: {WARNINGS_DOCS_URL}"]
+    if other:
+        out.append(f"Other warnings (no code): {other}, see the log above")
+    return out
