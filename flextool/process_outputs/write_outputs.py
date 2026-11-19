@@ -15,6 +15,8 @@ import yaml
 from spinedb_api import from_database, Array
 from flextool.update_flextool.db_handle import open_database_mapping
 from flextool import run_record
+# The lines around the solve summary printed at the end of a run (the GUI folds similar rows between them).
+from flextool.console_markers import SOLVE_SUMMARY_END, SOLVE_SUMMARY_START
 
 from flextool.lean_parquet import read_lean_parquet, read_lean_parquet_solve_labels, write_lean_parquet
 from flextool.process_outputs._sheet_names import excel_sheet_name
@@ -691,10 +693,6 @@ def summary_solve_text(par, s, v, r, timestamp=None) -> str:
     return f.getvalue()
 
 
-#: The lines around the solve summary printed at the end of a run (the GUI folds similar rows between them:
-#: ``flextool.gui.log_view.SUMMARY_START`` / ``SUMMARY_END``).
-SOLVE_SUMMARY_START = "--- Solve summary ---"
-SOLVE_SUMMARY_END = "--- End of solve summary ---"
 
 
 def solve_summary_lines(text: str) -> list[str]:

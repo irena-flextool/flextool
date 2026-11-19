@@ -1773,7 +1773,7 @@ def resolve_basis_cache_dir(work_folder: Path | str | None, run_options: "RunOpt
 # ---------------------------------------------------------------------------
 
 #: How the solver is named in the ``Running <Solver> (<program>)`` line that opens its log block (the FlexTool
-#: window greys the block from that line: ``gui/execution_window._SOLVER_BLOCK_STARTS``, pinned by a test).
+#: window greys the block from that line: ``flextool.console_markers.SOLVER_BLOCK_STARTS``, pinned by a test).
 _DISPLAY_NAMES: dict[str, str] = {
     "gurobi": "Gurobi",
     "cplex": "CPLEX",

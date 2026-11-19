@@ -4,7 +4,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from flextool.engine.solve._subprocess_solve import _DISPLAY_NAMES
-from flextool.gui.execution_window import _SOLVER_BLOCK_STARTS
+from flextool.console_markers import SOLVER_BLOCK_STARTS as _SOLVER_BLOCK_STARTS
 from flextool.gui.log_view import LogView
 
 
@@ -32,7 +32,7 @@ def test_commercial_solver_log_is_one_grey_block() -> None:
 
 
 def test_every_commercial_marker_opens_a_block() -> None:
-    """The engine's marker names and the GUI's block starts agree (the GUI does not import the engine)."""
+    """The engine's marker names and the shared block starts (``flextool.console_markers``) agree."""
     for name in _DISPLAY_NAMES.values():
         state = SimpleNamespace(highs_block_active=False)
         line = f"Running {name} (/opt/{name.lower()}/bin/solver)"
@@ -57,4 +57,6 @@ def test_the_gui_folds_between_the_markers_the_run_prints() -> None:
     lines = write_outputs.solve_summary_lines(text)
     assert lines[0] == log_view.SUMMARY_START and lines[-1] == log_view.SUMMARY_END
     assert lines[1].startswith('"Solve","Objective"') and not any("Output at (UTC)" in line for line in lines)
-    assert log_view.find_similar_runs(lines) == [(lines.index("Created, n1, p0, 0.5"), 4)]
+    keys = [log_view.similar_row_key(line) for line in lines]
+    first = lines.index("Created, n1, p0, 0.5")
+    assert keys[first:first + 4] == ["Created"] * 4 and keys[first - 1] != "Created" != keys[first + 4]

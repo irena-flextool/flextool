@@ -1,7 +1,9 @@
 """The run-output log pane of the execution window: colouring, wrapping, warning-code links and folded rows.
 
-The pure helpers (line patterns, :func:`warning_docs_url`, :func:`similar_row_key`, :func:`find_similar_runs`,
-:func:`wrap_mode_for`) need no Tk; :class:`LogView` drives one ``tk.Text``.  The GUI does not import the engine.
+The pure helpers (line patterns, :func:`warning_docs_url`, :func:`similar_row_key`, :func:`wrap_mode_for`) need no
+Tk; :class:`LogView` drives one ``tk.Text``.  The GUI does not import the engine: the warning registry
+(``flextool.run_warnings.registry``) and the marker lines (``flextool.console_markers``) are standard-library
+modules.
 """
 from __future__ import annotations
 
@@ -11,16 +13,11 @@ import webbrowser
 from collections.abc import Callable, Hashable, Iterable, Sequence
 from tkinter import font as tkfont
 
-#: A line that opens a solver's log block, which the run output greys until the next phase row: HiGHS' banner and
-#: the line FlexTool prints before a commercial solver's log (``Running <Solver> (<program>)``; the names are the
-#: engine's ``_subprocess_solve._DISPLAY_NAMES``, pinned by a test).
-SOLVER_BLOCK_STARTS = ("Running HiGHS", "Running Gurobi", "Running CPLEX", "Running Xpress", "Running COPT")
+from flextool.console_markers import SOLVE_SUMMARY_END, SOLVE_SUMMARY_START, SOLVER_BLOCK_STARTS
+from flextool.run_warnings.registry import WARNINGS_DOCS_URL, docs_url
 
-#: Base URL of the user documentation (``flextool/docs_build/parameters.py`` uses the same site).
-DOCS_BASE_URL = "https://irena-flextool.github.io/flextool/"
-#: The warnings reference page.  TODO(execution-log P2/P3): point this at the warning registry's
-#: ``WARNINGS_DOCS_URL`` once the registry exists (kept as a literal here so the GUI does not import the engine).
-WARNINGS_DOCS_URL = DOCS_BASE_URL + "reference/warnings/"
+__all__ = ["SOLVER_BLOCK_STARTS", "SUMMARY_END", "SUMMARY_START", "WARNINGS_DOCS_URL", "LogView", "classify_message",
+           "is_timing_row", "similar_row_key", "warning_docs_url", "wrap_mode_for"]
 
 #: A warning code at the end of a FlexTool message, e.g. ``[W-0123]``.
 WARNING_CODE_RE = re.compile(r"\[W-\d{4}\]")
@@ -39,8 +36,8 @@ _WORD_RE = re.compile(r"\b(warning|error)\b", re.IGNORECASE)
 _EXCEPTION_RE = re.compile(r"[A-Za-z_][\w.]*(?:Error|Exception)(?::|$)")
 
 #: The solve-summary block, whose similar rows fold.
-SUMMARY_START = "--- Solve summary ---"
-SUMMARY_END = "--- End of solve summary ---"
+SUMMARY_START = SOLVE_SUMMARY_START
+SUMMARY_END = SOLVE_SUMMARY_END
 
 #: A run of at least this many similar rows folds.
 MIN_FOLD_RUN = 3
@@ -51,8 +48,8 @@ WRAP_INDENT_CHARS = 2
 
 
 def warning_docs_url(code: str) -> str:
-    """The docs URL explaining warning *code* (``"W-0123"`` or ``"[W-0123]"``): the page anchor is the lower-case code."""
-    return f"{WARNINGS_DOCS_URL}#{code.strip('[]').lower()}"
+    """The docs URL explaining warning *code* (``"W-0123"`` or ``"[W-0123]"``): the registry's ``docs_url``."""
+    return docs_url(code.strip("[]"))
 
 
 def is_timing_row(line: str) -> bool:
@@ -60,30 +57,14 @@ def is_timing_row(line: str) -> bool:
     return bool(_TIMING_HEADER_RE.match(line) or _TIMING_ROW_RE.search(line))
 
 
-def similar_row_key(line: str) -> tuple[str, str] | None:
-    """The first two comma-separated fields of *line* (stripped), or ``None`` when it has fewer than three fields."""
+def similar_row_key(line: str) -> str | None:
+    """The row label of a solve-summary row: its first comma-separated field (stripped), e.g. ``Created`` of
+    ``Created, <node>, <period>, <value>``; ``None`` for a line with fewer than three fields.  Consecutive rows
+    with one label (one slack type over many nodes and periods) fold."""
     fields = line.split(",")
     if len(fields) < 3:
         return None
-    first, second = fields[0].strip(), fields[1].strip()
-    if not first:
-        return None
-    return first, second
-
-
-def find_similar_runs(lines: Sequence[str], key: Callable[[str], Hashable | None] = similar_row_key,
-                      min_run: int = MIN_FOLD_RUN) -> list[tuple[int, int]]:
-    """``(start, length)`` of every run of at least *min_run* consecutive *lines* sharing a non-``None`` *key*."""
-    runs: list[tuple[int, int]] = []
-    start, prev = 0, None
-    for i, line in enumerate([*lines, None]):
-        k = key(line) if line is not None else None
-        if k is not None and k == prev:
-            continue
-        if prev is not None and i - start >= min_run:
-            runs.append((start, i - start))
-        start, prev = i, k
-    return runs
+    return fields[0].strip() or None
 
 
 def wrap_mode_for(width_px: int, char_px: int, min_columns: int = MIN_WRAP_COLUMNS) -> str:
@@ -136,6 +117,7 @@ class LogView:
         self._run_mark: str | None = None
         self._run_count = 0
         self._fold_seq = 0
+        self._font: tuple[str, tkfont.Font] | None = None
         text.configure(wrap="char")
         text.bind("<Configure>", self._on_configure, add="+")
         text.bind("<<Copy>>", self._on_copy_event)
@@ -148,8 +130,18 @@ class LogView:
     # ── tags / geometry ───────────────────────────────────────────────
 
     def _char_px(self) -> int:
+        """The width of a character of the log's font.  The font object is kept per font spec (``<Configure>``
+        fires on every resize; a ``tkfont.Font`` each time would create a Tcl font); it is measured each time, so a
+        named font resized by the font-size setting is measured anew."""
         try:
-            return max(1, tkfont.Font(font=self.text.cget("font")).measure("0"))
+            spec = str(self.text.cget("font"))
+            if self._font is None or self._font[0] != spec:
+                try:
+                    font = tkfont.nametofont(spec)           # a named font (TkFixedFont): no new Tcl font
+                except tk.TclError:
+                    font = tkfont.Font(font=spec)
+                self._font = (spec, font)
+            return max(1, self._font[1].measure("0"))
         except tk.TclError:
             return 8
 

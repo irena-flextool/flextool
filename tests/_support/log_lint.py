@@ -22,15 +22,14 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 
+from flextool.console_markers import SOLVE_SUMMARY_END, SOLVE_SUMMARY_START, SOLVER_BLOCK_STARTS
+from flextool.run_warnings import complete_solve
+
 MAX_REPEATS = 3
 MAX_LINE = 100
 
-#: The lines that open a solver's console dump (the GUI's ``_SOLVER_BLOCK_STARTS``).
-SOLVER_BLOCK_STARTS = ("Running HiGHS", "Running Gurobi", "Running CPLEX", "Running Xpress", "Running COPT")
-SUMMARY_START = "--- Solve summary ---"
-SUMMARY_END = "--- End of solve summary ---"
+SUMMARY_START, SUMMARY_END = SOLVE_SUMMARY_START, SOLVE_SUMMARY_END
 _SOLVE_START = re.compile(r"^Solve start: (.+?), \d+/\d+\s*$")
-_ROLL_SUFFIX = re.compile(r"_roll_\d+$")
 # A timing / memory row (or its header): cells separated by "|" with a size or the word "memory".
 _SIZE = re.compile(r"\d+(?:\.\d+)? ?[kMGT]B\b")
 _QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
@@ -76,7 +75,7 @@ def flextool_lines(log: str) -> list[tuple[str, str]]:
             continue
         match = _SOLVE_START.match(line)
         if match:
-            solve = _ROLL_SUFFIX.sub("", match.group(1))
+            solve = complete_solve(match.group(1))
             in_solver = False
             continue
         if is_timing_row(line):
