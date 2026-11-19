@@ -759,35 +759,75 @@ def _master_side_feature_groups(
     return kept
 
 
+#: Entity-keyed (``e``) investment / retirement limit sets and Params (the rows of ``_cumulative_invest`` and the
+#: per-entity maxima of ``model/core.py``).  A region keeps the rows of its own entities only (item 286).
+_ENTITY_LIMIT_FIELDS: tuple[str, ...] = (
+    "ed_invest_period_set", "ed_divest_period_set",
+    "ed_invest_min_period", "ed_divest_min_period", "ed_invest_max_period", "ed_divest_max_period",
+    "e_invest_total", "e_divest_total",
+    "e_invest_min_total", "e_divest_min_total", "e_invest_max_total", "e_divest_max_total",
+    "ed_invest_cumulative", "ed_cumulative_max_capacity", "ed_cumulative_min_capacity",
+)
+
+#: Group-keyed (``g``) investment / retirement / cumulative-capacity limit sets (membership ``group_entity``).
+_GROUP_LIMIT_SET_FIELDS: tuple[str, ...] = (
+    "gd_invest_period", "gd_divest_period", "g_invest_total", "g_divest_total", "g_invest_cumulative",
+)
+
+#: The group limit Params filtered alongside :data:`_GROUP_LIMIT_SET_FIELDS`.
+_GROUP_LIMIT_PARAM_FIELDS: tuple[str, ...] = (
+    "p_group_invest_max_period", "p_group_invest_min_period",
+    "p_group_retire_max_period", "p_group_retire_min_period",
+    "p_group_invest_max_total", "p_group_invest_min_total",
+    "p_group_retire_max_total", "p_group_retire_min_total",
+    "pd_group_cumulative_max_capacity", "pd_group_cumulative_min_capacity",
+)
+
+
+def _limit_groups(data: FlexData) -> set[str]:
+    """The groups that carry an investment, retirement or cumulative-capacity limit (:data:`_GROUP_LIMIT_SET_FIELDS`)."""
+    out: set[str] = set()
+    for fld in _GROUP_LIMIT_SET_FIELDS:
+        f = getattr(data, fld, None)
+        if f is not None and f.height > 0 and "g" in f.columns:
+            out |= {str(g) for g in f.get_column("g").to_list()}
+    return out
+
+
 def _validate_feature_groups_in_one_region(
     data: FlexData,
     region_nodes: dict[str, set[str]],
+    region_procs: "dict[str, set[str]] | None" = None,
 ) -> None:
-    """A capacity-margin, inertia or non-synchronous group whose nodes lie in more than one region is an error.
+    """A capacity-margin, inertia or non-synchronous group whose nodes lie in more than one region is an error,
+    and so is an investment, retirement or cumulative-capacity limit group whose entities do.
 
     Each region subproblem would get its own copy of the group's row over the group's nodes in that region, so
     the requirement (the whole margin, inertia limit or share) would apply once per region instead of once for the
     group.  Only the families active in the solve are checked (``_group_slack.has_*``: a capacity margin needs
     investment periods; ``reduce_system_detail_method`` may leave inertia and non-synchronous out).  Nodes in no
-    region (shared, replicated into every region) do not count.
+    region (shared, replicated into every region) do not count.  A limit group (:data:`_GROUP_LIMIT_SET_FIELDS`)
+    sums over its member entities (``group_entity``: nodes and processes, placed by ``region_nodes`` /
+    ``region_procs``): each region would bound its own members' share by the whole limit.
     """
     from flextool.engine.model import _group_slack
 
     families = (("capacity margin", "groupCapacityMargin", _group_slack.has_capacity_margin),
                 ("inertia", "groupInertia", _group_slack.has_inertia),
                 ("non-synchronous", "groupNonSync", _group_slack.has_non_sync))
-    gn = data.group_node
-    if gn is None or gn.height == 0:
-        return
     region_of: dict[str, str] = {}
     for r, ns in region_nodes.items():
         for n in ns:
             region_of[n] = r
+    gn = data.group_node
     members: dict[str, set[str]] = {}
-    for g, n in gn.select(pl.col("g").cast(pl.Utf8), pl.col("n").cast(pl.Utf8)).iter_rows():
-        members.setdefault(g, set()).add(n)
+    if gn is not None and gn.height > 0:
+        for g, n in gn.select(pl.col("g").cast(pl.Utf8), pl.col("n").cast(pl.Utf8)).iter_rows():
+            members.setdefault(g, set()).add(n)
     errors: list[str] = []
     for what, set_name, active in families:
+        if not members:
+            break
         groups = getattr(data, set_name, None)
         if groups is None or groups.height == 0 or not active(data):
             continue
@@ -795,6 +835,20 @@ def _validate_feature_groups_in_one_region(
             regions = sorted({region_of[n] for n in members.get(g, ()) if n in region_of})
             if len(regions) > 1:
                 errors.append(f"{what} group {g!r} has nodes in regions {', '.join(regions)}")
+    limit_groups = _limit_groups(data)
+    ge = data.group_entity
+    if limit_groups and ge is not None and ge.height > 0:
+        entity_region = dict(region_of)
+        for r, ps in (region_procs or {}).items():
+            for p in ps:
+                entity_region[p] = r
+        entity_members: dict[str, set[str]] = {}
+        for g, e in ge.select(pl.col("g").cast(pl.Utf8), pl.col("e").cast(pl.Utf8)).iter_rows():
+            entity_members.setdefault(g, set()).add(e)
+        for g in sorted(limit_groups):
+            regions = sorted({entity_region[e] for e in entity_members.get(g, ()) if e in entity_region})
+            if len(regions) > 1:
+                errors.append(f"investment limit group {g!r} has entities in regions {', '.join(regions)}")
     if errors:
         raise RuntimeError(
             "split: " + "; ".join(errors) + ". A group's requirement cannot be split between Benders region "
@@ -1148,6 +1202,21 @@ def _build_region_data(
         new.group_node = src.group_node.filter(
             _is_in_keep("n", keep_nodes)
         )
+    # ---- Investment / retirement limits: this region's entities and groups only (item 286) ----
+    # The region keeps the capacity columns (unitsize) of its own entities only, so another region's entity floor
+    # would be a row with an empty left-hand side (0 >= the floor: infeasible) and its maximum an empty row.  A
+    # limit group with no member here has no row either (one straddling regions is refused by split).
+    keep_e = keep_nodes | keep_procs
+    for _f in _ENTITY_LIMIT_FIELDS:
+        _obj = getattr(src, _f, None)
+        setattr(new, _f, _filter_param(_obj, "e", keep_e) if isinstance(_obj, Param)
+                else _filter_frame(_obj, "e", keep_e))
+    if new.group_entity is not None and "g" in new.group_entity.columns:
+        keep_g = {str(g) for g in new.group_entity.get_column("g").to_list()}
+        for _f in _GROUP_LIMIT_SET_FIELDS:
+            setattr(new, _f, _filter_frame(getattr(src, _f, None), "g", keep_g))
+        for _f in _GROUP_LIMIT_PARAM_FIELDS:
+            setattr(new, _f, _filter_param(getattr(src, _f, None), "g", keep_g))
     new.process_unit = _filter_frame(src.process_unit, "p", keep_procs)
     new.process_exact = _filter_frame(getattr(src, "process_exact", None), "p", keep_procs)
     # Start-up input draws (startup_input_method): the region's units.  Their start-up nodes are in the region or in
@@ -2444,7 +2513,7 @@ def split(
             for r in regions
         ]
 
-    _validate_feature_groups_in_one_region(data, region_nodes)
+    _validate_feature_groups_in_one_region(data, region_nodes, region_procs)
 
     pss_tagged, cross, region_master, master_local = _classify_arcs(
         data.process_source_sink, region_nodes,
