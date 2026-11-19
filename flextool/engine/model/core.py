@@ -108,7 +108,7 @@ from flextool.engine.model import _extend
 from flextool.engine.model import _retire_built
 from flextool.engine.model import _self_discharge
 from flextool.engine.model import _unit_floors
-from flextool.engine.input._axis_enums import alias_to_axis, align_join_dtypes, rename_to_axis
+from flextool.engine.input._axis_enums import alias_to_axis, align_join_dtypes, join_aligned, rename_to_axis
 from flextool.engine.model._common import (
     _availability_factor,
     _connection_procs,
@@ -4607,6 +4607,28 @@ def _eq_co2_max_total(b: _Build) -> None:
     )
 
 
+def _user_constraint_flow_terms(b: _Build, idx: pl.DataFrame, weight: Param | None = None) -> list:
+    """The flow terms of the user constraints on the arcs ``idx`` (p, source, sink, cn), open dims (cn, d, t).
+
+    coef[p,s,k,cn]·unitsize[p]·v_flow[p,s,k,d,t], plus on a one-variable two-way arc (``twoway1var_arcs``:
+    ``no_losses_no_variable_cost`` without fork, DC power-flow lines) the same coefficient on its reverse flow
+    v_flow_back[p,s,k,d,t]: a two-variable connection carries its reverse flow on its own reverse arc, which takes
+    the coefficient of (c, n) too (both arcs touch n), so a connection counts by coef·(forward + reverse) whatever
+    its transfer method.  ``weight`` (d, t) multiplies both (the period_total row).
+    """
+    terms = []
+    pairs = [(b.v_flow, idx)]
+    if b.v_flow_back is not None and _has_rows(b.twoway1var_arcs):
+        back = join_aligned(idx, b.twoway1var_arcs.select("p", "source", "sink"),
+                            on=["p", "source", "sink"], how="semi")
+        if back.height > 0:
+            pairs.append((b.v_flow_back, back))
+    for var, rows in pairs:
+        term = Where(var * b.d.p_unitsize, rows) * b.d.p_flow_constraint_coef
+        terms.append(term if weight is None else term * weight)
+    return terms
+
+
 def _eq_user_constraints(b: _Build) -> None:
     """User-defined constraints."""
     if not b.has_user_cstr:
@@ -4618,6 +4640,7 @@ def _eq_user_constraints(b: _Build) -> None:
     # ─── EQ. ─── process_constraint_{equal,less_than,greater_than}[_period] ──
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{(p,s,k) ∈ flow_constraint[cn]} v_flow[p,s,k,d,t]·unitsize[p]·flow_coef[p,s,k,cn]
+    #   + Σ_{(p,s,k) ∈ flow_constraint[cn] ∩ twoway1var_arcs} v_flow_back[p,s,k,d,t]·unitsize[p]·flow_coef[p,s,k,cn]
     #   + Σ_n v_state[n,d,t]·state_unitsize[n]·node_state_coef[n,cn]
     #   + Σ_e inv[e,d]·invested_coef[e,cn]
     #   + Σ_e con[e,d]·in_construction_coef[e,cn]
@@ -4652,6 +4675,11 @@ def _eq_user_constraints(b: _Build) -> None:
     # cumulative-capacity rows.  cap = pre + inv − retired, with or without a lead time.  carried_* are the
     # investments earlier solves of a chain decided with a lead time (constants; existing holds them from their
     # start of operation, so pre subtracts the part coming online in d).
+    # flow_coef[p,s,k,cn] is the sum of the constraint_flow_coeff of (p, s) and (p, k): a connection's coefficient
+    # at either end lands on both its arcs, so a two-variable connection counts by coef·(forward + reverse).  A
+    # one-variable two-way arc (no_losses_no_variable_cost, DC power flow; signed flow = v_flow − v_flow_back) gives
+    # its reverse flow v_flow_back the same coefficient: the same row for every transfer method
+    # (_user_constraint_flow_terms).
     # The online term counts the units online (of unitsize) in each step; integer with binary startup, continuous
     # with linear.  v_online is the variable of the process's UC class (v_online_linear / v_online_integer).
     # Terms without data are absent.  The existing-capacity terms are constants and enter as Param terms.
@@ -4671,10 +4699,8 @@ def _eq_user_constraints(b: _Build) -> None:
     # online at their constant value.
     flow_terms: list = []
     if _has_rows(d.flow_constraint_idx):
-        flow_terms.append(Sum(
-            Where(b.v_flow * d.p_unitsize, d.flow_constraint_idx) * d.p_flow_constraint_coef,
-            over=("p", "source", "sink"),
-        ))
+        flow_terms.extend(Sum(term, over=("p", "source", "sink"))
+                          for term in _user_constraint_flow_terms(b, d.flow_constraint_idx))
     invest_terms: list = []
     lead_time = _lead_time.active(d)
     for axis, has_invest, var, coef in (
@@ -4976,6 +5002,8 @@ def _eq_user_constraints_period_total(b: _Build, pt_cns: list[str], capacity_ter
     # ─── EQ. ─── process_constraint_{equal,less_than,greater_than}_period_total ──
     # ─────────────────────────────────────────────────────────────────────────────
     # Σ_t w[d,t]·( Σ_{(p,s,k) ∈ flow_constraint[cn]} v_flow[p,s,k,d,t]·unitsize[p]·flow_coef[p,s,k,cn]
+    #              + Σ_{(p,s,k) ∈ flow_constraint[cn] ∩ twoway1var_arcs} v_flow_back[p,s,k,d,t]·unitsize[p]
+    #                                                                   ·flow_coef[p,s,k,cn]
     #              + Σ_{p ∈ process_online} v_online[p,d,t]·online_coef[p,cn] )
     #   + H[d]·( Σ_e inv[e,d]·invested_coef[e,cn] + Σ_e con[e,d]·in_construction_coef[e,cn]
     #            + Σ_e v_divest[e,d]·us[e]·retired_coef[e,cn] + Σ_e pre[e,d]·prebuilt_coef[e,cn]
@@ -4983,7 +5011,8 @@ def _eq_user_constraints_period_total(b: _Build, pt_cns: list[str], capacity_ter
     #   = / ≤ / ≥  constant[cn] (or constant[cn,d] for a period map)
     #   ∀ (cn,d) ∈ cdt_{eq,le,ge}, cn ∈ constraint_period_total, window_fraction[d] = 1
     # w[d,t] = step_duration[d,t]·timestep_weight[d,t] / period_share[d];   H[d] = Σ_t w[d,t]
-    # inv, con, pre, cap, us and the existing / carried constants as in process_constraint_* (_eq_user_constraints).
+    # inv, con, pre, cap, us, the v_flow_back term and the existing / carried constants as in process_constraint_*
+    # (_eq_user_constraints).
     # One row per period over the period's time-integrated, annualised terms (per year: flows in MWh, units online
     # in unit-hours, the constant in the constraint's unit per year), the weighting of co2_max_period.  H is the
     # number of hours the period's modelled steps stand for in a year (8760 for a full year, also with
@@ -5032,10 +5061,8 @@ def _eq_user_constraints_period_total(b: _Build, pt_cns: list[str], capacity_ter
     if _has_rows(d.flow_constraint_idx):
         idx = d.flow_constraint_idx.filter(pl.col("cn").cast(pl.Utf8).is_in(pt_cns))
         if idx.height > 0:
-            terms.append(Sum(
-                Where(b.v_flow * d.p_unitsize, idx) * d.p_flow_constraint_coef * w,
-                over=("p", "source", "sink", "t"),
-            ))
+            terms.extend(Sum(term, over=("p", "source", "sink", "t"))
+                         for term in _user_constraint_flow_terms(b, idx, w))
     if capacity_terms:
         terms.append(_sum_terms(capacity_terms) * hours)
     for v_online, coef_k in online_by_class:

@@ -24,7 +24,7 @@ A user constraint is a linear row that you write yourself. It ties flows, storag
 
 | Parameter | Set on | Term it puts in the row | Unit of the variable |
 |---|---|---|---|
-| `constraint_flow_coeff` | `unit__inputNode`, `unit__outputNode`, `connection__node` | The flow between the unit or connection and the node, in each time step. | MW |
+| `constraint_flow_coeff` | `unit__inputNode`, `unit__outputNode`, `connection__node` | The flow between the unit or connection and the node, in each time step. For a connection, the flow in both directions (see below). | MW |
 | `constraint_state_coeff` | `node` (storage) | The storage state of the node, in each time step. | MWh |
 | `constraint_online_coeff` | `unit`, `connection` (with online variables) | The number of units online, in each time step. One unit is `virtual_unitsize`; without it, the largest `existing` capacity, else 1000 MW. Whole numbers with *binary* startup, continuous with *linear*. | count of units |
 | `constraint_invested_capacity_coeff` | `node`, `unit`, `connection` | The capacity that comes online in the period. Without a construction lead time, this is the capacity invested in that period. | MW (MWh for a storage node) |
@@ -32,6 +32,8 @@ A user constraint is a linear row that you write yourself. It ties flows, storag
 | `constraint_retired_capacity_coeff` | `node`, `unit`, `connection` | The capacity retired in the period. | MW (MWh for a storage node) |
 | `constraint_cumulative_pre_built_capacity_coeff` | `node`, `unit`, `connection` | The capacity in service at the start of the period: existing capacity plus capacity that came online in earlier periods, minus earlier retirements. | MW (MWh for a storage node) |
 | `constraint_capacity_coeff` | `node`, `unit`, `connection` | The capacity in service in the period: existing plus investments still in service minus retirements. Capacity in construction is not included. | MW (MWh for a storage node) |
+
+**Connections.** A `constraint_flow_coeff` on a `connection__node` counts the connection's flow in both directions with the same coefficient: the row reads coefficient × (forward flow + reverse flow), not the net flow. This holds for every `transfer_method`, also for `no_losses_no_variable_cost` and DC power-flow lines, which carry both directions in one variable. A *less_than* row with coefficient 1 and `constant` 30 therefore limits the line to 30 MW in either direction. A coefficient on either end of the connection gives the same term; on both ends, the two coefficients add up. For a limit on the net flow into a node, use a flow group (`max_instant_flow` / `min_instant_flow`, see [Flow groups](flow_groups.md)).
 
 The full descriptions are with each entity: [nodes](nodes.md#data-for-nodes), [units](units.md#investment-parameters-for-capacity-expansion), [unit flows](units.md#properties-of-unit-inputnode-and-unit-outputnode-entities) and [connections](connections.md#investment-parameters-for-connections).
 

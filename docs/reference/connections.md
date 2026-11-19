@@ -54,4 +54,4 @@ These are the same as for units, see [here](units.md#investment-parameters-for-c
 
 On the membership entity between a `connection` and one of its endpoint `node`s:
 
-- `constraint_flow_coeff` - A map of coefficients (Index: constraint name, value: coefficient) placing this connection-to-node flow variable on the left side of a user-defined `constraint`. Applied per timestep. See [User constraints](user_constraints.md).
+- `constraint_flow_coeff` - A map of coefficients (Index: constraint name, value: coefficient) placing this connection-to-node flow variable on the left side of a user-defined `constraint`. Applied per timestep. The flow counts in both directions (coefficient × (forward + reverse)), for every `transfer_method`. See [User constraints](user_constraints.md#the-coefficient-parameters).
