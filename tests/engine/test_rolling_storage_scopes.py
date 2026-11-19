@@ -556,3 +556,75 @@ def test_capacity_added_later_starts_empty(tmp_path, rolling):
         lv.update({k: own[k] for k in (sorted(own)[:4] if rolling else own)})
     assert lv[("p2", "t01")] == pytest.approx(lv[("p1", "t16")], abs=1e-6)
     assert lv[("p1", "t16")] <= 50.0 + 1e-6
+
+
+def one_period_roll(period: str, **extra) -> dict:
+    """A rolling solve over ``period`` (16 h), jump 4 h, horizon 8 h."""
+    return {"solve_mode": "rolling_window", "rolling_solve_jump": 4.0, "rolling_solve_horizon": 8.0,
+            "rolling_duration": 16.0, "period_timeset": tmap({period: "full"}, "period"),
+            "years_represented": tmap({period: 1.0}, "period"), "realized_periods": arr([period]), **extra}
+
+
+FREE_FORWARD = {"storage_binding_method": "bind_forward_only", "storage_start_end_method": "fix_nothing"}
+
+
+def _start_level(step, node: str = "tank") -> float:
+    return float(utf8(step.handoff.cycle_start_state).filter(pl.col("node") == node)["value"][0])
+
+
+def test_free_forward_start_matched_over_a_sequence_of_rolling_solves(tmp_path):
+    """Review H1: two rolling solves in sequence (st1 over p1, st2 over p2), a bind_forward_only tank with a free
+    start and a 10 MW load at the start of p1.  The first roll of st1 holds its horizon end at its start
+    (match_first); the closing rolls of st2, which reach the end of the model and continue the tank from st1's
+    carry, end at least at the level the model started it from (match).  Before, st2 got no match: the tank could
+    start p1 full and end p2 empty (40 MWh never produced)."""
+    steps = run(tmp_path, {"st1": one_period_roll("p1"), "st2": one_period_roll("p2")}, top=["st1", "st2"],
+                tank=FREE_FORWARD, load={t: 10.0 for t in ("t01", "t02", "t03", "t04")},
+                gen={t: 1.0 for t in ("t05", "t06", "t07", "t08")})
+    r1, r2 = rolls(steps, "st1"), rolls(steps, "st2")
+    assert [kinds(r) for r in r1] == [["match_first"], [], [], []]
+    assert [kinds(r) for r in r2] == [[], [], ["match"], ["match"]]
+    start = _start_level(r1[0])
+    for r in r2[2:]:
+        (key, (lo, hi)), = row_bounds(build(r.flex_data), "storage_state_roll_match", "tank").items()
+        assert key.endswith(",p2,t16]") and lo == pytest.approx(start) and hi == float("inf")
+    assert levels(r2[-1])[("p2", "t16")] >= start - 1e-6
+
+
+def test_free_forward_start_matched_in_a_later_instance_of_a_nested_rolling_solve(tmp_path):
+    """Review H1: a rolling solve nested under a rolling upper solve of two rolls (jump 8 h): each upper roll has its
+    own instance of the lower rolling solve.  The second instance reaches the end of the model and continues the
+    tank from the first one; its closing roll ends at least at the level the model started the tank from at the
+    lower level (a regression guard: this setup passed before the fix too)."""
+    up = one_period_roll("p1", rolling_solve_jump=8.0, rolling_solve_horizon=8.0, contains_solves=arr(["st"]))
+    st = one_period_roll("p1", rolling_solve_horizon=4.0)
+    steps = run(tmp_path, {"up": up, "st": st}, top=["up"], tank=FREE_FORWARD,
+                load={t: 10.0 for t in ("t01", "t02", "t03", "t04")},
+                gen={t: 1.0 for t in ("t05", "t06", "t07", "t08")})
+    lower = sorted((s for name, s in steps.items() if name.startswith("st_")), key=lambda s: s.solve_name)
+    at_end = [s for s in lower if ("p1", "t16") in levels(s)]
+    assert at_end and all("match" in kinds(s) for s in at_end)
+    start = _start_level(lower[0])
+    for s in at_end:
+        (key, (lo, _hi)), = row_bounds(build(s.flex_data), "storage_state_roll_match", "tank").items()
+        assert key.endswith(",p1,t16]") and lo == pytest.approx(start)
+        assert levels(s)[("p1", "t16")] >= start - 1e-6
+
+
+def test_model_start_is_kept_per_nesting_level():
+    """Review M1: the level the model started a node from is recorded per nesting level, so a lower level's
+    matching end compares with its own start, not with the upper level's; a level without its own record takes the
+    nearest one."""
+    from types import SimpleNamespace
+
+    from flextool.engine.solve._run_model import _RollingStorage, _record_model_start
+
+    store = _RollingStorage()
+    for level, value in ((0, 80.0), (1, 30.0)):
+        _record_model_start(store, SimpleNamespace(cycle_start_state=pl.DataFrame({"node": ["tank"],
+                                                                                 "value": [value]})),
+                            None, level=level)
+    assert store.model_start_of(0, "tank") == 80.0
+    assert store.model_start_of(1, "tank") == 30.0
+    assert store.model_start_of(2, "tank") == 30.0
+    assert store.model_start_of(0, "other") is None
