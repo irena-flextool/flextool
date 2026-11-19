@@ -826,7 +826,14 @@ def test_reference_value_yields_to_a_nested_fix(tmp_path_factory, method):
         # not use the battery still caps the roll's usage (at 0, item 150).
         fam = FIX_Q if method == "fix_quantity" else FIX_U
         fixed = {r.split("[", 1)[1][:-1] for r in row_terms(pb, fam, "battery,")}
-        assert fixed == ends and not refs, (name, refs, fixed)
+        if method == "fix_usage":
+            # A roll crossing into the next period also caps the period it starts in, at that period's last step
+            # in the roll (the cumulative cap of every period the roll holds, review M3).
+            every = {f"battery,{d},{t}" for d, t in utf8(fd.nodeState_last_dt).filter(pl.col("n") == "battery")
+                     .select("d", "t").iter_rows()}
+            assert ends <= fixed <= every and not refs, (name, refs, fixed)
+        else:
+            assert fixed == ends and not refs, (name, refs, fixed)
         fixed_rolls += 1
         if method == "fix_usage":
             zero_caps += sum(hi == 0.0 for _lo, hi in row_bounds(pb, FIX_U, "battery,").values())
