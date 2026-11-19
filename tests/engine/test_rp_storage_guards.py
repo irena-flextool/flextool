@@ -99,7 +99,7 @@ def test_plain_cycle_on_representative_periods_is_an_error(tmp_path, method):
         _run_rp(tmp_path, method)
     msg = str(exc.value)
     assert "Solve 'rp_solve' is on representative periods (timeset(s) rp" in msg
-    assert f"tank ({method})" in msg
+    assert f"1 storage node (tank) use a storage_binding_method (e.g. tank: {method})" in msg
     assert f"{method} -> {BLENDED[method]}" in msg
     assert "bind_within_timeblock" in msg
 

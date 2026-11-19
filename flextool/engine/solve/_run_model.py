@@ -238,7 +238,10 @@ def _reject_plain_cyclic_in_rp_solve(*, complete_solve_name: str, active_timeset
     *_blended_weights variants chain the representative periods by their weights on the base-period chain.
     bind_within_timeblock cycles within each timeset block, which in a solve on representative periods is one
     representative period, so it is not affected.  Checked on the method set in the database, before
-    :func:`_fix_start_end_chains_forward` (which maps a fix_start_end node to bind_forward_only).
+    :func:`_fix_start_end_chains_forward`; a fix_start_end node is exempt (its binding method is ignored: that
+    function maps it to the blended forward chain, or in a solve that mixes periods with and without
+    representative periods to bind_within_timeblock).  The message names how many nodes and the first (the full
+    list goes to the debug log).
     """
     if not any(ts in rp_weights for ts in active_timeset_names):
         return
@@ -251,16 +254,23 @@ def _reject_plain_cyclic_in_rp_solve(*, complete_solve_name: str, active_timeset
     col = "storage_binding_method" if "storage_binding_method" in sbm.columns else "method"
     if col not in sbm.columns:
         return  # malformed frame; let the downstream loaders surface it
+    sse = _node_methods(provider, _SSE_KEY, "storage_start_end_method")
     hit = (sbm.filter(pl.col(col).cast(pl.Utf8).is_in(list(_RP_UNWEIGHTED_CYCLES)))
-           .select(pl.col("node").cast(pl.Utf8), pl.col(col).cast(pl.Utf8)).unique().sort("node"))
+           .select(pl.col("node").cast(pl.Utf8), pl.col(col).cast(pl.Utf8)).unique().sort("node")
+           .filter(~pl.col("node").is_in([n for n, m in sse.items() if m == "fix_start_end"])))
     if hit.height == 0:
         return
+    from flextool.engine import _behaviour_changes
     rp = sorted({ts for ts in active_timeset_names if ts in rp_weights})
-    nodes = ", ".join(f"{node} ({method})" for node, method in hit.iter_rows())
+    _MODULE_LOGGER.debug("Solve '%s': plain cyclic storage on representative periods: %s", complete_solve_name,
+                         ", ".join(f"{node} ({method})" for node, method in hit.iter_rows()))
+    first, method = hit.row(0)
+    named = _behaviour_changes.storages_named(hit["node"].to_list())
     variants = ", ".join(f"{m} -> {_RP_UNWEIGHTED_CYCLES[m]}" for m in sorted(set(hit[col].to_list())))
     raise FlexToolConfigError(
         f"Solve '{complete_solve_name}' is on representative periods (timeset(s) {', '.join(rp)} have "
-        f"representative_period_weights) and storage node(s) {nodes} use a storage_binding_method that carries "
+        f"representative_period_weights) and {named} use a storage_binding_method (e.g. {first}: {method}) that "
+        "carries "
         "the storage state from one representative period to the next without their weights, while the flows of "
         "each period count with its weight: energy stored in a period of low weight could be used in a period of "
         f"high weight, for free. Use the *_blended_weights variant ({variants}), which links the representative "
@@ -278,7 +288,8 @@ def _reject_plain_forward_in_rp_solve(*, complete_solve_name: str, active_timese
     its representative period, so energy stored in a period of low weight can be used in one of high weight.  There
     is no automatic switch to bind_forward_only_blended_weights: the user chooses the blended method.  Checked on
     the method set in the database (a node without one is bind_forward_only), before the engine's own mappings
-    (:func:`_fix_start_end_chains_forward` maps a cyclic fix_start_end node in such a solve to the blended chain).
+    (:func:`_fix_start_end_chains_forward` maps a cyclic fix_start_end node in such a solve to the blended chain, or
+    to bind_within_timeblock in a solve that also has periods without representative periods).
     The message names how many nodes and the first.
     """
     if not any(ts in rp_weights for ts in active_timeset_names):
@@ -1222,19 +1233,36 @@ _FIX_START_END_FORWARD: dict[str, str] = {
 
 
 # In a solve on representative periods a plain forward chain would link the representative periods without their
-# weights (a configuration error, :func:`_reject_plain_cyclic_in_rp_solve`): a fix_start_end node there chains forward
-# on the base-period chain, where storage_state_start and storage_state_end act (owner decision, Phase 5).  Only
-# bind_within_timeblock reaches it (the other plain cyclic methods are errors in such a solve).
+# weights (a configuration error, :func:`_reject_plain_forward_in_rp_solve`): a fix_start_end node with a cyclic method
+# there chains forward on the base-period chain, where storage_state_start and storage_state_end act (owner decision,
+# Phase 5).  These nodes are exempt from :func:`_reject_plain_cyclic_in_rp_solve` (fix_start_end ignores the binding
+# method).
 _FIX_START_END_FORWARD_RP: dict[str, str] = {
     **_FIX_START_END_FORWARD,
-    "bind_within_timeblock": "bind_forward_only_blended_weights",
-    "bind_within_period":    "bind_forward_only_blended_weights",
-    "bind_within_solve":     "bind_forward_only_blended_weights",
+    "bind_within_timeblock":   "bind_forward_only_blended_weights",
+    "bind_within_period":      "bind_forward_only_blended_weights",
+    "bind_within_solve":       "bind_forward_only_blended_weights",
+    "bind_intraperiod_blocks": "bind_forward_only_blended_weights",
+}
+
+# A solve that mixes periods with and without representative periods has no base-period chain over all of them
+# (a *_blended_weights method is a configuration error there, :func:`_check_rp_solve`) and a plain forward chain
+# would run through the representative periods unweighted, so a fix_start_end node with a cyclic method cycles
+# within each timeblock (bind_within_timeblock: each representative period is a timeblock, no energy moves between
+# them): storage_state_start pins the first timeblock's cycle, storage_state_end the last step of the model
+# (review M6; before, bind_within_timeblock mapped to the blended chain and the solve stopped with the error about
+# a *_blended_weights method the user never set).
+_FIX_START_END_MIXED_RP: dict[str, str] = {
+    "bind_within_period":                 "bind_within_timeblock",
+    "bind_within_solve":                  "bind_within_timeblock",
+    "bind_intraperiod_blocks":            "bind_within_timeblock",
+    "bind_within_solve_blended_weights":  "bind_within_timeblock",
+    "bind_within_period_blended_weights": "bind_within_timeblock",
 }
 
 
 def _fix_start_end_chains_forward(*, solve: str, provider, logger, complete_solve_name: str | None = None,
-                                  logged: set | None = None, rp: bool = False) -> None:
+                                  logged: set | None = None, rp: bool = False, mixed: bool = False) -> None:
     """Map the cyclic storage_binding_method of fix_start_end nodes to its forward-only equivalent, per solve.
 
     With ``storage_start_end_method`` *fix_start_end* the binding method is ignored (exception bind_forward_only,
@@ -1247,7 +1275,9 @@ def _fix_start_end_chains_forward(*, solve: str, provider, logger, complete_solv
     the model chains them forward (``model._self_discharge.block_forward_nodes``).  In a solve on representative
     periods (``rp``) the forward chain is the base-period chain (:data:`_FIX_START_END_FORWARD_RP`): a
     bind_within_timeblock fix_start_end node there becomes bind_forward_only_blended_weights, so its start and end
-    are pinned on the weighted chronological level, not on a chain through the representative periods.  One info line per mapping (the
+    are pinned on the weighted chronological level, not on a chain through the representative periods.  In a solve
+    that also has periods without representative periods (``mixed``) such a node cycles within each timeblock
+    instead (:data:`_FIX_START_END_MIXED_RP`).  One info line per mapping (the
     shared frame is mapped once, so later rolls log nothing); the bind_intraperiod_blocks line keeps its method, so
     it is logged once per (complete solve, node) through ``logged``.
     """
@@ -1264,7 +1294,8 @@ def _fix_start_end_chains_forward(*, solve: str, provider, logger, complete_solv
     nodes = sorted(str(n) for n in sse.filter(pl.col(sse_col) == "fix_start_end")["node"].unique().to_list())
     if not nodes:
         return
-    mapping = _FIX_START_END_FORWARD_RP if rp else _FIX_START_END_FORWARD
+    mapping = (_FIX_START_END_MIXED_RP if rp and mixed else _FIX_START_END_FORWARD_RP if rp
+               else _FIX_START_END_FORWARD)
     hit = (sbm.filter(pl.col("node").cast(pl.Utf8).is_in(nodes) & pl.col(sbm_col).is_in(list(mapping)))
            .select(pl.col("node").cast(pl.Utf8), pl.col(sbm_col).cast(pl.Utf8)).unique().sort("node"))
     if hit.height > 0:
@@ -1276,9 +1307,11 @@ def _fix_start_end_chains_forward(*, solve: str, provider, logger, complete_solv
             .alias(sbm_col)))
         for node, method in hit.iter_rows():
             logger.info(f"Solve '{solve}': storage node '{node}' has storage_start_end_method fix_start_end, so its "
-                        f"storage_binding_method {method} is ignored; it chains forward "
-                        f"({mapping[method]}).")
-    blocks = (sbm.filter(pl.col("node").cast(pl.Utf8).is_in(nodes) & (pl.col(sbm_col) == "bind_intraperiod_blocks"))
+                        f"storage_binding_method {method} is ignored; it "
+                        + ("cycles within each timeblock" if mapping[method] == "bind_within_timeblock"
+                           else "chains forward") + f" ({mapping[method]}).")
+    blocks = (sbm.filter(pl.col("node").cast(pl.Utf8).is_in(nodes) & (pl.col(sbm_col) == "bind_intraperiod_blocks")
+                         & pl.lit("bind_intraperiod_blocks" not in mapping))
               ["node"].cast(pl.Utf8).unique().sort().to_list())
     for node in blocks:
         if logged is not None:
@@ -2560,7 +2593,8 @@ def native_run_model(state, solver) -> int:
         # fix_start_end ignores a cyclic binding method: after the downgrades, on the same frame.
         _fix_start_end_chains_forward(solve=solve, provider=sub_solve_provider, logger=state.logger,
                                       complete_solve_name=complete_solve[solve], logged=_logged_fix_start_end_blocks,
-                                      rp=any(ts in state.timeline.rp_weights for ts in active_timeset_names))
+                                      rp=any(ts in state.timeline.rp_weights for ts in active_timeset_names),
+                                      mixed=not all(ts in state.timeline.rp_weights for ts in active_timeset_names))
         # A rolling solve uses bind_within_timeblock as bind_within_period (each period is one timeblock there).
         _timeblock_binds_within_period_in_roll(state=state, complete_solve_name=complete_solve[solve],
                                                active_timeset_names=active_timeset_names,

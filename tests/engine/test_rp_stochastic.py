@@ -608,7 +608,8 @@ def test_plain_within_solve_on_representative_periods_is_an_error(tmp_path_facto
                  [["solve", LH2_SOLVE, "stochastic_branches", _branches(*fan)]]
                  + [["node", n, "storage_binding_method", "bind_within_solve"] for n in BATTERIES],
                  patch=L._patch_rp_multi_base_solve)
-    assert "battery_A (bind_within_solve), battery_B (bind_within_solve), battery_C (bind_within_solve)" in str(
+    # One line: how many nodes and the first (review L4; the full list goes to the debug log).
+    assert "3 storage nodes (battery_A, ...) use a storage_binding_method (e.g. battery_A: bind_within_solve)" in str(
         exc.value)
 
 

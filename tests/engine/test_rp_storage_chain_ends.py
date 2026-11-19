@@ -43,8 +43,9 @@ def _m(data: dict, name: str) -> api.Map:
     return api.Map(list(data), list(data.values()), index_name=name)
 
 
-def _run(tmp_path_factory, *, s: dict, rp: bool = True, invest: bool = False):
-    """Build, solve and return the step of the tiny model; ``s`` = extra parameters of node ``s``."""
+def _run(tmp_path_factory, *, s: dict, rp: bool = True, invest: bool = False, mixed: bool = False):
+    """Build, solve and return the step of the tiny model; ``s`` = extra parameters of node ``s``.  ``mixed``: the
+    solve also holds period p2 on timeset ``plain`` (the four steps, no representative periods)."""
     from flextool.engine import run_chain_from_db
     from flextool.update_flextool.db_handle import open_database_mapping
     from flextool.update_flextool.initialize_database import initialize_database
@@ -84,6 +85,15 @@ def _run(tmp_path_factory, *, s: dict, rp: bool = True, invest: bool = False):
                    ("node", "s", "invest_cost", 1.0),
                    ("node", "s", "lifetime_technical", 1.0),
                    ("node", "s", "discount_rate", 0.0)]
+    if mixed:
+        entities.append(("timeset", "plain"))
+        values = [v for v in values if not (v[0] == "solve" and v[2] in ("period_timeset", "realized_periods",
+                                                                         "years_represented"))]
+        values += [("timeset", "plain", "timeline", "tl"),
+                   ("timeset", "plain", "timeset_duration", _m({"t0001": 4.0}, "time")),
+                   ("solve", "sol", "period_timeset", _m({"p1": "ts", "p2": "plain"}, "period")),
+                   ("solve", "sol", "realized_periods", api.Array(["p1", "p2"])),
+                   ("solve", "sol", "years_represented", _m({"p1": 1.0, "p2": 1.0}, "period"))]
     values += [("node", "s", k, v) for k, v in s.items()]
     with open_database_mapping(url) as db:
         _count, errors = api.import_data(
@@ -369,3 +379,40 @@ def test_life_extension_in_the_start_period_is_a_start_decision(monkeypatch):
     assert core._invest_at_start_nodes(b, nodes, ["p2"]) == {"s", "t"}
     b.has_invest_n = False
     assert core._invest_at_start_nodes(b, nodes, ["p1"]) == {"s"}
+
+
+def test_timeblock_fix_start_end_in_a_solve_mixing_representative_and_plain_periods_runs(tmp_path_factory):
+    """Review M6: bind_within_timeblock with fix_start_end in a solve whose p1 has representative periods and p2 not.
+    Before, the engine mapped the node to bind_forward_only_blended_weights and _check_rp_solve then stopped the
+    solve with an error about a *_blended_weights method the user never set.  Now the node keeps cycling within each
+    timeblock (no energy moves between the representative periods): the solve runs and needs no slack."""
+    step = _run(tmp_path_factory, mixed=True,
+                s={"storage_binding_method": "bind_within_timeblock", "storage_start_end_method": "fix_start_end",
+                   "storage_state_start": 0.5, "storage_state_end": 0.5, "existing": 2.0})
+    _no_slack(step)
+    assert "v_state_inter" not in step.solution._vars
+    # every timeblock returns to its start: the store gives no energy, src produces the whole demand
+    assert _production(step) == pytest.approx(8.0, abs=TOL)
+
+
+@pytest.mark.parametrize("method", ["bind_within_solve", "bind_within_period"])
+def test_cyclic_fix_start_end_on_representative_periods_chains_on_the_blended_chain(tmp_path_factory, method):
+    """Review M6: with fix_start_end the binding method is ignored, so a plain cyclic method is not the
+    configuration error of plain cycles on representative periods (before: the error, which named the method the
+    run ignores anyway); the node chains forward on the base-period chain, where the start and end pins act."""
+    step = _run(tmp_path_factory, s={"storage_binding_method": method, "storage_start_end_method": "fix_start_end",
+                                     "storage_state_start": 0.5, "storage_state_end": 0.5, "existing": 2.0})
+    _no_slack(step)
+    start, end = _chain(step)
+    assert start == pytest.approx(1.0, abs=TOL) and end == pytest.approx(1.0, abs=TOL)
+
+
+def test_plain_cyclic_error_on_representative_periods_names_the_count_and_the_first(tmp_path_factory):
+    """Review L4: the plain-cyclic error on representative periods is in the one-line format (how many nodes and the
+    first, with its method)."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    with pytest.raises(FlexToolConfigError) as exc:
+        _run(tmp_path_factory, s={"storage_binding_method": "bind_within_solve"})
+    msg = str(exc.value)
+    assert "1 storage node (s) use a storage_binding_method (e.g. s: bind_within_solve)" in msg, msg
