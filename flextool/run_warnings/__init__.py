@@ -1,0 +1,293 @@
+"""Coded, aggregated warnings and notes of a FlexTool run.
+
+One console line per warning code and solve (never one per entity)::
+
+    Warning: <message> (<N> cases, e.g. '<first name>') [W-0123]
+    Warning: <message> ('<the name>') [W-0123]                      # N == 1
+    Warning: <message> [W-0123]                                    # no entity
+
+The message comes from the registry (:mod:`flextool.run_warnings.registry`), which also documents every code on
+the web page :data:`WARNINGS_DOCS_URL`.  Lines go through the ``logging`` logger ``flextool.warnings`` (WARNING
+level for a warning, INFO for a note), so the console, the run log and the run record (``_run_status.json``, which
+stores the code and the number of cases with the line) all get them.  The full list of names, and the
+per-name *details*, go to the same logger at DEBUG level.
+
+Emitting
+--------
+* :func:`warn_grouped` ``(code, names, *, solve=None, details=None, per_run=False, **fmt)``: one line for *names*.
+* :func:`warn` ``(code, name=None, ...)``: the same for one name; inside a :func:`collecting` scope the names of
+  repeated calls join one line (the pattern for a check that finds entities one at a time in a loop).
+* :func:`note`: the same for an informational ``Note:`` line.
+
+Scope
+-----
+* Outside a :func:`collecting` scope a call prints at once.  With ``solve=`` a code prints once per complete
+  solve (the rolls ``<solve>_roll_<k>`` of a rolling solve count as one solve): a later call for the same code,
+  *fmt* and solve only adds its new names to the debug log and to the tally.
+* ``with collecting():`` gathers the calls made inside it and prints each (code, *fmt*, solve) as one line when
+  the scope ends (also when it ends by an exception).  Scopes nest: the outermost one prints.
+* ``per_run=True``: a name already named under the code earlier in the run is left out (each entity once per
+  run, however the solves group them); no line when no name is new.
+
+Run
+---
+:func:`start_run` forgets what earlier runs printed (called by ``_behaviour_changes.start_run`` at the start of
+every engine run).  :func:`tally_lines` gives the end-of-run summary that ``cmd_run_flextool`` prints::
+
+    Warnings: 2 kinds, 15 cases — W-0004 ×12, W-0001 ×3
+    Warnings explained: https://irena-flextool.github.io/flextool/reference/warnings/
+"""
+from __future__ import annotations
+
+import logging
+import threading
+from collections.abc import Iterable, Mapping
+from contextlib import contextmanager
+from typing import Any, Iterator
+
+from flextool.run_warnings.registry import (
+    NOTE,
+    WARNING,
+    WARNINGS,
+    WARNINGS_DOCS_URL,
+    WARNINGS_PAGE,
+    WarningSpec,
+    docs_url,
+)
+
+__all__ = [
+    "CASES_ATTR", "CODE_ATTR", "LOGGER_NAME", "MAX_NAME", "WARNINGS", "WARNINGS_DOCS_URL", "WARNINGS_PAGE",
+    "WarningSpec", "collecting", "docs_url", "flush", "format_line", "note", "start_run", "tally", "tally_lines",
+    "warn", "warn_grouped",
+]
+
+LOGGER_NAME = "flextool.warnings"
+#: ``LogRecord`` attributes of a coded line (``extra=``): the code and the number of cases.  The run record's
+#: warning handler stores them with the line (``flextool.run_record._status``).
+CODE_ATTR = "flextool_warning_code"
+CASES_ATTR = "flextool_warning_cases"
+#: A name longer than this is shortened in the console line (the debug log has it whole).
+MAX_NAME = 40
+
+_logger = logging.getLogger(LOGGER_NAME)
+_lock = threading.RLock()
+# (code, fmt key, solve) printed in this run -> the names it covered (the solve-scoped de-duplication).
+_printed: dict[tuple, set[str]] = {}
+# code -> names named under it in this run (per_run=True).
+_named: dict[str, set[str]] = {}
+# code -> number of cases in this run (the tally).
+_cases: dict[str, int] = {}
+# The open collecting() scope: (code, fmt key, solve) -> pending call; None when no scope is open.
+_pending: dict[tuple, "_Pending"] | None = None
+_depth = 0
+
+
+class _Pending:
+    __slots__ = ("code", "fmt", "solve", "names", "details", "per_run")
+
+    def __init__(self, code: str, fmt: dict[str, Any], solve: str | None, per_run: bool) -> None:
+        self.code, self.fmt, self.solve, self.per_run = code, fmt, solve, per_run
+        self.names: dict[str, None] = {}
+        self.details: list[str] = []
+
+
+def _complete_solve(solve: str | None) -> str | None:
+    if not solve:
+        return None
+    import re
+    return re.sub(r"_roll_\d+$", "", str(solve))
+
+
+def _name_text(name: Any) -> str:
+    if isinstance(name, (tuple, list)):
+        return ", ".join(str(part) for part in name)
+    return str(name)
+
+
+def _short(name: str) -> str:
+    return name if len(name) <= MAX_NAME else name[:MAX_NAME - 1] + "…"
+
+
+def _spec(code: str) -> WarningSpec:
+    try:
+        return WARNINGS[code]
+    except KeyError:
+        raise KeyError(f"unknown warning code {code!r}: add it to flextool/run_warnings/registry.py") from None
+
+
+def format_line(code: str, names: Iterable[Any] = (), *, solve: str | None = None, **fmt: Any) -> str:
+    """The console line of *code* for *names* (de-duplicated, in order), without printing it."""
+    spec = _spec(code)
+    texts = list(dict.fromkeys(_name_text(n) for n in names))
+    fields = dict(fmt)
+    fields.setdefault("solve", _complete_solve(solve) or "")
+    prefix = "Note" if spec.severity == NOTE else "Warning"
+    line = f"{prefix}: {spec.message.format(**fields)}"
+    if len(texts) == 1:
+        line += f" ('{_short(texts[0])}')"
+    elif texts:
+        line += f" ({len(texts)} cases, e.g. '{_short(texts[0])}')"
+    return f"{line} [{code}]"
+
+
+def _details_text(details: str | Mapping[Any, Any] | None) -> list[str]:
+    """The debug-log lines of *details*: ``name: text`` per item of a mapping, or the text itself."""
+    if details is None:
+        return []
+    if isinstance(details, Mapping):
+        return [f"{_name_text(key)}: {value}" for key, value in details.items()]
+    return [str(details)]
+
+
+def _emit(code: str, names: list[str], fmt: dict[str, Any], solve: str | None, details: list[str],
+          stacklevel: int) -> None:
+    """Print one line and log the full list (caller holds the lock)."""
+    spec = _spec(code)
+    cases = max(len(names), 1)
+    _cases[code] = _cases.get(code, 0) + cases
+    line = format_line(code, names, solve=solve, **fmt)
+    level = logging.INFO if spec.severity == NOTE else logging.WARNING
+    _logger.log(level, line, extra={CODE_ATTR: code, CASES_ATTR: cases}, stacklevel=stacklevel)
+    if len(names) > 1:
+        _logger.debug("%s all cases%s: %s", code, f" in solve '{solve}'" if solve else "", "; ".join(names))
+    for text in details:
+        _logger.debug("%s %s", code, text)
+
+
+def _fmt_key(fmt: Mapping[str, Any]) -> tuple:
+    return tuple(sorted((k, str(v)) for k, v in fmt.items()))
+
+
+def _fresh(code: str, names: list[str], per_run: bool) -> list[str]:
+    if not per_run:
+        return names
+    seen = _named.setdefault(code, set())
+    fresh = [n for n in names if n not in seen]
+    seen.update(fresh)
+    return fresh
+
+
+def _deliver(code: str, names: list[str], fmt: dict[str, Any], solve: str | None, details: list[str],
+             per_run: bool, stacklevel: int) -> bool:
+    """Print now, or only log what a line of this solve did not cover yet (caller holds the lock)."""
+    names = _fresh(code, names, per_run)
+    if per_run and not names:
+        return False
+    if solve is None:
+        _emit(code, names, fmt, None, details, stacklevel + 1)
+        return True
+    key = (code, _fmt_key(fmt), solve)
+    covered = _printed.get(key)
+    if covered is None:
+        _printed[key] = set(names)
+        _emit(code, names, fmt, solve, details, stacklevel + 1)
+        return True
+    extra = [n for n in names if n not in covered]
+    if extra:
+        covered.update(extra)
+        _cases[code] = _cases.get(code, 0) + len(extra)
+        _logger.debug("%s also in solve '%s': %s", code, solve, "; ".join(extra))
+        for text in details:
+            _logger.debug("%s %s", code, text)
+    return False
+
+
+def warn_grouped(code: str, names: Iterable[Any] = (), *, solve: str | None = None,
+                 details: str | Mapping[Any, Any] | None = None, per_run: bool = False,
+                 _stacklevel: int = 2, **fmt: Any) -> bool:
+    """One aggregated line of *code* for *names* (entity names, or tuples of them).
+
+    *fmt* fills the registry message (and is part of the grouping: calls with other *fmt* values give other
+    lines).  *details* (text, or ``{name: text}``) go to the debug log.  Returns True when a line was printed now
+    (False inside a :func:`collecting` scope, which prints at its end).
+    """
+    _spec(code)
+    texts = list(dict.fromkeys(_name_text(n) for n in names))
+    solve_key = _complete_solve(solve)
+    detail_lines = _details_text(details)
+    with _lock:
+        if _pending is not None:
+            key = (code, _fmt_key(fmt), solve_key)
+            pending = _pending.get(key)
+            if pending is None:
+                pending = _pending[key] = _Pending(code, dict(fmt), solve_key, per_run)
+            pending.names.update(dict.fromkeys(texts))
+            pending.details.extend(detail_lines)
+            return False
+        return _deliver(code, texts, dict(fmt), solve_key, detail_lines, per_run, _stacklevel + 1)
+
+
+def warn(code: str, name: Any = None, *, solve: str | None = None, details: str | Mapping[Any, Any] | None = None,
+         per_run: bool = False, **fmt: Any) -> bool:
+    """:func:`warn_grouped` for one *name* (or none); inside :func:`collecting` the names of repeated calls join
+    one line."""
+    return warn_grouped(code, () if name is None else (name,), solve=solve, details=details, per_run=per_run,
+                        _stacklevel=3, **fmt)
+
+
+def note(code: str, names: Iterable[Any] = (), *, solve: str | None = None,
+         details: str | Mapping[Any, Any] | None = None, per_run: bool = False, **fmt: Any) -> bool:
+    """:func:`warn_grouped` for a code registered as a note (a ``Note:`` line at INFO level)."""
+    if _spec(code).severity != NOTE:
+        raise ValueError(f"{code} is a warning, not a note: use warn_grouped")
+    return warn_grouped(code, names, solve=solve, details=details, per_run=per_run, _stacklevel=3, **fmt)
+
+
+def flush() -> None:
+    """Print what the open :func:`collecting` scope gathered so far (one line per code, *fmt* and solve)."""
+    global _pending
+    with _lock:
+        if not _pending:
+            return
+        pending, _pending = _pending, {}
+        for item in pending.values():
+            _deliver(item.code, list(item.names), item.fmt, item.solve, item.details, item.per_run, 3)
+
+
+@contextmanager
+def collecting() -> Iterator[None]:
+    """Gather the warnings of a pass (a validation pass, a loop over entities, one solve) and print each code once
+    when the pass ends."""
+    global _pending, _depth
+    with _lock:
+        _depth += 1
+        if _pending is None:
+            _pending = {}
+    try:
+        yield
+    finally:
+        with _lock:
+            _depth -= 1
+            if _depth == 0:
+                try:
+                    flush()
+                finally:
+                    _pending = None
+
+
+def start_run() -> None:
+    """Begin a run: forget the lines, names and tally of earlier runs (an open scope keeps its pending calls)."""
+    with _lock:
+        _printed.clear()
+        _named.clear()
+        _cases.clear()
+
+
+def tally() -> dict[str, int]:
+    """``{code: cases}`` of the warnings (not the notes) of this run, most cases first."""
+    with _lock:
+        items = [(c, n) for c, n in _cases.items() if WARNINGS[c].severity == WARNING]
+    return dict(sorted(items, key=lambda item: (-item[1], item[0])))
+
+
+def tally_lines() -> list[str]:
+    """The end-of-run summary: ``Warnings: <k> kinds, <n> cases — W-0004 ×12, ...`` and the docs link; ``[]``
+    when the run had no coded warning."""
+    counts = tally()
+    if not counts:
+        return []
+    total = sum(counts.values())
+    kinds = len(counts)
+    listed = ", ".join(f"{code} ×{n}" for code, n in counts.items())
+    return [f"Warnings: {kinds} kind{'s' if kinds != 1 else ''}, {total} case{'s' if total != 1 else ''} — {listed}",
+            f"Warnings explained: {WARNINGS_DOCS_URL}"]

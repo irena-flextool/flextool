@@ -36,6 +36,8 @@ from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence, TypeVar
 
+from flextool.run_warnings import CASES_ATTR as _CASES_ATTR
+from flextool.run_warnings import CODE_ATTR as _CODE_ATTR
 from flextool.run_record._owner import (
     ABANDONED_STATE,
     RUN_LOG_FILE,
@@ -70,6 +72,8 @@ _CREATE_TIME_SLACK = 5.0
 
 MAX_SOLVES = 1000
 _KEEP_FIRST_SOLVES = 100
+#: The most entries of ``warnings``.  A coded warning (``flextool.run_warnings``) takes one entry per code: its later
+#: lines add to the entry's ``cases`` / ``lines`` (the first line is the entry's ``message``).
 MAX_WARNINGS = 50
 _MESSAGE_LIMIT = 2000
 _WARNING_MESSAGE_LIMIT = 500
@@ -252,7 +256,11 @@ class _WarningHandler(logging.Handler):
             message = record.getMessage()
         except Exception:  # noqa: BLE001 - a malformed log call must not break the run
             message = str(record.msg)
-        self._recorder._queue_warning(record.levelname, record.name, message)
+        code = getattr(record, _CODE_ATTR, None)
+        cases = getattr(record, _CASES_ATTR, None)
+        self._recorder._queue_warning(record.levelname, record.name, message,
+                                      code=code if isinstance(code, str) else None,
+                                      cases=cases if isinstance(cases, int) else 1)
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
@@ -293,6 +301,8 @@ class RunRecorder:
         self._wq_lock = threading.Lock()
         self._wq: list[dict[str, str]] = []
         self._wq_omitted = 0
+        # code -> its entry (queued or in the status) of the coded warnings (guarded by _wq_lock).
+        self._wq_coded: dict[str, dict[str, Any]] = {}
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._dirty = False
@@ -434,16 +444,30 @@ class RunRecorder:
         for level, msg, args in pending:
             _logger.log(level, msg, *args)
 
-    def _queue_warning(self, level: str, logger_name: str, message: str) -> None:
-        """Queue one warning for the status (the warning handler; takes only the leaf lock)."""
+    def _queue_warning(self, level: str, logger_name: str, message: str, *, code: str | None = None,
+                       cases: int = 1) -> None:
+        """Queue one warning for the status (the warning handler; takes only the leaf lock).
+
+        A coded warning whose code already has an entry adds its *cases* and one line to that entry.
+        """
         if self._finished or self._taken_over or self._disabled:
             return
-        entry = {"level": level, "logger": logger_name, "message": message[:_WARNING_MESSAGE_LIMIT]}
+        entry: dict[str, Any] = {"level": level, "logger": logger_name, "message": message[:_WARNING_MESSAGE_LIMIT]}
         with self._wq_lock:
+            if code is not None:
+                known = self._wq_coded.get(code)
+                if known is not None:
+                    known["cases"] += cases
+                    known["lines"] += 1
+                    self._dirty = True
+                    return
+                entry.update(code=code, cases=cases, lines=1)
             if len(self._wq) + len(self._status.get("warnings") or ()) >= MAX_WARNINGS:
                 self._wq_omitted += 1
             else:
                 self._wq.append(entry)
+                if code is not None:
+                    self._wq_coded[code] = entry
         self._dirty = True
 
     def _drain_warnings(self) -> None:

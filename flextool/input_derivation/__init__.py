@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 import spinedb_api as api
+from flextool import run_warnings
 from flextool.update_flextool.db_handle import open_database_mapping
 from flextool.engine.input._solve_state import FlexToolConfigError
 
@@ -390,10 +391,13 @@ def run(
             if scen_config is not None:
                 api.filters.scenario_filter.scenario_filter_from_dict(db, scen_config)
             os.makedirs(wf / "input", exist_ok=True)
-            _do(db)
+            with run_warnings.collecting():
+                _do(db)
     else:
         # Accept a SpineDBBackend (with ._db) or a DatabaseMapping
         # directly; both expose the find_* API we need.
         db = getattr(backend_or_db_url, "_db", backend_or_db_url)
         os.makedirs(wf / "input", exist_ok=True)
-        _do(db)
+        # The coded warnings of the pass (flextool.run_warnings) print one line per code when it ends.
+        with run_warnings.collecting():
+            _do(db)

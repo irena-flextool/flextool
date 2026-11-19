@@ -1324,6 +1324,10 @@ def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_
     full_seconds = time.perf_counter() - t_total_start
     print("\n--- Full execution time %.4s seconds ---------------------------------------" % full_seconds)
     print("--------------------------------------------------------------------------\n")
+    # The coded warnings of the run (flextool.run_warnings): how many of each, and where they are explained.
+    from flextool import run_warnings
+    for _line in run_warnings.tally_lines():
+        print(_line, flush=True)
     timing_recorder.record('total', seconds=full_seconds, t_start=t_total_start)
 
     # Move timings.csv into the per-scenario output dir alongside

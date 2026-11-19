@@ -522,11 +522,14 @@ def read_markers_from_url(db_url: str) -> dict[str, str]:
 
 
 def start_run(markers: Mapping[str, str] | None) -> None:
-    """Begin a run: remember the input database's markers and forget what earlier runs announced."""
+    """Begin a run: remember the input database's markers and forget what earlier runs announced (also the coded
+    warnings of :mod:`flextool.run_warnings`)."""
     _markers.clear()
     _markers.update(dict(markers or {}))
     _announced.clear()
     _warned.clear()
+    from flextool import run_warnings
+    run_warnings.start_run()
 
 
 def warn_once(key, text: str) -> bool:

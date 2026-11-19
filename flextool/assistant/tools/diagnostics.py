@@ -74,7 +74,10 @@ def _status_block(status: dict) -> dict:
         "threads": status.get("threads"),
         "solves": shown,
         "warnings": [{"level": w.get("level"), "logger": w.get("logger"),
-                      "message": cap_text(w.get("message"), MESSAGE_MAX)} for w in warnings[:WARNINGS_MAX]],
+                      "message": cap_text(w.get("message"), MESSAGE_MAX),
+                      # A coded warning (flextool.run_warnings): its code and how many cases its lines name.
+                      **{key: w[key] for key in ("code", "cases") if key in w}}
+                     for w in warnings[:WARNINGS_MAX]],
         "options": _options(status),
     }
     if omitted:

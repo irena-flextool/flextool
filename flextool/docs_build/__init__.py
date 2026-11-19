@@ -1,5 +1,5 @@
-"""Generated documentation pages: the model formulation, the results catalogue and the parameter catalogue, built
-from the installed code.
+"""Generated documentation pages: the model formulation, the results catalogue, the parameter catalogue and the
+warnings page, built from the installed code.
 
 One generator for the web docs (the mkdocs hook ``tools/mkdocs_hooks.py``), for ``python -m
 flextool.docs_build`` and for the assistant's documentation cache (``index.generate``, called on first use by
@@ -36,6 +36,9 @@ def render_page(name: str, markdown_root: Path) -> str:
     if name == scope.PARAMETER_CATALOGUE_PAGE:
         from flextool.docs_build.parameters import render_parameter_catalogue
         return render_parameter_catalogue(markdown_root)
+    if name == scope.WARNINGS_PAGE:
+        from flextool.docs_build.warnings import render_warnings_page
+        return render_warnings_page(markdown_root)
     raise ValueError(f"{name!r} is not a generated page ({', '.join(scope.WEB_PAGES)})")
 
 
@@ -132,6 +135,7 @@ def write_pages(out_dir: Path, markdown_root: Path, private_names: Path | None) 
     written = []
     for name, text in pages.items():
         path = out_dir / name
+        path.parent.mkdir(parents=True, exist_ok=True)
         write_text_atomic(path, text)
         written.append(path)
     return written
