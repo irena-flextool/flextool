@@ -454,6 +454,8 @@
       
         
       
+        
+      
     
     
     
@@ -928,6 +930,34 @@
     
   
     Parameter catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../warnings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Warnings and notes
   
 
     
@@ -2676,9 +2706,9 @@
 <li>
 <p><em>solves</em>: sequence of solves in the model represented with an array of solve names.</p>
 </li>
-<li><em>inflation_rate</em>: [e.g. 0.02 for 2%] Model-wide inflation rate applied to all future costs. When inputs are in real (constant-price) terms, set to 0 (default). When inputs are in nominal terms, set to expected inflation.</li>
-<li><em>inflation_offset_investment</em>: [years] Offset from the period (often year) start to the first payment of the investment cost annuity.</li>
-<li><em>inflation_offset_operations</em>: [years] Offset from the period (often year) start to the payment of operational costs.</li>
+<li><em>social_discount_rate</em>: [e.g. 0.03 for 3%] The model's time discount rate: a cost or income is weighed by 1 / (1 + social_discount_rate)^t, t the years from the start of the run to the moment it falls. In the same terms as the cost inputs. 0 (default): no time preference (with real inputs, inflation is already in the prices). With nominal inputs, use (1 + inflation) × (1 + social rate) − 1. Not the per-entity <code>discount_rate</code> (the investor's WACC).</li>
+<li><em>discount_offset_investment</em>: [years] Where in each year the yearly investment payments and the yearly salvage credits fall, between 0 (default, the start of the year; the first payment on the day the capacity comes online) and 1 (the end). The annual payment is sized for that moment, so the payments are worth <code>invest_cost</code> at the <code>discount_rate</code> whatever the offset; the offset moves what <code>social_discount_rate</code> weighs.</li>
+<li><em>discount_offset_operations</em>: [years] Where in each year operating and fixed costs are weighed by <code>social_discount_rate</code>, between 0 (the start of the year) and 1 (the end): 0.5 (default) the middle of the year, standing for costs spread over the year.</li>
 <li><em>periods_available</em>: (Optional) Array of periods available for the model. Use this for periods that are in the data, but are not in period_timeset.</li>
 <li><em>max_flow_for_unconstrained_variables</em>: [MW] Upper bound for capacities and flows that have no other limit: how much capacity an entity with <code>invest_method</code> <code>invest_no_limit</code> or <code>invest_retire_no_limit</code> (or <code>cumulative_limits</code> without <code>cumulative_max_capacity</code>) can add on top of its <code>existing</code> capacity, and the flow on a unit's input or output whose <code>conversion_flow_coeff</code> is 0. The value is used as given; with several model entities the largest value is used. Keep it large enough not to limit the real solution and small enough to avoid numerical problems (see <a href="../../dev/scaling/">dev/scaling.md</a>). Default 1,000,000.</li>
 <li><em>debug</em>: Instruction set for performing model debugging and testing.</li>
@@ -3107,7 +3137,7 @@ result labels of that node follow it. Time steps are hours, so the node's <em>ra
 <td>CUR/MWh_th</td>
 </tr>
 <tr>
-<td><code>invest_cost</code>, <code>fixed_cost</code>, <code>salvage_value</code> of a unit whose capacity is on the node</td>
+<td><code>invest_cost</code>, <code>fixed_cost</code>, <code>net_salvage_value</code> of a unit whose capacity is on the node</td>
 <td>CUR/kW</td>
 <td>CUR per 0.001 m3/h</td>
 <td>CUR/kW_th</td>
@@ -3124,7 +3154,7 @@ result labels of that node follow it. Time steps are hours, so the node's <em>ra
 gets <code>/h</code> (m3 → m3/h, t → t/h). The value is case-sensitive (<code>mwh</code> gives <code>mwh/h</code>). It is a label only: FlexTool
 changes no number. Set the amount unit, not the rate: <code>m3</code>, not <code>m3/h</code> (FlexTool warns about a value that looks
 like a rate).</p>
-<p><strong>Costs per kW and kWh.</strong> <code>invest_cost</code>, <code>fixed_cost</code> and <code>salvage_value</code> (and the group
+<p><strong>Costs per kW and kWh.</strong> <code>invest_cost</code>, <code>fixed_cost</code> and <code>net_salvage_value</code> (and the group
 <code>penalty_capacity_margin</code>) are entered per kW or kWh, and FlexTool multiplies them by 1000. For a node in another
 unit they are per 0.001 of the rate or the amount. A desalination unit that costs 500 CUR per m3/h of capacity has
 <code>invest_cost</code> 0.5 (500 × 0.001); a water tank that costs 20 CUR per m3 has <code>invest_cost</code> 0.02. The capacities

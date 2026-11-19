@@ -366,6 +366,18 @@
   </span>
 </a>
 </li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../reference/warnings/">
+<span class="md-ellipsis">
+    
+  
+    Warnings and notes
+  
+
+    
+  </span>
+</a>
+</li>
 </ul>
 </nav>
 </li>
@@ -2215,7 +2227,9 @@ memory; CSVs only emitted under <code>csv_dump=True</code> for debugging).</p>
 <code>objective_terms(b)</code> summed into the objective. Optional features with
 their own variables live in their own modules (<code>_online</code>, <code>_unit_floors</code>,
 <code>_reserve</code>, <code>_group_slack</code>, <code>_cumulative_invest</code>, <code>_commodity_ladder</code>,
-<code>_dc_power_flow</code>, <code>_delay</code>, <code>_non_anticipativity</code>). The <code>model/core.py</code> module
+<code>_dc_power_flow</code>, <code>_delay</code>, <code>_non_anticipativity</code>); <code>_capacity</code> builds the
+capacity in service (investments and retirements counting in each period, from
+the cohort table) once for all of them. The <code>model/core.py</code> module
 docstring maps every variable and equation family; details in
 <a href="../engine/#lp-build-modelpy-and-the-feature-modules">engine.md</a>.</p>
 <p><code>_prepare</code> sets one <code>has_*</code> flag per feature on the <code>_Build</code> context from
@@ -2392,9 +2406,8 @@ relevant key families are declared in <code>engine/preprocess/_provider_keys.py<
 <ul>
 <li><code>HANDOFF_*</code> — quantities the just-solved problem produces for the next
   iteration (<code>fix_storage_quantity/price/usage</code>, <code>roll_end_state</code>,
-  <code>realized_invest</code>, <code>realized_existing</code>, <code>divest_cumulative</code>,
-  <code>cumulative_co2</code>, <code>commodity_ladder_cumulative</code>, <code>cum_sim_hours</code>,
-  <code>ed_history_realized_first</code>, <code>edd_history</code>).</li>
+  <code>realized_cohort</code>, <code>realized_retire</code>, <code>realized_commission</code>, <code>divest_cumulative</code>,
+  <code>cumulative_co2</code>, <code>commodity_ladder_cumulative</code>, <code>cum_sim_hours</code>).</li>
 <li><code>INPUT_*</code> — backend-derived rows the cascade re-reads each iteration.</li>
 <li><code>SOLVE_DATA_*</code> — per-solve sets and parameters that the derivation
   layer produces.</li>
@@ -2407,8 +2420,8 @@ sub-solve; a Benders solve dumps its undecomposed FlexData) and are not load-bea
 values from the sub-solve's <code>FlexData</code>, <code>FlexDataProvider</code> or <code>OutputWriterState</code>, never from <code>input/</code> or
 <code>solve_data/</code> on the work folder (item 163, <code>specs/bugfix/c24/design_163.md</code>;
 <code>test_output_writers_read_no_work_folder_inputs</code> in <code>tests/engine/test_meta_provider_invariants.py</code>, Rule 5). The
-five handoff-mirror CSVs under <code>solve_data/</code> (<code>p_entity_divested</code>, <code>fix_storage_quantity</code>, <code>fix_storage_usage</code>,
-<code>p_roll_continue_state</code>, <code>p_entity_period_existing_capacity</code>) are write-only <code>--csv-dump</code> debug output with no
+four handoff-mirror CSVs under <code>solve_data/</code> (<code>p_entity_divested</code>, <code>fix_storage_quantity</code>, <code>fix_storage_usage</code>,
+<code>p_roll_continue_state</code>) are write-only <code>--csv-dump</code> debug output with no
 reader anywhere in the engine; <code>period_capacity.csv</code> is the one mirror still written on every run (vestigial,
 always header-only).</p>
 <p>Because nothing reads the work folder back, <strong>FlexTool supports exactly one run per work folder at a time</strong>: a
@@ -2587,7 +2600,7 @@ raises.</p>
 <h5 id="silent-default-x-index-readers-outside-the-resolver">Silent-default <code>"x"</code> index — readers outside the resolver</h5>
 <p>Not every DB read goes through <code>resolve_param_shape</code>. The <strong>per-entity
 cascades</strong> in <code>_derived.py</code> / <code>_existing.py</code> /
-<code>_npv.py</code> read raw entity params (<code>source.parameter(...)</code>) and
+<code>_lifetime_inputs.py</code> read raw entity params (<code>source.parameter(...)</code>) and
 must detect the period axis themselves. The failure mode is identical to
 the resolver's: Spine names a Map's index column with the author's
 <code>index_name</code>, whose spinedb_api <em>default is the literal string <code>"x"</code></em>
@@ -3424,14 +3437,19 @@ names as before for debug inspection:</p>
 </thead>
 <tbody>
 <tr>
-<td><code>realized_invest</code></td>
-<td><code>p_entity_period_existing_capacity.csv</code> (period column)</td>
-<td>New capacity built this solve, in absolute units.</td>
+<td><code>realized_cohort</code></td>
+<td><code>produced_handoff/realized_cohort.csv</code></td>
+<td>The investments realised by the run so far, one row per cohort (investment decision): its start of operation and end of life in years of the run (placed once, by the deciding solve) and its size. A later solve's capacity is its existing cohort (the user's <code>existing</code> of each of its periods) plus the carried cohorts in service, minus the carried retirements (<code>_cohort_handoff.existing_capacity</code>).</td>
 </tr>
 <tr>
-<td><code>realized_existing</code></td>
-<td><code>p_entity_period_existing_capacity.csv</code> (existing column)</td>
-<td>Cumulative existing capacity history per <code>(entity, period)</code>.</td>
+<td><code>realized_retire</code></td>
+<td><code>produced_handoff/realized_retire.csv</code></td>
+<td>Retired capacity per cohort and realised decision period; counts while the cohort is in service.</td>
+</tr>
+<tr>
+<td><code>realized_commission</code></td>
+<td><em>(in-memory only)</em></td>
+<td>Realised investments with a construction lead time: coming online / in construction in a later solve.</td>
 </tr>
 <tr>
 <td><code>divest_cumulative</code></td>
@@ -3505,12 +3523,16 @@ an un-absorbable commitment, resolved by allowing slack.</p>
 used to be <code>SolveHandoff</code> fields too, populated only by the now-removed
 <code>capture_post_solve()</code> disk-read constructor. They were retired when the
 cascade fell through to Provider/CSV reads in all production paths; see
-the docstring of <code>solve/_handoff.py</code> for the history.</p>
+the docstring of <code>solve/_handoff.py</code> for the history.
+<code>realized_invest</code>, <code>realized_existing</code> and <code>realized_divest</code> (capacity keyed
+by period: the existing capacity entered once, at the first solve's first
+period, so a period-varying <code>existing</code> was lost in later solves) were replaced
+by <code>realized_cohort</code> / <code>realized_retire</code>.</p>
 <h2 id="solution-extraction">Solution extraction</h2>
 <p><code>process_outputs.read_highs_solution.VARIABLE_SPECS</code> declares every
 variable and dual to harvest from the live <code>highspy.Highs</code> instance:
 <code>v_flow</code>, <code>v_state</code>, <code>v_invest</code>, <code>v_divest</code>, <code>vq_*</code>, period / total /
-cumulative invest-cap duals, <code>co2_max_*</code> duals, the inflation-adjusted
+cumulative invest-cap duals, <code>co2_max_*</code> duals, the discount-factor-adjusted
 <code>v_dual_node_balance</code>, and so on. Each <code>VariableSpec</code> carries an
 <code>unscale_by</code> field so row / objective scaling is undone before the parquet
 is written.</p>

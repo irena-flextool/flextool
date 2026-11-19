@@ -452,6 +452,8 @@
       
         
       
+        
+      
     
     
     
@@ -796,6 +798,34 @@
     
   
     Parameter catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/warnings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Warnings and notes
   
 
     
@@ -3076,7 +3106,7 @@
 <td><em>bp_chp</em>: heat 83.33, power 41.67</td>
 <td>266.33</td>
 <td>16 257.8 + the RO annuity</td>
-<td>147.233</td>
+<td>147.004</td>
 </tr>
 <tr>
 <td><em>desal_water_storage</em></td>
@@ -3186,14 +3216,14 @@
 </tr>
 <tr>
 <td><code>unit</code> <em>ro_desal</em></td>
-<td><code>lifetime</code>, <code>discount_rate</code></td>
-<td>20, 0.05</td>
+<td><code>lifetime_technical</code>, <code>discount_rate</code></td>
+<td>20 (also the payback time), 0.05</td>
 </tr>
 </tbody>
 </table>
 <p><strong>invest_cost is per kW of the unit's capacity unit.</strong> FlexTool reads every capacity as if it were in MW, and <code>invest_cost</code> is per kW, that is per 0.001 of the capacity unit (with <code>unit_of_measure</code> <em>m3</em> on <em>water</em> the results label it CUR/(0.001 m³/h) and the annuity CUR/(m³/h)). For a capacity in m³/h, enter the cost per m³/h divided by 1000: 30 000 CUR per m³/h is <code>invest_cost</code> 30. The same holds for <code>fixed_cost</code>. The capacities themselves are entered in m³/h unchanged: <code>existing</code>, <code>invest_max_total</code> and <code>invest_min_total</code> of 2000 m³/h are 2000, not 2. An <code>other_operational_cost</code> on a water flow is per m³ directly (it is per MWh of flow, no ÷ 1000).</p>
-<p><strong>MED or RO.</strong> A cubic metre from MED costs 1/12 MWh of heat. The heat costs 1.5/0.85 MWh of fuel at 20 CUR/MWh, but the CHP also makes 0.5/12 MWh of power that <em>coal_plant</em> would otherwise make at 50 CUR/MWh: 2.941 − 2.083 = 0.858 CUR/m³. A cubic metre from RO costs 0.004 MWh of power at 50 CUR/MWh = 0.2 CUR/m³. The saving, 0.658 CUR/m³ × 8760 h = 5 764 CUR per m³/h and year, is more than twice the annuity (30 000 × 0.0802 = 2 407 CUR per m³/h and year at 5 % over 20 years).</p>
-<p><strong>The results.</strong> <em>ro_desal</em> is invested to its 2000 m³/h limit and uses 8 MW of power. MED makes the other 1000 m³/h, with 83.33 MW of heat, so <em>bp_chp</em> makes 41.67 MW of power and <em>coal_plant</em> 300 + 8 − 41.67 = 266.33 MW. The operation costs 16 257.8 CUR/h (142.419 M CUR a year) and the RO annuity is 2000 × 30 000 × 0.0802 = 4.815 M CUR: 147.233 M CUR. The investment is in <code>unit_capacity__d</code> and in the <em>unit investment &amp; retirement</em> row of the costs.</p>
+<p><strong>MED or RO.</strong> A cubic metre from MED costs 1/12 MWh of heat. The heat costs 1.5/0.85 MWh of fuel at 20 CUR/MWh, but the CHP also makes 0.5/12 MWh of power that <em>coal_plant</em> would otherwise make at 50 CUR/MWh: 2.941 − 2.083 = 0.858 CUR/m³. A cubic metre from RO costs 0.004 MWh of power at 50 CUR/MWh = 0.2 CUR/m³. The saving, 0.658 CUR/m³ × 8760 h = 5 764 CUR per m³/h and year, is more than twice the annuity (30 000 × 0.0802 / 1.05 = 2 293 CUR per m³/h and year at 5 % over 20 years, paid at the start of each year).</p>
+<p><strong>The results.</strong> <em>ro_desal</em> is invested to its 2000 m³/h limit and uses 8 MW of power. MED makes the other 1000 m³/h, with 83.33 MW of heat, so <em>bp_chp</em> makes 41.67 MW of power and <em>coal_plant</em> 300 + 8 − 41.67 = 266.33 MW. The operation costs 16 257.8 CUR/h (142.419 M CUR a year) and the RO annuity is 2000 × 30 000 × 0.0802 / 1.05 = 4.585 M CUR: 147.004 M CUR. The investment is in <code>unit_capacity__d</code> and in the <em>investment</em> row of the costs.</p>
 <h3 id="water-storage">Water storage</h3>
 <p><strong>(examples.sqlite scenario: desal_water_storage)</strong>
 <strong><em>init - west - coal - desal_system - desal_water_storage</em></strong></p>

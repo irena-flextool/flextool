@@ -454,6 +454,8 @@
       
         
       
+        
+      
     
     
     
@@ -895,6 +897,34 @@
     
   
     Parameter catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../warnings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Warnings and notes
   
 
     
@@ -2649,7 +2679,7 @@
 <td><code>model</code></td>
 <td>80</td>
 <td><code>d9d9d9</code></td>
-<td>Whole-model scope, horizons, numeric framing (version, periods, inflation).</td>
+<td>Whole-model scope, horizons, numeric framing (version, periods, discounting).</td>
 </tr>
 <tr>
 <td><code>solve_basics</code></td>
@@ -2728,8 +2758,8 @@ rerun fixes them all. A warning is printed once per scenario read in the run log
   <code>retire_min_period</code> / <code>retire_max_period</code>, <code>cumulative_min_capacity</code> / <code>cumulative_max_capacity</code> (compared per
   period; a constant applies to every period), <code>invest_min_total</code> / <code>invest_max_total</code>, <code>retire_min_total</code> /
   <code>retire_max_total</code> (unit, connection, node, group). No capacity could meet both.</li>
-<li><code>lifetime</code> at or below 0 on an entity that can invest or retire (the investment would be charged for no years).</li>
-<li>A map key of a period parameter (<code>existing</code>, <code>invest_cost</code>, <code>startup_cost</code>, <code>co2_max_period</code>, <code>lifetime</code>, and
+<li><code>lifetime_technical</code> or <code>payback_time</code> at or below 0 on an entity that can invest or retire (the investment would be charged for no years).</li>
+<li>A map key of a period parameter (<code>existing</code>, <code>invest_cost</code>, <code>startup_cost</code>, <code>co2_max_period</code>, <code>lifetime_technical</code>, and
   every other parameter that takes a period map) that is not a period: the readers would drop the value without a
   word (<em>y2020</em> for <em>p2020</em> gave no capacity). Periods are the keys of every <code>period_timeset</code>, the solve period lists,
   <code>years_represented</code>, the first level of <code>stochastic_branches</code>, the stochastic branch periods (<em>p2035_high</em>: the
@@ -2742,7 +2772,7 @@ rerun fixes them all. A warning is printed once per scenario read in the run log
   time-series check reports them). Maps keyed by something else (<code>constraint_flow_coeff</code> by constraint, <code>delay</code> by
   hours) are not period maps and are not checked.</li>
 <li>A time-step key, a <code>time</code> level or a time series on a period parameter that cannot vary over time
-  (<code>existing</code>, <code>startup_cost</code>, <code>invest_cost</code>, <code>lifetime</code>, ...; use a constant or a period map), and numeric map
+  (<code>existing</code>, <code>startup_cost</code>, <code>invest_cost</code>, <code>lifetime_technical</code>, ...; use a constant or a period map), and numeric map
   keys (2020) on any period parameter (periods are names such as <em>p2020</em>). A name that is both a period and a time
   step is read as a period.</li>
 <li>A timeline used by a solve (through a timeset named in a <code>period_timeset</code>, or the timeset a solve without

@@ -452,6 +452,8 @@
       
         
       
+        
+      
     
     
     
@@ -796,6 +798,34 @@
     
   
     Parameter catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/warnings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Warnings and notes
   
 
     
@@ -2680,7 +2710,7 @@ For the other option of converting the volume to potential energy in the reservo
 <li><code>existing</code>: The maximum size of the reservoir [m^3]</li>
 <li><code>penalty_up</code>: a larger number than with the demand node to not allow creating extra water if not enough electricity is being created</li>
 <li><code>penalty_down</code>: 0 or a large number (spilling or not)</li>
-<li>a <code>storage_method</code> to set the behaviour on how the storage levels should be managed - for short duration storages <em>bind_within_timeblock</em> may be best and for seasonal storages it could be best to use <em>bind_within_solve</em>. If historical storage level time series are available, it can be beneficial to use <em>fix_start</em> in the <code>storage_start_end_method</code> together with <code>storage_solve_horizon_method</code> <em>use_reference_value</em>, which will pick the storage level at the end of each solve from the time series provided as a reference (<em>storage_state_reference_value</em>). See <code>flextool/schemas/spinedb_schema.json</code> for the full enumeration of <code>storage_binding_method</code> values and the silent-degrade behaviour of the <code>*_blended_weights</code> variants; DB migration v55 renamed several legacy names (e.g. <code>bind_within_timeset</code> → <code>bind_within_timeblock</code>).</li>
+<li>a <code>storage_method</code> to set the behaviour on how the storage levels should be managed - for short duration storages <em>bind_within_timeblock</em> may be best (a rolling solve uses it as <em>bind_within_period</em>) and for seasonal storages it could be best to use <em>bind_within_solve</em>. If historical storage level time series are available, it can be beneficial to use <em>fix_start</em> in the <code>storage_start_end_method</code> together with <code>storage_solve_horizon_method</code> <em>use_reference_value</em>, which will pick the storage level at the end of each solve from the time series provided as a reference (<em>storage_state_reference_value</em>). See <code>flextool/schemas/spinedb_schema.json</code> for the full enumeration of <code>storage_binding_method</code> values and the silent-degrade behaviour of the <code>*_blended_weights</code> variants; DB migration v55 renamed several legacy names (e.g. <code>bind_within_timeset</code> → <code>bind_within_timeblock</code>).</li>
 </ul>
 <p>The <code>unit</code> is connected to the <em>reservoir</em> <code>node</code> and the output <code>node</code> <em>demand_node</em> (unit_c and unit_node_c in excel):</p>
 <ul>
@@ -2762,7 +2792,7 @@ In this implementation of reservoir hydro power, there is an option to spill wat
 <li><code>existing</code>: The maximum size of the reservoir as the potential energy [MWh]</li>
 <li><code>penalty_up</code>: a large number to prefer not creating energy from nowhere</li>
 <li><code>penalty_down</code>: 0 or a large number (spilling or not)</li>
-<li>a <code>storage_method</code> to set the behaviour on how the storage levels should be managed - for short duration storages <em>bind_within_timeblock</em> may be best and for seasonal storages it could be best to use <em>bind_within_solve</em>. If historical storage level time series are available, it can be beneficial to use <em>fix_start</em> in the <code>storage_start_end_method</code> together with <code>storage_solve_horizon_method</code> <em>use_reference_value</em>, which will pick the storage level at the end of each solve from the time series provided as a reference (<em>storage_state_reference_value</em>). See <code>flextool/schemas/spinedb_schema.json</code> for the full enumeration of <code>storage_binding_method</code> values and the silent-degrade behaviour of the <code>*_blended_weights</code> variants; DB migration v55 renamed several legacy names (e.g. <code>bind_within_timeset</code> → <code>bind_within_timeblock</code>).</li>
+<li>a <code>storage_method</code> to set the behaviour on how the storage levels should be managed - for short duration storages <em>bind_within_timeblock</em> may be best (a rolling solve uses it as <em>bind_within_period</em>) and for seasonal storages it could be best to use <em>bind_within_solve</em>. If historical storage level time series are available, it can be beneficial to use <em>fix_start</em> in the <code>storage_start_end_method</code> together with <code>storage_solve_horizon_method</code> <em>use_reference_value</em>, which will pick the storage level at the end of each solve from the time series provided as a reference (<em>storage_state_reference_value</em>). See <code>flextool/schemas/spinedb_schema.json</code> for the full enumeration of <code>storage_binding_method</code> values and the silent-degrade behaviour of the <code>*_blended_weights</code> variants; DB migration v55 renamed several legacy names (e.g. <code>bind_within_timeset</code> → <code>bind_within_timeblock</code>).</li>
 </ul>
 <p>The <code>unit</code> is connected to the <em>reservoir</em> <code>node</code> and the output <code>node</code> <em>nodeA</em> (unit_c and unit_node_c in excel):</p>
 <ul>

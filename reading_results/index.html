@@ -452,6 +452,8 @@
       
         
       
+        
+      
     
     
     
@@ -796,6 +798,34 @@
     
   
     Parameter catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/warnings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Warnings and notes
   
 
     
@@ -2706,7 +2736,7 @@
 <h3 id="3-what-does-the-system-cost">3. What does the system cost?</h3>
 <ul>
 <li><code>annualized_costs__d</code> [M CUR per year]: the costs of one year of each period by category (investment annuities, fixed costs, fuel, CO2, other operating costs, start-ups, penalties). Use it to compare periods.</li>
-<li><code>costs_discounted__d</code> and <code>costs_discounted</code> [M CUR]: the same costs discounted with <code>inflation_rate</code> and multiplied by the years each period represents, per period and in total. This is what the model minimises.</li>
+<li><code>costs_discounted__d</code> and <code>costs_discounted</code> [M CUR]: the same costs discounted with <code>social_discount_rate</code> and multiplied by the years each period represents, per period and in total. This is what the model minimises.</li>
 <li><code>cost_unit_annualized__d</code> and the tables for connections and nodes: the costs of each entity.</li>
 </ul>
 <p>See <a href="../results/#costs">Costs</a> and <a href="../advanced_concepts/#discounting-between-milestone-years">Discounting between milestone years</a>.</p>
@@ -2721,6 +2751,7 @@
 <li><code>unit__outputNode__dt</code> and <code>unit__inputNode__dt</code> [MW]: the output and input of each unit in each time step; <code>connection__dt</code> the flows on connections.</li>
 <li><code>node__dt</code> [MW] and <code>node__d</code> [MWh per year]: the energy balance of each node by category (units, connections, storage losses, inflow, loss of load).</li>
 <li><code>node_state__dt</code> [MWh]: the content of each storage.</li>
+<li><code>node_storage_usage__dt</code> [MWh]: the net use (outflows minus inflows) in each realised time step of each storage node with <code>storage_nested_fix_method</code> <em>fix_usage</em>, the quantity an upper-level solve caps.</li>
 <li>The dispatch plots of a node group with <code>print_dispatch</code> <em>yes</em> stack all flows into and out of the group.</li>
 </ul>
 <p>See <a href="../results/#energy-flows">Energy flows</a> and <a href="../results/#energy-balance-in-nodes">Energy balance in nodes</a>.</p>

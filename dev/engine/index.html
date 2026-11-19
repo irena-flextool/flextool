@@ -366,6 +366,18 @@
   </span>
 </a>
 </li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../reference/warnings/">
+<span class="md-ellipsis">
+    
+  
+    Warnings and notes
+  
+
+    
+  </span>
+</a>
+</li>
 </ul>
 </nav>
 </li>
@@ -2028,7 +2040,8 @@ few shared expressions):</p>
    <code>add_variables(b)</code> are called from here. Declaration order is the LP
    column order.</li>
 <li><code>_shared_expressions</code> — expressions read by several families (reserve
-   coupling sums, invest/divest-in-dispatch sums, <code>op_factor</code>).</li>
+   coupling sums, the capacity in service <code>b.cap</code> of <code>_capacity</code>,
+   <code>op_factor</code>).</li>
 <li>One <code>_eq_&lt;family&gt;(b)</code> per core equation family, in emit order,
    interleaved with the feature modules' <code>add_constraints(b)</code>.</li>
 <li><code>_obj_&lt;family&gt;(b)</code> and the modules' <code>objective_terms(b)</code> return their
@@ -2055,7 +2068,9 @@ group / cumulative / flow-group limits), <code>_commodity_ladder</code>,
 <code>_dc_power_flow</code>, <code>_exact</code> (direction switch of <code>exact</code> connections),
 <code>_delay</code> (delayed inputs, used by <code>conversion_indirect</code>) and
 <code>_non_anticipativity</code> (stochastic ties).
-Small helpers shared by these live in <code>_common</code>.</p>
+Small helpers shared by these live in <code>_common</code>. <code>_capacity</code> builds the
+capacity in service once per solve (<code>b.cap</code>, below); every family that
+reads an investment or a retirement takes its frames and sums from there.</p>
 <p><strong>Emit order is part of the LP.</strong> Row and column order decide which
 alternate optimum the solver returns, so moving a step in the table of
 contents (or a variable in <code>_declare_variables</code>) changes results on
@@ -2121,6 +2136,96 @@ grammar; <code>tests/docs/test_header_grammar.py</code> checks it):</p>
 <li><code>invest_*</code>, <code>retire_*</code>, <code>cumulative_*</code>, <code>invest_forced</code> and the capacity a
   construction lead time carries are MW (MWh) in every case. <code>v_invest</code> and
   <code>v_divest</code> are continuous, in units of <code>unitsize</code>.</li>
+<li>The capacity in service (<code>model/_capacity.py</code>, built once per solve from
+  the cohort table <code>preprocess/params/_cohorts.py</code>), in units of <code>unitsize</code>
+  (<code>state_unitsize</code> for a storage node):</li>
+<li><code>invested[e,d] = Σ_{d′ : (e,d′,d) ∈ alive} v_invest[e,d′]</code>: the
+    investments in service in <code>d</code> — the investment cohort <code>(e,d′)</code> is alive
+    in <code>d</code> when <code>y_on ≤ y[d] &lt; y_eol</code>, along the scenario lineage of a fan.
+    <code>y_on</code> is the start of operation (existing capacity:
+    <code>y_on = y[d0] − age</code>, <code>d0</code> the first period of the run, <code>age</code> from
+    <code>age_at_model_start</code> or <code>model.start_year − build_year</code>) and
+    <code>y_eol = round_end_of_life(y_on + lifetime_technical, end_of_life_method)</code>,
+    the <code>lifetime_technical</code> of the period the capacity comes online (<code>d0</code>
+    for existing capacity)
+    (<code>_run_calendar.round_end_of_life</code>: the nearer period start for
+    <code>closest_seam</code>, the default, a tie to the later one; the one at or after
+    it for <code>next_seam</code>, at or before it for <code>previous_seam</code>; within
+    <code>YEAR_TOL</code>; <code>+inf</code> for <code>reinvest_automatic</code>);</li>
+<li><code>prebuilt[e,d]</code>: the same over the cohorts in service from the start of
+    <code>d</code> (<code>y[d] &gt; y_on</code>), not starting to operate in <code>d</code>;</li>
+<li><code>retired[e,d] = Σ_{d′ : (e,d′,d) ∈ retired} v_divest[e,d′] + v_divested_built[e,d]</code>: a retirement
+    of existing capacity decided in <code>d′</code> counts in <code>d</code> when <code>y[d′] ≤ y[d]</code>
+    and the existing cohort of <code>e</code> is still in service in <code>d</code> (none for
+    <code>reinvest_automatic</code>, which has no end of life); <code>v_divested_built[e,d]</code>
+    is the model-built capacity retired so far that still counts in <code>d</code>
+    (<code>model/_retire_built.py</code>, <code>divestedBuilt</code>: the retirements
+    <code>v_divest_built[e,c,d′]</code> of each model-built cohort <code>c</code> of a
+    <code>reinvest_choice</code> / <code>no_reinvestment</code> entity, <code>(d′,d) ∈ dd_forward</code>, while
+    <code>c</code> is in service in <code>d</code>; one column per (entity, period) whatever the
+    number of cohorts; absent without such a cohort, so existing-only rows
+    keep their terms).  A cohort retires at most what it has
+    (<code>maxDivest_cohort</code>: the investment of this solve, or the carried size less
+    the carried retirements); a chain carries each retirement with its cohort
+    (handoff <code>realized_retire</code>), so the existing capacity's limit
+    (<code>maxRetired_existing</code>) counts only the existing cohort's;</li>
+<li><code>retired[e,d]</code> also subtracts <code>v_extended[e,d]</code>, the capacity extended beyond its end of life that is in
+    service in <code>d</code> (<code>model/_extend.py</code>, <code>extendedCapacity</code>: each extension <code>v_extend[e,c,d′]</code> of a cohort <code>c</code>
+    reaching its end of life at the start of an investment period <code>d′</code>, <code>(d′,d) ∈ dd_forward</code>, while
+    <code>y[d] &lt; y_eol(x)</code> of the extension cohort <code>x = extend:&lt;d′&gt;:&lt;c&gt;</code>).  It is a capacity term, never an
+    investment: the investment limits and <code>constraint_invested_capacity_coeff</code> do not count it.  A cohort
+    extends at most what it has in service at its end of life (<code>maxExtend_cohort</code>), once;</li>
+<li><code>cap[e,d] = existing[e,d] + invested[e,d] − retired[e,d]</code>.</li>
+<li><code>existing_mw[e,d]</code> (<code>p_entity_all_existing</code>, MW or MWh; the <code>existing</code> of
+  <code>cap</code> is <code>existing_mw / unitsize</code>) — the capacity a solve starts from, from
+  the cohorts (<code>_cohort_handoff.existing_capacity</code>, emitted per solve by
+  <code>_chain_params.emit_existing_capacity</code>):
+  <code>existing_mw[e,d] = pre[e,d] + carried[e,d] − retired_carried[e,d]</code>, with
+  <code>pre[e,d] = capacity[e,d]</code> while the existing cohort (counted from the start
+  of the run) is in service in <code>d</code>, <code>carried[e,d]</code> the cohorts earlier solves
+  of the run realised (handoff <code>realized_cohort</code>) in service in <code>d</code>, and
+  <code>retired_carried[e,d]</code> their realised retirements still counting in <code>d</code>
+  (handoff <code>realized_retire</code>).  The same formula in every solve: the first,
+  a chained, a roll, a nested sub-solve; the user's <code>existing</code> is read for
+  each period of each solve.</li>
+<li>The price of an investment cohort per year in service (<code>a_cap</code>, CUR/MW a
+  year, MWh for storage; column <code>a_cap</code> of the cohort table, carried by
+  <code>realized_cohort</code>; <code>_npv._per_method_annuity_lf</code>, <code>_annuity.level_factor</code>),
+  all values read at the period <code>c</code> the capacity comes online:
+  <code>A = invest_cost[e,c]·1000·r/(1 − (1+r)^−n)·(1+r)^(off_inv − 1)</code>
+  (<code>c·1000/n</code> for <code>r = 0</code>), <code>r = discount_rate[e,c]</code>, <code>n = payback_time[e,c]</code>
+  (else <code>lifetime_technical[e,c]</code>), <code>off_inv =
+  model.discount_offset_investment</code>;
+  <code>a_cap = A·G(n)/G(L)</code> with <code>L = lifetime_technical[e,c]</code>,
+  <code>G(x) = Σ_{k&lt;⌈x⌉} min(1, x−k)·(1+i)^−k</code>, <code>i = model.social_discount_rate</code>
+  (the investment payments are weighed by <code>inflation_inv[d]</code>, the social
+  discount factor of investment payments, at <code>discount_offset_investment</code>)
+  (<code>G(x) = x</code> for <code>i = 0</code>); <code>a_cap = A</code> when <code>n = L</code>.  The loan's present value spread evenly over the real
+  lifetime: one price for every build period, rounding and period length.
+  The timing factor <code>(1+r)^(off_inv − 1)</code> (<code>_annuity.annuity_factor</code>) makes
+  the loan worth <code>invest_cost</code> at <code>r</code> for every <code>discount_offset_investment</code>.
+  The salvage credit <code>a_salv = S·(1+r)^−L·af(r, L)</code> (<code>af</code> the annual factor
+  <code>annuity_factor</code>, <code>_annuity.salvage_credit</code>) with <code>S =
+  1000·net_salvage_value[e,d_eol]</code> (<code>_npv._level_prices_lf</code>) lowers the price: the
+  objective charges <code>a_cap − a_salv</code> over the cohort's periods in service
+  (<code>invest_cost_p</code> OBJ header).  A <code>reinvest_automatic</code> cohort is priced by its
+  <code>generation</code> rows: each plant of the chain at the values of the period it comes
+  online (<code>_npv.generation_prices</code>, <code>chain_lumps</code>; one price for the whole chain
+  with constant values, the annuity bit for bit); the replacement of existing
+  capacity as one plant (<code>existing_replacement_prices</code>), outside the default
+  objective (<code>existing_replacement</code> OBJ header), and its retirement settled by
+  <code>chain_retirement_costs</code>.  The cohort
+  also carries the loan (<code>pay = A</code>, <code>n_pay = n</code>, <code>r_loan = r</code>) and <code>nsv_eol = S</code>.
+  A life extension (kind <code>extend</code>, <code>parent</code> the cohort it extends) is priced as
+  one plant of its own (<code>_extend.extension_prices</code>): capital <code>E + S_c</code> (the
+  <code>life_extension_cost</code> and the parent's salvage value it gives up), loan over
+  <code>life_extension_years</code> at its <code>discount_rate</code>, its own salvage at the extended
+  end of life; its option costs <code>(a_cap − a_salv)·S̄</code> and its fixed cost over its
+  periods in service (<code>extend_cost</code> OBJ header), and its retirement is one of
+  model-built capacity.
+  The existing cohort carries <code>r_loan = r_x</code>, <code>a_salv = a_x</code> and <code>nsv_eol = S_x</code>
+  of its salvage credit (<code>_existing_salvage.existing_salvage</code>, <code>divest_cost_p</code> /
+  <code>existing_salvage</code> OBJ headers).</li>
 </ul>
 <h3 id="required-fields">Required fields</h3>
 <p>The data each feature needs is declared as module-level tuples at the
@@ -2293,7 +2398,7 @@ adds:</p>
 </tr>
 </tbody>
 </table>
-<p>In a stochastic solve every forecast branch period is an rp period with the timeset of the period it branches from (<code>_solve_writers._with_branch_period_timesets</code>); <code>rp_period_previous</code> is then a tree (a branch's first period ← the trunk period, later periods ← the same branch). A rolling_window solve on representative periods maps every blended method to <code>bind_forward_only</code> before the model (<code>_run_model._downgrade_blended_for_rolling_rp</code>, one warning per solve).</p>
+<p>In a stochastic solve every forecast branch period is an rp period with the timeset of the period it branches from (<code>_solve_writers._with_branch_period_timesets</code>); <code>rp_period_previous</code> is then a tree (a branch's first period ← the trunk period, later periods ← the same branch). A rolling_window solve on representative periods is a configuration error (<code>_run_model._reject_rolling_rp</code>), and so is a plain bind_forward_only node in a solve on representative periods (<code>_run_model._reject_plain_forward_in_rp_solve</code>). A plain bind_within_solve / bind_within_period / bind_intraperiod_blocks node there is a warning (<code>_run_model._warn_plain_cyclic_in_rp_solve</code>: the plain cycle moves the level between the representative periods unweighted while their flows are weighted, which is reasonable with equal weights or storage whose inflow timing does not matter; the weights are the user's to use).</p>
 <p>The three blended-weights methods that activate the block —
 <code>bind_within_solve_blended_weights</code>, <code>bind_within_period_blended_weights</code>,
 and <code>bind_forward_only_blended_weights</code> — are projected from the user-side
@@ -2363,12 +2468,56 @@ Provider.</p>
 <td><code>period_branch</code>, <code>pdt_branch_weight</code>, <code>pd_branch_weight</code> — stochastic branch weighting.</td>
 </tr>
 <tr>
+<td><code>_cohorts.py</code></td>
+<td>The cohort table (<code>cohort</code>, <code>cohort_alive</code>, <code>dd_forward</code>): the start of operation and end of life of the existing capacity and of each investment, the periods each is in service, the reach of a retirement; the <code>generation</code> rows of a <code>reinvest_automatic</code> chain (<code>chain_rows</code>: each plant that holds the root's capacity in turn, from its start of operation to its rounded end of life, at least one period each, to the end of the horizon; no capacity of their own); its views are the only lifetime gate (end of life, expired periods, investment alive / pre-built, retirement reach); <code>in_service</code> gives the model (<code>model/_capacity.py</code>) and the output readers the periods each investment and retirement counts in.</td>
+</tr>
+<tr>
+<td><code>_cohort_handoff.py</code></td>
+<td>The cohorts carried between the solves of a run: <code>realized_cohorts</code> writes the handoff <code>realized_cohort</code> / <code>realized_retire</code> (the realized investments, their chains and life extensions, and the retirements per cohort, chain-cumulative); <code>existing_capacity</code> sums the existing and the carried cohorts into the capacity a solve starts from.</td>
+</tr>
+<tr>
+<td><code>_extend.py</code></td>
+<td>The life extensions (<code>cd_extend</code>, <code>cdd_extend</code>, <code>cohort_extend</code>): each cohort that ends its life at the start of an investment period can be extended by <code>life_extension_years</code>; the extension cohort (<code>extend:&lt;period&gt;:&lt;parent&gt;</code>) and its periods in service join the cohort table; its prices and costs (<code>extension_prices</code>, <code>extension_costs</code>, <code>apply_extension_costs</code>), the one cost point.</td>
+</tr>
+<tr>
 <td><code>_existing.py</code></td>
 <td><code>p_entity_all_existing</code>, <code>p_entity_previously_invested_capacity</code> — cross-solve existing-capacity composition.</td>
 </tr>
 <tr>
 <td><code>_npv.py</code></td>
-<td>Annualized investment / divestment carriers feeding the objective.</td>
+<td>The investment price: the per-method annuity, the level prices, the chain and generation prices of <code>reinvest_automatic</code>, the investment lump <code>ed_entity_annual_discounted</code> (<code>apply_invest_lumps</code>) and the cohort prices.</td>
+</tr>
+<tr>
+<td><code>_fixed_costs.py</code></td>
+<td>The lifetime fixed costs: <code>ed_lifetime_fixed_cost</code>, the side a retirement saves <code>ed_lifetime_fixed_cost_divest</code> (<code>apply_retirement_fixed_cost</code>), <code>p_ed_fixed_cost</code>.</td>
+</tr>
+<tr>
+<td><code>_retire_settlement.py</code></td>
+<td>The retirement settlement of model-built cohorts and of <code>reinvest_automatic</code> chains (<code>cd_divest_built_cost</code> / <code>cd_divest_built_fixed</code>, <code>apply_built_retirement_costs</code>).</td>
+</tr>
+<tr>
+<td><code>_existing_salvage.py</code></td>
+<td>The salvage and replacement prices of existing capacity (<code>ed_divest_salvage</code>, <code>ed_existing_salvage_credit</code>; <code>apply_retirement_salvage</code>, <code>apply_existing_replacement</code>).</td>
+</tr>
+<tr>
+<td><code>_lifetime_inputs.py</code></td>
+<td>The per-entity readers and the per-decision lifetime inputs the lifetime costs share: entity class, <code>invest_method</code> / <code>lifetime_method</code>, the lifetime at the period a decision comes online, the raw fixed cost, the per-period walk (<code>period_walk_iterator</code>) and its window to the end of life, the registration of the lumps set as values.</td>
+</tr>
+<tr>
+<td><code>_discount.py</code></td>
+<td>Discount factors: the inflation scalars, the year rows, the per-period investment and operations factors (<code>p_inflation_op</code>), the solve's discount base from the run start (<code>solve_year_rows</code>), the run years (<code>run_years</code>).</td>
+</tr>
+<tr>
+<td><code>_report_lines.py</code></td>
+<td>Placing a reported cost event in a period (<code>report_years</code>, <code>event_period</code>, <code>stack_lines</code>).</td>
+</tr>
+<tr>
+<td><code>_run_costs.py</code></td>
+<td>The run-level fields of the reported costs (no model term reads them): the run's investment lump <code>ed_entity_annual_discounted_run</code> and cost lines, the run's discount factors <code>p_inflation_op_run</code> / <code>p_inflation_inv_run</code>, <code>p_entity_pre_existing</code>.</td>
+</tr>
+<tr>
+<td><code>_lifetime_costs.py</code></td>
+<td>The apply boundary: <code>apply_npv</code> (a Spine solve) and <code>apply_run_fields_of_synthetic_solve</code> (a roll or nested sub-solve) set the lifetime costs on <code>flex_data</code>.</td>
 </tr>
 <tr>
 <td><code>_profiles.py</code></td>
@@ -2484,9 +2633,9 @@ for the public-surface narrative and
 <a href="../architecture/#cross-solve-state-provider-keys--solvehandoff">Cross-solve state (Provider keys + SolveHandoff)</a>
 for the handoff-key family.</p>
 <h3 id="topological-ordering">Topological ordering</h3>
-<p>Emitters have dependencies — <code>_existing</code> reads
-<code>realized_invest</code> from prior solves' handoffs and <code>pd_invest_set</code>
-from <code>_period_params</code>; <code>_npv</code> reads
+<p>Emitters have dependencies — <code>_chain_params.emit_existing_capacity</code> reads
+<code>realized_cohort</code> from prior solves' handoffs, <code>_existing</code> reads <code>pd_invest_set</code>
+from <code>_period_params</code>; <code>_fixed_costs</code> reads
 <code>ed_lifetime_fixed_cost</code> which depends on <code>p_entity_all_existing</code>;
 <code>_block</code>'s overlap sets feed the arc-side block aggregation
 in <code>_arc_unions</code>.</p>
@@ -2499,7 +2648,7 @@ typically means appending one call to the right phase.</p>
 is the in-memory dict-of-frames that every cascade module reads from
 and writes to. Keys are declared in <code>_provider_keys.py</code>; the
 convention is <code>&lt;parent&gt;/&lt;basename&gt;</code> (e.g. <code>solve_data/foo</code>,
-<code>input/bar</code>, <code>handoff/realized_invest</code>). Bare-basename consumer
+<code>input/bar</code>, <code>handoff/realized_cohort</code>). Bare-basename consumer
 lookups are resolved against the parent-qualified key, so a single
 <code>put</code> registers the frame under one canonical name.</p>
 <p>Three key families:</p>
@@ -2596,7 +2745,7 @@ CI job <code>enum-mode</code>), and by hand <code>tools/lp_snapshot.py snapshot 
   fixture runs it; only the Benders / master-hosted region tests that
   load with <code>axis_enums=True</code> cover it.</li>
 <li>Intended narrowing casts null labels outside the scenario's
-  vocabulary: <code>d</code> casts of periods outside the solve (<code>_npv.py</code>,
+  vocabulary: <code>d</code> casts of periods outside the solve (<code>_retire_settlement.py</code>,
   <code>_derived.py</code>) and the <code>constraint</code> cast in <code>_spinedb_reader.py</code>. No
   LP effect in the fixtures; a site that needs such a label must not
   read it through the cast.</li>
@@ -2734,7 +2883,7 @@ user-facing story and the parameters that gate this path.</p>
 <p>When a solve is part of a cascade (rolling-window, nested, or stochastic
 sub-solves), each completed solve produces a <code>SolveHandoff</code> that seeds
 the next solve's preprocessing. The dataclass is in
-<code>solve/_handoff.py</code>; its eleven optional carriers are all
+<code>solve/_handoff.py</code>; its optional carriers are all
 <code>pl.DataFrame | None</code>:</p>
 <table>
 <thead>
@@ -2746,14 +2895,19 @@ the next solve's preprocessing. The dataclass is in
 </thead>
 <tbody>
 <tr>
-<td><code>realized_invest</code></td>
-<td><code>[entity, period, value]</code></td>
-<td>Capacity built in <em>this</em> solve, in absolute units.</td>
+<td><code>realized_cohort</code></td>
+<td><code>[entity, cohort, kind, method, eol_method, period_decided, period_online, y_on, age, y_life, y_end, y_first_life_end, y_eol, period_eol, a_cap, pay, n_pay, r_loan, a_salv, nsv_eol, root, parent, size]</code></td>
+<td>The investments realised by the run so far, one row per cohort (investment decision), chain-cumulative: the cohort-table row of the deciding solve (years of the run; a later solve compares its periods' run years with <code>y_on</code> / <code>y_eol</code>, no rounding repeated; <code>a_cap</code> / <code>a_salv</code> the capital price and the salvage credit per year in service, <code>pay</code> / <code>n_pay</code> / <code>r_loan</code> its loan, <code>nsv_eol</code> the salvage value at its end of life) and the size (MW, MWh); a <code>reinvest_automatic</code> cohort is followed by its <code>generation</code> rows (<code>root</code> the cohort, size empty: the plants of its chain and their prices, as the deciding solve placed them). A realized life extension is a row of its own (kind <code>extend</code>, <code>parent</code> the cohort it extends, its size): a later solve counts it as capacity (<code>p_entity_all_existing</code>) but not as previously invested capacity or as investment (<code>p_entity_invested</code>, the investment limits), retires it as model-built capacity, and offers its parent no other extension.</td>
 </tr>
 <tr>
-<td><code>realized_existing</code></td>
-<td><code>[entity, period, value]</code></td>
-<td>Resolved existing-capacity history per <code>(entity, period)</code>. Captures pre-existing decay + divest that <code>realized_invest</code> doesn't.</td>
+<td><code>realized_retire</code></td>
+<td><code>[entity, cohort, period, value]</code></td>
+<td>Retired capacity per cohort and realised decision period, chain-cumulative; counts while the cohort is in service.</td>
+</tr>
+<tr>
+<td><code>realized_commission</code></td>
+<td><code>[entity, period, commission_period, value]</code></td>
+<td>Realised investments with a construction lead time (coming online / in construction in a later solve).</td>
 </tr>
 <tr>
 <td><code>divest_cumulative</code></td>
@@ -2852,6 +3006,9 @@ on the child solve:</p>
         · pdt_branch_weight[d, t]</p>
 </li>
 </ul>
+<p>with <code>inflation_op[d]</code> (<code>p_inflation_op</code>, the social discount factor of
+  operating costs) = Σ over the years of <code>d</code> of the years' length ·
+  <code>(1 + social_discount_rate)^−(years from the run start + discount_offset_operations)</code>.</p>
 <p>The same parameter is also populated for any node whose
   <code>storage_binding_method</code> is <code>use_reference_price</code>, so the routing is
   unified and the dual carrier merely supplies values for the existing
@@ -2980,7 +3137,24 @@ blocks forward in every period on <code>block_forward_lag</code> (the
 roll uses in a period it holds in part), with the start in the first
 block's balance and the end pin on the last block.  So the start pin and
 the end pin never sit on one state: a cyclic node is pinned at its wrap
-target by <code>fix_start</code> only, and at its end by <code>fix_end</code> only.</p>
+target by <code>fix_start</code> only, and at its end by <code>fix_end</code> only.  In a solve
+on representative periods the mapping is <code>_FIX_START_END_FORWARD_RP</code>: a
+<code>bind_within_timeblock</code> fix_start_end node becomes
+<code>bind_forward_only_blended_weights</code> (plain <code>bind_forward_only</code> there is a
+configuration error, <code>_reject_plain_forward_in_rp_solve</code>, checked on the
+database methods before this mapping).</p>
+<p>Then <code>_run_model._timeblock_binds_within_period_in_roll</code> rewrites
+<code>bind_within_timeblock</code> to <code>bind_within_period</code> in a rolling solve
+(<code>_reject_rolling_with_gaps</code> has made sure each period is one timeblock),
+so the per-period rolling rule (<code>_scope_rows</code>, <code>scope_*</code> rows) applies to
+it.  Order per sub-solve: non-RP downgrade → <code>_reject_rolling_rp</code> /
+<code>_reject_rolling_with_gaps</code> / <code>_warn_plain_cyclic_in_rp_solve</code> /
+<code>_reject_plain_forward_in_rp_solve</code> → fix_start_end → rolling timeblock.
+<code>_restore_methods</code> captures the frame after these rewrites.</p>
+<p>Storage warnings and notices print one line per message type and complete
+solve, naming how many nodes and the first
+(<code>_behaviour_changes.storage_message</code>, <code>notice(..., solve=...)</code>); the
+values per node go to the <code>flextool.engine.storage</code> logger at debug level.</p>
 <h2 id="output-writer-shape-adaptation">Output-writer shape adaptation</h2>
 <p>The Phase E.1 work made the post-solve output writers in
 <code>flextool/process_outputs/read_parameters.py</code> shape-aware. The
@@ -3022,8 +3196,8 @@ empty because the thing they read was a file no normal run writes):</p>
   <code>solve_data/group_entity</code> ⋉ <code>solve_data/group_invest</code>, replacing a disk read of
   <code>input/group_entity_invest.csv</code> — a file only the retired GMPL model ever wrote.</li>
 </ul>
-<p>The five <code>solve_data/</code> handoff-mirror CSVs (<code>p_entity_divested</code>, <code>fix_storage_quantity</code>,
-<code>fix_storage_usage</code>, <code>p_roll_continue_state</code>, <code>p_entity_period_existing_capacity</code>) are write-only
+<p>The four <code>solve_data/</code> handoff-mirror CSVs (<code>p_entity_divested</code>, <code>fix_storage_quantity</code>,
+<code>fix_storage_usage</code>, <code>p_roll_continue_state</code>) are write-only
 debug output for <code>--csv-dump</code>, never read back by anything (<code>handoff_writers.py</code>'s module
 docstring); a plain run computes and writes none of them. <code>period_capacity.csv</code> is the one
 exception — written every run, unconditionally, always header-only (the per-period capacity dumps

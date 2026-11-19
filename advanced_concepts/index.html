@@ -452,6 +452,8 @@
       
         
       
+        
+      
     
     
     
@@ -796,6 +798,34 @@
     
   
     Parameter catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/warnings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Warnings and notes
   
 
     
@@ -1481,10 +1511,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#the-inflation-rate" class="md-nav__link">
+  <a href="#the-social-discount-rate" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The inflation rate
+        The social discount rate
       
     </span>
   </a>
@@ -1507,17 +1537,6 @@
     <span class="md-ellipsis">
       
         The discount rate (per technology)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#consistency-between-rates" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Consistency between rates
       
     </span>
   </a>
@@ -2712,10 +2731,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#the-inflation-rate" class="md-nav__link">
+  <a href="#the-social-discount-rate" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The inflation rate
+        The social discount rate
       
     </span>
   </a>
@@ -2738,17 +2757,6 @@
     <span class="md-ellipsis">
       
         The discount rate (per technology)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#consistency-between-rates" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Consistency between rates
       
     </span>
   </a>
@@ -2882,7 +2890,7 @@
 <td>CUR/kW</td>
 <td>Capacity margin</td>
 <td>No</td>
-<td>Cost per kW of capacity shortfall per period. Analogous to investment cost -- but not annualized. It still has operational inflation adjustment.</td>
+<td>Cost per kW of capacity shortfall per period. Analogous to investment cost -- but not annualized. It is still discounted like an operating cost.</td>
 </tr>
 </tbody>
 </table>
@@ -2890,45 +2898,71 @@
 <p>The capacity margin penalty is different from the others: it represents the cost of not having sufficient installed capacity. It is analogous to an investment cost (CUR/kW) but is NOT annualized over a lifetime like actual investments. Instead, it applies as a lump cost per period. This means a <code>penalty_capacity_margin</code> of 1000 CUR/kW is much more expensive than an <code>invest_cost</code> of 1000 CUR/kW (which would be annualized to roughly 50-100 CUR/kW/year depending on lifetime and discount rate). Set the penalty to reflect the annual cost of capacity shortfall, not the total investment cost.</p>
 <h2 id="economic-modelling">Economic Modelling</h2>
 <h3 id="overview">Overview</h3>
-<p>FlexTool minimizes total system cost over a planning horizon. The economic framework uses two key rates:</p>
+<p>FlexTool minimizes total system cost over a planning horizon. The economic framework uses two kinds of rate:</p>
 <ul>
-<li><strong><code>inflation_rate</code></strong> (model-level): Adjusts for general price level changes over time. Whether to use inlfation_rate depends on whether you use real or nominal values elsewhere in the input data - be consistent.</li>
-<li><strong><code>discount_rate</code></strong> (per technology): Reflects the financing cost and risk of each investment</li>
+<li><strong><code>social_discount_rate</code></strong> (model-level): the model's time discount rate. It weighs a cost or income in a later year less than the same amount now.</li>
+<li><strong><code>discount_rate</code></strong> (per technology): the investor's rate (WACC). It turns an <code>invest_cost</code> into yearly payments and reflects the financing cost and risk of each investment.</li>
 </ul>
 <h3 id="real-vs-nominal-values">Real vs nominal values</h3>
 <p>Economic values can be expressed in two ways:</p>
 <ul>
-<li><strong>Real (constant prices)</strong>: All values are expressed in today's money. A power plant that costs 1000 EUR/kW today still costs 1000 EUR/kW in 2040 in real terms -- the purchasing power is the same.</li>
-<li><strong>Nominal (current prices)</strong>: Values include inflation. The same plant might cost 1300 EUR/kW in 2040 at 2% annual inflation, even though its real cost hasn't changed.</li>
+<li><strong>Real (constant prices)</strong>: all values are in the money of one base year. A power plant that costs 1000 EUR/kW today still costs 1000 EUR/kW in 2040 in real terms: the purchasing power is the same.</li>
+<li><strong>Nominal (current prices)</strong>: values include inflation. The same plant might cost 1300 EUR/kW in 2040 at 2 % annual inflation, even though its real cost has not changed.</li>
 </ul>
-<p><strong>Example</strong>: A coal plant costs 1500 EUR/kW today. At 2% inflation:</p>
+<p><strong>The rule: every cost input and both rates are in the same terms.</strong> FlexTool never converts a rate or a price between real and nominal. The annuity, the salvage credits and the retirement settlement all assume one consistent basis, normally real prices with real rates.</p>
+<table>
+<thead>
+<tr>
+<th>Inputs</th>
+<th><code>social_discount_rate</code> (model)</th>
+<th><code>discount_rate</code> (entity)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Real (constant prices)</td>
+<td>the real time preference: 0 for none, or e.g. 0.03</td>
+<td>the real WACC, e.g. 0.05</td>
+</tr>
+<tr>
+<td>Nominal (current prices)</td>
+<td>(1 + inflation) × (1 + real time preference) − 1, e.g. 1.02 × 1.03 − 1 = 0.0506</td>
+<td>the nominal WACC, e.g. 0.07</td>
+</tr>
+</tbody>
+</table>
 <ul>
-<li>Real cost in 2035: 1500 EUR/kW (unchanged)</li>
-<li>Nominal cost in 2035: 1500 x (1.02)^10 = 1829 EUR/kW approximately</li>
+<li><strong><code>social_discount_rate</code> is the model's time discounting</strong>, in the terms of the inputs. 0 means no time preference: a cost in a later period weighs the same as the same cost now (with real inputs, inflation is already in the prices). Above 0, later costs and incomes weigh less. With nominal inputs it must include inflation (the combined rate above), or later nominal costs would weigh too much.</li>
+<li><strong>The entity <code>discount_rate</code> is the investor's rate of return (WACC)</strong>, in the same terms. It turns <code>invest_cost</code> into the yearly payments the investor needs. A risk premium belongs here, not in the <code>social_discount_rate</code>. With a <code>discount_rate</code> above the <code>social_discount_rate</code>, money paid back to the investor sooner is cheaper for the model: a shorter <code>payback_time</code> with the same <code>discount_rate</code> makes the investment cheaper, not dearer (and a retirement, which pays the rest of the loan at once, also changes the cost). With equal rates the timing of the investor's payments does not matter.</li>
 </ul>
-<p><strong>Rule</strong>: Never mix real and nominal values in the same model. If <code>inflation_rate</code> = 0, all inputs must be in real terms. If <code>inflation_rate</code> &gt; 0, all inputs must be in nominal terms.</p>
-<h3 id="the-inflation-rate">The inflation rate</h3>
-<p>The model-level <code>inflation_rate</code> parameter (default: 0) adjusts all future costs to a common price base. It applies uniformly to all cost types: investment costs, fuel costs, fixed O&amp;M, penalties, etc.</p>
-<ul>
-<li><strong>Real inputs</strong> (most common): Set <code>inflation_rate</code> = 0. All costs in all years use today's prices. A fuel cost of 50 EUR/MWh means the same purchasing power whether it occurs in 2025 or 2040. To discount future costs with a social discount rate, set <code>inflation_rate</code> to that rate instead (see <a href="#discounting-between-milestone-years">Discounting between milestone years</a>).</li>
-<li><strong>Nominal inputs</strong>: Set <code>inflation_rate</code> to expected inflation (e.g., 0.02 for 2%). The model deflates future costs: a nominal cost of 60 EUR/MWh in 2035 is treated as 60 / (1.02)^10 = 49.2 EUR/MWh approximately in today's money.</li>
-</ul>
-<p>The inflation rate applies via the factor <code>1 / (1 + inflation_rate)^years</code>. Investment costs are assumed to occur at the beginning of each year; operational costs at the middle of the year (adjustable with <code>inflation_offset_investment</code> and <code>inflation_offset_operations</code>).</p>
+<p>The Fisher equation relates the two: (1 + nominal rate) = (1 + real rate) × (1 + inflation); approximately, nominal = real + inflation (5 % + 2 % ≈ 7 %).</p>
+<h3 id="the-social-discount-rate">The social discount rate</h3>
+<p>The model-level <code>social_discount_rate</code> (no value: 0) weighs every cost and income by <code>1 / (1 + social_discount_rate)^t</code>, where <code>t</code> is the years from the start of the run to the moment the cost falls. It applies uniformly to all cost types: investment payments, fuel costs, fixed O&amp;M, penalties, salvage values, etc. The discounted costs are present values at that rate.</p>
+<p>The yearly investment payments fall at the start of each year by default (the annual payment is sized for that, see below) and operating costs at the middle of the year: <code>discount_offset_investment</code> (default 0) and <code>discount_offset_operations</code> (default 0.5) move them within the year.</p>
 <h3 id="discounting-between-milestone-years">Discounting between milestone years</h3>
-<p><strong>Only <code>inflation_rate</code> discounts.</strong> FlexTool discounts the costs of later periods (milestone years) with the <code>model</code> parameter <code>inflation_rate</code> and nothing else. Each period's costs are multiplied by a discount factor: the sum, over the years the period represents, of <code>1 / (1 + inflation_rate)^years_from_start</code>. The per-technology <code>discount_rate</code> does not discount between periods: it only turns an <code>invest_cost</code> into a yearly payment (see <a href="#the-discount-rate-per-technology">The discount rate</a>).</p>
-<p><strong>How the years are counted.</strong> The years from the start of the run come from <code>years_represented</code>: a period starts after the years that the periods before it represent. The period names are only labels, so <em>p2030</em> is not read as the year 2030. Give each milestone the number of years until the next milestone (for example 5 for <em>p2025</em> when the next period is <em>p2030</em>). Investment costs are discounted from the start of a year (<code>inflation_offset_investment</code>, default 0), operating costs from the middle of it (<code>inflation_offset_operations</code>, default 0.5).</p>
-<p><strong>With <code>inflation_rate</code> 0 there is no discounting.</strong> A cost in 2040 then weighs the same as the same cost in 2025: each period's yearly costs are only multiplied by its <code>years_represented</code>. This is right for a model in real terms that should not prefer earlier or later costs, but it is not what most planning studies want.</p>
-<p><strong>A social discount rate.</strong> In a model with real (constant-price) inputs, enter the social discount rate as <code>inflation_rate</code>, for example 0.05 for 5 %. The model applies the same factor whether the rate stands for inflation or for time preference, so the discounted costs are then present values at that rate. Keep the per-technology <code>discount_rate</code> at the real cost of capital of each technology. In a model with nominal inputs, use the combined rate: (1 + inflation) × (1 + social discount rate) − 1.</p>
+<p><strong>Only <code>social_discount_rate</code> discounts.</strong> FlexTool discounts the costs of later periods (milestone years) with the <code>model</code> parameter <code>social_discount_rate</code> and nothing else. Each period's costs are multiplied by a discount factor: the sum, over the years the period represents, of <code>1 / (1 + social_discount_rate)^years_from_start</code>. The per-technology <code>discount_rate</code> does not discount between periods: it only turns an <code>invest_cost</code> into a yearly payment (see <a href="#the-discount-rate-per-technology">The discount rate</a>).</p>
+<p><strong>How the years are counted.</strong> The years from the start of the run come from <code>years_represented</code>: a period starts after the years that the periods before it represent. The period names are only labels, so <em>p2030</em> is not read as the year 2030. Give each milestone the number of years until the next milestone (for example 5 for <em>p2025</em> when the next period is <em>p2030</em>). Investment payments are discounted from the start of a year (<code>discount_offset_investment</code>, default 0), operating costs from the middle of it (<code>discount_offset_operations</code>, default 0.5).</p>
+<p><strong>With <code>social_discount_rate</code> 0 there is no discounting.</strong> A cost in 2040 then weighs the same as the same cost in 2025: each period's yearly costs are only multiplied by its <code>years_represented</code>. This is right for a model that should not prefer earlier or later costs, but it is not what most planning studies want. Keep the per-technology <code>discount_rate</code> at the cost of capital of each technology in either case.</p>
 <p><strong>Where to see it.</strong> <code>summary_solve.csv</code> lists the <em>Operational discount factor</em> and the <em>Investment discount factor</em> of each period. The cost results come both annualized (one year of the period, not discounted) and discounted (present value over the years the periods represent); see <a href="../results/#costs">Costs</a>.</p>
 <h3 id="the-discount-rate-per-technology">The discount rate (per technology)</h3>
 <p>Each unit, connection, and storage node can have its own <code>discount_rate</code> parameter (default: 0.05, i.e., 5%). This represents the <strong>weighted average cost of capital (WACC)</strong> -- the return that investors require to finance the technology.</p>
-<p>The discount rate converts a lump-sum investment cost into annual payments over the technology's lifetime using the standard annuity formula:</p>
-<div class="highlight"><pre><span></span><code>annual_payment = invest_cost * discount_rate / (1 - (1 / (1 + discount_rate))^lifetime)
+<p>The discount rate converts a lump-sum investment cost into annual payments over the technology's payback time (<code>payback_time</code>, else its <code>lifetime_technical</code>) using the standard annuity formula:</p>
+<div class="highlight"><pre><span></span><code>annual_payment = invest_cost * discount_rate / (1 - (1 / (1 + discount_rate))^payback_time)
+                 * (1 + discount_rate)^(discount_offset_investment - 1)
 </code></pre></div>
-<p>A <code>discount_rate</code> of 0 gives the straight-line annuity <code>invest_cost / lifetime</code> (no interest). Without a value the rate is 0.05; a negative rate is an input error. The <code>lifetime</code> has no default: it is required when the entity invests or retires with a cost (<code>invest_cost</code>, <code>salvage_value</code>), and when its <code>lifetime_method</code> is <code>reinvest_choice</code> or <code>no_investment</code> (also for existing capacity without investment), since the capacity then ends after the lifetime.</p>
-<p>An <code>invest_method</code> other than <code>not_allowed</code> offers investment (retirement) in every investment period, also without an <code>invest_cost</code> (<code>salvage_value</code>) or where it is 0: that capacity has no annuity, and its <code>fixed_cost</code> still counts (a retirement saves it). A 0 in an <code>invest_cost</code> map therefore does not block investment in that period; to forbid investment in a period, use a period method (<code>invest_period</code>, <code>invest_period_total</code> or their <code>invest_retire_</code> forms) and set <code>invest_max_period</code> 0 for it; the other methods do not use <code>invest_max_period</code>. With neither <code>invest_cost</code> nor <code>fixed_cost</code> any invested amount is optimal, so the result is arbitrary. A zero-cost investment needs a <code>lifetime</code> only with <code>lifetime_method</code> <code>reinvest_choice</code> or <code>no_investment</code>.</p>
-<p><strong>Example</strong>: A solar plant costs 800 EUR/kW with a 25-year lifetime and 5% discount rate:
-<div class="highlight"><pre><span></span><code>annual_payment = 800 * 0.05 / (1 - 1/1.05^25) = 800 * 0.0710 = 56.8 EUR/kW/year approximately
+<p>The loan is taken when the capacity comes online (<code>invest_cost</code> is the overnight cost) and each yearly payment falls
+<code>discount_offset_investment</code> years into its service year: at the default 0 at the start of each year, the first one on
+the day the capacity comes online; at 1 at the end of each year. The last factor sizes the payments for that moment,
+so the payments are worth exactly <code>invest_cost</code> at the <code>discount_rate</code> whatever the offset. For example, invest cost
+1000, discount rate 5 % and payback time 10 years give 129.50 a year paid at year ends (offset 1) and 129.50 / 1.05 =
+123.34 a year paid at year starts (offset 0); both are worth 1000 when discounted at 5 % from the moment the capacity
+comes online. The same factor sizes the level salvage credit (below).</p>
+<p>With <code>lifetime_method</code> <em>reinvest_choice</em> or <em>no_reinvestment</em> the plant pays a level yearly cost over its real lifetime: the present value of the <code>payback_time</code> annual payments, discounted at the model <code>social_discount_rate</code>, spread evenly over the <code>lifetime_technical</code> years, <code>annual_payment · G(payback_time) / G(lifetime_technical)</code> with <code>G(x)</code> the discounted sum of x years (a fractional last year counts its fraction). It is paid for each year the capacity is in service, from the year it starts to operate to its end of life as <code>end_of_life_method</code> rounds it: a 12-year plant whose life is rounded to 10 years pays the yearly cost of the 12-year plant for 10 years, and one rounded to 15 years for 15. The price does not depend on when the plant is built or on the period lengths. <code>payback_time</code> and <code>discount_rate</code> set only its size: with <code>discount_rate</code> equal to <code>social_discount_rate</code> the yearly cost is the annuity over <code>lifetime_technical</code> whatever the payback time, with a <code>discount_rate</code> above it a shorter payback time is cheaper, and below it dearer (see <a href="#real-vs-nominal-values">real vs nominal values</a>). With <em>reinvest_automatic</em> the plant is replaced at its end of life by a new plant with the values of the period the replacement comes online, each plant paying its own level yearly cost (its salvage value netted in) for its years in service, to the end of the model horizon; with constant values, <code>payback_time</code> equal to <code>lifetime_technical</code> and no <code>net_salvage_value</code> this is the annual payment in every year. Years after the model horizon are not counted.</p>
+<p>The <code>net_salvage_value</code> at the end of the real lifetime lowers that yearly cost: its present value at <code>discount_rate</code> levelled over the <code>lifetime_technical</code> years, <code>net_salvage_value · (1 + discount_rate)^−lifetime_technical · annual factor</code>, the same annual factor as the investment (with <code>payback_time</code> equal to <code>lifetime_technical</code>, the textbook capital recovery with salvage). Existing capacity, whose investment is sunk, holds its salvage value as the same level credit over its service years from the model start. A retirement receives the whole <code>net_salvage_value</code> at the start of the retirement period and gives the credits back. Since years after the horizon are not counted, a retirement late in the horizon collects a salvage value whose credits a kept plant would earn mostly after the horizon, so it can pay; this is a consequence of the finite horizon, not a model error. In the cost results the <em>investment</em> and <em>salvage</em> of capacity that lives past the horizon are these horizon shares (see <a href="../results/#costs">Costs</a>).</p>
+<p>A <code>discount_rate</code> of 0 gives the straight-line annuity <code>invest_cost / payback_time</code> (no interest). Without a value the rate is 0.05; a negative rate is an input error. Neither lifetime has a default: an entity that invests or retires with a cost (<code>invest_cost</code>, <code>net_salvage_value</code>) needs a <code>payback_time</code> or a <code>lifetime_technical</code>, and one whose <code>lifetime_method</code> is <code>reinvest_choice</code> or <code>no_reinvestment</code> needs a <code>lifetime_technical</code> (also for existing capacity without investment), since the capacity then ends after it.</p>
+<p>An <code>invest_method</code> other than <code>not_allowed</code> offers investment (retirement) in every investment period, also without an <code>invest_cost</code> (<code>net_salvage_value</code>) or where it is 0: that capacity has no annuity, and its <code>fixed_cost</code> still counts (a retirement saves it). A 0 in an <code>invest_cost</code> map therefore does not block investment in that period; to forbid investment in a period, use a period method (<code>invest_period</code>, <code>invest_period_total</code> or their <code>invest_retire_</code> forms) and set <code>invest_max_period</code> 0 for it; the other methods do not use <code>invest_max_period</code>. With neither <code>invest_cost</code> nor <code>fixed_cost</code> any invested amount is optimal, so the result is arbitrary. A zero-cost investment needs a <code>lifetime_technical</code> only with <code>lifetime_method</code> <code>reinvest_choice</code> or <code>no_reinvestment</code>.</p>
+<p><strong>Example</strong>: A solar plant costs 800 EUR/kW with a 25-year lifetime and 5% discount rate, paid at the start of each year (the default <code>discount_offset_investment</code> 0):
+<div class="highlight"><pre><span></span><code>annual_payment = 800 * 0.05 / (1 - 1/1.05^25) * 1.05^(0 - 1) = 800 * 0.0710 / 1.05 = 54.1 EUR/kW/year approximately
 </code></pre></div></p>
 <p>Different technologies can have different discount rates reflecting their risk profiles:</p>
 <ul>
@@ -2936,37 +2970,10 @@
 <li>Medium risk (e.g., natural gas turbine): 5-7%</li>
 <li>High risk (e.g., novel technology): 8-12%</li>
 </ul>
-<h3 id="consistency-between-rates">Consistency between rates</h3>
-<p>The <code>discount_rate</code> and <code>inflation_rate</code> must use the same price basis across one model instance (either real or nominal):</p>
-<table>
-<thead>
-<tr>
-<th>Inputs</th>
-<th>inflation_rate</th>
-<th>discount_rate (entity)</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Real (constant prices)</td>
-<td>0, or the social discount rate</td>
-<td>Real WACC (e.g., 5%)</td>
-</tr>
-<tr>
-<td>Nominal (current and future prices)</td>
-<td>Expected inflation (e.g., 2%)</td>
-<td>Nominal WACC (e.g., 7%)</td>
-</tr>
-</tbody>
-</table>
-<p>The relationship between real and nominal rates follows the Fisher equation:
-<div class="highlight"><pre><span></span><code>(1 + nominal_rate) = (1 + real_rate) * (1 + inflation_rate)
-</code></pre></div>
-Approximation: nominal = real + inflation approximately (e.g., 5% + 2% = 7%).</p>
 <h3 id="fixed-costs">Fixed costs</h3>
 <p>Fixed costs (<code>fixed_cost</code> parameter on units, connections, and nodes) represent annual operation and maintenance costs that are incurred regardless of how much the asset is used. They are expressed in CUR/kW/year (or CUR/kWh/year for storage).</p>
-<p>For <strong>existing</strong> assets, fixed costs are applied each year with inflation adjustment.</p>
-<p>For <strong>invested</strong> assets, the fixed cost is paid in every period the new capacity operates within the model horizon: until its <code>lifetime</code> ends, or in every later period with <code>lifetime_method</code> <em>reinvest_automatic</em>. Each period's fixed cost is discounted like the other costs of that period. Years after the model horizon are not counted, the same as for the investment annuity, so the investment decision weighs the costs of the years the model covers. In the results, these costs are reported as a separate line item (<em>fixed cost invested</em>) from the investment annuity.</p>
+<p>For <strong>existing</strong> assets, fixed costs are applied each year, discounted like the operating costs.</p>
+<p>For <strong>invested</strong> assets, the fixed cost is paid in every period the new capacity operates within the model horizon: until its <code>lifetime_technical</code> ends, or in every later period with <code>lifetime_method</code> <em>reinvest_automatic</em> (the same years as the yearly investment cost, see above). It is the <code>fixed_cost</code> of each of those periods, as for existing capacity (a period map can let it rise with the age of the fleet), discounted like the other costs of that period. Years after the model horizon are not counted, the same as for the investment annuity, so the investment decision weighs the costs of the years the model covers. In the results, these costs are reported as a separate line item (<em>fixed cost invested</em>) from the investment annuity.</p>
 <h3 id="summary-of-economic-parameters">Summary of economic parameters</h3>
 <table>
 <thead>
@@ -2979,28 +2986,28 @@ Approximation: nominal = real + inflation approximately (e.g., 5% + 2% = 7%).</p
 </thead>
 <tbody>
 <tr>
-<td><code>inflation_rate</code></td>
+<td><code>social_discount_rate</code></td>
 <td>Model</td>
 <td>0</td>
-<td>General inflation rate. Set to 0 for real inputs.</td>
+<td>The model's time discount rate; 0 is no time preference</td>
 </tr>
 <tr>
-<td><code>inflation_offset_investment</code></td>
+<td><code>discount_offset_investment</code></td>
 <td>Model</td>
 <td>0</td>
-<td>When in the year investment costs occur (0 = start)</td>
+<td>Where in the year the yearly investment payments and salvage credits fall (0 = start, 1 = end); the annual payment is sized for it</td>
 </tr>
 <tr>
-<td><code>inflation_offset_operations</code></td>
+<td><code>discount_offset_operations</code></td>
 <td>Model</td>
 <td>0.5</td>
-<td>When in the year operational costs occur (0.5 = middle)</td>
+<td>Where in the year operating and fixed costs fall (0.5 = middle)</td>
 </tr>
 <tr>
 <td><code>discount_rate</code></td>
 <td>Entity</td>
 <td>0.05</td>
-<td>Technology-specific WACC for annualizing investments; 0 gives invest_cost / lifetime</td>
+<td>Technology-specific WACC for annualizing investments; 0 gives invest_cost / payback_time</td>
 </tr>
 <tr>
 <td><code>invest_cost</code></td>
@@ -3009,10 +3016,16 @@ Approximation: nominal = real + inflation approximately (e.g., 5% + 2% = 7%).</p
 <td>Overnight investment cost [CUR/kW]</td>
 </tr>
 <tr>
-<td><code>lifetime</code></td>
+<td><code>lifetime_technical</code></td>
 <td>Entity</td>
 <td>-</td>
-<td>Economic lifetime [years]; required when the entity invests or retires with a cost</td>
+<td>How long the capacity operates [years]; required when the entity invests or retires with a cost and has no <code>payback_time</code></td>
+</tr>
+<tr>
+<td><code>payback_time</code></td>
+<td>Entity</td>
+<td><code>lifetime_technical</code></td>
+<td>Years over which <code>invest_cost</code> is annualized</td>
 </tr>
 <tr>
 <td><code>fixed_cost</code></td>
@@ -3021,25 +3034,25 @@ Approximation: nominal = real + inflation approximately (e.g., 5% + 2% = 7%).</p
 <td>Annual fixed O&amp;M cost [CUR/kW/year]</td>
 </tr>
 <tr>
-<td><code>salvage_value</code></td>
+<td><code>net_salvage_value</code></td>
 <td>Entity</td>
 <td>-</td>
-<td>Residual value at end of life [CUR/kW]</td>
+<td>Scrap value minus decommissioning cost when the capacity stops operating [CUR/kW]</td>
 </tr>
 </tbody>
 </table>
 <h3 id="how-multi-year-periods-are-handled-internally">How multi-year periods are handled internally</h3>
 <p>A period can represent multiple years via the <code>years_represented</code> parameter on the solve entity. For example, a period <code>p2025</code> with <code>years_represented = 5</code> means that the modelled timeline (e.g., one representative week) stands in for 5 full years (2025-2029).</p>
-<p>Internally, FlexTool expands this into per-year entries. A period with <code>years_represented = 5</code> becomes 5 rows in the solve data, each representing 1 year at a different distance from the start of the run (the first period of the model's first solve; a later solve counts the years of the earlier solves' periods first). The inflation factor then sums the per-year inflation adjustments:</p>
-<div class="highlight"><pre><span></span><code>inflation_factor = Σ_y  p_years_represented[d,y] × 1/(1 + inflation_rate)^(years_from_run_start[d,y] + p_years_represented[d,y] × offset)
+<p>Internally, FlexTool expands this into per-year entries. A period with <code>years_represented = 5</code> becomes 5 rows in the solve data, each representing 1 year at a different distance from the start of the run (the first period of the model's first solve; a later solve counts the years of the earlier solves' periods first). The discount factor then sums the per-year discount factors:</p>
+<div class="highlight"><pre><span></span><code>discount_factor = Σ_y  p_years_represented[d,y] × 1/(1 + social_discount_rate)^(years_from_run_start[d,y] + p_years_represented[d,y] × offset)
 </code></pre></div>
-<p>where <code>years_from_run_start[d,y]</code> is the start of year <code>y</code> of period <code>d</code> (a fractional year counts as its fraction: after a period of 2.5 years the next one starts at 2.5) and <code>offset</code> is <code>inflation_offset_investment</code> or <code>inflation_offset_operations</code>.</p>
-<p>With <code>inflation_rate = 0</code>, each term contributes <code>p_years_represented[d,y] × 1 = 1</code>, and the sum equals <code>years_represented</code> (i.e., 5). With <code>inflation_rate = 2%</code>, each year is deflated slightly more, giving a sum of approximately 4.81.</p>
-<p>This mechanism also supports fractional values. With <code>years_represented = 0.5</code> (half-year resolution for investment decisions), the inflation factor is <code>0.5 × 1/(1+π)^y</code>, correctly counting only half a year of costs.</p>
+<p>where <code>years_from_run_start[d,y]</code> is the start of year <code>y</code> of period <code>d</code> (a fractional year counts as its fraction: after a period of 2.5 years the next one starts at 2.5) and <code>offset</code> is <code>discount_offset_investment</code> or <code>discount_offset_operations</code>.</p>
+<p>With <code>social_discount_rate = 0</code>, each term contributes <code>p_years_represented[d,y] × 1 = 1</code>, and the sum equals <code>years_represented</code> (i.e., 5). With <code>social_discount_rate = 2%</code>, each later year is discounted slightly more, giving a sum of approximately 4.81 (at offset 0).</p>
+<p>This mechanism also supports fractional values. With <code>years_represented = 0.5</code> (half-year resolution for investment decisions), the discount factor is <code>0.5 × 1/(1 + social_discount_rate)^y</code>, correctly counting only half a year of costs.</p>
 <p>In the objective function, operational costs follow this pattern:</p>
-<div class="highlight"><pre><span></span><code>cost_per_timestep × step_duration × inflation_factor / period_share_of_year
+<div class="highlight"><pre><span></span><code>cost_per_timestep × step_duration × discount_factor / period_share_of_year
 </code></pre></div>
-<p>where <code>period_share_of_year = hours_in_period / 8760</code> converts the modelled period to an annual equivalent, and the inflation factor then scales across all represented years. Investment costs follow a similar pattern using a separate inflation factor that accounts for investment timing.</p>
+<p>where <code>period_share_of_year = hours_in_period / 8760</code> converts the modelled period to an annual equivalent, and the discount factor then scales across all represented years. Investment costs follow a similar pattern using a separate discount factor that accounts for investment timing (<code>discount_offset_investment</code>).</p>
 <h3 id="using-periods-that-are-not-one-year-long">Using periods that are not one year long</h3>
 <p>A period does not have to represent exactly one year. It can be shorter
 (e.g. a half-year period for six-monthly investment decisions) or stand in

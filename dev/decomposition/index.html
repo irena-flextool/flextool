@@ -366,6 +366,18 @@
   </span>
 </a>
 </li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../reference/warnings/">
+<span class="md-ellipsis">
+    
+  
+    Warnings and notes
+  
+
+    
+  </span>
+</a>
+</li>
 </ul>
 </nav>
 </li>
@@ -2134,7 +2146,7 @@ solve dispatches within those decisions.</p>
   <code>define_solve_recursive</code> time and threads <code>ParentSolveInfo</code> into
   nested children.</li>
 <li>The parent's realised capacity / storage state rides
-  <code>SolveHandoff.realized_invest</code> / <code>realized_existing</code> /
+  <code>SolveHandoff.realized_cohort</code> / <code>realized_retire</code> /
   <code>fix_storage</code> / <code>fix_storage_timesteps</code>.</li>
 <li>The child's preprocessing reads from <code>state.handoffs[parent_name]</code>
   (in memory; there is no disk fallback).</li>

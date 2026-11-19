@@ -454,6 +454,8 @@
       
         
       
+        
+      
     
     
     
@@ -900,6 +902,34 @@
     
   
     Parameter catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../warnings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Warnings and notes
   
 
     
@@ -2590,10 +2620,10 @@
 <li><em>invest</em> and/or <em>retire</em> </li>
 <li>investment limits for each <em>period</em> and/or for all periods (<em>total</em>) or <em>no_limit</em> </li>
 <li><em>cumulative_limits</em> considers investments, retirements and existing together, requires <code>cumulative_max_capacity</code> and/or <code>cumulative_min_capacity</code></li>
-<li>any method other than <em>not_allowed</em> offers investment (retirement) in every investment period, also without <code>invest_cost</code> (<code>salvage_value</code>) or where it is 0: that capacity has no annuity, its <code>fixed_cost</code> still counts. To forbid investment in a period, use a <em>period</em> method (<em>invest_period</em>, <em>invest_period_total</em> and their <em>invest_retire_</em> forms) and set <code>invest_max_period</code> 0 for it: the other methods do not use <code>invest_max_period</code>. A 0 in an <code>invest_cost</code> map does not forbid it.</li>
+<li>any method other than <em>not_allowed</em> offers investment (retirement) in every investment period, also without <code>invest_cost</code> (<code>net_salvage_value</code>) or where it is 0: that capacity has no annuity, its <code>fixed_cost</code> still counts. To forbid investment in a period, use a <em>period</em> method (<em>invest_period</em>, <em>invest_period_total</em> and their <em>invest_retire_</em> forms) and set <code>invest_max_period</code> 0 for it: the other methods do not use <code>invest_max_period</code>. A 0 in an <code>invest_cost</code> map does not forbid it.</li>
 </ul>
 </li>
-<li><code>lifetime_method</code> to choose how the investments behave after unit runs out of lifetime. Automatic reinvestment (reinvest_automatic - default) causes the model to keep the capacity until the end of model horizon and applies the annualized investment cost until the end of model horizon without further choice by the model. Choice of reinvestment (reinvest_choice) removes the capacity at the end of the lifetime and the model needs to decide how much new capacity is to be built. One-shot investment (no_investment) allows the model to invest freely within the first-period lifetime window (subject to the usual invest_method / invest_max_period caps) but pins v_invest to zero for any period after that window — the asset retires once and cannot be rebuilt. Use for physical one-off additions such as plant refurbishments that cannot be repeated at the same cost. If there is a need to remove the possibility to invest after lifetime, then the investment limits can be used.</li>
+<li><code>lifetime_method</code> - What happens when capacity reaches the end of its <code>lifetime_technical</code>, as for units: <em>reinvest_automatic</em> (default) replaces it, without a model choice, by a new plant at the values of the period the replacement comes online, to the end of the horizon; <em>reinvest_choice</em> retires it and the model decides how much new capacity to build; <em>no_reinvestment</em> retires it and allows investment only during the first technical lifetime from the model start. See <a href="../units/#lifetime-age-and-end-of-life">lifetime, age and end of life</a>.</li>
 </ul>
 <h2 id="main-data-items-for-connections">Main data items for connections</h2>
 <ul>
@@ -2610,12 +2640,16 @@
 <li><code>constraint_online_coeff</code> - [unit of the constraint per unit online] A map of coefficients (Index: constraint name, value: coefficient). Puts the number of units of the connection online in each time step (both directions together) on the left side of the user constraint. One unit is <code>virtual_unitsize</code>; without it, the largest <code>existing</code> capacity, else 1000 MW — set <code>virtual_unitsize</code> on a connection that is invested in. Needs <code>startup_method</code> <em>linear</em> or <em>binary</em>; a coefficient on a connection without it is an error. With <em>linear</em> startup the number is continuous. For MW online, use the unit size as the coefficient. See <a href="../user_constraints/">User constraints</a>.</li>
 <li><code>other_operational_cost</code> - [CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, period, time or period+time.</li>
 <li><code>fixed_cost</code> - [CUR/kW/a] Annual fixed cost. New capacity pays it only while it operates. Constant or period.</li>
-<li><code>invest_cost</code> - [CUR/kW] Overnight investment cost of new capacity. It is paid as an annuity over the years the capacity operates. Construction time costs with their interest must be included here. Constant or period: the value of the period when the capacity is built (comes online) is used.</li>
-<li><code>discount_rate</code> - [e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk for this technology. Should be nominal when model <code>inflation_rate</code> &gt; 0, real when <code>inflation_rate</code> = 0. Constant or period.</li>
-<li><code>lifetime</code> - [years] Operating lifetime. It starts when the capacity starts to operate: with a construction lead time, after the construction. Used with the discount rate to calculate the annuity. What happens at the end of the lifetime depends on <code>lifetime_method</code>: <em>reinvest_automatic</em> keeps the capacity to the end of the model horizon, <em>reinvest_choice</em> retires it, <em>no_investment</em> retires it once. The <code>existing</code> capacity ends at the first year of the model run plus the <code>lifetime</code> of the first period (in every solve of a chain of solves). Constant or period.</li>
+<li><code>invest_cost</code> - [CUR/kW] Overnight investment cost of new capacity. It is annualized over <code>payback_time</code> with <code>discount_rate</code>; with <code>lifetime_method</code> <em>reinvest_choice</em> or <em>no_reinvestment</em> that annuity is spread evenly over <code>lifetime_technical</code> and paid for each year the capacity is in service (with <em>reinvest_automatic</em>: each replacement at the <code>invest_cost</code> of the period it comes online, for its years in service). Construction time costs with their interest must be included here. Constant or period: the value of the period when the capacity is built (comes online) is used.</li>
+<li><code>discount_rate</code> - [e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk for this technology. In the same terms as the cost inputs: a real rate for inputs in real prices, a nominal rate for nominal inputs. Not the model's <code>social_discount_rate</code>, which weighs costs over time. Constant or period.</li>
+<li><code>lifetime_technical</code> - [years] Technical lifetime: how long the capacity operates, from its start of operation (existing capacity: from the model start minus its age). Its end is rounded to a period start by <code>end_of_life_method</code>. Without <code>payback_time</code>, <code>invest_cost</code> is annualized over it. Constant or period: the value of the period the capacity comes online.</li>
+<li><code>payback_time</code> - [years] Years over which <code>invest_cost</code> is annualized with <code>discount_rate</code>; it sets only the size of the level yearly price the capacity pays over its <code>lifetime_technical</code> (see <a href="../units/#discount-calculations">discount calculations</a>). No value: <code>lifetime_technical</code>. Constant or period.</li>
+<li><code>age_at_model_start</code> - [years] or <code>build_year</code> - [year] (with the <code>model</code> parameter <code>start_year</code>): the age of the existing capacity at the model start, which shortens its remaining life. Give one, not both. Constant.</li>
+<li><code>end_of_life_method</code> - How an end of life inside a period is rounded to a period start: <em>closest_seam</em> (default), <em>previous_seam</em> (for capacity-adequacy studies) or <em>next_seam</em>, as for units.</li>
 <li><code>construction_lead_time</code> - [years] Time from the investment decision until the capacity starts to operate. The start is rounded to the start of a period (see <code>construction_lead_time_method</code>). Investments whose rounded start is after the end of the solve or the model horizon are not offered, with a warning. Constant or period. Default 0. See <a href="../../how_to/investment/#how-to-make-investments-storageunit">construction lead time</a>.</li>
 <li><code>construction_lead_time_method</code> - How the start of operation (decision year plus <code>construction_lead_time</code>) is rounded to the start of a period: <em>immediate</em> (no lead time, the capacity operates from the decision period), <em>closest_seam</em> (the nearest period start; a tie goes to the later one), <em>previous_seam</em> (the period start before), <em>next_seam</em> (the period start after). Without a value: <em>immediate</em> when there is no lead time, else <em>closest_seam</em>.</li>
-<li>other investment parameters: <code>invest_max_total</code>, <code>invest_max_period</code>, <code>invest_min_total</code>, <code>invest_min_period</code>, <code>salvage_value</code> (only <code>existing</code> capacity can be retired, see <a href="../units/#retirements">retirements</a>) As for units, <code>inf</code> in <code>invest_max_period</code>, <code>retire_max_period</code> or <code>cumulative_max_capacity</code> means no limit in that period, and 0 or <code>-inf</code> in a minimum no minimum.</li>
+<li><code>life_extension_cost</code> - [CUR/kW] and <code>life_extension_years</code> - [years]: capacity reaching the end of its <code>lifetime_technical</code> can be kept in service <code>life_extension_years</code> longer for a one-off <code>life_extension_cost</code>, as for units, with <code>lifetime_method</code> <em>reinvest_choice</em> or <em>no_reinvestment</em> (see <a href="../units/#life-extension">life extension</a>). Give both or neither. Constant or period: the value of the period the extension starts in.</li>
+<li>other investment parameters: <code>invest_max_total</code>, <code>invest_max_period</code>, <code>invest_min_total</code>, <code>invest_min_period</code>, <code>retire_max_total</code>, <code>retire_max_period</code>, <code>retire_min_total</code>, <code>retire_min_period</code>, <code>net_salvage_value</code> (an income received in full when capacity is retired, and a level yearly credit in the yearly price of capacity kept to its end of life; <code>existing</code> capacity can be retired with an <code>invest_method</code> that allows retirement, and with <em>invest_retire_…</em> or <em>cumulative_limits</em> also the capacity the model builds; see <a href="../units/#retirements">retirements</a>). As for units, <code>inf</code> in <code>invest_max_period</code>, <code>retire_max_period</code> or <code>cumulative_max_capacity</code> means no limit in that period, and 0 or <code>-inf</code> in a minimum no minimum.</li>
 <li><code>is_DC</code> - A flag whether the connection is DC: its flow into a node of a group with a <em>non_synchronous_limit</em> counts as non-synchronous (both directions; between two nodes of the same group it does not count). Default false. An <code>is_DC</code> connection inside a <code>dc_power_flow_with_angles</code> group is not a DC power-flow line: it keeps its own <code>transfer_method</code> and needs no <code>reactance</code>.</li>
 <li><code>virtual_unitsize</code> - [MW] Size of one unit of the connection. With it, <code>existing</code> is the number of units. Binary startups commit whole units of this size. Investments and retirements are continuous; their limits are in MW. No value: the existing capacity, or 1000 MW without it.</li>
 <li><code>availability</code> - [e.g. 0.9 means 90%] Fraction of capacity available for connection flows. Constant, period, time or period+time.</li>

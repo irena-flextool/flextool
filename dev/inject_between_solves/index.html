@@ -452,6 +452,8 @@
       
         
       
+        
+      
     
     
     
@@ -796,6 +798,34 @@
     
   
     Parameter catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/warnings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Warnings and notes
   
 
     
@@ -2683,7 +2713,7 @@ Python wrapper substitute values for any of those handoff carriers
 <p>Typical wrappers:</p>
 <ul>
 <li>An outer model in a bi-level setup writes a Parquet file with target
-  capacities; the wrapper reads it and overrides <code>realized_invest</code>.</li>
+  capacities; the wrapper reads it and overrides <code>realized_cohort</code>.</li>
 <li>A market simulator runs between two operational solves; the wrapper
   feeds an updated <code>cumulative_co2</code> or <code>cumulative_commodity</code> ladder
   into the second solve.</li>
@@ -2716,8 +2746,11 @@ handoff translators and before preprocessing. Returning <code>{}</code> (or
 (<code>translate_overrides_to_provider</code>, <code>read_handoff_frame</code>,
 <code>dump_provider_sources</code>).</p>
 <h2 id="whitelisted-handoff-keys">Whitelisted handoff keys</h2>
-<p>Only the 11 keys below are overridable. Supplying any other key raises
-<code>ValueError</code> in <code>translate_overrides_to_provider</code>. The constants live
+<p>Only the keys below are overridable. Supplying any other key raises
+<code>ValueError</code> in <code>translate_overrides_to_provider</code>; so do the retired keys
+<code>handoff/realized_invest</code> / <code>handoff/realized_existing</code> (the message names
+<code>K.HANDOFF_REALIZED_COHORT</code>) and <code>handoff/realized_divest</code> (it names
+<code>K.HANDOFF_REALIZED_RETIRE</code>). The constants live
 in <code>flextool.engine.preprocess._provider_keys</code>; import as
 <code>from flextool.engine.preprocess import _provider_keys as K</code>.</p>
 <table>
@@ -2730,14 +2763,14 @@ in <code>flextool.engine.preprocess._provider_keys</code>; import as
 </thead>
 <tbody>
 <tr>
-<td><code>K.HANDOFF_REALIZED_INVEST</code></td>
-<td>Realised investment decisions carried into the next solve's "previously invested capacity"</td>
-<td><code>entity, period, value</code></td>
+<td><code>K.HANDOFF_REALIZED_COHORT</code></td>
+<td>The investments realised by the earlier solves, one row per cohort (investment decision): its start of operation and end of life (years of the run) and its size; a <code>reinvest_automatic</code> cohort is followed by the <code>generation</code> rows of its replacements (<code>root</code> the cohort, no size), which price the chain and hold no capacity; a life extension (kind <code>extend</code>, <code>parent</code> the cohort it extends) is a cohort of its own with its size, capacity but never an investment (<code>invest_max_total</code> does not count it). The next solve's capacity is the user's <code>existing</code> of each period plus the cohorts in service there</td>
+<td><code>entity, cohort, kind, method, eol_method, period_decided, period_online, y_on, age, y_life, y_end, y_first_life_end, y_eol, period_eol, a_cap, pay, n_pay, r_loan, a_salv, nsv_eol, root, parent, size</code></td>
 </tr>
 <tr>
-<td><code>K.HANDOFF_REALIZED_EXISTING</code></td>
-<td>Realised existing (non-decision) capacity adjustments</td>
-<td><code>entity, period, value</code></td>
+<td><code>K.HANDOFF_REALIZED_RETIRE</code></td>
+<td>Retired capacity per cohort and decision period (counts while the cohort is in service)</td>
+<td><code>entity, cohort, period, value</code></td>
 </tr>
 <tr>
 <td><code>K.HANDOFF_DIVEST_CUMULATIVE</code></td>
@@ -2847,7 +2880,7 @@ configuration is the same (<code>_reuse_blocker</code> in <code>solve/_warm.py</
 Concretely:</p>
 <ul>
 <li>An override that changes anything preprocessing computes (for example
-  <code>K.HANDOFF_REALIZED_INVEST</code> at iteration N changes
+  <code>K.HANDOFF_REALIZED_COHORT</code> at iteration N changes
   <code>p_entity_previously_invested_capacity</code>) makes iteration N's <code>FlexData</code>
   differ, so iteration N builds its own LP: the override always reaches
   the LP matrix, the objective and the right-hand sides.</li>
@@ -2868,9 +2901,9 @@ it was meant to (and didn't fire on the ones it wasn't).</p>
 <h2 id="example-wrapper">Example wrapper</h2>
 <p>A wrapper script that reads override frames from a directory of
 Parquet files. Each file is named <code>&lt;scenario&gt;__&lt;solve_name&gt;.parquet</code>
-and contains a single override frame for <code>realized_invest</code>. Files that
+and contains a single override frame for <code>realized_cohort</code>. Files that
 don't exist are treated as "no override for that iteration".</p>
-<div class="highlight"><pre><span></span><code><span class="sd">"""Run a FlexTool cascade with realized_invest overrides supplied</span>
+<div class="highlight"><pre><span></span><code><span class="sd">"""Run a FlexTool cascade with realized_cohort overrides supplied</span>
 <span class="sd">by an external tool that drops Parquet files into a watch directory.</span>
 
 <span class="sd">Usage:</span>
@@ -2919,16 +2952,26 @@ don't exist are treated as "no override for that iteration".</p>
             <span class="k">return</span> <span class="p">{}</span>
 
         <span class="n">frame</span> <span class="o">=</span> <span class="n">pl</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span><span class="n">parquet</span><span class="p">)</span>
-        <span class="c1"># Ensure the schema matches what the handoff translator wrote</span>
-        <span class="c1"># for an empty realized_invest carrier:</span>
-        <span class="c1">#     (entity, period, value).  Cast value to Utf8 to match</span>
-        <span class="c1"># the CSV-roundtrip contract (polars also accepts Float64).</span>
+        <span class="c1"># One row per investment cohort, the columns of the</span>
+        <span class="c1"># realized_cohort carrier (start from a captured</span>
+        <span class="c1"># SolveHandoff.realized_cohort and change its sizes): the</span>
+        <span class="c1"># cohort id ``invest:&lt;decision period&gt;``, the start of operation</span>
+        <span class="c1"># ``y_on`` and end of life ``y_eol`` in years of the run, the</span>
+        <span class="c1"># capital price per year in service ``a_cap`` and the salvage</span>
+        <span class="c1"># credit ``a_salv`` (CUR/MW), the loan's payment ``pay``, years</span>
+        <span class="c1"># ``n_pay`` and rate ``r_loan``, the end-of-life salvage value</span>
+        <span class="c1"># ``nsv_eol``, ``root`` (the cohort a ``generation`` row of a</span>
+        <span class="c1"># reinvest_automatic chain belongs to; a cohort's own id),</span>
+        <span class="c1"># ``parent`` (the cohort a life extension ``extend:&lt;period&gt;:&lt;cohort&gt;``</span>
+        <span class="c1"># extends; empty on every other row) and ``size`` in MW (MWh for</span>
+        <span class="c1"># storage; empty on a generation row).</span>
         <span class="n">frame</span> <span class="o">=</span> <span class="n">frame</span><span class="o">.</span><span class="n">select</span><span class="p">(</span>
-            <span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">"entity"</span><span class="p">)</span><span class="o">.</span><span class="n">cast</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">Utf8</span><span class="p">),</span>
-            <span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">"period"</span><span class="p">)</span><span class="o">.</span><span class="n">cast</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">Utf8</span><span class="p">),</span>
-            <span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">"value"</span><span class="p">)</span><span class="o">.</span><span class="n">cast</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">Utf8</span><span class="p">),</span>
+            <span class="s2">"entity"</span><span class="p">,</span> <span class="s2">"cohort"</span><span class="p">,</span> <span class="s2">"kind"</span><span class="p">,</span> <span class="s2">"method"</span><span class="p">,</span> <span class="s2">"eol_method"</span><span class="p">,</span>
+            <span class="s2">"period_decided"</span><span class="p">,</span> <span class="s2">"period_online"</span><span class="p">,</span> <span class="s2">"y_on"</span><span class="p">,</span> <span class="s2">"age"</span><span class="p">,</span> <span class="s2">"y_life"</span><span class="p">,</span>
+            <span class="s2">"y_end"</span><span class="p">,</span> <span class="s2">"y_first_life_end"</span><span class="p">,</span> <span class="s2">"y_eol"</span><span class="p">,</span> <span class="s2">"period_eol"</span><span class="p">,</span> <span class="s2">"a_cap"</span><span class="p">,</span> <span class="s2">"pay"</span><span class="p">,</span>
+            <span class="s2">"n_pay"</span><span class="p">,</span> <span class="s2">"r_loan"</span><span class="p">,</span> <span class="s2">"a_salv"</span><span class="p">,</span> <span class="s2">"nsv_eol"</span><span class="p">,</span> <span class="s2">"root"</span><span class="p">,</span> <span class="s2">"parent"</span><span class="p">,</span> <span class="s2">"size"</span><span class="p">,</span>
         <span class="p">)</span>
-        <span class="k">return</span> <span class="p">{</span><span class="n">K</span><span class="o">.</span><span class="n">HANDOFF_REALIZED_INVEST</span><span class="p">:</span> <span class="n">frame</span><span class="p">}</span>
+        <span class="k">return</span> <span class="p">{</span><span class="n">K</span><span class="o">.</span><span class="n">HANDOFF_REALIZED_COHORT</span><span class="p">:</span> <span class="n">frame</span><span class="p">}</span>
 
     <span class="k">return</span> <span class="n">fetch_override</span>
 
@@ -2969,7 +3012,7 @@ override fired on the expected iterations.</p>
 author. Whoever invokes <code>run_chain_from_db</code> already has full Python
 execution privileges in the same process, so the override hook
 introduces no new injection surface — anything the callable could do,
-the wrapper script itself could already do. The 11-key whitelist
+the wrapper script itself could already do. The key whitelist
 constrains <em>what cascade state</em> the returned dict can substitute, not
 <em>what code can run inside the callable</em>. No <code>eval</code> / <code>exec</code> /
 <code>importlib</code> machinery is involved on the FlexTool side; the callable

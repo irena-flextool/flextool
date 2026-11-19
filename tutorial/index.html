@@ -804,6 +804,8 @@
       
         
       
+        
+      
     
     
     
@@ -1148,6 +1150,34 @@
     
   
     Parameter catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/warnings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Warnings and notes
   
 
     
@@ -3265,11 +3295,14 @@
 <ul>
 <li><code>invest_method</code> = <em>invest_no_limit</em> — the model may build any amount of new capacity.</li>
 <li><code>invest_cost</code> = <code>1000</code> — the overnight cost of new capacity [CUR/kW].</li>
-<li><code>lifetime</code> = <code>25</code> — years.</li>
+<li><code>lifetime_technical</code> = <code>25</code> — years the new capacity operates. Without a <code>payback_time</code>, the investment is also
+  paid back over these years.</li>
 <li><code>discount_rate</code> = <code>0.04</code> — the cost of capital, 4 %.</li>
 </ul>
-<p>The model turns the investment cost into a yearly payment (an annuity) over the lifetime:
-1000 × 0.04 / (1 − 1.04^−25) ≈ 64 CUR/kW per year.</p>
+<p>The model turns the investment cost into a yearly payment (an annuity) over the payback time, here the technical
+lifetime:
+1000 × 0.04 / (1 − 1.04^−25) / 1.04 ≈ 61.5 CUR/kW per year, paid at the start of each year (the <code>/ 1.04</code> makes the
+payments worth the 1000 CUR/kW at 4 % when the capacity starts to operate).</p>
 <p>On the solve <em>2day-dispatch</em> (under <em>wind_invest</em>):</p>
 <ul>
 <li><code>invest_periods</code> = an array with <em>p2020</em> — the periods in which the model may invest.</li>
@@ -3279,7 +3312,7 @@
 <p>Create a scenario <em>wind_invest</em> with alternatives <em>init</em>, <em>init_2day-test</em>, <em>west</em>, <em>coal</em>, <em>wind</em>, <em>network</em>, <em>wind_invest</em>. Commit, queue, execute. In the results:</p>
 <ul>
 <li><strong>Capacity.</strong> The unit capacity table (<code>unit_capacity__d</code>) shows the <em>existing</em> capacity of <em>wind_plant</em>, the capacity <em>invested</em> and the <em>total</em>. The model builds wind until one more MW would save less in fuel and penalties than its annuity.</li>
-<li><strong>Costs.</strong> The annualized costs (<code>annualized_costs__d</code>) now have a <em>unit investment &amp; retirement</em> category: the annuity of the new capacity for one year, in M CUR.</li>
+<li><strong>Costs.</strong> The annualized costs (<code>annualized_costs__d</code>) now have an <em>investment</em> category: in this one-year period, the annuity of the new capacity for its one year in the model, in M CUR.</li>
 <li><strong>Dispatch.</strong> Compare <em>network</em> and <em>wind_invest</em> in the comparison view: more wind output and less coal.</li>
 </ul>
 <div class="admonition note">
