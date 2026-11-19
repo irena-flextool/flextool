@@ -146,12 +146,17 @@ def interpret_optimal(facts: dict[str, Any] | None, *, is_mip: bool) -> SolverNo
     return None
 
 
-def note_solver_outcome(sol: Any, acceptance: Any, *, solve_name: str, solver: str, noted: set) -> None:
-    """Print the note on *sol*'s accepted solve (see the module docstring), once per code and complete solve.
+#: Codes noted once per run (not once per solve): the generic note on HiGHS's IPX warnings.
+_ONCE_PER_RUN = frozenset({IPM_RELATIVE_ONLY})
 
-    *noted* holds the ``(code, solve)`` pairs already printed in this run; a later roll of the same solve with the
-    same outcome only goes to the debug log.  Prints at once (flushes an open ``collecting()`` scope), so the
-    note stands next to the solver's output it explains.
+
+def note_solver_outcome(sol: Any, acceptance: Any, *, solve_name: str, solver: str, noted: set) -> None:
+    """Print the note on *sol*'s accepted solve (see the module docstring), once per code and complete solve
+    (:data:`IPM_RELATIVE_ONLY`, the generic one: once per run).
+
+    *noted* holds the ``(code, solve)`` pairs already printed in this run (``solve`` ``None`` for a once-per-run
+    code); a later roll of the same solve with the same outcome only goes to the debug log.  Prints at once
+    (flushes an open ``collecting()`` scope), so the note stands next to the solver's output it explains.
     """
     from flextool import run_warnings
 
@@ -168,8 +173,8 @@ def note_solver_outcome(sol: Any, acceptance: Any, *, solve_name: str, solver: s
         return
     if found is None:
         return
-    complete = run_warnings._complete_solve(solve_name) or solve_name
-    key = (found.code, complete)
+    complete = run_warnings.complete_solve(solve_name) or solve_name
+    key = (found.code, None if found.code in _ONCE_PER_RUN else complete)
     if key in noted:
         _LOGGER.debug("%s also in '%s': %s", found.code, solve_name, found.detail)
         return

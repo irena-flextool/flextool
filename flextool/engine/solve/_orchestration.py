@@ -191,7 +191,7 @@ def _log_cold_rebuild(logger: logging.Logger, logged: set, solve: str, reason: s
     """The warm LP reuse of a roll fell back to a cold rebuild (*reason*: the first FlexData field that differs).
     The normal outcome for every roll of a rolling solve (``dt`` shifts), so one INFO line per complete solve and
     reason; the other rolls go to the debug log."""
-    base = re.sub(r"_roll_\d+$", "", solve)
+    base = run_warnings.complete_solve(solve)
     key = (base, reason)
     if key in logged:
         logger.debug("warm reuse fell back to a cold rebuild for %s: %s", solve, reason)
@@ -4866,11 +4866,16 @@ def _drive_cascade(
             elif _acc.near_optimal:
                 self.state.logger.info(_acc.message)
             # One ``Note:`` on what a not-clean HiGHS outcome means for the
-            # results (W-0540..W-0542), once per complete solve.
-            note_solver_outcome(
-                sol, _acc, solve_name=complete_solve_name, solver=_active_solver_cfg.name,
-                noted=self.state.__dict__.setdefault("_solver_outcome_noted", set()),
-            )
+            # results (W-0540..W-0542), once per complete solve.  Diagnostic
+            # only: a failure in it must not fail a run that has solved.
+            try:
+                note_solver_outcome(
+                    sol, _acc, solve_name=complete_solve_name, solver=_active_solver_cfg.name,
+                    noted=self.state.__dict__.setdefault("_solver_outcome_noted", set()),
+                )
+            except Exception:  # noqa: BLE001
+                logging.getLogger(__name__).debug(
+                    "the solver-outcome note of %s failed", complete_solve_name, exc_info=True)
             if _active_solver_cfg.name == "highs" and _acc.model_status == "kOptimal":
                 # A HiGHS MIP treats ``objective_bound`` as a cutoff and calls
                 # the best solution within it optimal.  Every roll of a solve

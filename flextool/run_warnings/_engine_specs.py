@@ -400,6 +400,7 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
         title="Optimal within a multiple of the relative tolerances",
         topic=_SOLVER,
         severity=NOTE,
+        entityless=True,
         body=(
             "HiGHS called the solve optimal, although its solution misses some of HiGHS's tolerances (by default "
             "1e-7) also in relative terms, by up to the factor given (HiGHS's own log says `Model status is "
@@ -417,10 +418,12 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
     ),
     WarningSpec(
         code="W-0541",
-        message="solve '{solve}' used interior point without crossover; HiGHS warnings expected",
+        message=("these HiGHS IPX warnings ('imprecise', 'Unwelcome IPX status', 'Model status changed from Unknown "
+                 "to Optimal') are expected in this solver mode and the solve was accepted by FlexTool's checks"),
         title="Interior point without crossover: HiGHS's tolerance warnings",
         topic=_SOLVER,
         severity=NOTE,
+        entityless=True,
         body=(
             "The solve ran the interior-point method without crossover (`solver` = `ipm`, `run_crossover` = "
             "`off`) and HiGHS called the result optimal. Such a solution is an interior point, not a vertex, and "
@@ -440,11 +443,14 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "up to about 10 means the flows, storage levels and costs are accurate to about a millionth of their "
             "size, far below the accuracy of any input data.\n\n"
             "The results are usable. The duals (prices) are less exact than the primal values: small price "
-            "differences between equivalent nodes or time steps can be numerical noise. FlexTool cannot read "
-            "HiGHS's log, and when polar-high's autoscale has scaled the problem (`user_objective_scale` / "
-            "`user_bound_scale` in the HiGHS log), HiGHS keeps only part of these checks in what it reports to "
-            "FlexTool; so this note is given for every such solve, also one that HiGHS solved without warnings. "
-            "When the reported checks are complete and clean, there is no note. Each solve is noted once.\n\n"
+            "differences between equivalent nodes or time steps can be numerical noise.\n\n"
+            "The note is printed **once per run**, after the first interior-point solve without crossover whose "
+            "solution HiGHS reports as not certainly clean; it covers the same HiGHS warnings of the later solves "
+            "of the run, which go to the debug log only. FlexTool cannot read HiGHS's log, and when polar-high's "
+            "autoscale has scaled the problem (`user_objective_scale` / `user_bound_scale` in the HiGHS log), "
+            "HiGHS keeps only part of these checks in what it reports to FlexTool, so the note can appear also "
+            "when HiGHS printed none of these warnings. When the reported checks are complete and clean, there is "
+            "no note. A solve whose relative tolerances are missed gets its own note, W-0540.\n\n"
             "**How to fix:** usually nothing. If a certified optimum matters: " + _CROSSOVER_FIX
         ),
     ),
@@ -454,6 +460,7 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
         title="Near-optimal solve accepted",
         topic=_SOLVER,
         severity=NOTE,
+        entityless=True,
         body=(
             "HiGHS ended the solve with model status `Unknown`: after an interior-point solve without crossover, "
             "postsolve left the dual objective slightly inconsistent, so HiGHS cannot certify the optimum. "

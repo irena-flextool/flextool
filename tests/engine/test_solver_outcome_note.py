@@ -88,13 +88,30 @@ def test_once_per_complete_solve_and_next_to_the_solver_output(coded_log):
     assert "Note:" not in coded_log()
     note_solver_outcome(_sol(_facts(num_dual_residual_errors=3)), acc, solve_name="st_roll_roll_5", solver="highs",
                         noted=noted)
-    assert "used interior point without crossover; HiGHS warnings expected [W-0541]" in coded_log()
+    assert ("are expected in this solver mode and the solve was accepted by FlexTool's checks [W-0541]"
+            in coded_log())
     # not HiGHS, not accepted, a clean solve: nothing
     note_solver_outcome(_sol(worse), acc, solve_name="other", solver="gurobi", noted=noted)
     rejected = SimpleNamespace(accepted=False, near_optimal=False, model_status="kInfeasible", message="")
     note_solver_outcome(_sol(worse), rejected, solve_name="other", solver="highs", noted=noted)
     note_solver_outcome(_sol(_facts()), acc, solve_name="other", solver="highs", noted=noted)
     assert coded_log() == ""
+
+
+def test_the_generic_ipx_note_is_printed_once_per_run(coded_log):
+    """W-0541 (HiGHS's IPX warnings are expected): at the first interior-point solve without crossover only; the
+    later solves of the run, also other complete solves, go to the debug log."""
+    run_warnings.start_run()
+    noted: set = set()
+    acc = SimpleNamespace(accepted=True, near_optimal=False, model_status="kOptimal", message="")
+    for solve in ("invest", "dispatch_roll_1", "dispatch_roll_2", "other"):
+        note_solver_outcome(_sol(_facts(num_dual_residual_errors=3)), acc, solve_name=solve, solver="highs",
+                            noted=noted)
+    notes = [line for line in coded_log().splitlines() if line.startswith("Note:")]
+    assert notes == ["Note: these HiGHS IPX warnings ('imprecise', 'Unwelcome IPX status', 'Model status changed "
+                     "from Unknown to Optimal') are expected in this solver mode and the solve was accepted by "
+                     "FlexTool's checks [W-0541]"]
+    assert run_warnings.tally() == {}                         # a note, not a warning
 
 
 def test_near_optimal_acceptance(coded_log):
