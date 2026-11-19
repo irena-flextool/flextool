@@ -909,6 +909,7 @@ def _check_storage_accounting(b: _Build) -> None:
     go to the log at debug level.
     """
     from flextool.engine import _behaviour_changes
+    from flextool import run_warnings
     d = b.d
     carried = set()
     if _has_rows(_self_discharge.carried_nodes(d)):
@@ -955,16 +956,10 @@ def _check_storage_accounting(b: _Build) -> None:
         if sizes:
             # One line per solve (the first solve of each level: a carried start is not an endowment).
             total = sum(mwh[n] for n in sizes)
-            _behaviour_changes.storage_message(
-                "storage_endowment", b.solve_name, sorted(sizes),
-                lambda named: (f"Warning: {named} start {where} at storage_state_start on capacity the solve "
-                               "cannot change and end free (bind forward only, no fix_end, use_reference_value or "
-                               f"upper-level fix), so the run may use this start energy ({total:.6g} MWh in total, "
-                               "on the existing capacity before any retirement in this solve) "
-                               "without producing it. This is a valid model of an initial stock (an endowment); if "
-                               "the storage should return it, use fix_start_end, a cyclic storage_binding_method or "
-                               "use_reference_value."),
-                details=f"Endowment in {where}: {', '.join(sizes[n] for n in sorted(sizes))}.")
+            run_warnings.warn_grouped(
+                "W-0534", sorted(sizes), solve=b.solve_name,
+                details=f"Endowment in {where}: {', '.join(sizes[n] for n in sorted(sizes))} "
+                        f"({total:.6g} MWh in total, on the existing capacity before any retirement).")
     if not d.storage_solve_at_model_end:
         # A free start (fix_nothing, not use_reference_value) is matched by the later solve that reaches the end of
         # the model and continues the chain (_run_model._sequence_match_rows, _anchor_cyclic_in_rolling: the level
@@ -973,15 +968,7 @@ def _check_storage_accounting(b: _Build) -> None:
         rp_nodes = set(str(n) for n in d.nodeState_rp["n"].to_list()) if _has_rows(d.nodeState_rp) else set()
         decided = sorted(n for n in forward - nested - rp_nodes if investable(n) and (n in fix_start or n in reference))
         if decided:
-            _behaviour_changes.storage_message(
-                "storage_end_match_not_applied", b.solve_name, decided,
-                lambda named: (f"Warning: {named} start {where} at a level the solve decides by investing "
-                               "(storage_state_start, or the reference value, of capacity it can build or extend) "
-                               "and chain forward, but the "
-                               "solve does not reach the end of the model, so the end is not held at least at that "
-                               "start: built storage can deliver its start energy without producing it. Use "
-                               "bind_within_solve(_blended_weights), or fix_start_end with storage_state_end at least "
-                               "storage_state_start."))
+            run_warnings.warn_grouped("W-0535", decided, solve=b.solve_name)
 
 
 def _warn_reference_start_mismatch(b: _Build, share: dict) -> None:
@@ -993,15 +980,10 @@ def _warn_reference_start_mismatch(b: _Build, share: dict) -> None:
     off = sorted(n for n, v in ref.items() if n in share and abs(share[n] - v) > 1e-9)
     if not off:
         return
-    from flextool.engine import _behaviour_changes
-    solve = _behaviour_changes.complete_solve_of(b.solve_name)
-    _behaviour_changes.storage_message(
-        "storage_reference_start_mismatch", b.solve_name, off,
-        lambda named: (f"Warning: in solve '{solve}' {named} with use_reference_value have a storage_state_start "
-                       "(fix_start) that differs from the storage_state_reference_value at their first step; the "
-                       "start uses storage_state_start."),
-        details=f"Reference start mismatch in solve '{solve}': " + ", ".join(
-            f"{n} storage_state_start {share[n]:.6g}, reference {ref[n]:.6g}" for n in off))
+    from flextool import run_warnings
+    run_warnings.warn_grouped(
+        "W-0536", off, solve=b.solve_name,
+        details={n: f"storage_state_start {share[n]:.6g}, reference {ref[n]:.6g}" for n in off})
 
 
 def _warn_storage_slack_bypass(b: _Build) -> None:
@@ -1014,7 +996,7 @@ def _warn_storage_slack_bypass(b: _Build) -> None:
     inflow or demand, e.g. a battery): a carrier node's slack is the intended outlet of its unmet demand.  One
     printed line per solve (the rolls of a rolling solve count as one solve), the node pairs in the log.
     """
-    from flextool.engine import _behaviour_changes
+    from flextool import run_warnings
     d = b.d
     off = getattr(d, "nodeBalance_penalty_off", None)
     if not (_has_rows(off) and _has_rows(d.nodeState) and _has_rows(d.process_source_sink)):
@@ -1044,19 +1026,9 @@ def _warn_storage_slack_bypass(b: _Build) -> None:
                 linked.setdefault(n, set()).update(hard)
     if not linked:
         return
-    solve = _behaviour_changes.complete_solve_of(b.solve_name)
-    where = f"solve '{solve}'" if solve else "this solve"
-    first = sorted(linked)[0]
-    _behaviour_changes.storage_message(
-        "storage_slack_bypass", b.solve_name, sorted(linked),
-        lambda named: (f"Warning: in {where} {named} with balance slack (penalty_method not off) are linked by a "
-                       f"unit or a connection to node(s) with penalty_method off (e.g. {first} to "
-                       f"{_node_list(sorted(linked[first]))}). The storage slack can supply or absorb energy for those "
-                       "nodes and so bypass their hard balance at the storage node's penalty. If the balance should "
-                       "hold, set penalty_method off on the storage node too (or give it a high penalty), so that a "
-                       "shortfall shows where it arises."),
-        details=f"Storage slack bypass in {where}: "
-                + ", ".join(f"{n} ({_node_list(sorted(linked[n]))})" for n in sorted(linked)))
+    run_warnings.warn_grouped(
+        "W-0537", sorted(linked), solve=b.solve_name,
+        details={n: f"linked to penalty_method off node(s) {_node_list(sorted(linked[n]))}" for n in sorted(linked)})
 
 
 STORAGE_START_END_MESSAGE = (
@@ -6206,14 +6178,8 @@ def _warn_reference_below_start(b: _Build, nodes: set) -> None:
     investment.  One printed line per solve."""
     if not nodes:
         return
-    from flextool.engine import _behaviour_changes
-    solve = _behaviour_changes.complete_solve_of(b.solve_name)
-    _behaviour_changes.storage_message(
-        "storage_reference_below_start", b.solve_name, sorted(nodes),
-        lambda named: (f"Warning: in solve '{solve}' {named} with use_reference_value end below their start and the "
-                       "solve can invest in their storage: storage built must still return its start energy (the "
-                       "matching end), which caps that investment. Give storage_state_reference_value at least the "
-                       "start if the storage should be built freely."))
+    from flextool import run_warnings
+    run_warnings.warn_grouped("W-0538", sorted(nodes), solve=b.solve_name)
 
 
 def _eq_profiles(b: _Build) -> None:

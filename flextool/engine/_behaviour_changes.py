@@ -186,25 +186,6 @@ def storages_named(names: Iterable[str], noun: str = "storage node") -> str:
     return f"{count} {noun}{'' if count == 1 else 's'} ({first}{', ...' if count > 1 else ''})"
 
 
-def storage_message(kind: str, solve: str | None, names: Iterable[str], text_of, details: str = "") -> bool:
-    """Print a storage warning or notice: one line per message ``kind`` and complete solve (the rolls of a rolling
-    solve count as one), ``text_of(named)`` where ``named`` is :func:`storages_named` of ``names`` (how many and
-    the first).  ``details`` (the values per node) go to the log at debug level, not to the console.  Returns True
-    when it printed."""
-    import logging
-    names = list(dict.fromkeys(str(n) for n in names))
-    if not names:
-        return False
-    key = ("storage_message", kind, complete_solve_of(solve))
-    if key in _warned:
-        return False
-    _warned.add(key)
-    print(text_of(storages_named(names)), flush=True)
-    if details:
-        logging.getLogger("flextool.engine.storage").debug(details)
-    return True
-
-
 def mark_once(key) -> bool:
     """Record *key* for this run without printing (a message that goes to the log, once per run).  Returns True
     the first time in a run, False after that; :func:`start_run` forgets it."""

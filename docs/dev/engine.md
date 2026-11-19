@@ -1184,10 +1184,10 @@ it.  Order per sub-solve: non-RP downgrade → `_reject_rolling_rp` /
 `_reject_plain_forward_in_rp_solve` → fix_start_end → rolling timeblock.
 `_restore_methods` captures the frame after these rewrites.
 
-Storage warnings and notices print one line per message type and complete
-solve, naming how many nodes and the first
-(`_behaviour_changes.storage_message`, `notice(..., solve=...)`); the
-values per node go to the `flextool.engine.storage` logger at debug level.
+Storage warnings and notices print one line per code and complete solve,
+naming how many nodes and the first (`run_warnings.warn_grouped(code, names,
+solve=...)`: W-0534..W-0539, W-0580..W-0583; `notice(..., solve=...)`); the
+values per node go to the `flextool.warnings` logger at debug level.
 
 ## Output-writer shape adaptation
 

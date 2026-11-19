@@ -295,7 +295,7 @@ def test_gap_counter_counts_blocks_per_period():
                                   complete_active_time_list={"p1": steps(0, 1), "p2": steps(0, 2, 3, 7)})
 
 
-def test_many_storage_nodes_print_one_line(capsys, coded_log):
+def test_many_storage_nodes_print_one_line(coded_log):
     """Owner rule (format 6b): a storage message prints one line per message type and solve, naming how many nodes
     and the first only, whatever the number of nodes and rolls."""
     from types import SimpleNamespace
@@ -326,12 +326,15 @@ def test_many_storage_nodes_print_one_line(capsys, coded_log):
                                                provider=provider)
         assert set(provider.get("input/node__storage_binding_method")["storage_binding_method"].to_list()) == {
             "bind_within_period"}
+    from flextool.engine.solve._run_model import _warn_storages
     for roll in range(3):
-        _behaviour_changes.storage_message("some_warning", f"st_roll_{roll}", names,
-                                           lambda named: f"Warning: {named} do something.")
-    assert [ln for ln in coded_log().splitlines() if "[W-0532]" in ln] == [
+        _warn_storages("W-0582", f"st_roll_{roll}", names, f"roll st_roll_{roll}")
+    log = coded_log()
+    assert [ln for ln in log.splitlines() if "[W-0532]" in ln] == [
         "Note: rolling 'st': bind_within_timeblock used as bind_within_period (12 cases, e.g. 'battery_00') [W-0532]"]
-    assert capsys.readouterr().out.splitlines() == ["Warning: 12 storage nodes (battery_00, ...) do something."]
+    assert [ln for ln in log.splitlines() if ln.endswith("[W-0582]")] == [
+        "Warning: rolling 'st': period start unknown; storage closes at the carry (12 cases, e.g. 'battery_00') "
+        "[W-0582]"]
 
 
 def test_intraperiod_blocks_close_the_period(tmp_path):

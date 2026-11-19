@@ -9,6 +9,7 @@ the registry merges them.
 * W-053x outputs of a solve and storage notes
 * W-054x what the solver's outcome means (notes after a solve that ended optimal, but not cleanly)
 * W-055x warm start and how the solves are run (in this process or a separate one)
+* W-058x storage notes (continued from W-053x)
 * W-06xx behaviour-change notices (their texts: :mod:`flextool.run_warnings._behaviour_specs`)
 """
 from __future__ import annotations
@@ -430,6 +431,106 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
         ),
     ),
     WarningSpec(
+        code="W-0534",
+        message="storage ends free in '{solve}'; its storage_state_start energy is usable",
+        title="Storage start energy can be used up (an endowment)",
+        topic=_STORAGE,
+        body=(
+            "The storage nodes start the solve at `storage_state_start` on capacity the solve cannot change "
+            "(existing capacity, no investment or life extension in the start period) and chain forward to a "
+            "free end: `bind_forward_only`, no `fix_end`, no `use_reference_value` and no end fixed by an "
+            "upper-level solve. The run may then use this start energy without producing it. This is a valid "
+            "model of an initial stock (an endowment). The warning is given in the first solve of each level "
+            "(a start carried from an earlier solve is not an endowment). The debug log gives the energy per "
+            "node and in total (MWh, on the existing capacity before any retirement in the solve).\n\n"
+            "**How to fix:** nothing, if the initial stock is meant. If the storage should return it, use "
+            "`storage_start_end_method` `fix_start_end`, a cyclic `storage_binding_method` or "
+            "`storage_solve_horizon_method` `use_reference_value`."
+        ),
+    ),
+    WarningSpec(
+        code="W-0535",
+        message="storage start on investable capacity not matched at the end in '{solve}'",
+        title="Start of investable storage not matched at the end",
+        topic=_STORAGE,
+        body=(
+            "The storage nodes start the solve at a level the solve decides by investing: `storage_state_start` "
+            "(or the reference value of `use_reference_value`) on capacity the solve can build or extend in the "
+            "start period, and chain forward. The matching end (the end held at least at the start) needs both "
+            "ends in one solve, and this solve does not hold the last step of the model, so it is not applied: "
+            "built storage can deliver its start energy without producing it. A free start (`fix_nothing`) is "
+            "not warned about: the later solve that reaches the end of the model matches it.\n\n"
+            "**How to fix:** use `storage_binding_method` `bind_within_solve` (or "
+            "`bind_within_solve_blended_weights`), or `storage_start_end_method` `fix_start_end` with "
+            "`storage_state_end` at least `storage_state_start`."
+        ),
+    ),
+    WarningSpec(
+        code="W-0536",
+        message="storage_state_start differs from the reference in '{solve}'; start used",
+        title="Start differs from the reference value",
+        topic=_STORAGE,
+        body=(
+            "The storage nodes have `storage_solve_horizon_method` `use_reference_value` and a "
+            "`storage_start_end_method` that fixes the start (`fix_start` or `fix_start_end`), and their "
+            "`storage_state_start` differs from `storage_state_reference_value` at their first step. The start "
+            "uses `storage_state_start`. (A node that does not fix its start starts from the reference value.) "
+            "The debug log gives both values per node.\n\n"
+            "**How to fix:** give `storage_state_start` the reference value of the first step, or set "
+            "`storage_start_end_method` to `fix_nothing` (or `fix_end`) so that the start follows the reference "
+            "value."
+        ),
+    ),
+    WarningSpec(
+        code="W-0537",
+        message="storage slack in solve '{solve}' can bypass a linked hard balance",
+        title="Storage balance slack bypasses a hard balance",
+        topic=_STORAGE,
+        body=(
+            "The storage nodes have balance slack (`penalty_method` not `off`) and a unit or a connection links "
+            "them to node(s) with `penalty_method` `off`. The storage slack can supply or absorb energy for "
+            "those nodes and so bypass their hard balance at the storage node's penalty, which can be far below "
+            "what an unmet demand there should cost. Only pure storage nodes (no own inflow or demand, e.g. a "
+            "battery) are named: the slack of a node with its own demand is the intended outlet of that demand. "
+            "The debug log gives the linked nodes of each storage node.\n\n"
+            "**How to fix:** if the balance should hold, set `penalty_method` `off` on the storage node too (or "
+            "give it a high penalty), so that a shortfall shows where it arises."
+        ),
+    ),
+    WarningSpec(
+        code="W-0538",
+        message="reference end below the start in '{solve}'; caps storage investment",
+        title="Reference value below the start of investable storage",
+        topic=_STORAGE,
+        body=(
+            "The storage nodes have `storage_solve_horizon_method` `use_reference_value`, their reference value "
+            "at the end lies below their start, and the solve can invest in their storage in the period they "
+            "start in. As for `fix_start_end`, the matching end stays (the end at least at the start), so "
+            "storage built must still return its start energy, which caps that investment.\n\n"
+            "**How to fix:** give `storage_state_reference_value` at least the start if the storage should be "
+            "built freely."
+        ),
+    ),
+    WarningSpec(
+        code="W-0539",
+        message="storage in '{solve}' cycles over representative periods unweighted",
+        title="Plain storage cycle on representative periods",
+        topic=_STORAGE,
+        body=(
+            "The solve is on representative periods (its timesets have `representative_period_weights`), and "
+            "the storage nodes use a `storage_binding_method` (`bind_within_solve`, `bind_within_period` or "
+            "`bind_intraperiod_blocks`) that moves the storage level from one representative period to the next "
+            "without their weights, while the flows of each step count with the weight of its period. This is "
+            "reasonable when the representative periods have equal weights or when the timing of the storage's "
+            "inflows does not matter (e.g. pumped hydro, large heat storage). Nodes with `storage_start_end_method` "
+            "`fix_start_end` are not named (their binding method is not used). The debug log gives the "
+            "timesets and the method of each node.\n\n"
+            "**How to fix:** if the weights matter, use the `*_blended_weights` method, which weights the "
+            "transfer: `bind_within_solve` -> `bind_within_solve_blended_weights`, `bind_within_period` and "
+            "`bind_intraperiod_blocks` -> `bind_within_period_blended_weights`."
+        ),
+    ),
+    WarningSpec(
         code="W-0540",
         message="solve '{solve}' optimal by HiGHS at up to {factor}x its relative tolerances",
         title="Optimal within a multiple of the relative tolerances",
@@ -572,6 +673,66 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "memory of this process low. Each solve takes some tens of seconds more for the file I/O. The results "
             "are not affected. The note is printed once per run.\n\n"
             "**How to fix:** nothing, if it was meant. For faster solves, leave `warm` at its default (`True`)."
+        ),
+    ),
+    WarningSpec(
+        code="W-0580",
+        message="rolling '{solve}': instance start unknown; storage closes at the carry",
+        title="Rolling solve: start level of an instance not known",
+        topic=_STORAGE,
+        body=(
+            "In a rolling solve, the storage nodes with `bind_within_solve` continue each roll from the level the "
+            "previous roll realised, and the closing roll ends them at the level the instance (one run of the "
+            "rolling solve within its upper-level solve) started from. That start level was not recorded for this instance, so the "
+            "closing roll ends at the carried level instead: the storage does not return to its start over the "
+            "instance. The debug log names the closing roll.\n\n"
+            "**How to fix:** usually nothing; report it with the debug log (`--debug`) if the storage balance "
+            "over the instance matters."
+        ),
+    ),
+    WarningSpec(
+        code="W-0581",
+        message="rolling '{solve}': no start for upper-fixed storage; first roll cycles",
+        title="Nested rolling solve: no start level for the first roll",
+        topic=_STORAGE,
+        body=(
+            "The storage nodes are fixed by the upper-level solve (a nested solve), but neither that solve "
+            "gives them a start level for the first roll nor do they have `storage_state_start` with a "
+            "`storage_start_end_method` that fixes the start. The first roll then cycles on itself: it ends at "
+            "the level it starts from. The debug log names the roll.\n\n"
+            "**How to fix:** set `storage_state_start` and `storage_start_end_method` `fix_start` on the nodes, "
+            "so the first roll starts from a known level."
+        ),
+    ),
+    WarningSpec(
+        code="W-0582",
+        message="rolling '{solve}': period start unknown; storage closes at the carry",
+        title="Rolling solve: start level of a period not known",
+        topic=_STORAGE,
+        body=(
+            "The rolls of the rolling solve continue a period that an earlier roll started (storage nodes with "
+            "`bind_within_period`, `bind_within_timeblock` or `bind_intraperiod_blocks`), but the level the "
+            "node started the period at was not recorded. The roll continues the period from the carried level "
+            "and closes it there, so the storage does not return to the period's start level. The debug log "
+            "names the roll and the period.\n\n"
+            "**How to fix:** usually nothing; report it with the debug log (`--debug`) if the storage balance "
+            "over the period matters."
+        ),
+    ),
+    WarningSpec(
+        code="W-0583",
+        message="storage fix_start in '{solve}' differs from the upper solve's level",
+        title="Nested solve: fix_start differs from the upper plan",
+        topic=_STORAGE,
+        body=(
+            "The storage nodes are fixed by an upper-level solve (`storage_nested_fix_method`), and the lower "
+            "solve starts them from their explicit start (`storage_start_end_method` `fix_start` or "
+            "`fix_start_end`, at the start of the model) instead of the level the upper solve planned. After the "
+            "solve, the two start levels differ: the storage capacity or the start share is not the same in the "
+            "two solves. The difference is energy the lower solve gets or loses against the upper plan. The "
+            "debug log gives both levels per node (MWh).\n\n"
+            "**How to fix:** check that the storage capacity at the start (existing and invested) is the same in "
+            "the lower solve as in the upper-level solve."
         ),
     ),
 ) + BEHAVIOUR_SPECS
