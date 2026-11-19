@@ -839,14 +839,8 @@ class ExecutionWindow(tk.Toplevel):
         # inserting new text.
         at_bottom = self._output_text.yview()[1] >= 0.99
 
-        # Append only the new lines. The engine prints a ``total_cost.val = …``
-        # line for CLI/test consumers that parse stdout; it's redundant in the
-        # GUI (the solver already reports the objective) and lands mid-table,
-        # so drop it from the displayed log. The raw stdout is untouched.
-        self._log_view.append(
-            line for line in lines[already_shown:]
-            if not line.startswith("total_cost.val =")
-        )
+        # Append only the new lines.
+        self._log_view.append(lines[already_shown:])
         self._displayed_counts[job_id] = new_count
 
         # Auto-scroll only when the user is already at (or near) the bottom

@@ -40,7 +40,7 @@ except (AttributeError, ValueError, OSError):
     pass
 from flextool._safe_text import make_printable
 from flextool._mem_sampler import start_mem_sampler
-from flextool.process_outputs.write_outputs import resolve_output_settings, write_outputs
+from flextool.process_outputs.write_outputs import print_solve_summary, resolve_output_settings, write_outputs
 from flextool import run_record
 from flextool.cli._console import run_tool
 from flextool.cli._timing import TimingRecorder
@@ -1222,6 +1222,7 @@ def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_
         sys.exit(1)
 
     # If successful and requested, write outputs
+    solve_summary = None  # the text of summary_solve.csv (write_outputs), printed at the end of the run
     if return_code == 0:
         t_write_outputs = time.perf_counter()
         # Δ.31 — pass the last step's flex_data + solution so
@@ -1269,7 +1270,7 @@ def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_
                 # ``output_raw/_solve_order.txt`` creation-order manifest.
                 wo_flex_data = last_step.flex_data if last_step else None
                 wo_solution = last_step.solution if last_step else None
-                write_outputs(
+                solve_summary = write_outputs(
                     scenario_name=scenario_name,
                     output_location=output_location,
                     subdir=output_subdir,
@@ -1324,6 +1325,9 @@ def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_
     full_seconds = time.perf_counter() - t_total_start
     print("\n--- Full execution time %.4s seconds ---------------------------------------" % full_seconds)
     print("--------------------------------------------------------------------------\n")
+    # The whole solve summary (the content of summary_solve.csv, whatever the write methods) of a successful run.
+    if return_code == 0 and solve_summary:
+        print_solve_summary(solve_summary)
     # The coded warnings of the run (flextool.run_warnings): how many of each, and where they are explained.
     from flextool import run_warnings
     for _line in run_warnings.tally_lines():

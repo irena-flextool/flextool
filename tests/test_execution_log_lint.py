@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from flextool.run_warnings import WARNINGS
+from flextool.process_outputs.write_outputs import SOLVE_SUMMARY_END, SOLVE_SUMMARY_START, solve_summary_lines
 from tests._support.log_lint import MAX_LINE, MAX_REPEATS, flextool_lines, lint, template
 
 # Chosen to cover the warnings the test scenarios print (the survey of every tests/scenarios.yaml scenario on the
@@ -46,17 +47,18 @@ FAST_SCENARIOS = (
 SLOW_SCENARIOS = ("fullYear_roll",)
 
 # (template regex, why it is allowed).  A new offender: fix the site rather than adding an entry.
-KNOWN_REPEATS: list[tuple[str, str]] = [
-    (r"^total_cost\.val = ", "printed after every solve and roll (a marker the GUI and tests read); P4"),
-]
+KNOWN_REPEATS: list[tuple[str, str]] = []
 KNOWN_LONG: list[tuple[str, str]] = [
+    # Kept on one line on purpose: it is printed once per run (again only when it changes), it is the option list
+    # a user copies into solver_arguments or compares between runs, and tests of every solver match it whole.
     (r"^Solver args: ", "the solver's whole option list, once per run (copyable as is; the GUI wraps it)"),
 ]
 # Entries that only the slow scenarios exercise (the stale check skips them when those did not run).
-SLOW_ONLY = {r"^total_cost\.val = "}
+SLOW_ONLY: set[str] = set()
 
 _CODE = re.compile(r"\[(W-\d{4})\]")
 _LOGS: dict[str, str] = {}
+_ROOT: list[Path] = []  # the runs' folder (one per scenario)
 _USED: set[str] = set()
 
 
@@ -77,6 +79,7 @@ def _run(scenario: str, db_url: str, solver_config_dir: Path, root: Path) -> str
 @pytest.fixture(scope="module")
 def _runner(test_db_url, test_solver_config_dir, tmp_path_factory):
     root = tmp_path_factory.mktemp("log_lint")
+    _ROOT[:] = [root]
 
     def log_of(scenario: str) -> str:
         if scenario not in _LOGS:
@@ -158,6 +161,21 @@ def test_allow_list_has_no_stale_entries(_runner):
     assert not stale, "allow-list entries that match nothing any more (delete them):\n" + "\n".join(stale)
 
 
+@pytest.mark.solver
+@pytest.mark.parametrize("scenario", _PARAMS)
+def test_run_ends_with_the_solve_summary(_runner, scenario):
+    """A successful run prints the whole summary_solve.csv (without its time line) after "Full execution time",
+    between the summary markers the GUI folds on."""
+    log = _runner(scenario)
+    lines = log.splitlines()
+    start, end = lines.index(SOLVE_SUMMARY_START), lines.index(SOLVE_SUMMARY_END)
+    assert lines.count(SOLVE_SUMMARY_START) == 1
+    assert any(line.startswith("--- Full execution time") for line in lines[:start])
+    # The rows are those of summary_solve.csv (the runs write csv), less its title line and blank lines.
+    (csv_file,) = (_ROOT[0] / scenario / "out").rglob("summary_solve.csv")
+    assert lines[start:end + 1] == solve_summary_lines(csv_file.read_text(encoding="utf-8"))
+
+
 # -- the linter itself (no solver) -------------------------------------------------------------------------------
 
 _SYNTHETIC = """\
@@ -175,6 +193,13 @@ Solve start: dispatch_roll_2, 2/2
 Warning: thing 'w' at 4 is odd.
 Warning: node 'c' is odd.
 Output: /a/very/long/path/that/would/break/the/limit/on/its/own/without/shortening/it/to/a/marker/ok/yes
+--- Solve summary ---
+"Total cost counted in the objective (M CUR)",1,"a description far longer than the limit of one hundred characters"
+Created, a, p1, 1
+Created, a, p2, 1
+Created, a, p3, 1
+Created, a, p4, 1
+--- End of solve summary ---
 """
 
 

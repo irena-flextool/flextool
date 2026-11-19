@@ -4,7 +4,8 @@
 rolling solve and the repeated starts of one solve count as one solve, the lines before the first start are
 the ``<run>`` scope), drops what is not FlexTool's own text (the solver's console block, which opens at
 ``Running HiGHS`` / ``Running <solver>`` and ends at the next timing row; the timing rows themselves; blank
-lines) and reports
+lines; the solve summary at the end of a run, ``--- Solve summary ---`` ... ``--- End of solve summary ---``,
+which is the content of ``summary_solve.csv``, a table, not messages) and reports
 
 * **repeats**: a line template (:func:`template`: quoted names → ``<n>``, numbers → ``<x>``) that appears more
   than :data:`MAX_REPEATS` times within one solve (a per-entity warning that should be one aggregated line);
@@ -26,6 +27,8 @@ MAX_LINE = 100
 
 #: The lines that open a solver's console dump (the GUI's ``_SOLVER_BLOCK_STARTS``).
 SOLVER_BLOCK_STARTS = ("Running HiGHS", "Running Gurobi", "Running CPLEX", "Running Xpress", "Running COPT")
+SUMMARY_START = "--- Solve summary ---"
+SUMMARY_END = "--- End of solve summary ---"
 _SOLVE_START = re.compile(r"^Solve start: (.+?), \d+/\d+\s*$")
 _ROLL_SUFFIX = re.compile(r"_roll_\d+$")
 # A timing / memory row (or its header): cells separated by "|" with a size or the word "memory".
@@ -63,8 +66,14 @@ def flextool_lines(log: str) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     solve = "<run>"
     in_solver = False
+    in_summary = False
     for raw in log.splitlines():
         line = raw.rstrip()
+        if line.strip() == SUMMARY_START:
+            in_summary = True
+        if in_summary:
+            in_summary = line.strip() != SUMMARY_END
+            continue
         match = _SOLVE_START.match(line)
         if match:
             solve = _ROLL_SUFFIX.sub("", match.group(1))

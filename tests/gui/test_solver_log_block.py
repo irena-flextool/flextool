@@ -38,3 +38,23 @@ def test_every_commercial_marker_opens_a_block() -> None:
         line = f"Running {name} (/opt/{name.lower()}/bin/solver)"
         assert line.startswith(_SOLVER_BLOCK_STARTS), name
         assert _classify(state, line) == ["highs"] and state.highs_block_active
+
+
+def test_the_gui_folds_between_the_markers_the_run_prints() -> None:
+    """The run's solve summary (``write_outputs.solve_summary_lines``) opens and closes with the GUI's fold markers,
+    and its slack rows of one node over several periods make a foldable run."""
+    from flextool.gui import log_view
+    import importlib
+
+    write_outputs = importlib.import_module("flextool.process_outputs.write_outputs")
+    from tests._support import log_lint
+
+    assert log_view.SUMMARY_START == write_outputs.SOLVE_SUMMARY_START == log_lint.SUMMARY_START
+    assert log_view.SUMMARY_END == write_outputs.SOLVE_SUMMARY_END == log_lint.SUMMARY_END
+    text = ('"' + write_outputs.SUMMARY_TITLE + '2026-11-19 10:00:00+00:00"\n\n\n'
+            '"Solve","Objective","Total cost from solver, includes all penalty costs"\ninv,1.5\n\n'
+            + "".join(f"Created, n1, p{y}, 0.5\n" for y in range(4)) + "Removed, n1, p0, 1\n")
+    lines = write_outputs.solve_summary_lines(text)
+    assert lines[0] == log_view.SUMMARY_START and lines[-1] == log_view.SUMMARY_END
+    assert lines[1].startswith('"Solve","Objective"') and not any("Output at (UTC)" in line for line in lines)
+    assert log_view.find_similar_runs(lines) == [(lines.index("Created, n1, p0, 0.5"), 4)]

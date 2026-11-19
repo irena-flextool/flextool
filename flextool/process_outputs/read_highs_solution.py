@@ -1339,10 +1339,9 @@ def write_v_obj(
     )
     path = output_dir / f"v_obj__{solve_name}.parquet"
     write_lean_parquet(df, path)
-    # Emit the canonical ``total_cost.val`` stdout line so that callers
-    # parsing the FlexTool stdout (e.g. test_representative_periods)
-    # still see the objective value.
-    print(f"total_cost.val = {obj:.12g}")
+    # The objective of each solve is in the solve summary printed at the end of a run (and summary_solve.csv);
+    # the per-solve ``total_cost.val`` line is debug output only.
+    _logger.debug("total_cost.val = %.12g", obj)
     _logger.debug("Wrote v_obj for solve '%s' -> %s (%.10g)", solve_name, path, obj)
     return path
 

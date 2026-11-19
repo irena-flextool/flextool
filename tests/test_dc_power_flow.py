@@ -897,7 +897,6 @@ class TestPGLibCase14Integration:
     @pytest.fixture()
     def case14_run(self, tmp_path: Path) -> dict[str, object]:
         """Parse case14, create DB, run FlexTool, return results dict."""
-        import re
 
         from flextool.process_inputs.read_matpower import (
             create_flextool_db_from_matpower,
@@ -950,22 +949,22 @@ class TestPGLibCase14Integration:
         # cleaned up unless ``--csv-dump`` is passed).  The canonical
         # outputs after ``write_outputs`` are:
         #
-        #   * Objective value → emitted on stdout as ``total_cost.val = X``
-        #     by ``write_v_obj`` (read_highs_solution.py:1507).
+        #   * Objective value → the solve summary printed at the end of the
+        #     run (``--- Solve summary ---``; summary_solve.csv's content).
         #   * Per-bus angles  → ``output_parquet/<scenario>/dc_angle_dt_e.parquet``
         #     produced by the ``dc_power_flow`` output func
         #     (out_ancillary.py:370) and aggregated by ``write_outputs``
         #     with a top-level ``scenario`` column axis.
         from flextool.lean_parquet import read_lean_parquet
 
-        obj_matches = re.findall(
-            r"total_cost\.val\s*=\s*([0-9eE.+\-]+)", result.stdout,
-        )
-        assert obj_matches, (
-            "No 'total_cost.val = ...' line in FlexTool stdout.\n"
+        from tests._support.solve_summary import summary_objectives
+
+        objectives = summary_objectives(result.stdout)
+        assert objectives, (
+            "No solve summary in FlexTool stdout.\n"
             f"--- stdout tail ---\n{result.stdout[-2000:]}"
         )
-        obj_value = float(obj_matches[-1])
+        obj_value = list(objectives.values())[-1]
 
         angle_pq = output_loc / "output_parquet" / scenario / "dc_angle_dt_e.parquet"
         assert angle_pq.exists(), (
