@@ -112,10 +112,11 @@ values").
   continuous timeblock (next item), so the two mean the same cycle; the per-period rolling rule above applies, and
   one printed line names how many nodes and the first. A solve that is not rolling (an investment or storage solve
   above the rolling dispatch, also on representative periods) keeps `bind_within_timeblock`.
-- **A rolling solve over a timeline with gaps stops with a configuration error.** A period with several timeblocks
-  (a sampled timeline, e.g. sampled weeks) cannot be rolled: a roll cuts and joins the timeblocks, so the storage
-  level would carry across the gaps. Use a single solve for sampled timeblocks. The aggregated steps of a solve with
-  `new_stepduration` count as consecutive.
+- **A rolling solve over a timeline with gaps stops with a configuration error, also in a model without
+  storage.** A period with several timeblocks (a sampled timeline, e.g. sampled weeks) cannot be rolled: a roll
+  cuts and joins the timeblocks, so the storage level (and the online and ramp states) would carry across the gaps.
+  Use a single solve for sampled timeblocks. The aggregated steps of a solve with `new_stepduration` count as
+  consecutive.
 - **A representative-period solve that follows another solve starts its storage chain from the realised level
   (results change).** A `bind_forward_only_blended_weights` node in a solve with representative periods that
   continues from an earlier solve (a sequence, or a roll) now starts its base-period chain from the level realised
@@ -135,13 +136,15 @@ values").
 - **Storage warnings and notices print one line per message type and solve**, naming how many storage nodes and
   the first (e.g. "12 storage nodes (KOR_Battery, ...)"); the values per node go to the log at debug level
   (`--debug`). This covers the endowment, borrowed-start, matching-end, `fix_start_end` drain, reference,
-  slack-bypass and rolling timeblock messages and the storage behaviour-change notices.
+  slack-bypass and rolling timeblock messages, the storage behaviour-change notices (also
+  `storage_default_fix_nothing`, once per run) and the storage configuration errors on representative periods.
 - **A rolling solve on representative periods stops with a configuration error.** Rolling over representative
   periods is not supported: use a single solve on the representative periods (e.g. the investment solve) and roll a
   separate solve over a timeset without `representative_period_weights`. Before (#126), its `*_blended_weights`
   storage nodes bound forward only, with a warning, without the weights and without a closure.
 - **`bind_within_solve`, `bind_within_period` or `bind_intraperiod_blocks` storage in a solve on representative
-  periods stops with a configuration error** naming the nodes. These methods carried the storage state from the end of one
+  periods stops with a configuration error** naming how many nodes and the first (not for a node with
+  `fix_start_end`, whose binding method is ignored: see the next item). These methods carried the storage state from the end of one
   representative period into the start of the next without their weights, while the flows counted with them, so
   energy stored in a period of low weight could be used in a period of high weight for free. Use the
   `*_blended_weights` variant, or `bind_within_timeblock`, which cycles the storage within each representative
@@ -149,9 +152,12 @@ values").
 - **`bind_forward_only` storage (also the default) in a solve on representative periods stops with a configuration
   error** naming how many nodes and the first: the forward chain runs through the representative periods without
   their weights, with the same free energy as above. Blended weights need to be provided: choose a
-  `*_blended_weights` method (or `bind_within_timeblock`); nothing is switched automatically. A
-  `bind_within_timeblock` node with `fix_start_end` in such a solve chains forward on the base-period chain (as
-  `bind_forward_only_blended_weights`), so its start and end are pinned on the weighted chronological level.
+  `*_blended_weights` method (or `bind_within_timeblock`); nothing is switched automatically. A node with
+  `fix_start_end` and a cyclic method (`bind_within_timeblock`, `bind_within_period`, `bind_within_solve`,
+  `bind_intraperiod_blocks`) in such a solve chains forward on the base-period chain (as
+  `bind_forward_only_blended_weights`), so its start and end are pinned on the weighted chronological level; in a
+  solve that mixes periods with and without representative periods it cycles within each timeblock
+  (`bind_within_timeblock`) instead.
 - **A storage node whose balance slack can bypass a hard balance prints a warning**: a pure storage node (no
   inflow or demand of its own, e.g. a battery; a carrier node's slack is the intended outlet of its unmet demand)
   with `penalty_method` other than *off* that a unit or a connection links to a node with `penalty_method` *off*. Its slack can supply or absorb that node's energy at the storage node's penalty, so a
@@ -160,7 +166,8 @@ values").
   inside an upper step (results change).** A lower-level solve under an upper `fix_usage` may now use, over the
   last period of its horizon, the upper solve's usage from the start of that period (in the solve instance) to the
   horizon end, less what its earlier rolls realised there; an upper step only partly in that span counts with the
-  share of its hours inside it. Before, each roll was capped by the upper usage of every upper step it touched,
+  share of its hours inside it. A roll of a rolling solve whose horizon reaches into the next period is capped the
+  same way in each earlier period it holds, up to that period's end. Before, each roll was capped by the upper usage of every upper step it touched,
   counted whole and from its own start, so a roll that drew more than planned in its realised hours and planned to
   refill in its look-ahead left the next roll free to skip the refill: the realised rolls could use energy the
   upper solve never planned. A lower horizon that ends inside an upper step is now fixed (`fix_quantity`) at the
@@ -190,16 +197,18 @@ values").
 - **A forward storage chain whose start the solve decides ends at least at that start (results change, also for
   the default storage).** A `bind_forward_only` (the default) or `bind_forward_only_blended_weights` node with a
   free start (`fix_nothing`, `fix_end`) now ends the model at least at the level it started from, and one with
-  `fix_start` on storage the solve can invest in during the period it starts in returns at least the
-  `storage_state_start` share of the capacity built there. Before, the solve could start full and end empty, or
+  `fix_start` on storage the solve can invest in (or extend, `life_extension_cost`) during the period it starts in
+  returns at least the `storage_state_start` share of the capacity built there. Before, the solve could start full and end empty, or
   build storage only for its start energy. The condition is an inequality (a start of 0, or no investment, always
   meets it) and applies in a solve that holds both the start of the model and its last step, in every solve
   with representative periods, and with a free start (`fix_nothing`) in a rolling solve without them (the first
   roll ends its horizon at least at the level it starts from, and the rolls reaching the end of the model end at
-  least at that level); a free end after `fix_start` on capacity the solve cannot change is kept (the
-  user's start energy, named with its size in a warning). An investment solve
-  that does not reach the end of the model warns for such nodes instead. Upgraded databases get a notice naming
-  the nodes.
+  least at that level); a later solve of a sequence (also a later rolling solve) that continues a free start from
+  a carry and reaches the end of the model ends it at least at the level the model started it from at that nesting
+  level; a free end after `fix_start` on capacity the solve cannot change is kept (the user's start energy, named
+  with its size in a warning). An investment solve that does not reach the end of the model warns for nodes with
+  an explicit start (`fix_start`, or the reference start) on capacity it can build, which the sequence does not
+  match. Upgraded databases get a notice naming the nodes.
 - **`fix_start_end` with `storage_state_end` below `storage_state_start` prints a warning** (in the solve that
   reaches the end of the model) with the MWh it drains from existing capacity: a planned drawdown can be intended.
   Storage the solve can invest in during the start period must still return its start energy (the matching end
@@ -210,7 +219,7 @@ values").
   longer a free level bounded by the matching end; a falling reference series therefore drains the existing
   storage by the drop. With `fix_start` too, `storage_state_start` wins and a warning names the nodes whose two
   values differ. Where the reference end lies below the start on storage the solve can invest in, the matching end
-  stays and caps that investment, with a warning (before: a configuration error).
+  stays and caps that investment, with a warning.
 - **BREAKING for tools that connect FlexTool with other models through `override_provider`** (scripts and
   integrations that inject state between solves, for example capacities decided by another model): the keys
   `handoff/realized_invest`, `handoff/realized_existing` and `handoff/realized_divest` are gone and raise an error
