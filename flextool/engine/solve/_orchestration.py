@@ -196,7 +196,7 @@ def _log_cold_rebuild(logger: logging.Logger, logged: set, solve: str, reason: s
         logger.debug("warm reuse fell back to a cold rebuild for %s: %s", solve, reason)
         return
     logged.add(key)
-    logger.info("Warm LP reuse not possible in solve '%s': %s (the LP is rebuilt)", base, reason)
+    logger.info("No warm LP reuse in solve '%s': %s", base, reason)
 
 
 def _highs_echo_translations(

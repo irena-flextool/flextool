@@ -45,30 +45,15 @@ FAST_SCENARIOS = (
 )
 SLOW_SCENARIOS = ("fullYear_roll",)
 
-# (template regex, why it is allowed).  TODO(P3): fix the site and delete the entry.
+# (template regex, why it is allowed).  A new offender: fix the site rather than adding an entry.
 KNOWN_REPEATS: list[tuple[str, str]] = [
-    (r"^Solver args: ", "printed before every solve and roll; P3: once per run (again only when changed)"),
-    (r"^total_cost\.val = ", "printed after every solve and roll; P3/P4"),
-    (r"^warm reuse fell back to COLD REBUILD ", "every roll; P3"),
+    (r"^total_cost\.val = ", "printed after every solve and roll (a marker the GUI and tests read); P4"),
 ]
 KNOWN_LONG: list[tuple[str, str]] = [
-    (r"^Autoscale by polar-high: LP within HiGHS comfort zone", "P3: shorten"),
-    (r"^Solver args: ", "P3: shorten / once per run"),
-    (r"^manifest: registered file missing on disk: ", "P3: shorten or debug level"),
-    (r"^Info: the existing capacity of ", "P3: lifetime reinvest notice (_cohorts.py), Note: prefix + code"),
-    (r"^capacity margin shortfall: ", "P3"),
-    (r"^Note: \w+ <n> has maps without index names", "P3: _param_shapes notice"),
-    (r"^Warning: timeset <n> \(solve <n>\): the block starting ", "P3: timeset block warning"),
-    (r"^Solves <n> and <n> both realize dispatch in period ", "P3: _realized_overlap.py"),
-    (r"^Rolling solve <n>: <x> storage node ", "P3: storage notice"),
-    (r"^Solve <n> is a rolling_window solve whose rolls start inside a period", "P3: storage notice"),
-    (r"^warm reuse fell back to COLD REBUILD ", "P3"),
+    (r"^Solver args: ", "the solver's whole option list, once per run (copyable as is; the GUI wraps it)"),
 ]
 # Entries that only the slow scenarios exercise (the stale check skips them when those did not run).
-SLOW_ONLY = {
-    r"^total_cost\.val = ", r"^warm reuse fell back to COLD REBUILD ",
-    r"^Rolling solve <n>: <x> storage node ", r"^Solve <n> is a rolling_window solve whose rolls start inside a period",
-}
+SLOW_ONLY = {r"^total_cost\.val = "}
 
 _CODE = re.compile(r"\[(W-\d{4})\]")
 _LOGS: dict[str, str] = {}
