@@ -2659,7 +2659,33 @@ def _fix_usage_target(b: _Build) -> "pl.DataFrame | None":
               .agg(pl.col("value").sum())
               .select("n", "d", "t", "value"))
     target = _restated(d, target, "usage_cap")
+    target = _with_period_caps(d, target)
     return target if target.height > 0 else None
+
+
+def _with_period_caps(d, target: pl.DataFrame) -> pl.DataFrame:
+    """``target`` (n, d, t, value) with the ``usage_cap_period`` rows of ``storage_roll_end``: the cumulative
+    fix_usage cap of a period of a roll before its horizon's last period, at the period's last step in the roll
+    (_run_model._nested_end_rows; a period already in ``target`` keeps its row)."""
+    sre = getattr(d, "storage_roll_end", None)
+    if not _has_rows(sre) or "period" not in sre.columns:
+        return target
+    extra = (sre.filter((pl.col("kind") == "usage_cap_period") & pl.col("period").is_not_null())
+             .select(pl.col("n").cast(pl.Utf8), pl.col("period").cast(pl.Utf8).alias("d"), "value"))
+    if extra.height == 0:
+        return target
+    fixed = d.n_fix_storage_usage.select(pl.col("n").cast(pl.Utf8)).unique()
+    last = d.nodeState_last_dt.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                                      pl.col("t").cast(pl.Utf8))
+    extra = (extra.join(fixed, on="n", how="semi").join(last, on=["n", "d"], how="inner")
+             .join(target.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8)), on=["n", "d"], how="anti")
+             .select("n", "d", "t", "value").sort("n", "d", "t"))
+    if extra.height == 0:
+        return target
+    schema = target.schema
+    extra = extra.with_columns([pl.col(c).cast(schema[c], strict=False) for c in ("n", "d", "t")]
+                               + [pl.col("value").cast(schema["value"])])
+    return pl.concat([target, extra], how="vertical")
 
 
 def _fix_price_steps(b: _Build) -> "pl.DataFrame | None":
@@ -2722,6 +2748,8 @@ def _eq_storage_usage_fix(b: _Build) -> None:
     #   ≤ Σ_{(d_up,d) ∈ period_branch, t_up : ∃t (d,t,t_up) ∈ dtt_timeline_matching} fix_storage_usage[n,d_up,t_up]
     #     (storage_roll_end(usage_cap)[n] instead, where it is given)
     #   ∀ n ∈ n_fix_storage_usage, d ∈ period_last, (n,d,t_last) ∈ nodeState_last_dt;   Δt = step_duration[d,t]
+    #   and, in a roll, ∀ (n,d) ∈ storage_roll_end(usage_cap_period): d a period of the roll before its horizon's
+    #     last one, RHS that cumulative cap
     # Caps the net energy drawn from storage node n over a whole period (MWh)
     # by the usage an upper-level (coarser) solve planned for the coarse
     # windows overlapping that period.  One row per period, at its last step;

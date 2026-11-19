@@ -333,7 +333,8 @@ def _rp_chain_reaches_model_end(state, solves: list, complete_solve: dict, at_en
 
 _SBM_KEY = "input/node__storage_binding_method"
 _SSE_KEY = "input/node__storage_start_end_method"
-_ROLL_END_SCHEMA = {"node": pl.Utf8, "kind": pl.Utf8, "value": pl.Float64}
+# period: only for a kind that holds per period (usage_cap_period); None otherwise.
+_ROLL_END_SCHEMA = {"node": pl.Utf8, "kind": pl.Utf8, "value": pl.Float64, "period": pl.Utf8}
 
 
 def _method_col(frame: pl.DataFrame, name: str) -> "str | None":
@@ -463,6 +464,7 @@ def _warn_storages(kind: str, complete_solve_name: str, names: list, text_of, de
 
 def _put_roll_end(provider, rows: list) -> None:
     from flextool.engine.preprocess import _provider_keys
+    rows = [tuple(r) + (None,) * (len(_ROLL_END_SCHEMA) - len(r)) for r in rows]
     provider.put(_provider_keys.SOLVE_DATA_STORAGE_ROLL_END,
                  pl.DataFrame(rows, schema=_ROLL_END_SCHEMA, orient="row"))
 
@@ -858,7 +860,7 @@ def _upper_level_at(*, node: str, parent: str, parent_handoff, active_time_lists
 
 
 def _nested_end_rows(*, solve: str, parent: "str | None", parent_handoff, active_time_lists: dict, time_index,
-                     instance: tuple, store: "_RollingStorage", period_branch: list) -> list:
+                     instance: tuple, store: "_RollingStorage", period_branch: list, rolling: bool = False) -> list:
     """``storage_roll_end`` rows that restate an upper-level storage fix at the horizon end of ``solve``.
 
     * ``fix_quantity`` (MWh): where the horizon ends inside an upper step, the upper level interpolated at that
@@ -871,6 +873,10 @@ def _nested_end_rows(*, solve: str, parent: "str | None", parent_handoff, active
       together use at most what the upper solve planned.  Written only where it differs from the sum of the whole
       upper windows that overlap the horizon (the cap of a sub-solve aligned with the upper steps that starts the
       period).
+    * ``usage_cap_period`` (MWh, with its period): in a roll of a rolling solve (``rolling``), the same cumulative
+      cap for each period of the roll before the horizon's last one, up to the end of the period, so the rolls
+      that realise a period's last steps (their horizon reaching into the next period) are capped in it too and
+      the realised rolls of every period use at most what the upper solve planned for it.
     """
     if parent is None or parent_handoff is None:
         return []
@@ -896,26 +902,51 @@ def _nested_end_rows(*, solve: str, parent: "str | None", parent_handoff, active
     usage = getattr(parent_handoff, "fix_storage_usage", None)
     if usage is not None and usage.height > 0:
         anchor = {str(b): str(p) for p, b in period_branch if b != p}
-        base = anchor.get(str(period), str(period))
-        start = store.usage_start.setdefault((instance, base), first)
         spans = {(u[4], u[5]): u for u in upper}
         value_col = "p_fix_storage_usage" if "p_fix_storage_usage" in usage.columns else "value"
-        per_node: dict = {}
-        for node, p_up, t_up, value in usage.select(
-                pl.col("node").cast(pl.Utf8), pl.col("period").cast(pl.Utf8), pl.col("step").cast(pl.Utf8),
-                pl.col(value_col).cast(pl.Float64)).iter_rows():
-            span = spans.get((p_up, t_up))
-            if span is None or span[0] != h[0] or value is None:
-                continue
-            rank, root, a, b = span[:4]
-            whole = float(value) if (a < h[1] and b > first[1]) else 0.0
-            lo, hi = max(a, start[1] if start[0] == rank else a), min(b, h[1])
-            total = time_index.hours(root, a, b)
-            part = float(value) * time_index.hours(root, lo, hi) / total if hi > lo and total > 0 else 0.0
-            old, new = per_node.get(node, (0.0, 0.0))
-            per_node[node] = (old + whole, new + part)
-        for node, (old, new) in sorted(per_node.items()):
-            new -= store.usage_realised.get((instance, base, node), 0.0)
+        upper_usage = usage.select(
+            pl.col("node").cast(pl.Utf8), pl.col("period").cast(pl.Utf8), pl.col("step").cast(pl.Utf8),
+            pl.col(value_col).cast(pl.Float64)).rows()
+
+        def cumulative(base: str, first_at, end_at) -> dict:
+            """``{node: (whole, cumulative)}``: the upper usage of the windows of the period (rank ``end_at[0]``)
+            overlapping [first_at, end_at) (whole: the default cap of the model), and the cumulative cap: the upper
+            usage from the period's start in the instance up to ``end_at``, pro rata, less what the instance's
+            earlier sub-solves realised in the period."""
+            start = store.usage_start.setdefault((instance, base), first_at)
+            per_node: dict = {}
+            for node, p_up, t_up, value in upper_usage:
+                span = spans.get((p_up, t_up))
+                if span is None or span[0] != end_at[0] or value is None:
+                    continue
+                rank, root, a, b = span[:4]
+                whole = float(value) if (a < end_at[1] and b > first_at[1]) else 0.0
+                lo, hi = max(a, start[1] if start[0] == rank else a), min(b, end_at[1])
+                total = time_index.hours(root, a, b)
+                part = float(value) * time_index.hours(root, lo, hi) / total if hi > lo and total > 0 else 0.0
+                old, new = per_node.get(node, (0.0, 0.0))
+                per_node[node] = (old + whole, new + part)
+            return {node: (old, new - store.usage_realised.get((instance, base, node), 0.0))
+                    for node, (old, new) in per_node.items()}
+
+        # The periods of a roll before its horizon's last one (the realised part and the look-ahead of a roll that
+        # crosses into the next period): their own cumulative cap up to the period's end in the roll, so the rolls
+        # that realise a period's tail are capped too (review M3).  Rolling solves only: a solve that is not
+        # rolling keeps the cap of its last period.
+        if rolling:
+            for p_mid, mid_steps in lower.items():
+                if p_mid == period:
+                    break
+                if not mid_steps:
+                    continue
+                mid_first = time_index.position(str(p_mid), str(mid_steps[0].timestep))
+                mid_end = time_index.end_of(str(p_mid), str(mid_steps[-1].timestep), mid_steps[-1].duration)
+                if mid_first is None or mid_end is None or mid_end[3] is not None:
+                    continue
+                for node, (_old, new) in sorted(cumulative(anchor.get(str(p_mid), str(p_mid)), mid_first,
+                                                           (mid_end[0], mid_end[2])).items()):
+                    rows.append((node, "usage_cap_period", new, str(p_mid)))
+        for node, (old, new) in sorted(cumulative(anchor.get(str(period), str(period)), first, h).items()):
             if abs(new - old) > 1e-9 * max(1.0, abs(old)):
                 rows.append((node, "usage_cap", new))
     if rows:
@@ -2704,7 +2735,8 @@ def native_run_model(state, solver) -> int:
         _nested_rows = _nested_end_rows(
             solve=solve, parent=parent_roll.get(solve), parent_handoff=parent_handoff,
             active_time_lists=active_time_lists, time_index=_time_index, instance=_instance_of[solve],
-            store=_rolling_storage, period_branch=period__branch_lists[solve])
+            store=_rolling_storage, period_branch=period__branch_lists[solve],
+            rolling=state.solve.solve_modes.get(complete_solve[solve]) == "rolling_window")
         # A later solve of a sequence that reaches the end of the model returns the free start the model began
         # forward chains at (the rolls of a rolling solve do so in _anchor_cyclic_in_rolling).
         if state.solve.solve_modes.get(complete_solve[solve]) != "rolling_window":

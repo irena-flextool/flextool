@@ -628,3 +628,44 @@ def test_model_start_is_kept_per_nesting_level():
     assert store.model_start_of(1, "tank") == 30.0
     assert store.model_start_of(2, "tank") == 30.0
     assert store.model_start_of(0, "other") is None
+
+
+def test_fix_usage_cap_covers_the_period_a_roll_realises_into_the_next(tmp_path):
+    """Review M3: a rolling lower solve over p1 and p2 (jump 6 h, horizon 8 h) under an upper fix_usage on both
+    periods.  The roll starting at p1 t13 realises p1's last four hours while its horizon ends in p2.  The load
+    (10 MW at p1 t13-t14) and the charger (p1 t15-t16) cancel in the upper 4 h step, so the upper plans no usage in
+    p1.  Before, that roll had only p2's cap: it served the load from the tank without recharging, and the realised
+    rolls drew 20 MWh from p1 the upper solve never planned.  Now each period of a roll before the horizon's last
+    one gets its own cumulative cap (usage_cap_period), so p1's realised usage stays within the upper plan."""
+    up = {"solve_mode": "single_solve", "new_stepduration": 4.0,
+          "period_timeset": tmap({"p1": "coarse", "p2": "coarse"}, "period"),
+          "years_represented": tmap({"p1": 1.0, "p2": 1.0}, "period"), "realized_periods": arr(["p1", "p2"]),
+          "fix_storage_periods": arr(["p1", "p2"]), "contains_solves": arr(["st"])}
+    steps = run(tmp_path, {"up": up, "st": two_periods()}, top=["up"],
+                tank={"storage_nested_fix_method": "fix_usage", "storage_binding_method": "bind_within_solve"},
+                load={"t13": 10.0, "t14": 10.0}, gen={"t15": 1.0, "t16": 1.0})
+    rs = rolls(steps)
+    crossing = next(r for r in rs if ("p1", "t13") in levels(r) and any(d == "p2" for d, _t in levels(r)))
+    assert "usage_cap_period" in kinds(crossing)
+    caps = row_bounds(build(crossing.flex_data), "node_storage_usage_fix_le", "tank")
+    assert any(key.endswith(",p1,t16]") for key in caps), caps
+    realised_p1 = 0.0
+    for r in rs:
+        ts = [t for d, t in sorted(levels(r))[:6] if d == "p1"]     # the realised part (jump 6 h) in p1
+        if ts:
+            realised_p1 += usage_mwh_period(r, "p1", ts)
+    upper_p1 = usage_mwh_period(steps["up"], "p1", STEPS)
+    assert upper_p1 == pytest.approx(0.0, abs=1e-6)
+    assert realised_p1 <= upper_p1 + 1e-6
+
+
+def usage_mwh_period(step, period: str, steps: list[str]) -> float:
+    """The tank's net usage (dis input − gen output, MWh) over ``steps`` of ``period`` in a solved step."""
+    flows = utf8(step.solution.value("v_flow")).filter((pl.col("d") == period) & pl.col("t").is_in(steps))
+    us = dict(zip(*[utf8(step.flex_data.p_unitsize.frame)[c].to_list() for c in ("p", "value")]))
+    dur = utf8(step.flex_data.p_step_duration.frame).filter(pl.col("d") == period)
+    hours = dict(zip(dur["t"].to_list(), dur["value"].to_list()))
+    flows = flows.with_columns(h=pl.col("t").replace_strict(hours, default=1.0).cast(pl.Float64))
+    out = (flows.filter(pl.col("p") == "dis")["value"] * flows.filter(pl.col("p") == "dis")["h"]).sum() * us["dis"]
+    gen = flows.filter(pl.col("p") == "gen")
+    return float(out - (gen["value"] * gen["h"]).sum() * us["gen"])

@@ -3949,7 +3949,9 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         if sre.height > 0:
             roll_end = (sre.pipe(rename_to_axis, {"node": "n"})
                         .select("n", pl.col("kind").cast(pl.Utf8),
-                                pl.col("value").cast(pl.Float64, strict=False)))
+                                pl.col("value").cast(pl.Float64, strict=False),
+                                (pl.col("period").cast(pl.Utf8) if "period" in sre.columns
+                                 else pl.lit(None, dtype=pl.Utf8)).alias("period")))
 
     # Rolling sub-solve: solve_data/roll_period_whole (period, whole) has a row per period of the roll
     # (_run_model).  The bind_intraperiod_blocks blocks of a period the roll holds only in part chain forward.
