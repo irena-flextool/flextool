@@ -29,7 +29,7 @@ import polars as pl
 import pytest
 import spinedb_api as api
 
-from tests.engine._lp_rows import row_terms
+from tests.engine._lp_rows import row_bounds, row_terms
 from tests.engine._unit_db import build
 
 REPO = Path(__file__).resolve().parents[2]
@@ -43,9 +43,12 @@ def _m(data: dict, name: str) -> api.Map:
     return api.Map(list(data), list(data.values()), index_name=name)
 
 
-def _run(tmp_path_factory, *, s: dict, rp: bool = True, invest: bool = False, mixed: bool = False):
+def _run(tmp_path_factory, *, s: dict, rp: bool = True, invest: bool = False, mixed: bool = False,
+         sequence: bool = False):
     """Build, solve and return the step of the tiny model; ``s`` = extra parameters of node ``s``.  ``mixed``: the
-    solve also holds period p2 on timeset ``plain`` (the four steps, no representative periods)."""
+    solve also holds period p2 on timeset ``plain`` (the four steps, no representative periods).  ``sequence``:
+    ``sol`` runs over p1 on timeset ``plain`` (no representative periods) and a second solve ``sol2`` over p2 on
+    ``ts`` follows it; returns every step (a dict)."""
     from flextool.engine import run_chain_from_db
     from flextool.update_flextool.db_handle import open_database_mapping
     from flextool.update_flextool.initialize_database import initialize_database
@@ -94,6 +97,17 @@ def _run(tmp_path_factory, *, s: dict, rp: bool = True, invest: bool = False, mi
                    ("solve", "sol", "period_timeset", _m({"p1": "ts", "p2": "plain"}, "period")),
                    ("solve", "sol", "realized_periods", api.Array(["p1", "p2"])),
                    ("solve", "sol", "years_represented", _m({"p1": 1.0, "p2": 1.0}, "period"))]
+    if sequence:
+        entities += [("solve", "sol2"), ("timeset", "plain")]
+        values = [v for v in values if v[2] not in ("solves", "period_timeset")]
+        values += [("model", "flextool", "solves", api.Array(["sol", "sol2"])),
+                   ("timeset", "plain", "timeline", "tl"),
+                   ("timeset", "plain", "timeset_duration", _m({"t0001": 4.0}, "time")),
+                   ("solve", "sol", "period_timeset", _m({"p1": "plain"}, "period")),
+                   ("solve", "sol2", "solve_mode", "single_solve"),
+                   ("solve", "sol2", "period_timeset", _m({"p2": "ts"}, "period")),
+                   ("solve", "sol2", "realized_periods", api.Array(["p2"])),
+                   ("solve", "sol2", "years_represented", _m({"p2": 1.0}, "period"))]
     values += [("node", "s", k, v) for k, v in s.items()]
     with open_database_mapping(url) as db:
         _count, errors = api.import_data(
@@ -104,6 +118,9 @@ def _run(tmp_path_factory, *, s: dict, rp: bool = True, invest: bool = False, mi
         assert not errors, errors[:5]
         db.commit_session("rp chain ends tiny model")
     steps = run_chain_from_db(url, "tiny_s", work_folder=work / "w", keep_solutions=True)
+    if sequence:
+        assert all(st.solution is not None and st.solution.optimal for st in steps.values())
+        return steps
     step = steps["sol"]
     assert step.solution is not None and step.solution.optimal
     return step
@@ -416,3 +433,22 @@ def test_plain_cyclic_error_on_representative_periods_names_the_count_and_the_fi
         _run(tmp_path_factory, s={"storage_binding_method": "bind_within_solve"})
     msg = str(exc.value)
     assert "1 storage node (s) use a storage_binding_method (e.g. s: bind_within_solve)" in msg, msg
+
+
+def test_later_representative_period_solve_returns_the_free_start(tmp_path_factory):
+    """rp_inter_period_start_match (review L7: it had no test): a solve without representative periods (sol over
+    p1, where the bind_forward_only_blended_weights node runs as bind_forward_only) followed by one on them (sol2 over
+    p2), a free start.  sol does not reach the end of the model and starts the store full (its start energy is free
+    there); sol2 continues the chain from the carry and reaches the end, so its chain ends at least at the level the
+    model started the node from (capped at the capacity): the run returns the start energy."""
+    steps = _run(tmp_path_factory, sequence=True,
+                 s={"storage_binding_method": FO_B, "storage_start_end_method": "fix_nothing", "existing": 2.0})
+    first, last = steps["sol"], steps["sol2"]
+    start = float(first.handoff.cycle_start_state.filter(pl.col("node") == "s")["value"][0])
+    rows = row_bounds(build(last.flex_data), "rp_inter_period_start_match", "s")
+    assert list(rows) == ["rp_inter_period_start_match[s,p2,t0003]"], rows
+    (lo, hi), = rows.values()
+    assert start == pytest.approx(2.0, abs=TOL)
+    assert lo == pytest.approx(min(start, 2.0)) and hi == float("inf")
+    _no_slack(last)
+    assert _values(last, "v_state_inter")[("s", "p2", "t0003")] >= min(start, 2.0) - TOL
