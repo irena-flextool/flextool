@@ -20,6 +20,7 @@ from spinedb_api import DatabaseMapping, import_data, to_database
 
 from flextool._resources import package_data_path
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
+from flextool.update_flextool.db_migration import _DEFINITION_RENAMES, _REUSED_DEFINITIONS
 from flextool.update_flextool.fixture_schema import unpack_value
 from flextool.update_flextool.initialize_database import initialize_database
 
@@ -34,6 +35,11 @@ SEED75 = Path(__file__).parent / "data" / "v75_seed_stoch_two_period.json"
 SELF_RERUN_STEPS = (35, 37, 38, 52, 57, 59, 61, 65)
 #: The steps that detect their own effect (the others only tolerate an empty commit).
 GUARDED_STEPS = (35, 37, 38, 52, 65)
+#: (stamp, content) of a database migrated by FlexTool 4.6.0 or older that failed or was killed after content was
+#: committed (the stamp was written only at the end): steps stamp+1..content run again on their own later results.
+#: Each needs the later names of definitions (``_DEFINITION_RENAMES``), parameter group ``output`` (v43) and the
+#: v62 list members (v51, v60).  Item 284: (31, 56).
+LEGACY_CASES = ((22, 35), (42, 44), (43, 56), (55, 65), (50, 62), (31, 56), (23, FLEXTOOL_DB_VERSION))
 
 
 def _seed_data(path: Path, *, base: bool) -> None:
@@ -154,6 +160,47 @@ def test_step_rerun_on_its_own_result_converges(v2_chain, tmp_path, k: int) -> N
     assert all(f" v{k} " in r for r in records), records
 
 
+@pytest.mark.parametrize(("s", "k"), LEGACY_CASES)
+def test_steps_rerun_on_later_content_converge(v2_chain, tmp_path, s: int, k: int) -> None:
+    """Content k under stamp s migrated to k equals content k, and the steps say what they found applied."""
+    path = copy_db(v2_chain[k], tmp_path / "db.sqlite")
+    restamp_file(path, s)
+    with already_applied_records() as records:
+        migrate(path, up_to=k)
+    assert version_of(path) == k
+    assert diff(snapshot(v2_chain[k]), snapshot(path)) == []
+    assert records
+
+
+def test_item_284_pre_v32_database_killed_after_v56_converges(v2_chain, tmp_path) -> None:
+    """A v31 database whose migration by FlexTool 4.6.0 or older was killed after v56 (content 56, stamp 31, the
+    backup copy deleted) migrates to the current version and equals the clean migration."""
+    path = copy_db(v2_chain[56], tmp_path / "db.sqlite")
+    restamp_file(path, 31)
+    migrate(path)
+    assert version_of(path) == FLEXTOOL_DB_VERSION
+    assert diff(snapshot(v2_chain[FLEXTOOL_DB_VERSION]), snapshot(path)) == []
+
+
+def test_a_rerun_keeps_the_definitions_v23_brought_back(v2_chain, tmp_path) -> None:
+    """v13 and v15 removed ``node.storate_state_end`` and ``node.invest_forced``, v23 typed them again: steps 15..34
+    rerun on content 34 keep those definitions and their values."""
+    expected = copy_db(v2_chain[34], tmp_path / "expected.sqlite")
+    with DatabaseMapping(url_of(expected)) as db:
+        for name, value in (("invest_forced", 25.0), ("storate_state_end", 0.5)):
+            val, typ = to_database(value)
+            db.add_parameter_value(entity_class_name="node", entity_byname=("n_in",), parameter_definition_name=name,
+                                   alternative_name="a1", value=val, type=typ)
+        db.commit_session("values of the v23 definitions")
+    for stamp in (12, 14):
+        path = copy_db(expected, tmp_path / f"db{stamp}.sqlite")
+        restamp_file(path, stamp)
+        with already_applied_records() as records:
+            migrate(path, up_to=34)
+        assert diff(snapshot(expected), snapshot(path)) == []
+        assert any("brought back" in r for r in records), records
+
+
 def _commits(path: Path, up_to: int) -> int:
     """How many commits migrating a copy of *path* to *up_to* makes (the last one is the version commit)."""
     probe = copy_db(path, path.with_name("probe.sqlite"))
@@ -214,3 +261,22 @@ def test_every_kill_inside_a_step_converges(v2_chain, v75_chain, tmp_path) -> No
                 if result:
                     failures.append((first, k, j, result[:3]))
     assert failures == []
+
+
+@pytest.mark.nightly_heavy  # PR CI skips it; runs nightly (pyproject markers)
+def test_the_rename_registry_matches_the_migration_chain(v2_chain) -> None:
+    """Every rename of ``_DEFINITION_RENAMES`` happens at its version in the clean chain (the old name there before,
+    gone after; the new name there after), and every definition name that is absent between two presences is in
+    ``_REUSED_DEFINITIONS``."""
+    present: dict[tuple[str, str], set[int]] = {}
+    for k in range(FLEXTOOL_DB_VERSION + 1):
+        with DatabaseMapping(url_of(v2_chain[k])) as db:
+            for d in db.get_items("parameter_definition"):
+                present.setdefault((d["entity_class_name"], d["name"]), set()).add(k)
+    wrong = [entry for entry in _DEFINITION_RENAMES
+             if not ({entry[0] - 1} <= present.get(entry[1:3], set()) and entry[0] not in present[entry[1:3]]
+                     and entry[0] in present.get(entry[3:5], set()))]
+    assert wrong == []
+    reused = sorted(key for key, versions in present.items()
+                    if max(versions) - min(versions) + 1 != len(versions))
+    assert reused == sorted(_REUSED_DEFINITIONS)
