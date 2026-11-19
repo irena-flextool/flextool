@@ -5804,7 +5804,7 @@ _FRACTIONAL_COUNT_WARNED: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionar
 
 
 def _warn_fractional_integer_unit_counts(flex_data: "FlexData", db_reader: "InputSource | None") -> None:
-    """Warn for each unit / connection with integer online variables whose ``p_process_existing_count`` (existing
+    """Warn (W-0526, one line) about the units / connections with integer online variables whose ``p_process_existing_count`` (existing
     capacity / unit size, the number of existing units) is not a whole number in some period of this solve.
 
     ``v_online_integer`` counts whole units up to that count (``maxOnline_integer`` / ``maxShutdown_integer``), so
@@ -5849,17 +5849,16 @@ def _warn_fractional_integer_unit_counts(flex_data: "FlexData", db_reader: "Inpu
     if flex_data.p_unitsize is not None:
         us = flex_data.p_unitsize.frame
         unitsize = dict(zip(us["p"].cast(pl.Utf8).to_list(), us["value"].to_list()))
+    found: dict[str, str] = {}
     for (p,), rows in frame.sort(["p", "d"]).group_by(["p"], maintain_order=True):
         counts = ", ".join(f"{v:g} in {d}" for d, v in zip(rows["d"].to_list(), rows["value"].to_list()))
         size = unitsize.get(p)
         size_txt = f" of {size:g} MW" if size is not None else ""
         cls = "unit" if p in units else "connection"
         warned.add(p)
-        print(f"Warning: {cls} '{p}' has integer online variables (whole units), but its existing capacity makes "
-              f"{counts} units{size_txt}, not a whole number of units. Integer online units cannot use the "
-              f"fraction (below 1 the {cls} can never be online). Without virtual_unitsize, one unit is the "
-              f"largest existing capacity over the periods; set virtual_unitsize to the size of one unit and "
-              f"existing to the number of units, or use startup_method linear.", flush=True)
+        found[p] = f"{cls}: existing capacity makes {counts} units{size_txt}"
+    from flextool import run_warnings
+    run_warnings.warn_grouped("W-0526", list(found), details=found)
 
 
 def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",

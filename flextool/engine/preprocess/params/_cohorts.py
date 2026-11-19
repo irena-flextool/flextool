@@ -575,8 +575,8 @@ def run_existing_cohorts(source: "InputSource", rc: "RunCalendar | None") -> pl.
 def _existing_replacement_info(source: "InputSource", frame: pl.DataFrame) -> None:
     """Name, once per run, the processes and storage nodes with existing capacity (> 0 in some period) whose
     reinvest_automatic chain has a replacement inside the horizon (a generation after the first): their existing
-    capacity reaches its end of life and is replaced at the values of the period the replacement comes online."""
-    from flextool.engine import _behaviour_changes
+    capacity reaches its end of life and is replaced at the values of the period the replacement comes online
+    (note W-0520)."""
     from flextool.engine.preprocess.params._existing import _per_entity_param_lf
     replaced = frame.filter((pl.col("kind") == KIND_GENERATION) & pl.col("root").str.starts_with(f"{KIND_EXISTING}:")
                             & ~pl.col("cohort").str.ends_with(":1"))
@@ -588,13 +588,9 @@ def _existing_replacement_info(source: "InputSource", frame: pl.DataFrame) -> No
                      .iter_rows() if v is not None and v > 0.0}
     years = {e: y for e, y in first.iter_rows() if e in with_existing}
     if years:
-        _behaviour_changes.warn_once_each(
-            "existing_replaced", sorted(years),
-            lambda fresh: "Info: the existing capacity of " + ", ".join(f"{e} (from year {years[e]:g} of the run)"
-                                                                         for e in fresh)
-            + " reaches its end of life inside the horizon and is replaced (lifetime_method reinvest_automatic) at "
-            "the invest_cost of the period the replacement comes online; the replacement is reported as investment "
-            "pre-existing, outside the optimised objective (as the fixed cost of existing capacity).")
+        from flextool import run_warnings
+        run_warnings.note("W-0520", sorted(years), per_run=True,
+                          details={e: f"replaced from year {years[e]:g} of the run" for e in sorted(years)})
 
 
 def _roots(frame: pl.DataFrame) -> pl.DataFrame:
@@ -610,8 +606,8 @@ def _generations(frame: pl.DataFrame) -> pl.DataFrame:
 def _past_end_of_life_warning(source: "InputSource", frame: pl.DataFrame, years: Mapping[str, float]) -> None:
     """Warn, once per run and entity, about the existing capacity of a ``reinvest_choice`` / ``no_reinvestment``
     process or storage node with ``existing`` > 0 in some period whose rounded end of life is at or before the model
-    start (``y_eol <= y[d0] + YEAR_TOL``): its existing capacity is 0 in every period."""
-    from flextool.engine import _behaviour_changes
+    start (``y_eol <= y[d0] + YEAR_TOL``): its existing capacity is 0 in every period (W-0521, one line)."""
+    from flextool import run_warnings
     from flextool.engine.preprocess.params._derived import _entity_classes_lookup, run_start_period
     start = run_start_period(dict(years))
     if start is None:
@@ -630,6 +626,7 @@ def _past_end_of_life_warning(source: "InputSource", frame: pl.DataFrame, years:
     for cls in ENTITY_CLASSES:
         built.update(_constant_values(source, cls, BUILD_YEAR))
     start_year = model_start_year(source)
+    found: dict[str, str] = {}
     for e, age, y_life, y_end, method in gone.select("e", "age", "y_life", "y_end", "eol_method").iter_rows():
         if (e not in process_set and e not in node_set) or e not in with_existing:
             continue
@@ -645,11 +642,10 @@ def _past_end_of_life_warning(source: "InputSource", frame: pl.DataFrame, years:
             where = "at the model start"
         else:
             where = f"which end_of_life_method {method} rounds to the model start"
-        _behaviour_changes.warn_once(
-            ("existing_past_end_of_life", e),
-            f"Warning: {classes.get(e, 'entity')} {e}: the end of life (lifetime_technical {y_life:g} years{aged}) is "
-            f"at year {y_end:g} of the run, {where}; its existing capacity is 0 in every period. Check the age or "
-            "lifetime_technical.")
+        found[e] = (f"{classes.get(e, 'entity')}: the end of life (lifetime_technical {y_life:g} years{aged}) "
+                    f"is at year {y_end:g} of the run, {where}")
+    if found:
+        run_warnings.warn_grouped("W-0521", list(found), per_run=True, details=found)
 
 
 def existing_cohorts(source: "InputSource",
@@ -904,17 +900,15 @@ def _never_operates_warning(source: "InputSource", never: Mapping[str, list[tupl
     the investment set leaves it out."""
     if not never:
         return
-    from flextool.engine import _behaviour_changes
+    from flextool import run_warnings
     classes = _entity_class_names(source)
+    found: dict[str, str] = {}
     for e, decisions in sorted(never.items()):
         periods = ", ".join(d for d, _life, _m in decisions)
         _d, life, method = decisions[0]
-        _behaviour_changes.warn_once(
-            ("investment_never_operates", e),
-            f"Warning: {classes.get(e, 'entity')} {e}: investments decided in {periods} would never operate "
-            f"(lifetime_technical {life:g} years, end_of_life_method {method}): their end of life is rounded to the "
-            "start of the period they start to operate in. They are not offered (their investment minimums do not "
-            "apply).")
+        found[e] = (f"{classes.get(e, 'entity')}: investments decided in {periods} (lifetime_technical {life:g} "
+                    f"years, end_of_life_method {method})")
+    run_warnings.warn_grouped("W-0522", list(found), per_run=True, details=found)
 
 
 def _closest_seam_notice(source: "InputSource", rows: list[tuple], cal: _Calendar) -> None:

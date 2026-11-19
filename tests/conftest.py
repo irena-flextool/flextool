@@ -95,7 +95,8 @@ if _CONSTRAINTS_CONFTEST.exists() and (
     sys.modules["_engine_constraints_conftest"] = _constraints_module
     _spec.loader.exec_module(_constraints_module)
 
-pytest_plugins = ["_engine_constraints_conftest"]
+# ``coded_log``: the coded warnings of a test (tests/_support/coded_warnings.py).
+pytest_plugins = ["_engine_constraints_conftest", "tests._support.coded_warnings"]
 REPO_ROOT = TEST_DIR.parent
 
 # Make db_utils importable from this directory

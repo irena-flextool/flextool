@@ -1539,19 +1539,17 @@ def emit_node_inflow_scaling_params(
     """
     frames = _compute_inflow_scaling_frames_vectorized(
         input_dir, solve_data_dir, provider=provider)
-    check_inflow_scaling_inputs(input_dir, solve_data_dir, provider=provider, frames=frames)
+    from flextool import run_warnings
+    with run_warnings.collecting():  # one line per code for the nodes of this pass
+        check_inflow_scaling_inputs(input_dir, solve_data_dir, provider=provider, frames=frames)
     for basename, df in frames.items():
         _emit(provider, f"solve_data/{basename}", df)
 
     diag, diag_warnings = _compute_inflow_scaling_diagnostics(
         input_dir, solve_data_dir, provider=provider)
     _emit(provider, "solve_data/inflow_scaling_diagnostics.csv", diag)
-    for n, d, f_val in diag_warnings:
-        pct = 100.0 * (f_val - 1.0)
-        _logger.warning(
-            "inflow scaling: node %s period %s: timeset_weights imply an "
-            "annualisation that differs from an even-sample annualisation "
-            "by f=%.5f (demand level %+.2f%%); check that timeset_weights "
-            "match the representativeness of the selected timesteps.",
-            n, d, f_val, pct,
-        )
+    if diag_warnings:
+        run_warnings.warn_grouped(
+            "W-0512", [(n, d) for n, d, _f in diag_warnings], per_run=True,
+            details={(n, d): f"timeset_weights give f={f_val:.5f} (demand level {100.0 * (f_val - 1.0):+.2f}%)"
+                     for n, d, f_val in diag_warnings})

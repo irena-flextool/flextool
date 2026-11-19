@@ -196,13 +196,14 @@ def test_no_reinvestment_window_does_not_age(tmp_path_factory, variant) -> None:
      "coal_plant: the end of life (lifetime_technical 3 years) is at year 3 of the run, which end_of_life_method "
      "previous_seam rounds to the model start"),
 ])
-def test_existing_capacity_past_its_end_of_life_warns_once(tmp_path_factory, capsys, alt, values, where) -> None:
-    capsys.readouterr()
+def test_existing_capacity_past_its_end_of_life_warns_once(tmp_path_factory, coded_log, alt, values, where) -> None:
+    coded_log()
     chain = solve_values("life_a", ["p2020"], [5.0]) + solve_values("life_b", ["p2025", "p2030"], [5.0, 10.0])
     steps = steps_of(tmp_path_factory, alt, chain + values, solves=["life_a", "life_b"])
-    printed = capsys.readouterr().out
-    assert printed.count("Warning: unit " + where) == 1, printed
-    assert "its existing capacity is 0 in every period. Check the age or lifetime_technical." in printed
+    printed = coded_log()
+    assert printed.count("Warning: existing capacity past its end of life at the model start ('coal_plant') "
+                         "[W-0521]") == 1, printed
+    assert printed.count("W-0521 coal_plant: unit: " + where.removeprefix("coal_plant: ")) == 1, printed
     for step in steps.values():
         assert set(capacity(step).values()) == {0.0}
 

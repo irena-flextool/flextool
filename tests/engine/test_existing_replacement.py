@@ -168,7 +168,7 @@ def test_replacement_is_reported_as_investment_pre_existing(tmp_path_factory) ->
 
 
 @pytest.mark.solver
-def test_free_replacement_with_salvage_is_named(tmp_path_factory, capsys) -> None:
+def test_free_replacement_with_salvage_is_named(tmp_path_factory, capsys, coded_log) -> None:
     """No invest_cost, net_salvage_value 200: the replacement is free but keeps its salvage value; a warning names
     the entity once."""
     from flextool.engine import run_chain_from_db
@@ -178,7 +178,9 @@ def test_free_replacement_with_salvage_is_named(tmp_path_factory, capsys) -> Non
     run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp("er_free_warning_w"))
     out = capsys.readouterr().out
     assert out.count(f"Warning: {PLANT}: the existing capacity (lifetime_method reinvest_automatic) is replaced") == 1
-    assert f"Info: the existing capacity of {PLANT} (from year 10 of the run)" in out
+    notes = coded_log()
+    assert f"Note: existing capacity replaced at its end of life in the horizon ('{PLANT}') [W-0520]" in notes
+    assert f"W-0520 {PLANT}: replaced from year 10 of the run" in notes
 
 
 @pytest.mark.solver

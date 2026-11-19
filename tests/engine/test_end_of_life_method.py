@@ -168,19 +168,17 @@ def _cap_every_period(values: list) -> list:
             for row in values]
 
 
-def test_investment_that_never_operates_is_not_offered(tmp_path_factory, capsys) -> None:
+def test_investment_that_never_operates_is_not_offered(tmp_path_factory, coded_log) -> None:
     """wind_plant may invest in p2020, p2025 and p2030 (lifetime_technical 7, previous_seam).  Hand: p2020 y_on 0,
     Y 7 → 5 (in service in p2020); p2025 y_on 5, Y 12 → 10 (p2025); p2030 y_on 10, Y 17 → 10 = y_on: it would
     never operate, so the solve has no investment column for it; a warning names p2030 once."""
-    from flextool.engine import _behaviour_changes
-    capsys.readouterr()
+    coded_log()
     values = solve_values(invest=PERIODS) + _cap_every_period(wind_invest(7.0, "previous_seam"))
     (step,) = steps_of(tmp_path_factory, "eol_never_one", values).values()
-    printed = capsys.readouterr().out
-    assert _behaviour_changes.already_warned(("investment_never_operates", WIND))
-    assert ("Warning: unit wind_plant: investments decided in p2030 would never operate (lifetime_technical 7 "
-            "years, end_of_life_method previous_seam)") in printed
-    assert "They are not offered (their investment minimums do not apply)." in printed
+    printed = coded_log()
+    assert "Warning: investments would never operate (end of life at start) ('wind_plant') [W-0522]" in printed
+    assert ("W-0522 wind_plant: unit: investments decided in p2030 (lifetime_technical 7 years, "
+            "end_of_life_method previous_seam)") in printed
     assert printed.count("investments decided in") == 1
     assert _offered(step) == ["p2020", "p2025"]
     assert _invest_columns(step) == ["p2020", "p2025"]

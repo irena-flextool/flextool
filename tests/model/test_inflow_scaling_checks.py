@@ -88,33 +88,34 @@ def test_zero_annual_flow_is_zero_inflow(tmp_path_factory) -> None:
     assert _west_inflow(step).abs().max() == 0.0
 
 
-def test_peak_scaling_hits_peak_and_annual_flow(tmp_path_factory, capsys) -> None:
+def test_peak_scaling_hits_peak_and_annual_flow(tmp_path_factory, coded_log) -> None:
     """Valid peak scaling (no message): the scaled peak is peak_inflow and the period's inflow sums to
     annual_flow x period share of year = 9e6 x 48/8760 = 49315.068... MWh (both by the method's definition)."""
     step = _run(tmp_path_factory, "is_peak_ok", _west(inflow_method=PEAK, annual_flow=9e6, peak_inflow=-1100))
     inflow = _west_inflow(step)
     assert inflow.min() == pytest.approx(-1100.0, rel=1e-9)
     assert inflow.sum() == pytest.approx(-9e6 * 48 / 8760, rel=1e-9)
-    assert "Warning: node 'west'" not in capsys.readouterr().out
+    assert "W-051" not in coded_log()
 
 
-def test_peak_scaling_beyond_reach_warns(tmp_path_factory, capsys) -> None:
+def test_peak_scaling_beyond_reach_warns(tmp_path_factory, coded_log) -> None:
     """annual_flow 1e7 > |peak_inflow| x 8760 = 9.636e6: no profile with peak 1100 reaches it; the scaled inflow
     exceeds peak_inflow off-peak (warning, result still matches annual_flow)."""
     step = _run(tmp_path_factory, "is_peak_reach", _west(inflow_method=PEAK, annual_flow=1e7, peak_inflow=-1100))
-    out = capsys.readouterr().out
-    assert "node 'west'" in out and "above |peak_inflow| x 8760" in out, out
+    out = coded_log()
+    assert "Warning: annual_flow is above what peak_inflow can reach ('west') [W-0510]" in out, out
+    assert "W-0510 west: period 'p2020': annual_flow 1e+07 is above |peak_inflow| x 8760" in out, out
     assert _west_inflow(step).min() < -1100.0
 
 
-def test_peak_scaling_direction_flip_warns(tmp_path_factory, capsys) -> None:
+def test_peak_scaling_direction_flip_warns(tmp_path_factory, coded_log) -> None:
     """Hand derivation (docs/how_to/basics.md formula): r = peak/peak_old = 1100/872, the profile scaled to the peak
     annualises to S = r x 29103 x 8760/48 = 6.70e6 MWh, N = 1100 x 8760 = 9.636e6, so for annual_flow 1e6
     c = (S - A)/(N - S) = 1.94 and the smallest-demand step becomes r(1+c) x 423 - 1100c = 1569 - 2135 < 0
     in demand terms: the node supplies there (warning)."""
     step = _run(tmp_path_factory, "is_peak_flip", _west(inflow_method=PEAK, annual_flow=1e6, peak_inflow=-1100))
-    out = capsys.readouterr().out
-    assert "node 'west'" in out and "changes direction" in out, out
+    out = coded_log()
+    assert "Warning: the scaled inflow changes direction in some time steps ('west') [W-0511]" in out, out
     assert _west_inflow(step).max() > 0.0
 
 
@@ -126,12 +127,12 @@ def _two_hour_steps() -> list:
 
 
 @pytest.mark.parametrize("annual_flow, warns", [(6e6, True), (4e6, False)], ids=["above", "below"])
-def test_peak_reach_counts_the_time_steps_of_a_year(tmp_path_factory, capsys, annual_flow, warns) -> None:
+def test_peak_reach_counts_the_time_steps_of_a_year(tmp_path_factory, coded_log, annual_flow, warns) -> None:
     """2 h steps: a year has 8760 / 2 = 4380 time steps, so |peak_inflow| x 4380 = 1100 x 4380 = 4.818e6 is the
     most a profile with peak 1100 reaches.  annual_flow 6e6 is above it (warning), 4e6 below (none).  Before: the
     reach was 1100 x 8760 = 9.636e6 and 6e6 gave no warning."""
     step = _run(tmp_path_factory, f"is_peak_reach_2h_{int(annual_flow)}",
                 _west(inflow_method=PEAK, annual_flow=annual_flow, peak_inflow=-1100) + [_two_hour_steps()])
-    out = capsys.readouterr().out
+    out = coded_log()
     assert ("above |peak_inflow| x 4380 time steps a year = 4.818e+06" in out) is warns, out
     assert _west_inflow(step).sum() == pytest.approx(-annual_flow * 96 / 8760, rel=1e-9)

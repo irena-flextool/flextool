@@ -106,7 +106,7 @@ def test_rounding_on_run_calendar_single_solve(tmp_path_factory, lead, method, s
         assert "p2020" in _invest_columns(step)
 
 
-def test_rounding_on_run_calendar_chain(tmp_path_factory, capsys) -> None:
+def test_rounding_on_run_calendar_chain(tmp_path_factory, coded_log) -> None:
     """L = 8.  Solve y2020_5week (p2020 + p2025): with previous_seam the p2020 decision starts to operate in
     p2025 (5), inside the solve, and is offered; its p2025 decision (5 + 8 = 13 -> 10, p2030) starts after the
     solve and is not.  With closest_seam the p2020 decision rounds to p2030 (10), after the solve: not offered,
@@ -115,38 +115,36 @@ def test_rounding_on_run_calendar_chain(tmp_path_factory, capsys) -> None:
     first = _solve_of(prev, "y2020_5week")
     assert _commission(first) == {"p2020": "p2025"}
     assert _offered(first) == ["p2020"]
-    capsys.readouterr()
+    coded_log()
     closest = _run(tmp_path_factory, "lt_chain_close", [_lead(b64(8.0, "float")), _method("closest_seam")], CHAIN)
-    out = capsys.readouterr().out
+    out = coded_log()
     first = _solve_of(closest, "y2020_5week")
     assert _offered(first) == []
     assert _invest_columns(first) == []
-    lines = [ln for ln in out.splitlines()
-             if "unit coal_plant: construction_lead_time" in ln and "after the end of solve y2020_5week " in ln]
-    assert len(lines) == 1, out
-    assert "construction_lead_time 8 years" in lines[0]
-    assert "investments decided in p2020, p2025" in lines[0]
-    assert "after the end of solve y2020_5week (p2025)" in lines[0]
-    assert "construction_lead_time_method immediate" in lines[0]
+    assert out.count("Warning: investments would start after solve 'y2020_5week'; not offered ('coal_plant') "
+                     "[W-0525]") == 1, out
+    assert ("W-0525 coal_plant: unit: construction_lead_time 8 years; investments decided in p2020, p2025 would "
+            "start to operate after p2025") in out
 
 
-def test_myopic_chain_shorter_than_lead_time(tmp_path_factory, capsys) -> None:
+def test_myopic_chain_shorter_than_lead_time(tmp_path_factory, coded_log) -> None:
     """L = 10 with two-period solves: every decision of every solve starts to operate after its solve (or after
     the model horizon for the decisions from p2030 on: 10 + 10 = 20 is the end of the horizon), so no solve has a
     coal_plant investment variable, and each solve warns once."""
-    capsys.readouterr()
+    coded_log()
     steps = _run(tmp_path_factory, "lt_myopic", [_lead(b64(10.0, "float"))], CHAIN)
-    out = capsys.readouterr().out
+    out = coded_log()
     for name in ("y2020_5week", "y2025_5week", "y2030_5week", "y2035_5week"):
         step = _solve_of(steps, name)
         assert _invest_columns(step) == [], name
     for name in ("y2020_5week", "y2025_5week"):
-        lines = [ln for ln in out.splitlines() if f"after the end of solve {name} " in ln and "coal_plant" in ln]
-        assert len(lines) == 1, (name, out)
-        assert "construction_lead_time 10 years" in lines[0]
-    horizon = [ln for ln in out.splitlines() if "after the end of the model horizon" in ln and "coal_plant" in ln]
-    assert horizon, out
-    assert all("(the end of period p2035)" in ln for ln in horizon)
+        lines = [ln for ln in out.splitlines() if f"after solve '{name}'" in ln]
+        assert lines == [f"Warning: investments would start after solve '{name}'; not offered ('coal_plant') "
+                         "[W-0525]"], (name, out)
+    assert "W-0525 coal_plant: unit: construction_lead_time 10 years" in out
+    horizon = [ln for ln in out.splitlines() if ln.startswith("W-0524 coal_plant: ")]
+    assert horizon and "Warning: investments would start after the model horizon; not offered" in out, out
+    assert all(ln.endswith("would start to operate after the end of period p2035") for ln in horizon), horizon
 
 
 # ---------------------------------------------------------------------------

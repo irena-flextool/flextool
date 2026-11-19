@@ -340,16 +340,14 @@ def _never_operates_warning(never: pl.DataFrame) -> None:
     so they are not offered."""
     if never.height == 0:
         return
-    from flextool.engine import _behaviour_changes
+    from flextool import run_warnings
+    found: dict[str, str] = {}
     for e, rows in never.group_by("e", maintain_order=True):
-        name = str(e[0])
         periods = ", ".join(dict.fromkeys(str(d) for d in rows["d"].to_list()))
         life, method = rows.select(LIFE_EXTENSION_YEARS, "eol_method").row(0)
-        _behaviour_changes.warn_once(
-            ("extension_never_operates", name),
-            f"Warning: {name}: the life extensions starting in {periods} would never operate "
-            f"(life_extension_years {life:g} years, end_of_life_method {method}): their end of life is rounded to "
-            "the start of the period they start in. They are not offered.")
+        found[str(e[0])] = (f"the life extensions starting in {periods} (life_extension_years {life:g} years, "
+                            f"end_of_life_method {method})")
+    run_warnings.warn_grouped("W-0523", list(found), per_run=True, details=found)
 
 
 def existing_in_service_before(source: "InputSource",

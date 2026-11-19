@@ -213,15 +213,17 @@ def test_no_reinvestment_capacity_is_kept_by_an_extension(tmp_path_factory) -> N
 
 
 @pytest.mark.solver
-def test_extension_that_rounds_to_no_period_is_not_offered(tmp_path_factory, capsys) -> None:
+def test_extension_that_rounds_to_no_period_is_not_offered(tmp_path_factory, coded_log) -> None:
     """life_extension_years 1 on 5-year periods: closest_seam rounds the extended end of life (11) back to 10, the
     extension's own start; it would never operate, so it has no column, and a warning names the entity."""
     from flextool.engine import _behaviour_changes
     _behaviour_changes.start_run({})
     step = _step(tmp_path_factory, "le_never", _values(cost=100.0, years=1.0))
     assert step.flex_data.cd_extend is None
-    assert (f"Warning: {PLANT}: the life extensions starting in p2030, p2035 would never operate "
-            "(life_extension_years 1 years, end_of_life_method closest_seam)") in capsys.readouterr().out
+    printed = coded_log()
+    assert f"Warning: life extensions would never operate (end of life at start) ('{PLANT}') [W-0523]" in printed
+    assert (f"W-0523 {PLANT}: the life extensions starting in p2030, p2035 (life_extension_years 1 years, "
+            "end_of_life_method closest_seam)") in printed
 
 
 @pytest.mark.solver

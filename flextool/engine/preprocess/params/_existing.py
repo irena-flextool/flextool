@@ -586,17 +586,18 @@ def warn_investments_not_offered(source: "InputSource",
                                      period_in_use: list[str],
                                      run_calendar: "object | None" = None,
                                      ) -> None:
-    """Warn once per run for each entity and solve whose investment decisions are not offered because the
-    capacity would start to operate after the end of the solve or of the model horizon.  Names the entity, its
-    lead time, the decision periods and the horizon."""
+    """Warn (W-0524 / W-0525, one line per solve) about the entities whose investment decisions are not offered
+    because the capacity would start to operate after the end of the solve or of the model horizon.  The debug log
+    names each entity's lead time, decision periods and the horizon."""
     if not_offered is None or not_offered.height == 0:
         return
-    from flextool.engine import _behaviour_changes
+    from flextool import run_warnings
 
     classes = {str(e): str(ec) for e, ec in _entity_class_lf(source)
                .select(pl.col("e").cast(pl.Utf8), "ec").collect().iter_rows()}
     model_end = getattr(run_calendar, "last_period", None)
     solve_end = str(period_in_use[-1]) if period_in_use else "?"
+    found: dict[str, dict[str, str]] = {"W-0524": {}, "W-0525": {}}
     for (e,), grp in not_offered.sort("e", "d").group_by(["e"], maintain_order=True):
         e = str(e)
         cls = classes.get(e, "entity")
@@ -608,18 +609,15 @@ def warn_investments_not_offered(source: "InputSource",
             lead_txt = " / ".join(f"{v:g}" for v in leads)
             periods = ", ".join(str(d) for d in part["d"].to_list())
             if after_model:
-                horizon = (f"the end of the model horizon (the end of period {model_end})" if model_end
-                           else "the end of the model horizon")
-                text = (f"Warning: {cls} {e}: construction_lead_time {lead_txt} years; investments decided in "
-                        f"{periods} would start to operate after {horizon} and are not offered.")
-                key = ("construction_lead_time_after_model", active_solve, e)
+                horizon = f"the end of period {model_end}" if model_end else "the end of the model horizon"
+                found["W-0524"][e] = (f"{cls}: construction_lead_time {lead_txt} years; investments decided in "
+                                      f"{periods} would start to operate after {horizon}")
             else:
-                text = (f"Warning: {cls} {e}: construction_lead_time {lead_txt} years; investments decided in "
-                        f"{periods} would start to operate after the end of solve {active_solve} "
-                        f"({solve_end}) and are not offered. Use a longer solve horizon or "
-                        f"construction_lead_time_method immediate.")
-                key = ("construction_lead_time_after_solve", active_solve, e)
-            _behaviour_changes.warn_once(key, text)
+                found["W-0525"][e] = (f"{cls}: construction_lead_time {lead_txt} years; investments decided in "
+                                      f"{periods} would start to operate after {solve_end}")
+    for code, details in found.items():
+        if details:
+            run_warnings.warn_grouped(code, list(details), solve=active_solve, details=details)
 
 
 def lead_time_sets(source: "InputSource",

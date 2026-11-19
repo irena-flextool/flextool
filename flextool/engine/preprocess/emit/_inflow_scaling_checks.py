@@ -43,7 +43,7 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine._behaviour_changes import warn_once
+from flextool import run_warnings
 from flextool.engine.input._constants import HOURS_PER_YEAR
 from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.preprocess._provider_io import _provider_key
@@ -255,11 +255,9 @@ def _warn_peak(n: str, d: str, af: float, peak: float, slope: float | None, sect
     """
     reach = abs(peak) * steps_a_year
     if af > reach:
-        warn_once(("inflow_scaling_peak_reach", n),
-                  f"Warning: node '{n}' (scale_to_annual_and_peak_flow, period '{d}'): annual_flow {_fmt(af)} is "
-                  f"above |peak_inflow| x {_fmt(steps_a_year)} time steps a year = {_fmt(reach)}; no profile with "
-                  f"peak {_fmt(peak)} reaches it, so the scaled inflow exceeds peak_inflow at its off-peak steps. "
-                  "Raise peak_inflow or lower annual_flow.")
+        run_warnings.warn("W-0510", n, per_run=True, details={n: (
+            f"period '{d}': annual_flow {_fmt(af)} is above |peak_inflow| x {_fmt(steps_a_year)} time steps a year "
+            f"= {_fmt(reach)}; no profile with peak {_fmt(peak)} reaches it")})
     if slope is None or section is None:
         return
     s = 1.0 if peak > 0 else -1.0
@@ -267,9 +265,6 @@ def _warn_peak(n: str, d: str, af: float, peak: float, slope: float | None, sect
     flipped = [slope * v - section * k for v, k in old if s * v >= 0 and s * (slope * v - section * k) < -tol]
     if flipped:
         worst = min(flipped, key=lambda x: s * x)
-        warn_once(("inflow_scaling_peak_flip", n),
-                  f"Warning: node '{n}' (scale_to_annual_and_peak_flow, period '{d}'): the scaled inflow changes "
-                  f"direction at {len(flipped)} timestep(s) (down to {_fmt(worst)} against peak_inflow "
-                  f"{_fmt(peak)}): annual_flow {_fmt(af)} is too small for this peak and profile shape, so the "
-                  f"low-{'demand' if s < 0 else 'supply'} steps turn into {'supply' if s < 0 else 'demand'}. Raise "
-                  "annual_flow or lower |peak_inflow|.")
+        run_warnings.warn("W-0511", n, per_run=True, details={n: (
+            f"period '{d}': the scaled inflow changes direction at {len(flipped)} timestep(s) (down to "
+            f"{_fmt(worst)} against peak_inflow {_fmt(peak)}, annual_flow {_fmt(af)})")})

@@ -93,24 +93,23 @@ def test_map_and_constant_give_the_same_solution(tmp_path_factory, mode):
         assert on_m.equals(on_c), name
 
 
-def test_fractional_unit_count_warns_once_per_run(tmp_path_factory, capsys):
+def test_fractional_unit_count_warns_once_per_run(tmp_path_factory, coded_log):
     """existing ``{p2020: 8.5, p2025: 17}`` without virtual_unitsize: one unit of 17 MW (the largest), of which
     8.5 / 17 = 0.5 exists in p2020.  Integer online cannot use half a unit: one warning for the whole rolling run
     (4 rolls), naming the unit, the count and the unit size."""
-    capsys.readouterr()
+    coded_log()
     _RUNS.get(tmp_path_factory, alt="uc_half_rolling", values=_values("map", "rolling", 8.5, 17.0, floor=False),
               base_chain=PLANT_CHAIN)
-    lines = [ln for ln in capsys.readouterr().out.splitlines() if "not a whole number of units" in ln]
-    assert len(lines) == 1, lines
-    assert f"unit '{PLANT}'" in lines[0]
-    assert "0.5 in p2020 units of 17 MW" in lines[0]
+    lines = [ln for ln in coded_log().splitlines() if "W-0526" in ln]
+    assert lines == [f"Warning: integer online units: existing is not whole units ('{PLANT}') [W-0526]",
+                     f"W-0526 {PLANT}: unit: existing capacity makes 0.5 in p2020 units of 17 MW"], lines
 
 
-def test_whole_unit_count_does_not_warn(tmp_path_factory, capsys):
-    capsys.readouterr()
+def test_whole_unit_count_does_not_warn(tmp_path_factory, coded_log):
+    coded_log()
     _RUNS.get(tmp_path_factory, alt="uc_whole_rolling", values=_values("map", "rolling", 17.0, 8.5, floor=False),
               base_chain=PLANT_CHAIN)
-    assert [ln for ln in capsys.readouterr().out.splitlines() if "not a whole number of units" in ln] == []
+    assert "W-0526" not in coded_log()
 
 
 def test_emitted_unitsize_reads_constant_and_period_map_existing():
