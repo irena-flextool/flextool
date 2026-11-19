@@ -193,3 +193,13 @@ def test_run_record_keeps_one_entry_per_code(tmp_path):
     assert coded["W-0001"]["cases"] == 1
     assert [w["message"] for w in status["warnings"] if "code" not in w] == ["an uncoded warning"]
     assert status["warnings_omitted"] == 0
+
+
+def test_the_gui_links_codes_to_the_registry_page():
+    """The GUI's run log links ``[W-dddd]`` with its own copy of the URL (TODO(P3): import it from
+    ``flextool.run_warnings.registry``, which needs no engine); until then the two must agree."""
+    pytest.importorskip("tkinter")
+    from flextool.gui import log_view
+
+    assert log_view.WARNINGS_DOCS_URL == WARNINGS_DOCS_URL
+    assert log_view.warning_docs_url("[W-0004]") == docs_url("W-0004")
