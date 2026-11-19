@@ -1,4 +1,4 @@
-## Unreleased
+## Release 4.6.0 (19.11.2026) — investment vintages: technical lifetime and payback time, age of existing capacity, retiring built capacity, life extension, replacement at the end of life; continuous storage across rolls and representative periods; clearer execution log with coded warnings (schema v82)
 
 Input databases move to data version 82. The FlexTool window, the Spine Toolbox workflow and `flextool-run
 --migrate` migrate them. All cost inputs and rates must be in the same terms (normally real prices with real
@@ -109,8 +109,7 @@ values").
   A jump of whole periods changes nothing. Before, energy could appear at every roll boundary that fell inside a
   period or timeblock. Upgraded databases get a notice naming the nodes.
 - **A rolling solve uses `bind_within_timeblock` as `bind_within_period`.** Each period of a rolling solve is one
-  continuous timeblock (next item), so the two mean the same cycle; the per-period rolling rule above applies, and
-  one printed line names how many nodes and the first. A solve that is not rolling (an investment or storage solve
+  continuous timeblock (next item), so the two mean the same cycle; the per-period rolling rule above applies. A solve that is not rolling (an investment or storage solve
   above the rolling dispatch, also on representative periods) keeps `bind_within_timeblock`.
 - **A rolling solve over a timeline with gaps stops with a configuration error, also in a model without
   storage.** A period with several timeblocks (a sampled timeline, e.g. sampled weeks) cannot be rolled: a roll
@@ -130,25 +129,10 @@ values").
   scope started from, capped at the storage capacity in service in the closing period; before, a store whose
   capacity shrank between periods could not close and used its penalty slack. Capacity added later still brings no
   energy of its own.
-- **A `fix_start` storage with a free end on capacity the solve cannot change prints a warning with its start
-  energy**: the run may use that stock without producing it, which is a valid model of an initial stock. Before,
-  it was only logged.
-- **Storage warnings and notices print one line per message type and solve**, naming how many storage nodes and
-  the first (e.g. "12 storage nodes (KOR_Battery, ...)"); the values per node go to the log at debug level
-  (`--debug`). This covers the endowment, borrowed-start, matching-end, reference, slack-bypass, plain cycle on
-  representative periods and rolling timeblock messages, the storage behaviour-change notices (also
-  `storage_default_fix_nothing`, once per run) and the storage configuration errors on representative periods.
 - **A rolling solve on representative periods stops with a configuration error.** Rolling over representative
   periods is not supported: use a single solve on the representative periods (e.g. the investment solve) and roll a
   separate solve over a timeset without `representative_period_weights`. Before (#126), its `*_blended_weights`
   storage nodes bound forward only, with a warning, without the weights and without a closure.
-- **`bind_within_solve`, `bind_within_period` or `bind_intraperiod_blocks` storage in a solve on representative
-  periods prints a warning** naming how many nodes and the first (not for a node with `fix_start_end`, whose
-  binding method is ignored: see the next item). These methods move the storage level from the end of one
-  representative period into the start of the next without their weights, while the flows count with them. That
-  is reasonable when the representative periods have equal weights or when the timing of the storage's inflows
-  does not matter (e.g. pumped hydro, a large heat storage); the `*_blended_weights` methods weight the transfer,
-  and `bind_within_timeblock` cycles the storage within each representative period.
 - **`bind_forward_only` storage (also the default) in a solve on representative periods stops with a configuration
   error** naming how many nodes and the first: the forward chain runs through the representative periods without
   their weights, while the flows count with them, so energy stored in a period of low weight could be used in a
@@ -159,10 +143,6 @@ values").
   `bind_forward_only_blended_weights`), so its start and end are pinned on the weighted chronological level; in a
   solve that mixes periods with and without representative periods it cycles within each timeblock
   (`bind_within_timeblock`) instead.
-- **A storage node whose balance slack can bypass a hard balance prints a warning**: a pure storage node (no
-  inflow or demand of its own, e.g. a battery; a carrier node's slack is the intended outlet of its unmet demand)
-  with `penalty_method` other than *off* that a unit or a connection links to a node with `penalty_method` *off*. Its slack can supply or absorb that node's energy at the storage node's penalty, so a
-  shortfall meant to show elsewhere appears as storage slack.
 - **A nested `fix_usage` is cumulative over the rolls and pro rata, and a nested `fix_quantity` is interpolated
   inside an upper step (results change).** A lower-level solve under an upper `fix_usage` may now use, over the
   last period of its horizon, the upper solve's usage from the start of that period (in the solve instance) to the
@@ -275,6 +255,28 @@ values").
 - **A `lifetime_technical` map with the unnamed index (`x`) gives each period its own value** in the end of life
   of existing capacity. Before, the map's last value was read, so {10, 10, 10, 40} kept the existing capacity to
   the end of the horizon.
+- **Specification-format (FlexTool 3.x) Excel files are read by column header, not by column position.** Workbooks
+  of older template versions imported silently wrong (the activity column read `has_balance` or `sense`, numbers
+  in formerly text columns became text, missing optional columns stopped the import). Older header names are
+  recognised, 'no'/'false' in the activity column means inactive, a period series overrides the constant of the
+  same parameter, legacy `solve_mode` values map to `single_solve` / `rolling_window`, the time-series data of the
+  `unit_node_t` sheet is imported, unknown columns are reported and the final status counts the errors and
+  warnings. Period data beyond the solves' periods is listed in `model.periods_available` (before, the run
+  stopped on it).
+
+### Execution log and warnings
+
+- The log in the FlexTool window wraps long lines (at least 100 columns) and highlights solver warnings separately.
+- FlexTool warnings carry a code (`[W-0123]`) that links to the new *Warnings and notes* page of the documentation
+  (what it means, how to fix it); the run ends with a tally of the warning codes.
+- A warning that concerns many entities prints one line per solve, with the number of cases and an example name
+  (the full list at debug level, `--debug`). New warnings among them: storage start energy on capacity the solve
+  cannot change, unweighted cycles on representative periods and storage slack that can bypass a hard balance.
+- The timing and memory rows are compact, with fixed columns.
+- The solve summary (`summary_solve.csv`) is printed at the end of every successful run, whatever the output
+  settings.
+- A note after a solve explains a solver outcome that is not cleanly optimal (e.g. accepted within a loosened
+  tolerance).
 
 ## Release 4.5.2 (18.11.2026) — migration of large databases, all-or-nothing migration (schema v80)
 
