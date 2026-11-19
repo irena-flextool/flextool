@@ -30,16 +30,37 @@ _SCATTERED_STEPS = [
     {"period": "p2030", "step": "t0004", "step_duration": "1.0"},
 ]
 
+# ``solve_data/step_previous.csv`` for ``_SCATTERED_STEPS`` (the seed's file describes its 48 consecutive p2020 steps,
+# so leaving it in place links (p2020, t0003) to t0002, which is not in dt).  Each period is its own block: its first
+# step wraps to its last step, and the second step follows a gap in the timeline (t0001 -> t0003, t0002 -> t0004), so
+# no step has ``jump == 1`` and the reload builds no ramp link.
+_SCATTERED_STEP_PREVIOUS = [
+    {"period": "p2020", "time": "t0001", "previous": "t0003", "previous_within_timeset": "t0003",
+     "previous_period": "p2020", "previous_within_solve": "t0003", "jump": -2},
+    {"period": "p2020", "time": "t0003", "previous": "t0001", "previous_within_timeset": "t0001",
+     "previous_period": "p2020", "previous_within_solve": "t0001", "jump": 2},
+    {"period": "p2030", "time": "t0002", "previous": "t0004", "previous_within_timeset": "t0004",
+     "previous_period": "p2030", "previous_within_solve": "t0004", "jump": -2},
+    {"period": "p2030", "time": "t0004", "previous": "t0002", "previous_within_timeset": "t0002",
+     "previous_period": "p2030", "previous_within_solve": "t0002", "jump": 2},
+]
+
+
+def _write_scattered_steps(workdir) -> None:
+    """``steps_in_use.csv`` with ``_SCATTERED_STEPS`` and the matching ``step_previous.csv``."""
+    write_csv(workdir, "steps_in_use.csv", _SCATTERED_STEPS)
+    write_csv(workdir, "step_previous.csv", _SCATTERED_STEP_PREVIOUS)
+
 
 def _write_scattered_periods(workdir, share_hours: dict[str, float]) -> None:
-    """Two scattered periods in ``steps_in_use.csv`` plus the per-period files that go with a period set.
+    """Two scattered periods in ``steps_in_use.csv`` (with their ``step_previous.csv``) plus the per-period files that go with a period set.
 
     The seed workdir has one period (p2020); adding p2030 to ``steps_in_use.csv`` alone leaves the
     period-keyed companions without a p2030 row.  ``complete_period_share_of_year_calc.csv`` (the
     complete solve's hours of each period / 8760) and ``p_inflation_factor_operations_yearly.csv``
     weight every operational cost of their period, so they are written for both periods.
     """
-    write_csv(workdir, "steps_in_use.csv", _SCATTERED_STEPS)
+    _write_scattered_steps(workdir)
     write_csv(workdir, "complete_period_share_of_year_calc.csv",
               [{"period": d, "value": h / 8760.0} for d, h in share_hours.items()])
     write_csv(workdir, "p_inflation_factor_operations_yearly.csv",
@@ -105,7 +126,7 @@ def test_period_share_without_a_dt_period_raises(tiny_workdir):
 
     Reload-only seed (c24 S1-7): see the module docstring; moved to tests/csv_reload/ by c24 S1-8.
     """
-    write_csv(tiny_workdir, "steps_in_use.csv", _SCATTERED_STEPS)  # the seed's share has p2020 only
+    _write_scattered_steps(tiny_workdir)  # the seed's share has p2020 only
     with pytest.raises(ValueError, match=r"p_period_share has no row for dt periods \['p2030'\]"):
         load_from_dump(tiny_workdir)
 

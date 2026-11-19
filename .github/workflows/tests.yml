@@ -133,3 +133,9 @@ jobs:
           python .github/scripts/peak_mem.py
           pytest tests/ -v --tb=short -n logical
           -m "nightly_heavy and not csv_reload and not axis_enums"
+
+      - name: Run CSV reload contract tests
+        # tests/csv_reload is opt-in (its conftest skips it unless -m names csv_reload), so neither the PR
+        # `test` job nor the step above runs it; ~1.5 min on 8 local workers.
+        if: ${{ !cancelled() }}
+        run: pytest -m csv_reload tests/csv_reload -v --tb=short -n logical
