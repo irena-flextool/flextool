@@ -98,15 +98,14 @@ def _availability_case(tmp_path_factory, alt: str, plant_labels: tuple[str, str]
                          ["unit", CHP, "availability", chp_value]])
 
 
-def test_unnamed_time_map_next_to_period_time_map(tmp_path_factory, capsys) -> None:
+def test_unnamed_time_map_next_to_period_time_map(tmp_path_factory, coded_log) -> None:
     """coal_plant: unnamed period x time availability; coal_chp: unnamed 1-level map over the time steps.
     ≡ the twin with named levels (objective, ``p_process_availability``).  Before: objective 8.68e8 (coal_chp's
     time steps read as periods) instead of 1.73e9.  The note naming both units is printed once."""
     chp = {t: 0.5 for t in TIMESTEPS}
-    capsys.readouterr()
+    coded_log()
     case = _availability_case(tmp_path_factory, "lp_mix_t", ("x", "x"), map1("x", chp))
-    notes = [ln for ln in capsys.readouterr().out.splitlines()
-             if ln.startswith("Note: unit 'availability' has maps without index names")]
+    notes = [ln for ln in coded_log().splitlines() if ln.startswith("W-0515 unit.availability: ")]
     twin = _availability_case(tmp_path_factory, "lp_mix_t_twin", ("period", "time"), map1("time", chp))
     assert case.solution.obj == pytest.approx(twin.solution.obj, rel=1e-9)
     assert field_diff(case.flex_data.p_process_availability, twin.flex_data.p_process_availability) is None

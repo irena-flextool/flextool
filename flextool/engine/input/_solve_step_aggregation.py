@@ -606,7 +606,7 @@ def _warn_mixed_no_limit_steps(timed: pl.DataFrame, key: "tuple[str, str]", grou
 
         nl = inf (upper) / -inf (lower)
         M  = { (k, s) : ∃ b ∈ base(s), v[k, b] = nl  and  ∃ b' ∈ base(s), v[k, b'] finite }
-        warn once per (key, k) per run, naming the (period, s) of M for k     (MEAN / SUM: the step is nl)
+        warn (W-0513) once per (key, k) per run, naming the (period, s) of M for k  (MEAN / SUM: the step is nl)
         raise FlexToolConfigError     if a step has both nl and -nl            (the step would be NaN)
 
     ``k`` is the group of the frame other than ``period_col``; the period of a step is the row's ``period_col``
@@ -652,19 +652,16 @@ def _warn_mixed_no_limit_steps(timed: pl.DataFrame, key: "tuple[str, str]", grou
         raise FlexToolConfigError(
             "; ".join(parts) + ". These solve steps of new_stepduration combine time steps of inf and -inf, which "
             f"have no mean. For no limit in a time step, give {'inf' if side == 'upper' else '-inf'} there.")
-    from flextool.engine import _behaviour_changes
+    from flextool import run_warnings
 
     use = "inf" if side == "upper" else "-inf"
+    found: dict[tuple[str, str], str] = {}
     for (k,), g in steps.group_by("__k", maintain_order=True):
         where = g.get_column("__at").to_list()
         shown = ", ".join(where[:_MIXED_STEPS_SHOWN]) + (
             f" and {len(where) - _MIXED_STEPS_SHOWN} more" if len(where) > _MIXED_STEPS_SHOWN else "")
-        _behaviour_changes.warn_once(
-            ("mixed_no_limit_step", cls, param, k),
-            f"Warning: {cls} '{k}', parameter '{param}' is {use} (no limit) in some but not all time steps of "
-            f"these solve steps of new_stepduration: {shown}. A solve step takes the mean of its time steps, which "
-            f"is {use}, so the limit is dropped for the whole solve step. To keep a limit, give {use} in all or "
-            f"none of the time steps of a solve step, or use a shorter new_stepduration.")
+        found[(f"{cls} {k}", param)] = f"solve steps {shown}"
+    run_warnings.warn_grouped("W-0513", list(found), per_run=True, use=use, details=found)
 
 
 def aggregate_if_active(frame: pl.DataFrame, key: "tuple[str, str] | None", *, time_col: str = "t",

@@ -722,17 +722,8 @@ def _scope_rows(*, complete_solve_name: str, solve: str, instance: tuple, scoped
     if names:
         from flextool.engine import _behaviour_changes
         _behaviour_changes.notice("rolling_cyclic_storage_anchored", "nodes", names, solve=complete_solve_name)
-        key = ("scope_logged", complete_solve_name)
-        if key not in store.warned:
-            store.warned.add(key)
-            _MODULE_LOGGER.info(
-                "Solve '%s' is a rolling_window solve whose rolls start inside a period: %s with bind_within_period "
-                "(also bind_within_timeblock) or bind_intraperiod_blocks continue that period from the level realised "
-                "by the previous roll; a roll ends its part at least at that level, and the roll(s) holding its end "
-                "end it at the level it started from.",
-                complete_solve_name, _behaviour_changes.storages_named(names))
-            _MODULE_LOGGER.debug("Solve '%s': per-period rolling carry for %s.", complete_solve_name,
-                                 ", ".join(names))
+        from flextool import run_warnings
+        run_warnings.note("W-0533", names, solve=complete_solve_name)
     return rows
 
 
@@ -1351,13 +1342,8 @@ def _timeblock_binds_within_period_in_roll(*, state, complete_solve_name: str, a
         return
     provider.put(_SBM_KEY, sbm.with_columns(
         pl.when(is_tb).then(pl.lit("bind_within_period")).otherwise(pl.col(col)).alias(col)))
-    from flextool.engine import _behaviour_changes
-    _behaviour_changes.storage_message(
-        "rolling_timeblock_as_period", complete_solve_name, names,
-        lambda named: (f"Rolling solve '{complete_solve_name}': {named} with bind_within_timeblock use "
-                       "bind_within_period in this solve; each period is one continuous timeblock here."),
-        details=f"Rolling solve '{complete_solve_name}': bind_within_timeblock used as bind_within_period for "
-                f"{', '.join(names)}.")
+    from flextool import run_warnings
+    run_warnings.note("W-0532", names, solve=complete_solve_name)
 
 
 def _reject_rolling_with_gaps(*, state, complete_solve_name: str, complete_active_time_list: dict) -> None:

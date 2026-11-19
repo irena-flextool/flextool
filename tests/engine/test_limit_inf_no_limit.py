@@ -438,20 +438,17 @@ def test_opposite_infinity_is_an_error(tmp_path_factory, cls, ent, param, value,
         _steps(tmp_path_factory, f"inf_bad_{param}", [[cls, ent, param, pmap({"p2020": value})]], chain)
 
 
-def test_huge_finite_limit_warns_once_and_is_kept(tmp_path_factory, capsys) -> None:
+def test_huge_finite_limit_warns_once_and_is_kept(tmp_path_factory, coded_log) -> None:
     """co2_max_period = 1e15 in p2020 of a rolling solve: one warning (not one per roll) naming the group, the
     parameter, the period and the value, suggesting inf; the p2020 cap rows keep a finite upper bound of that size
     (the value is used as given, not dropped)."""
-    from flextool.engine import _behaviour_changes
-
-    _behaviour_changes._warned.discard(("huge_limit_value", "group", "co2_max_period", "co2_limit"))
     steps = _steps(tmp_path_factory, "inf_huge",
                    ROLLING + [["group", "co2_limit", "co2_max_period", pmap({"p2020": 1.0e15, "p2025": 1.0e9})]],
                    CO2_CHAIN)
-    out = capsys.readouterr().out
-    msg = "Warning: group 'co2_limit', parameter 'co2_max_period' has a very large value: p2020 (1e+15)"
+    out = coded_log()
+    msg = "Warning: limit has a very large value (numerically unstable) ('group co2_limit, co2_max_period') [W-0514]"
     assert out.count(msg) == 1, out[-2000:]
-    assert "give inf there" in out
+    assert "W-0514 group co2_limit, co2_max_period: p2020 (1e+15)" in out
     rows, _ = _lp(list(steps.values())[0])
     caps = [ub for r, (_lb, ub, _c) in rows.items() if r.startswith("co2_max_period[co2_limit,p2020]")]
     assert caps and all(math.isfinite(ub) and ub > 1.0e14 for ub in caps)
@@ -481,28 +478,24 @@ def test_no_limit_keys_are_means() -> None:
 
 
 @pytest.mark.parametrize("rolling", [False, True])
-def test_instant_flow_inf_mixed_in_solve_step(tmp_path_factory, capsys, rolling) -> None:
+def test_instant_flow_inf_mixed_in_solve_step(tmp_path_factory, coded_log, rolling) -> None:
     """new_stepduration 2: max_instant_flow 1e5 MW with inf at t0005 and 1e5 at t0006, so the solve step t0005
     (t0005 + t0006) has the mean (inf + 1e5) / 2 = inf: no maxInstant_flow row at t0005, one warning per run
     naming the flowGroup, the parameter and p2020/t0005.  The reference has 1e5 at t0005 and 2e5 at t0006: the step
     is (1e5 + 2e5) / 2 = 1.5e5 (finite, no warning); every other step is 1e5 in both."""
-    from flextool.engine import _behaviour_changes
-
-    _behaviour_changes._warned.discard(("mixed_no_limit_step", "flowGroup", "max_instant_flow", FLOW_GROUP))
     extra = COARSE + (ROLLING if rolling else TWO_PERIODS)
     a = _steps(tmp_path_factory, f"inf_mif_mix_{rolling}_a",
                extra + [["flowGroup", FLOW_GROUP, "max_instant_flow", _instant_time_map_pair(INF, 1.0e5, 1.0e5)]],
                PLANT_CHAIN, entities=FLOW_ENTITIES)
-    out = capsys.readouterr().out
-    msg = (f"Warning: flowGroup '{FLOW_GROUP}', parameter 'max_instant_flow' is inf (no limit) in some but not all "
-           f"time steps of these solve steps of new_stepduration: p2020/t0005")
-    assert out.count(f"flowGroup '{FLOW_GROUP}', parameter 'max_instant_flow' is inf") == 1, out[-3000:]
-    assert msg in out, out[-3000:]
-    assert "the limit is dropped for the whole solve step" in out
+    out = coded_log()
+    msg = (f"Warning: limit is inf in only part of a new_stepduration step; dropped "
+           f"('flowGroup {FLOW_GROUP}, max_instant_flow') [W-0513]")
+    assert out.count(msg) == 1, out[-3000:]
+    assert f"W-0513 flowGroup {FLOW_GROUP}, max_instant_flow: solve steps p2020/t0005" in out, out[-3000:]
     b = _steps(tmp_path_factory, f"inf_mif_mix_{rolling}_b",
                extra + [["flowGroup", FLOW_GROUP, "max_instant_flow", _instant_time_map_pair(1.0e5, 2.0e5, 1.0e5)]],
                PLANT_CHAIN, entities=FLOW_ENTITIES)
-    assert "parameter 'max_instant_flow' is inf" not in capsys.readouterr().out
+    assert "W-0513" not in coded_log()
     assert len(a) > (2 if rolling else 0)
     gone = (f"maxInstant_flow[{FLOW_GROUP},p2020,t0005]", f"maxInstant_flow[{FLOW_GROUP},p2025,t0005]")
     _assert_lp_minus(a, b, gone)

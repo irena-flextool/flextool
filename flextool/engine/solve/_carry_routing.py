@@ -138,9 +138,11 @@ class CarryRouter:
                 key = (solve, entry.solve)
                 if key not in self._warned:
                     self._warned.add(key)
-                    _LOG.warning(
-                        "The state realised by solve '%s' (ending at %s) is not before the start of solve '%s' "
-                        "(%s); it is not carried into it.", entry.solve, entry.end_step, solve, first_step)
+                    from flextool import run_warnings
+                    run_warnings.warn_grouped(
+                        "W-0502", [entry.solve], solve=solve,
+                        details={entry.solve: f"its state ends at {entry.end_step}; solve '{solve}' starts at "
+                                              f"{first_step}"})
                 continue
             out.append(entry)
         if not out:
@@ -199,11 +201,10 @@ class CarryRouter:
         names = sorted(str(n) for n in entry.roll_end_state["node"].to_list() if str(n) not in quiet)
         if not names:
             return
-        nodes = ", ".join(names)
-        _LOG.warning(
-            "Solve '%s' is the first solve of its nesting level: its storage node(s) %s start from "
-            "storage_start_end_method (fix_start) or free, not from the state solve '%s' realised at a higher level "
-            "before it.", solve, nodes, entry.solve)
+        from flextool import run_warnings
+        run_warnings.warn_grouped("W-0503", names, solve=solve,
+                                  details=f"solve '{solve}': not from the state solve '{entry.solve}' realised at a "
+                                          f"higher level before it")
 
 
 class RoutedCarriers:

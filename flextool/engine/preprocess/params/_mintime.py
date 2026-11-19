@@ -271,7 +271,19 @@ def cut_short_lookback_warnings(min_times: "dict[str, list[tuple[str, float]]]",
                                 first_step_link: "pl.DataFrame | None",
                                 carry_roots: "pl.DataFrame | None",
                                 solve_name: str) -> "list[str]":
-    """Warnings for the steps whose minimum up/down-time look-back the solve boundary cuts short.
+    """Warnings for the steps whose minimum up/down-time look-back the solve boundary cuts short (the texts of
+    :func:`_cut_short_lookback_cases`)."""
+    return [f"Process '{p}' has {param}={L:g} hours; the look-back from time step ({d}, {t}) of solve "
+            f"'{solve_name}' covers 0 hours"
+            for param, p, L, d, t in _cut_short_lookback_cases(min_times, dt, first_step_link, carry_roots)]
+
+
+def _cut_short_lookback_cases(min_times: "dict[str, list[tuple[str, float]]]",
+                              dt: "pl.DataFrame | None",
+                              first_step_link: "pl.DataFrame | None",
+                              carry_roots: "pl.DataFrame | None") -> list[tuple]:
+    """``[(parameter, process, L, d, t)]``: the steps whose minimum up/down-time look-back the solve boundary cuts
+    short.
 
     A first step of a period of this solve is cut short when the complete solve's predecessor of it is adjacent on
     the timeline (``jump == 1``) but is not a step of this solve, and the step is not one of the *carry_roots*
@@ -280,7 +292,7 @@ def cut_short_lookback_warnings(min_times: "dict[str, list[tuple[str, float]]]",
     solve ends at: a hole or an overlap in time between the two solves (a solve with longer steps than the dispatch
     realized before it continues that dispatch when the two steps end at the same time).
     ``min_times`` maps ``"min_uptime"`` / ``"min_downtime"`` to ``[(p, L)]``; ``first_step_link`` ``[period, time,
-    previous_period, previous_within_solve, jump]``.  One message per process and parameter, naming the first such
+    previous_period, previous_within_solve, jump]``.  One case per process and parameter, naming the first such
     step.
     """
     if dt is None or dt.height == 0 or first_step_link is None or first_step_link.height == 0:
@@ -301,19 +313,13 @@ def cut_short_lookback_warnings(min_times: "dict[str, list[tuple[str, float]]]",
                        on=["d", "t"], how="anti")
     if cut.height == 0:
         return []
-    messages = []
+    out = []
+    d, t = cut.row(0)[0], cut.row(0)[1]
     for param, procs in min_times.items():
         for p, L in sorted(procs):
-            if L <= 0:
-                continue
-            for d, t, _, _, _ in cut.rows():
-                messages.append(
-                    f"Process '{p}' has {param}={L:g} hours but the look-back from time step ({d}, {t}) of solve "
-                    f"'{solve_name}' covers only 0 hours: the time steps before it belong to an earlier solve and "
-                    f"this step does not continue the last step that solve realized, so no realized on-line history "
-                    f"reaches it and the earlier start-ups and shut-downs do not constrain it.")
-                break
-    return messages
+            if L > 0:
+                out.append((param, p, L, d, t))
+    return out
 
 
 def report_cut_short_lookback(min_times: "dict[str, list[tuple[str, float]]]",
@@ -321,10 +327,15 @@ def report_cut_short_lookback(min_times: "dict[str, list[tuple[str, float]]]",
                               first_step_link: "pl.DataFrame | None",
                               carry_roots: "pl.DataFrame | None",
                               solve_name: str) -> "list[str]":
-    """Log and print (the console of a solve shows only printed lines) the :func:`cut_short_lookback_warnings`;
-    returns them."""
+    """Warn (W-0504, one line per parameter and solve) about the :func:`cut_short_lookback_warnings`, which go to
+    the debug log; returns them."""
+    from flextool import run_warnings
+    cases = _cut_short_lookback_cases(min_times, dt, first_step_link, carry_roots)
     messages = cut_short_lookback_warnings(min_times, dt, first_step_link, carry_roots, solve_name)
-    for message in messages:
-        logger.warning(message)
-        print(f"WARNING: {message}", flush=True)
+    by_param: dict[str, dict[str, str]] = {}
+    for (param, process, *_rest), message in zip(cases, messages):
+        by_param.setdefault(param, {})[process] = message
+    for param, found in by_param.items():
+        run_warnings.warn_grouped("W-0504", list(found), solve=solve_name, parameter=param.removeprefix("min_"),
+                                  details=found)
     return messages

@@ -2118,13 +2118,14 @@ def _shape_read_notice(source: "InputSource", entity_class: str, parameter_name:
             groups.setdefault(words, []).append(_entity_text(tuple(row[c] for c in ent_cols)))
     if not groups:
         return
+    from flextool import run_warnings
     read = []
     for words, names in groups.items():
         more = f" and {len(names) - 3} more" if len(names) > 3 else ""
         read.append(f"{', '.join(repr(n) for n in names[:3])}{more} over {words}")
-    _behaviour_changes.warn_once(
-        key, f"Note: {entity_class} '{parameter_name}' has maps without index names; read {'; '.join(read)} from "
-             "their depth and keys. Name the index levels to make this explicit.")
+    if _behaviour_changes.mark_once(key):
+        name = f"{entity_class}.{parameter_name}"
+        run_warnings.note("W-0515", [name], details={name: "read " + "; ".join(read)})
 
 
 def resolve_param_shape(
@@ -3585,17 +3586,12 @@ def check_limit_values(out: "Param | None", entity_keys: "tuple[str, ...]", *, e
     huge = _limit_rows(out, entity_keys, value.is_finite() & (value.abs() >= HUGE_LIMIT_VALUE))
     if not huge:
         return
-    from flextool.engine import _behaviour_changes
+    from flextool import run_warnings
 
-    use = "inf" if side == "upper" else "-inf"
-    for k, at in sorted(huge.items()):
-        shown = ", ".join(at[:_LIMIT_VALUES_SHOWN]) + (f" and {len(at) - _LIMIT_VALUES_SHOWN} more"
-                                                         if len(at) > _LIMIT_VALUES_SHOWN else "")
-        _behaviour_changes.warn_once(
-            ("huge_limit_value", entity_class, parameter_name, k),
-            f"Warning: {entity_class} '{k}', parameter '{parameter_name}' has a very large value: {shown}. It is "
-            f"used as a limit, and a number this large makes the solve numerically unstable. If no limit is meant "
-            f"in a period, give {use} there.")
+    found = {(f"{entity_class} {k}", parameter_name): ", ".join(at[:_LIMIT_VALUES_SHOWN]) + (
+             f" and {len(at) - _LIMIT_VALUES_SHOWN} more" if len(at) > _LIMIT_VALUES_SHOWN else "")
+             for k, at in sorted(huge.items())}
+    run_warnings.warn_grouped("W-0514", list(found), per_run=True, details=found)
 
 
 def drop_no_limit_rows(out: "Param | None", side: str) -> "Param | None":

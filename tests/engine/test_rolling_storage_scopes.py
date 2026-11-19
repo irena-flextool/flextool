@@ -194,7 +194,7 @@ def test_aligned_period_rolls_unchanged(tmp_path):
     assert len(rs) == 2 and all(r.flex_data.storage_roll_end is None for r in rs)
 
 
-def test_timeblock_in_rolling_is_within_period(tmp_path, capsys):
+def test_timeblock_in_rolling_is_within_period(tmp_path, coded_log):
     """Owner decision (Phase 5): a rolling solve uses bind_within_timeblock as bind_within_period (each period of a
     rolling solve is one continuous timeblock).  The same model with the two methods gives, roll by roll, the same
     storage_roll_end rows, the same anchor / close bounds and the same objective; one printed line names the
@@ -202,12 +202,10 @@ def test_timeblock_in_rolling_is_within_period(tmp_path, capsys):
     rs = {}
     for method in ("bind_within_timeblock", "bind_within_period"):
         rs[method] = rolls(run(tmp_path / method, {"st": two_periods()}, tank={"storage_binding_method": method}))
-        out = capsys.readouterr().out
-        lines = [ln for ln in out.splitlines() if "with bind_within_timeblock use bind_within_period" in ln]
-        assert len(lines) == (1 if method == "bind_within_timeblock" else 0), out[-2000:]
-        if lines:
-            assert lines[0] == ("Rolling solve 'st': 1 storage node (tank) with bind_within_timeblock use "
-                                "bind_within_period in this solve; each period is one continuous timeblock here.")
+        out = coded_log()
+        lines = [ln for ln in out.splitlines() if "[W-0532]" in ln]
+        assert lines == (["Note: rolling 'st': bind_within_timeblock used as bind_within_period ('tank') [W-0532]"]
+                         if method == "bind_within_timeblock" else []), out[-2000:]
     tb, wp = rs["bind_within_timeblock"], rs["bind_within_period"]
     assert len(tb) == len(wp)
     for a, b in zip(tb, wp):
@@ -293,7 +291,7 @@ def test_gap_counter_counts_blocks_per_period():
                                   complete_active_time_list={"p1": steps(0, 1), "p2": steps(0, 2, 3, 7)})
 
 
-def test_many_storage_nodes_print_one_line(capsys):
+def test_many_storage_nodes_print_one_line(capsys, coded_log):
     """Owner rule (format 6b): a storage message prints one line per message type and solve, naming how many nodes
     and the first only, whatever the number of nodes and rolls."""
     from types import SimpleNamespace
@@ -327,11 +325,9 @@ def test_many_storage_nodes_print_one_line(capsys):
     for roll in range(3):
         _behaviour_changes.storage_message("some_warning", f"st_roll_{roll}", names,
                                            lambda named: f"Warning: {named} do something.")
-    lines = capsys.readouterr().out.splitlines()
-    assert lines == [
-        "Rolling solve 'st': 12 storage nodes (battery_00, ...) with bind_within_timeblock use bind_within_period in "
-        "this solve; each period is one continuous timeblock here.",
-        "Warning: 12 storage nodes (battery_00, ...) do something."]
+    assert [ln for ln in coded_log().splitlines() if "[W-0532]" in ln] == [
+        "Note: rolling 'st': bind_within_timeblock used as bind_within_period (12 cases, e.g. 'battery_00') [W-0532]"]
+    assert capsys.readouterr().out.splitlines() == ["Warning: 12 storage nodes (battery_00, ...) do something."]
 
 
 def test_intraperiod_blocks_close_the_period(tmp_path):
