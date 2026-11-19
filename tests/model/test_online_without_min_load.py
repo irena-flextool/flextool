@@ -32,7 +32,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from tests._support.coded_capture import capture_coded
+from tests._support.coded_warnings import capture_coded
 from tests.engine._unit_db import b64, build, last_stochastic, make_db, utf8
 
 REPO = Path(__file__).resolve().parents[2]

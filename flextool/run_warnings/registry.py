@@ -42,6 +42,9 @@ class WarningSpec:
     #: The section of the documentation page the code is listed under.
     topic: str
     severity: str = WARNING
+    #: The code names no entity: it is emitted without names (``warn_grouped(code)``) and its line has no
+    #: ``(...)`` part.  Every other code names what it is about (the log guard checks this).
+    entityless: bool = False
 
 
 _SPECS: tuple[WarningSpec, ...] = (

@@ -20,7 +20,7 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from tests._support.coded_capture import capture_coded
+from tests._support.coded_warnings import capture_coded
 from tests.engine._unit_db import (
     CHP, CHP_CHAIN, COAL, GAS, GAS_ENTITIES, b64, build, cstr_over, flow,
     gas, make_db, no_ratio_constraint, online, run, solve, time_map, uc,

@@ -25,7 +25,7 @@ import pytest
 import spinedb_api as api
 
 from flextool._resources import package_data_path
-from tests._support.coded_capture import capture_coded
+from tests._support.coded_warnings import capture_coded
 
 FLEXTOOL_ROOT = Path(__file__).resolve().parents[2]
 CANONICAL = sorted(Path(str(package_data_path("schemas/canonical_databases"))).glob("*.json"))

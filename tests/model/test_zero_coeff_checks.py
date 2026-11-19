@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests._support.coded_capture import capture_coded
+from tests._support.coded_warnings import capture_coded
 from tests.engine._unit_db import CHP_CHAIN, PLANT_CHAIN, b64, make_db, run
 
 

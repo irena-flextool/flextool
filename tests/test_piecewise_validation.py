@@ -19,7 +19,7 @@ from spinedb_api import Array, DatabaseMapping, Map, TimeSeriesVariableResolutio
 from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.input_derivation._process_method import derive_process_method
 from flextool.input_derivation._validators import validate_piecewise_linear_inputs, validate_startup_inputs
-from tests._support.coded_capture import capture_coded
+from tests._support.coded_warnings import capture_coded
 
 O1 = Map([0.4, 0.7, 1.0], [0.30, 0.40, 0.42])
 E8 = Map([0.4, 0.7, 1.0], [0.30, 0.36, 0.42])
@@ -408,3 +408,21 @@ def test_W7_not_for_items_that_cannot_pay(tmp_path, schema_db_url, caplog) -> No
                          [_unit("E", inputs=("fuel", "gas"), curve=ELECTROLYSER), _unit("R", curve=RISING)],
                          extra_values=vals, extra_entities=ents)
     assert warnings == []
+
+
+def test_a_clean_model_prints_no_nameless_w0200_w0201(tmp_path, schema_db_url):
+    """B1: with no unit to name, W-0200 / W-0201 print no line and add nothing to the tally (an empty name list is
+    "no case", not "a case without a name")."""
+    from flextool import run_warnings
+    from flextool.input_derivation._validators import validate_min_load_efficiency_inputs
+
+    url = _db(tmp_path, schema_db_url, *_unit("plain", ct="constant_efficiency", curve=None))
+    run_warnings.start_run()
+    try:
+        with capture_coded() as got, DatabaseMapping(url) as db:
+            validate_min_load_efficiency_inputs(db, logging.getLogger("test"))
+            validate_piecewise_linear_inputs(db, logging.getLogger("test"))
+        assert got.lines() == [] and got.codes() == []
+        assert run_warnings.tally() == {} and run_warnings.tally_lines() == []
+    finally:
+        run_warnings.start_run()

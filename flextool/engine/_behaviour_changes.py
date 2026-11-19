@@ -173,8 +173,8 @@ def warn_once_each(kind: str, names: list[str], text_of) -> bool:
 
 def complete_solve_of(solve: str | None) -> str:
     """The complete solve a sub-solve name belongs to: a roll ``<solve>_roll_<k>`` counts as ``<solve>``."""
-    import re
-    return re.sub(r"_roll_\d+$", "", solve) if solve else ""
+    from flextool.run_warnings import complete_solve
+    return complete_solve(solve) or ""
 
 
 def storages_named(names: Iterable[str], noun: str = "storage node") -> str:

@@ -37,7 +37,7 @@ import polars as pl
 import pytest
 
 from tests.engine._lp_rows import row_terms
-from tests._support.coded_capture import capture_coded
+from tests._support.coded_warnings import capture_coded
 from tests.engine._unit_db import FLEXTOOL_ROOT, RunCache, b64, build, make_db, time_map, utf8
 
 pytestmark = pytest.mark.solver

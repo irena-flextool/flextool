@@ -202,8 +202,8 @@ def warn_realized_dispatch_overlaps(
 
 
 def _complete(solve: str) -> str:
-    import re
-    return re.sub(r"_roll_\d+$", "", str(solve))
+    from flextool.run_warnings import complete_solve
+    return complete_solve(solve) or ""
 
 
 # ---------------------------------------------------------------------------

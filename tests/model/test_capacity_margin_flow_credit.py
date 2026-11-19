@@ -379,7 +379,7 @@ def test_share_constant_equals_period_map_in_rolling_and_stochastic_solves(tmp_p
 
 def test_capacity_margin_on_a_relative_of_peak_demand_group_is_reported_ignored(tmp_path_factory) -> None:
     """``capacity_margin`` on a relative_of_peak_demand group is not its margin; the run says so (W-0101)."""
-    from tests._support.coded_capture import capture_coded
+    from tests._support.coded_warnings import capture_coded
 
     with capture_coded() as got:
         _shortfall(tmp_path_factory, "P_warn", BASE, [["group", "cm", "capacity_margin_relative", sc(0.1)]], [],
@@ -401,7 +401,7 @@ def test_balance_within_period_node_in_a_capacity_margin_group_is_an_error(tmp_p
 
 def test_storage_node_with_demand_in_a_capacity_margin_group_is_reported(tmp_path_factory) -> None:
     """A storage node of the group with demand has that demand left out of the margin; the run says so (W-0100)."""
-    from tests._support.coded_capture import capture_coded
+    from tests._support.coded_warnings import capture_coded
 
     vals = [v for v in BAT_VALUES if v[2] != "penalty_method"] + [["node", "bat", "inflow", sc(-10.0)]]
     with capture_coded() as got:

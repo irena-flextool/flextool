@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 from spinedb_api import DatabaseMapping
 
-from tests._support.coded_capture import capture_coded
+from tests._support.coded_warnings import capture_coded
 from flextool.input_derivation._validators import (
     validate_connection_node_memberships,
 )

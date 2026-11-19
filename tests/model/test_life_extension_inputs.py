@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 
 from flextool.engine.input._solve_state import FlexToolConfigError
-from tests._support.coded_capture import capture_coded
+from tests._support.coded_warnings import capture_coded
 from tests.engine._unit_db import PLANT_CHAIN, b64, make_db
 
 PREFIX = "Input values out of range:\n  "

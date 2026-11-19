@@ -32,7 +32,7 @@ import types
 import polars as pl
 import pytest
 
-from tests._support.coded_capture import capture_coded
+from tests._support.coded_warnings import capture_coded
 from tests.engine._unit_db import (
     CHP, CHP_CHAIN, COAL, GAS, GAS_ENTITIES, PLANT, PLANT_CHAIN, b64, build,
     cstr_over, demand, flow, gas, no_ratio_constraint, online, run, solve,

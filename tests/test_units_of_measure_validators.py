@@ -13,7 +13,7 @@ import pytest
 from spinedb_api import DatabaseMapping, to_database
 
 from flextool.input_derivation._validators import node_units_of_measure, validate_units_of_measure
-from tests._support.coded_capture import capture_coded
+from tests._support.coded_warnings import capture_coded
 
 
 

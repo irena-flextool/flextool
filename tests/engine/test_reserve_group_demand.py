@@ -19,7 +19,7 @@ import json
 import polars as pl
 import pytest
 
-from tests._support.coded_capture import capture_coded
+from tests._support.coded_warnings import capture_coded
 from tests.engine._unit_db import (
     BASE_FIXTURE_JSON, FLEXTOOL_ROOT, PLANT, PLANT_CHAIN, b64, build, make_db, run, solve, time_map, utf8,
 )

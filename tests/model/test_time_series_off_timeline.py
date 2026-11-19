@@ -19,7 +19,7 @@ import json
 import pytest
 
 from flextool.engine.input._solve_state import FlexToolConfigError
-from tests._support.coded_capture import capture_coded
+from tests._support.coded_warnings import capture_coded
 from tests.engine._unit_db import BASE_FIXTURE_JSON, PLANT_CHAIN, b64, make_db, run
 
 

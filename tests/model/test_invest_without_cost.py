@@ -226,7 +226,7 @@ def test_f_non_storage_node_invest_method_gets_no_variable(tmp_path_factory) -> 
     """Node investment is storage capacity: the balance node ``west`` with ``invest_method`` ``invest_no_limit``
     and no ``invest_cost`` gets no ``v_invest_n`` (before, a free degenerate column), and the validator names
     it (W-0304).  Solved under ``FLEXTOOL_AUTOSCALE_STRICT=1`` (no scale gap for a node outside ``nodeState``)."""
-    from tests._support.coded_capture import capture_coded
+    from tests._support.coded_warnings import capture_coded
 
     with capture_coded() as got:
         steps = run(tmp_path_factory, *make_db(tmp_path_factory, alt="i218_f", base_chain=CHAIN, values=BASE + [

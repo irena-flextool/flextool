@@ -13,7 +13,7 @@ from pathlib import Path
 import spinedb_api as api
 
 from flextool.input_derivation._validators import warn_node_connections
-from tests._support.coded_capture import capture_coded
+from tests._support.coded_warnings import capture_coded
 from tests.engine._unit_db import PLANT_CHAIN, make_db, run
 
 

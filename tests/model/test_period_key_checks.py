@@ -19,7 +19,7 @@ import pytest
 import spinedb_api as api
 
 from flextool.engine.input._solve_state import FlexToolConfigError
-from tests._support.coded_capture import capture_coded
+from tests._support.coded_warnings import capture_coded
 from tests.engine._unit_db import PLANT_CHAIN, b64, last_stochastic, make_db, run, utf8
 
 PREFIX = "Map keys that are not periods of any solve in the database:\n  "
