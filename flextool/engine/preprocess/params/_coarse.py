@@ -109,9 +109,12 @@ def coarse_groups(node_group: dict[str, str], group_step: dict[str, float], solv
             continue
         step = float(step)
         if step < solve_step - _EPS:
-            _warn_once(f"group {g!r}: new_stepduration {step:g} h is shorter than the time step {solve_step:g} h "
-                       f"of the solve{f' {solve!r}' if solve else ''}; its nodes are balanced at the solve's time "
-                       "step.")
+            tag = f"W-0505 {g} {step:g} {solve_step:g} {solve}"
+            if tag not in _WARNED:
+                _WARNED.add(tag)
+                from flextool import run_warnings
+                run_warnings.warn_grouped("W-0505", [g], solve=solve or None, details={
+                    g: f"new_stepduration {step:g} h, solve time step {solve_step:g} h"})
             continue
         if step <= solve_step + _EPS:
             continue

@@ -512,7 +512,7 @@ def test_min_load_warning_names_only_min_load_efficiency_units(caplog) -> None:
                                                "value": [0.3, 0.5, 0.3, 0.5]}),
                                  Agg.MEAN, ["name"], base, keys=key, notes=set(), approx_entities=approx)
     msgs = [r.message for r in caplog.records if "min_load varies" in r.message]
-    assert len(msgs) == 1 and "min_load_efficiency: u)" in msgs[0]
+    assert len(msgs) == 1 and "('u') [W-0519]" in msgs[0]
 
 
 def test_one_dedupe_set_serves_both_paths(caplog) -> None:

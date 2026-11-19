@@ -66,6 +66,7 @@ from flextool.engine.solve._acceptance import (
 from flextool.run_options import RunOptions
 from flextool._thread_budget import highs_thread_options
 from flextool.engine.solve._handoff import SolveHandoff
+from flextool.engine.solve._solver_outcome import note_solver_outcome
 from flextool.engine.solve import _objective_options
 from flextool.engine.solve._objective_options import (
     check_benders_options as _check_benders_objective_options,
@@ -4864,6 +4865,12 @@ def _drive_cascade(
                 )
             elif _acc.near_optimal:
                 self.state.logger.info(_acc.message)
+            # One ``Note:`` on what a not-clean HiGHS outcome means for the
+            # results (W-0540..W-0542), once per complete solve.
+            note_solver_outcome(
+                sol, _acc, solve_name=complete_solve_name, solver=_active_solver_cfg.name,
+                noted=self.state.__dict__.setdefault("_solver_outcome_noted", set()),
+            )
             if _active_solver_cfg.name == "highs" and _acc.model_status == "kOptimal":
                 # A HiGHS MIP treats ``objective_bound`` as a cutoff and calls
                 # the best solution within it optimal.  Every roll of a solve

@@ -1362,6 +1362,12 @@ def _push_unscaled_to_highs(
                 sol.pre_unscale_diagnostics = _diag_fn()
             except Exception:  # pragma: no cover — Solution may forbid setattr
                 pass
+        # And the HiGHS info + tolerances the solver-outcome note reads.
+        from flextool.engine.solve._solver_outcome import snapshot_highs_outcome
+        try:
+            sol.pre_unscale_highs_outcome = snapshot_highs_outcome(h)
+        except Exception:  # pragma: no cover — Solution may forbid setattr
+            pass
         # The basis of the solve that ran (statuses of the scaled LP on the
         # handle).  Only a valid one is restored: a crossover-off IPM solve
         # has none worth keeping.

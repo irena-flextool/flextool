@@ -7,6 +7,7 @@ the registry merges them.
 * W-051x inputs of a solve: inflow scaling, limits, maps, time steps
 * W-052x lifetimes, investments and units
 * W-053x outputs of a solve and storage notes
+* W-054x what the solver's outcome means (notes after a solve that ended optimal, but not cleanly)
 * W-06xx behaviour-change notices (their texts: :mod:`flextool.run_warnings._behaviour_specs`)
 """
 from __future__ import annotations
@@ -19,6 +20,15 @@ _INPUTS = "Inputs of a solve"
 _LIFETIME = "Lifetimes, investments and units"
 _OUTPUTS = "Results of a solve"
 _STORAGE = "Storage"
+_SOLVER = "Solver outcome"
+
+_CROSSOVER_FIX = (
+    "add `run_crossover` = `on` to the solve's `solver_arguments` to run crossover (or set `solver` = "
+    "`simplex` there). Crossover turns the interior point into a vertex solution that HiGHS certifies "
+    "against the absolute tolerances; it takes extra time, which on a large model can be much more than the "
+    "interior point itself. Scaling problems (see the `Coefficient ranges` HiGHS prints and the autoscale line) "
+    "make the outcome more likely: fixing the units of very large or very small numbers helps too."
+)
 
 ENGINE_SPECS: tuple[WarningSpec, ...] = (
     WarningSpec(
@@ -90,6 +100,19 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "start-ups and shut-downs do not constrain it. The debug log names the time step.\n\n"
             "**How to fix:** make the solves continue each other in time (a hole or an overlap between the "
             "realized time steps of the solves causes this), or accept the looser constraint at that step."
+        ),
+    ),
+    WarningSpec(
+        code="W-0505",
+        message="group new_stepduration shorter than the time step of solve '{solve}'",
+        title="Group new_stepduration shorter than the solve's time step",
+        topic=_SOLVES,
+        body=(
+            "The group's `new_stepduration` would make its nodes coarser than the solve's time step, but it is "
+            "shorter than that step, so it has no effect: the group's nodes are balanced at the solve's own time "
+            "step. The debug log gives both durations.\n\n"
+            "**How to fix:** remove `new_stepduration` from the group, or give it a multiple of the solve's time "
+            "step (the solve's own `new_stepduration`, or its timeline's step)."
         ),
     ),
     WarningSpec(
@@ -191,6 +214,34 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "block's start, so the block is cut at the end of the timeline. The debug log gives the block, its "
             "length and the time steps left.\n\n"
             "**How to fix:** shorten the block or start it earlier, or extend the timeline."
+        ),
+    ),
+    WarningSpec(
+        code="W-0518",
+        message="a new_stepduration step has values for only some of its time steps",
+        title="Time series with gaps inside a solve step",
+        topic=_INPUTS,
+        body=(
+            "The named time series (`class.parameter`) has values for only some of the time steps that a solve "
+            "step of `new_stepduration` combines. The solve step is made of the time steps that have a value; the "
+            "default of the other time steps is not part of it. The debug log gives an example entity and step.\n\n"
+            "**How to fix:** give the time series a value in every time step (or none of a solve step's), or check "
+            "that its time steps are those of the timeline."
+        ),
+    ),
+    WarningSpec(
+        code="W-0519",
+        message="value of {parameter} varies within a solve step; its curve is approximate",
+        title="Value that varies within a solve step makes a curve approximate",
+        topic=_INPUTS,
+        body=(
+            "`unit.min_load` varies within a solve step of `new_stepduration` for the named units with "
+            "`min_load_efficiency`. The solve step uses the mean `min_load` and the harmonic means of `efficiency` "
+            "and `efficiency_at_min_load`, so the min_load_efficiency curve (slope and section) of those steps is "
+            "an approximation of the step mean of the hourly curves. It is exact for a `min_load` that is constant "
+            "within each solve step.\n\n"
+            "**How to fix:** usually nothing. For an exact curve, keep `min_load` constant within each solve step "
+            "(or use a shorter `new_stepduration`)."
         ),
     ),
     WarningSpec(
@@ -341,6 +392,78 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "previous roll realised; a roll ends its part at least at that level, and the roll(s) holding the "
             "period's end end it at the level it started from.\n\n"
             "**How to fix:** nothing; this is how a rolling solve binds storage within a period."
+        ),
+    ),
+    WarningSpec(
+        code="W-0540",
+        message="solve '{solve}' optimal by HiGHS at up to {factor}x its relative tolerances",
+        title="Optimal within a multiple of the relative tolerances",
+        topic=_SOLVER,
+        severity=NOTE,
+        body=(
+            "HiGHS called the solve optimal, although its solution misses some of HiGHS's tolerances (by default "
+            "1e-7) also in relative terms, by up to the factor given (HiGHS's own log says `Model status is "
+            "\"Optimal\" since relative violation of tolerances is no more than X`). This happens after an "
+            "interior-point solve without crossover (`solver` = `ipm`, `run_crossover` = `off`), and the factor "
+            "tells how serious it is: a factor up to about 10 means the flows, storage levels and costs are "
+            "accurate to about a millionth (1e-6) of their size, which is far below the accuracy of any input "
+            "data: the results are usable. The duals (prices) are less exact than the primal values: small "
+            "differences in prices between equivalent nodes or time steps can be numerical noise. The debug log "
+            "names the checks and their largest violations. Each solve is noted once; a later roll of a rolling "
+            "solve with the same outcome goes to the debug log.\n\n"
+            "**How to fix:** usually nothing. If prices or small values matter, or the factor is large: "
+            + _CROSSOVER_FIX
+        ),
+    ),
+    WarningSpec(
+        code="W-0541",
+        message="solve '{solve}' used interior point without crossover; HiGHS warnings expected",
+        title="Interior point without crossover: HiGHS's tolerance warnings",
+        topic=_SOLVER,
+        severity=NOTE,
+        body=(
+            "The solve ran the interior-point method without crossover (`solver` = `ipm`, `run_crossover` = "
+            "`off`) and HiGHS called the result optimal. Such a solution is an interior point, not a vertex, and "
+            "HiGHS checks it against its tolerances (by default 1e-7) both in absolute terms and relative to the "
+            "size of the numbers in each row and column. Its log then often has `WARNING` lines that read as "
+            "alarms but are expected here:\n\n"
+            "- `Status interior point solve: imprecise`, `WARNING: Unwelcome IPX status ... run_crossover is "
+            "\"off\"`, `WARNING: Running postsolve on non-optimal solution of reduced LP` and `WARNING: Model "
+            "status changed from \"Unknown\" to \"Optimal\"`: the interior point stopped a little short of "
+            "HiGHS's own target, and the solution of the full model meets the tolerances after postsolve.\n"
+            "- `WARNING: Solution optimality conditions` (also `: Before postsolve`) with a table of `num/max` "
+            "violations: absolute violations in rows or columns with large numbers. The `relative` numbers in "
+            "the same table are what counts.\n"
+            "- `WARNING: LP solver claims optimality, but with ... relative ...` and `Model status is "
+            "\"Optimal\" since relative violation of tolerances is no more than X`: the relative violations are "
+            "at most X times the tolerance. A \"Before postsolve\" one concerns the presolved model only. An X "
+            "up to about 10 means the flows, storage levels and costs are accurate to about a millionth of their "
+            "size, far below the accuracy of any input data.\n\n"
+            "The results are usable. The duals (prices) are less exact than the primal values: small price "
+            "differences between equivalent nodes or time steps can be numerical noise. FlexTool cannot read "
+            "HiGHS's log, and when polar-high's autoscale has scaled the problem (`user_objective_scale` / "
+            "`user_bound_scale` in the HiGHS log), HiGHS keeps only part of these checks in what it reports to "
+            "FlexTool; so this note is given for every such solve, also one that HiGHS solved without warnings. "
+            "When the reported checks are complete and clean, there is no note. Each solve is noted once.\n\n"
+            "**How to fix:** usually nothing. If a certified optimum matters: " + _CROSSOVER_FIX
+        ),
+    ),
+    WarningSpec(
+        code="W-0542",
+        message="solve '{solve}' not certified optimal by HiGHS; its feasible solution is used",
+        title="Near-optimal solve accepted",
+        topic=_SOLVER,
+        severity=NOTE,
+        body=(
+            "HiGHS ended the solve with model status `Unknown`: after an interior-point solve without crossover, "
+            "postsolve left the dual objective slightly inconsistent, so HiGHS cannot certify the optimum. "
+            "FlexTool checked the solution itself: the primal solution (the flows, storage levels and "
+            "investments the results are made of) is feasible within the tolerances, and the gap between the "
+            "primal and dual objectives is within the accepted optimality gap (`FLEXTOOL_ACCEPT_PD_GAP`, by "
+            "default 1 %), so the solution is used as near-optimal. The objective can be off the true optimum "
+            "by at most that gap. The debug log and the run record (`_run_status.json`) give the numbers. A solve "
+            "that fails these checks stops the run with an error instead. Each solve is noted once.\n\n"
+            "**How to fix:** usually nothing. If the exact optimum or the prices matter: " + _CROSSOVER_FIX
         ),
     ),
 ) + BEHAVIOUR_SPECS

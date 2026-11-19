@@ -209,11 +209,8 @@ NOT_TIME_SERIES: frozenset[tuple[str, str]] = frozenset({
 # exact.  The callers pass the entities it matters to (``approx_entities``).
 _APPROXIMATE_WHEN_VARYING: dict[tuple[str, str], str] = {
     ("unit", "min_load"): (
-        "unit.min_load varies within a solve step of new_stepduration (units with min_load_efficiency: "
-        "{entities}). The step uses the mean min_load and the harmonic means of efficiency and "
-        "efficiency_at_min_load, so the min_load_efficiency curve (slope and section) of those steps is an "
-        "approximation of the step mean of the hourly curves; it is exact for a min_load that is constant within "
-        "each step."),
+        "units with min_load_efficiency: the step uses the mean min_load and the harmonic means of efficiency and "
+        "efficiency_at_min_load (W-0519)"),
 }
 
 #: The time-series limits whose ``inf`` (``-inf`` for a lower limit) means no limit in that time step, by side.  A
@@ -328,13 +325,15 @@ def _what(key: tuple[str, str]) -> str:
     return f"{key[0]}.{key[1]}"
 
 
-def _note_once(notes: "set | None", tag: tuple, message: str) -> None:
-    """One WARNING per ``tag`` within ``notes`` (the run's dedupe set; always logged without one)."""
+def _note_once(notes: "set | None", tag: tuple, code: str, names: list, details: "dict | str",
+               **fmt: object) -> None:
+    """One coded warning per ``tag`` within ``notes`` (the run's dedupe set; always given without one)."""
     if notes is not None:
         if tag in notes:
             return
         notes.add(tag)
-    _LOGGER.warning(message)
+    from flextool import run_warnings
+    run_warnings.warn_grouped(code, names, details=details, **fmt)
 
 
 _KIND_CODE: dict[Agg, int] = {Agg.MEAN: 0, Agg.HARMONIC: 1, Agg.SUM: 2, Agg.LAST: 3}
@@ -506,11 +505,9 @@ def aggregate_to_solve_steps(
         name = _what(key) if key else "a time series"
         i = first_index(partial, label)
         sample = grouped.select(entity_cols).row(i) if entity_cols else ()
-        _note_once(notes, ("partial", key or label), (
-            f"{name}: a solve step of new_stepduration has values for only some of its time steps "
-            f"(e.g. {', '.join(str(x) for x in sample if x is not None)} at {steps_col[i]}); "
-            f"the step takes the time steps that have a value (the default of the other time steps is not part "
-            f"of it)."))
+        _note_once(notes, ("partial", key or label), "W-0518", [name], {name: (
+            f"e.g. {', '.join(str(x) for x in sample if x is not None)} at {steps_col[i]}; the step takes the "
+            "time steps that have a value")})
     varying_labels = [lab for lab in uniq if key_of(lab) in _APPROXIMATE_WHEN_VARYING]
     for label in varying_labels:
         key = key_of(label)
@@ -521,8 +518,8 @@ def aggregate_to_solve_steps(
         if approx_entities is not None and key in approx_entities:
             names &= set(approx_entities[key])
         if names:
-            _note_once(notes, ("varying", key),
-                       _APPROXIMATE_WHEN_VARYING[key].format(entities=", ".join(sorted(names))))
+            _note_once(notes, ("varying", key), "W-0519", sorted(names),
+                       _APPROXIMATE_WHEN_VARYING[key], parameter=".".join(key))
     # Earlier releases took the step's first base step, its default where that hour has no value: a step whose
     # first authored hour is not its first hour counts as changed too.
     step_p0 = grouped.select("__s").join(base.group_by("__s").agg(pl.col("__pos").min().alias("__sp0")),
