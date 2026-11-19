@@ -457,7 +457,7 @@ def _ladder_case(data: dict) -> dict:
         ["solve", ACTIVE_SOLVE, "period_timeset", lps._pmap({"p2020": "2day"})]])
 
 
-def test_price_ladder_without_periods_applies_without_period_timeset(tmp_path_factory, capsys) -> None:
+def test_price_ladder_without_periods_applies_without_period_timeset(tmp_path_factory, coded_log) -> None:
     """A period-less ``price_ladder_annual`` expands over the Rule 5b periods: the case builds the twin's LP
     (before the fix the ladder was skipped, with a warning, and the LP lacked it).  An upgraded database prints
     the behaviour-change notice naming the commodity."""
@@ -473,7 +473,7 @@ def test_price_ladder_without_periods_applies_without_period_timeset(tmp_path_fa
         db.commit_session("behaviour-change marker")
     from flextool.engine import run_chain_from_db
 
-    capsys.readouterr()
+    coded_log()
     run_chain_from_db(url, "ladder_ann_depth2", work_folder=tmp_path_factory.mktemp("ladder_notice_w"))
-    out = capsys.readouterr().out
+    out = coded_log()
     assert "price_ladder_annual given without periods" in out and "Affected commodities: coal." in out, out

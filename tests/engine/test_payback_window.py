@@ -330,7 +330,7 @@ FIXED_NOTICE_ID = "fixed_cost_per_operating_period"
 
 
 @pytest.mark.solver
-def test_fixed_cost_notice_names_entities_whose_fixed_cost_changes(tmp_path_factory, capsys) -> None:
+def test_fixed_cost_notice_names_entities_whose_fixed_cost_changes(tmp_path_factory, coded_log) -> None:
     """With the upgrade's marker naming coal_plant, the fixed_cost map above changes its lifetime fixed cost and the
     notice names it once; a map with the same value in every period changes nothing and prints no notice."""
     from spinedb_api import DatabaseMapping
@@ -346,10 +346,10 @@ def test_fixed_cost_notice_names_entities_whose_fixed_cost_changes(tmp_path_fact
             db.add_item("metadata", name=MARKER_PREFIX + FIXED_NOTICE_ID,
                         value='{"since": 81, "entities": ["coal_plant"]}')
             db.commit_session("behaviour-change marker")
-        capsys.readouterr()
+        coded_log()
         run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"))
         summary = BEHAVIOUR_CHANGES[FIXED_NOTICE_ID].summary
-        return [ln for ln in capsys.readouterr().out.splitlines() if summary in ln]
+        return [ln for ln in coded_log.notices() if summary in ln]
 
     named = lines("pb_fixed_notice", FIXED_COST_MAP)
     assert len(named) == 1 and "Affected entities: coal_plant." in named[0], named
@@ -548,7 +548,7 @@ def test_chain_reports_the_fixed_cost_of_each_period(tmp_path_factory) -> None:
 NOTICE_ID = "annuity_over_payback_time"
 
 
-def _notice_lines(tmp_path_factory, capsys, alt: str, values: list) -> list[str]:
+def _notice_lines(tmp_path_factory, log, alt: str, values: list) -> list[str]:
     from spinedb_api import DatabaseMapping
 
     from flextool.engine import run_chain_from_db
@@ -559,23 +559,23 @@ def _notice_lines(tmp_path_factory, capsys, alt: str, values: list) -> list[str]
     with DatabaseMapping(url) as db:
         db.add_item("metadata", name=MARKER_PREFIX + NOTICE_ID, value='{"since": 81, "entities": ["coal_plant"]}')
         db.commit_session("behaviour-change marker")
-    capsys.readouterr()
+    log()
     run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"))
     summary = BEHAVIOUR_CHANGES[NOTICE_ID].summary
-    return [ln for ln in capsys.readouterr().out.splitlines() if summary in ln]
+    return [ln for ln in log.notices() if summary in ln]
 
 
 @pytest.mark.solver
-def test_notice_names_entities_whose_annuity_changes(tmp_path_factory, capsys) -> None:
+def test_notice_names_entities_whose_annuity_changes(tmp_path_factory, coded_log) -> None:
     """With the upgrade's marker, coal_plant (lifetime_technical = payback_time = 12) is named once: before, its
     annuity was paid in every period that started before the end of the lifetime (p2020 decision: years 0 … 14),
     now for its 10 years in service.  With a lifetime of 10 (ending on a period start) the years and the price are
     those of before and no notice is printed.  Nor for reinvest_automatic, whose annuity is paid to the horizon
     whatever the lifetimes (here a payback time of 12 against a technical lifetime of 30)."""
-    lines = _notice_lines(tmp_path_factory, capsys, "pb_notice", _economics())
+    lines = _notice_lines(tmp_path_factory, coded_log, "pb_notice", _economics())
     assert len(lines) == 1 and "coal_plant" in lines[0]
-    assert _notice_lines(tmp_path_factory, capsys, "pb_notice_seam", _economics(technical=10.0, payback=10.0)) == []
-    assert _notice_lines(tmp_path_factory, capsys, "pb_notice_automatic",
+    assert _notice_lines(tmp_path_factory, coded_log, "pb_notice_seam", _economics(technical=10.0, payback=10.0)) == []
+    assert _notice_lines(tmp_path_factory, coded_log, "pb_notice_automatic",
                          _economics(method="reinvest_automatic", technical=30.0)) == []
 
 

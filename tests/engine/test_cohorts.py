@@ -309,7 +309,7 @@ def test_end_of_life_on_a_solve_without_years_represented(tmp_path_factory, alt,
     ("coh_1y_default_past", 1.5, ["p2020"], False),  # past the horizon end → 1 (next_seam: +inf): in service alike
     ("coh_1y_default_short", 0.4, [], True),         # 0.4 < 1 − 0.4 → 0 (next_seam: 1): p2020 is lost
 ])
-def test_default_end_of_life_on_a_solve_without_years_represented(tmp_path_factory, capsys, alt, life, alive,
+def test_default_end_of_life_on_a_solve_without_years_represented(tmp_path_factory, coded_log, alt, life, alive,
                                                                    named) -> None:
     """The default end_of_life_method (closest_seam) on a solve without a run calendar and without
     years_represented: an end of life after the last period start rounds to the end of the horizon, so that period
@@ -322,9 +322,9 @@ def test_default_end_of_life_on_a_solve_without_years_represented(tmp_path_facto
     reader = SpineDbReader(url, scen)
     bc.start_run({"end_of_life_closest_seam": '{"since": 81, "entities": ["coal_plant"]}'})
     try:
-        capsys.readouterr()
+        coded_log()
         frames = build_cohort_frames(reader, "y2020_2day_dispatch", None, ["p2020"], None)
-        printed = [ln for ln in capsys.readouterr().out.splitlines()
+        printed = [ln for ln in coded_log().splitlines()
                    if bc.BEHAVIOUR_CHANGES["end_of_life_closest_seam"].summary in ln]
     finally:
         bc.start_run(None)

@@ -303,7 +303,7 @@ def test_nothing_armed_is_a_pass_through() -> None:
         assert sorted(out.rows()) == [("g", "t1", 1.0), ("g", "t2", 2.0)]
 
 
-def test_behaviour_change_notice_names_the_changed_entities(capsys) -> None:
+def test_behaviour_change_notice_names_the_changed_entities(coded_log) -> None:
     """With the marker ``solve_step_series_combined`` (an upgraded database), the notice names each parameter and
     entity whose step value is not its first base step's value: availability u 0.3 / 0.5 → 0.4 (changed), v 0.9 /
     0.9 → 0.9 (unchanged, not named).  Without the marker, or for a series earlier releases already combined
@@ -316,12 +316,12 @@ def test_behaviour_change_notice_names_the_changed_entities(capsys) -> None:
     try:
         bc.start_run({})
         aggregate_to_solve_steps(frame, Agg.MEAN, ["name"], base, keys=key)
-        assert capsys.readouterr().out == ""
+        assert coded_log() == ""
         bc.start_run({"solve_step_series_combined": "79"})
         aggregate_to_solve_steps(frame, Agg.MEAN, ["name"], base, keys=key, report_changes=False)
-        assert capsys.readouterr().out == ""
+        assert coded_log() == ""
         aggregate_to_solve_steps(frame, Agg.MEAN, ["name"], base, keys=key)
-        out = capsys.readouterr().out
+        out = coded_log()
         assert "Affected parameters: unit.availability of u." in out
         assert "of v" not in out
     finally:
@@ -543,7 +543,7 @@ def test_timeline_config_keeps_one_dedupe_set() -> None:
     assert cfg.solve_step_notes == set()
 
 
-def test_notice_names_a_step_whose_first_hour_is_missing(capsys) -> None:
+def test_notice_names_a_step_whose_first_hour_is_missing(coded_log) -> None:
     """(WP-B N5) Earlier releases took the value of the step's first base step (its default where that hour has no
     value): availability authored only at h2 = 0.6 of step h1 (h1, h2) keeps 0.6, but differs from what earlier
     releases used at h1, so the notice names it."""
@@ -554,6 +554,6 @@ def test_notice_names_a_step_whose_first_hour_is_missing(capsys) -> None:
         bc.start_run({"solve_step_series_combined": "79"})
         aggregate_to_solve_steps(pl.DataFrame({"name": ["u"], "t": ["h2"], "value": [0.6]}), Agg.MEAN, ["name"],
                                  base, keys=("unit", "availability"), notes=set())
-        assert "Affected parameters: unit.availability of u." in capsys.readouterr().out
+        assert "Affected parameters: unit.availability of u." in coded_log()
     finally:
         bc.start_run(None)

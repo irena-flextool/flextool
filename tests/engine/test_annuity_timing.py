@@ -88,7 +88,7 @@ def test_investment_is_worth_its_cost_at_every_offset(tmp_path_factory, off) -> 
 
 
 @pytest.mark.solver
-def test_notice_names_entities_whose_annuity_changes(tmp_path_factory, capsys) -> None:
+def test_notice_names_entities_whose_annuity_changes(tmp_path_factory, coded_log) -> None:
     """With the upgrade's ``annuity_timing`` marker naming the plant, a run at offset 0 names it once; at offset 1
     its annuity is that of before and no notice is printed."""
     from spinedb_api import DatabaseMapping
@@ -103,10 +103,10 @@ def test_notice_names_entities_whose_annuity_changes(tmp_path_factory, capsys) -
             db.add_item("metadata", name=MARKER_PREFIX + "annuity_timing",
                         value=f'{{"since": 81, "entities": ["{PLANT}"]}}')
             db.commit_session("behaviour-change marker")
-        capsys.readouterr()
+        coded_log()
         run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"))
         summary = BEHAVIOUR_CHANGES["annuity_timing"].summary
-        return [ln for ln in capsys.readouterr().out.splitlines() if summary in ln]
+        return [ln for ln in coded_log().splitlines() if summary in ln]
 
     named = lines("ann_notice_off0", 0.0)
     assert len(named) == 1 and f"Affected entities: {PLANT}." in named[0], named

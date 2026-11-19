@@ -285,7 +285,7 @@ def test_nested_fix_price_keeps_the_closure(tmp_path):
     assert not row_terms(build(r[1].flex_data), ANCHOR, "tank")
 
 
-def test_notice_names_the_anchored_node_with_the_marker(tmp_path, capsys):
+def test_notice_names_the_anchored_node_with_the_marker(tmp_path, coded_log):
     """With the marker the run prints the rolling_cyclic_storage_anchored notice once, naming the tank; without it
     (a new database) nothing."""
     from flextool.engine import run_chain_from_db
@@ -293,11 +293,11 @@ def test_notice_names_the_anchored_node_with_the_marker(tmp_path, capsys):
 
     url = build_db(tmp_path, {"st": rolling()}, top=["st"])
     run_chain_from_db(url, SCENARIO, work_folder=tmp_path / "w0")
-    assert "rolling_cyclic_storage_anchored" not in capsys.readouterr().out
+    assert "rolling_cyclic_storage_anchored" not in coded_log()
     with open_database_mapping(url) as db:
         db.add_item("metadata", name="flextool_behaviour_change:rolling_cyclic_storage_anchored",
                     value='{"since": 82, "nodes": ["tank"]}')
         db.commit_session("marker")
     run_chain_from_db(url, SCENARIO, work_folder=tmp_path / "w1")
-    lines = [ln for ln in capsys.readouterr().out.splitlines() if "rolling_cyclic_storage_anchored" in ln]
+    lines = [ln for ln in coded_log().splitlines() if "rolling_cyclic_storage_anchored" in ln]
     assert len(lines) == 1 and "Affected nodes: tank." in lines[0]

@@ -688,7 +688,7 @@ NOTICE_ID = "retirement_of_existing_capacity_only"
 NOTICE_MARKER = f"flextool_behaviour_change:{NOTICE_ID}"
 
 
-def _notice_lines(tmp_path_factory, capsys, alt: str, values: list, chain: list[str], marker: bool) -> list[str]:
+def _notice_lines(tmp_path_factory, log, alt: str, values: list, chain: list[str], marker: bool) -> list[str]:
     from spinedb_api import DatabaseMapping
 
     from flextool.engine import run_chain_from_db
@@ -699,16 +699,16 @@ def _notice_lines(tmp_path_factory, capsys, alt: str, values: list, chain: list[
         with DatabaseMapping(url) as db:
             db.add_item("metadata", name=NOTICE_MARKER, value="77")
             db.commit_session("behaviour-change marker")
-    capsys.readouterr()
+    log()
     run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"))
     summary = BEHAVIOUR_CHANGES[NOTICE_ID].summary
-    return [ln for ln in capsys.readouterr().out.splitlines() if summary in ln]
+    return [ln for ln in log.notices() if summary in ln]
 
 
 @pytest.mark.solver
-def test_notice_names_the_retiring_entities_once(tmp_path_factory, capsys) -> None:
+def test_notice_names_the_retiring_entities_once(tmp_path_factory, coded_log) -> None:
     """The chain y2020 … y2035 with a retiring coal_plant: one notice line naming it."""
-    lines = _notice_lines(tmp_path_factory, capsys, "ret_notice", _lifetime("reinvest_choice", 15.0) + _retire(),
+    lines = _notice_lines(tmp_path_factory, coded_log, "ret_notice", _lifetime("reinvest_choice", 15.0) + _retire(),
                           _no_battery_invest(CHAIN), marker=True)
     assert len(lines) == 1
     assert f"Affected entities: {PLANT}." in lines[0] and NOTICE_MARKER in lines[0]
@@ -716,11 +716,11 @@ def test_notice_names_the_retiring_entities_once(tmp_path_factory, capsys) -> No
 
 @pytest.mark.solver
 @pytest.mark.parametrize("chain", ["chain", "single"])
-def test_notice_names_the_end_of_life_entities_of_a_chain(tmp_path_factory, capsys, chain) -> None:
+def test_notice_names_the_end_of_life_entities_of_a_chain(tmp_path_factory, coded_log, chain) -> None:
     """reinvest_choice existing capacity without retirement: a chain names coal_plant once (its end of life now
     counts from the run's start in the later solves); a single solve prints nothing."""
     values = _lifetime("reinvest_choice", 15.0) + NO_INVEST
-    lines = _notice_lines(tmp_path_factory, capsys, f"eol_notice_{chain}", values,
+    lines = _notice_lines(tmp_path_factory, coded_log, f"eol_notice_{chain}", values,
                           _no_battery_invest(CHAIN if chain == "chain" else SINGLE), marker=True)
     if chain == "chain":
         assert len(lines) == 1 and f"Affected entities: {PLANT}." in lines[0]
@@ -730,10 +730,10 @@ def test_notice_names_the_end_of_life_entities_of_a_chain(tmp_path_factory, caps
 
 @pytest.mark.solver
 @pytest.mark.parametrize("retiring, marker", [(True, False), (False, True)], ids=["no_marker", "no_retirement"])
-def test_no_retirement_notice(tmp_path_factory, capsys, retiring, marker) -> None:
+def test_no_retirement_notice(tmp_path_factory, coded_log, retiring, marker) -> None:
     values = _retire() if retiring else NO_INVEST
     alt = f"ret_no_notice_{retiring}_{marker}"
-    assert _notice_lines(tmp_path_factory, capsys, alt, values, _no_battery_invest(SINGLE), marker) == []
+    assert _notice_lines(tmp_path_factory, coded_log, alt, values, _no_battery_invest(SINGLE), marker) == []
 
 
 def test_notice_is_registered_and_written_by_the_upgrade() -> None:

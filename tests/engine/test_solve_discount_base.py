@@ -121,7 +121,7 @@ def test_a_single_solve_with_its_map_out_of_period_order_counts_in_the_map_order
     assert rows.filter(pl.col("d") == "p2")["base"].to_list() == [0.0, 1.0, 2.0, 3.0, 4.0]
 
 
-def test_notice_names_the_solve_once_and_only_with_inflation(capsys) -> None:
+def test_notice_names_the_solve_once_and_only_with_inflation(coded_log) -> None:
     """The notice fires while the marker is present and inflation discounts the costs; the rolls of a rolling
     solve are announced once, by the rolling solve's name."""
     from flextool.engine import _behaviour_changes as bc
@@ -129,12 +129,12 @@ def test_notice_names_the_solve_once_and_only_with_inflation(capsys) -> None:
 
     bc.start_run({"chained_solve_discount_from_run_start": '{"since": 79}'})
     try:
-        capsys.readouterr()
+        coded_log()
         notice_discount_from_run_start("later", 0.0)
-        assert capsys.readouterr().out == ""
+        assert coded_log() == ""
         for roll in ("roll_p2_roll_0", "roll_p2_roll_1", "later"):
             notice_discount_from_run_start(roll, 0.05)
-        lines = capsys.readouterr().out.splitlines()
+        lines = coded_log.notices()
         assert len(lines) == 2 and "Affected solves: roll_p2." in lines[0] and "Affected solves: later." in lines[1]
     finally:
         bc.start_run({})

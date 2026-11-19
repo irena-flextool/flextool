@@ -870,7 +870,7 @@ NOTICE_ID = "chained_solve_costs_from_run_start"
 NOTICE_MARKER = f"flextool_behaviour_change:{NOTICE_ID}"
 
 
-def _printed(tmp_path_factory, capsys, alt: str, values: list, chain: list[str], marker: bool,
+def _printed(tmp_path_factory, log, alt: str, values: list, chain: list[str], marker: bool,
              entities: list | None = None) -> list[str]:
     """The notice lines a run prints."""
     from spinedb_api import DatabaseMapping
@@ -883,36 +883,36 @@ def _printed(tmp_path_factory, capsys, alt: str, values: list, chain: list[str],
         with DatabaseMapping(url) as db:
             db.add_item("metadata", name=NOTICE_MARKER, value="77")
             db.commit_session("behaviour-change marker")
-    capsys.readouterr()
+    log()
     run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"))
     summary = BEHAVIOUR_CHANGES[NOTICE_ID].summary
-    return [ln for ln in capsys.readouterr().out.splitlines() if summary in ln]
+    return [ln for ln in log.notices() if summary in ln]
 
 
 @pytest.mark.solver
-def test_notice_lists_every_solve_of_the_run_once(tmp_path_factory, capsys) -> None:
-    lines = _printed(tmp_path_factory, capsys, "cc_notice", [], _no_battery_invest(CHAIN), marker=True)
+def test_notice_lists_every_solve_of_the_run_once(tmp_path_factory, coded_log) -> None:
+    lines = _printed(tmp_path_factory, coded_log, "cc_notice", [], _no_battery_invest(CHAIN), marker=True)
     assert len(lines) == 1
     assert "Affected solves: y2020_5week, y2025_5week, y2030_5week, y2035_5week." in lines[0]
     assert NOTICE_MARKER in lines[0]
 
 
 @pytest.mark.solver
-def test_notice_names_nested_solves(tmp_path_factory, capsys) -> None:
+def test_notice_names_nested_solves(tmp_path_factory, coded_log) -> None:
     values = (_solves(["cc_invest", "cc_dispatch"])
               + _solve("cc_invest", PERIODS, invest_periods=PERIODS, realized_invest_periods=PERIODS)
               + _solve("cc_dispatch", PERIODS, realized_periods=PERIODS))
     entities = [["solve", "cc_invest", None], ["solve", "cc_dispatch", None]]
-    lines = _printed(tmp_path_factory, capsys, "cc_notice_nested", values, _no_battery_invest(CHAIN), marker=True,
+    lines = _printed(tmp_path_factory, coded_log, "cc_notice_nested", values, _no_battery_invest(CHAIN), marker=True,
                      entities=entities)
     assert len(lines) == 1 and "Affected solves: cc_invest, cc_dispatch." in lines[0]
 
 
 @pytest.mark.solver
 @pytest.mark.parametrize("chain, marker", [(CHAIN, False), (SINGLE, True)], ids=["no_marker", "single_solve"])
-def test_no_notice(tmp_path_factory, capsys, chain, marker) -> None:
+def test_no_notice(tmp_path_factory, coded_log, chain, marker) -> None:
     alt = f"cc_no_notice_{marker}"
-    assert _printed(tmp_path_factory, capsys, alt, [], _no_battery_invest(chain), marker=marker) == []
+    assert _printed(tmp_path_factory, coded_log, alt, [], _no_battery_invest(chain), marker=marker) == []
 
 
 def test_notice_is_registered_and_written_by_the_upgrade() -> None:

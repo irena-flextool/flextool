@@ -23,16 +23,32 @@ def test_no_marker_no_notice(capsys) -> None:
     assert capsys.readouterr().out == ""
 
 
-def test_each_entity_once_per_run(capsys) -> None:
+def test_each_entity_once_per_run(coded_log) -> None:
     bc.start_run({CHANGE: "77"})
     assert bc.notice(CHANGE, "storage nodes", ["a", "b"])
     assert not bc.notice(CHANGE, "storage nodes", ["b", "a"])  # a later roll of the same run
     assert bc.notice(CHANGE, "storage nodes", ["b", "c"])
-    lines = capsys.readouterr().out.splitlines()
-    assert len(lines) == 2
-    assert "Affected storage nodes: a, b." in lines[0] and "Affected storage nodes: c." in lines[1]
+    out = coded_log()
+    assert [ln for ln in out.splitlines() if ln.startswith("Note: ")] == [
+        "Note: changed in 4.2.0: storage starts free by default (fix_nothing) (2 cases, e.g. 'a') [W-0600]",
+        "Note: changed in 4.2.0: storage starts free by default (fix_nothing) ('c') [W-0600]"]
+    notices = [ln for ln in out.splitlines() if ln.startswith("W-0600 Behaviour changed in FlexTool 4.2.0")]
+    assert len(notices) == 2
+    assert "Affected storage nodes: a, b." in notices[0] and "Affected storage nodes: c." in notices[1]
     bc.start_run({CHANGE: "77"})  # a new run announces again
     assert bc.notice(CHANGE, "storage nodes", ["a"])
+
+
+def test_every_database_change_has_a_note_code() -> None:
+    """The run notices are coded notes whose documentation is the change's summary (one text for the console note,
+    the GUI / assistant and the warnings page)."""
+    from flextool.run_warnings import WARNINGS
+    for change in bc.BEHAVIOUR_CHANGES.values():
+        if change.id == "gui_solver_defaults":
+            assert change.code is None
+            continue
+        spec = WARNINGS[change.code]
+        assert spec.severity == "note" and spec.body.startswith(change.summary) and change.silence in spec.body
 
 
 def test_text_names_version_and_silence(monkeypatch) -> None:
@@ -68,7 +84,7 @@ def test_display_text_puts_each_notice_in_its_own_paragraph() -> None:
     assert text.count("\n\n") == 1 and "Affected projects: p." in text.split("\n\n")[1].splitlines()
 
 
-def test_zero_cost_notice_detail_lists_fresh_entities_only(capsys, monkeypatch) -> None:
+def test_zero_cost_notice_detail_lists_fresh_entities_only(coded_log, monkeypatch) -> None:
     """A later solve of the run that adds one entity lists only that entity's periods, not those of the entities
     an earlier solve announced."""
     from flextool.engine.preprocess.params import _derived
@@ -79,7 +95,7 @@ def test_zero_cost_notice_detail_lists_fresh_entities_only(capsys, monkeypatch) 
     _derived.zero_cost_invest_notice(None, None, None)
     found["invest_cost"] = {"g": ["p2020", "p2025"], "h": ["p2025"]}
     _derived.zero_cost_invest_notice(None, None, None)
-    lines = capsys.readouterr().out.splitlines()
+    lines = coded_log.notices()
     assert len(lines) == 2, lines
     assert "(entity, periods): g (p2020)." in lines[0]
     assert "(entity, periods): h (p2025)." in lines[1] and "g (p2020" not in lines[1], lines[1]

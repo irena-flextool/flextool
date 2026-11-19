@@ -191,7 +191,7 @@ def test_e_capacity_coefficient_entity_still_offered(tmp_path_factory) -> None:
     assert ("k", "p2020") in invest
 
 
-def test_notice_names_the_newly_offered_pairs(tmp_path_factory, capsys) -> None:
+def test_notice_names_the_newly_offered_pairs(tmp_path_factory, coded_log) -> None:
     """With the database's ``invest_without_cost_offered`` marker, the run names the entities offered without a
     cost (``g``: no invest_cost; ``r``: no net_salvage_value), not those the old rule offered too (``c``: a non-zero
     invest_cost; ``k``: a user-constraint capacity coefficient)."""
@@ -214,7 +214,7 @@ def test_notice_names_the_newly_offered_pairs(tmp_path_factory, capsys) -> None:
         db.add_item("metadata", name="flextool_behaviour_change:invest_without_cost_offered", value="{}")
         db.commit_session("marker")
     run(tmp_path_factory, url, scen)
-    lines = [ln for ln in capsys.readouterr().out.splitlines() if "invest_without_cost_offered" in ln]
+    lines = [ln for ln in coded_log.notices() if "invest_without_cost_offered" in ln]
     assert len(lines) == 1, lines
     assert "Affected entities: g, r." in lines[0], lines[0]
     assert "Investment without invest_cost (entity, periods): g (p2020)." in lines[0], lines[0]

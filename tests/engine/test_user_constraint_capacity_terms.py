@@ -177,7 +177,7 @@ def test_prebuilt_nets_earlier_retirements_single_equals_chain(tmp_path_factory)
     assert _wind_invest_mw(in_2025, "p2025") == pytest.approx(_wind_invest_mw(single, "p2025"), rel=1e-6)
 
 
-def test_prebuilt_retirement_notice(tmp_path_factory, capsys) -> None:
+def test_prebuilt_retirement_notice(tmp_path_factory, coded_log) -> None:
     """With the upgrade marker, a run prints the notice for a constraint whose pre-built entity can retire,
     and not for one whose entity cannot."""
     from flextool.engine import _behaviour_changes as bc
@@ -188,14 +188,14 @@ def test_prebuilt_retirement_notice(tmp_path_factory, capsys) -> None:
     url, scen = make_db(tmp_path_factory, alt="uc_grow_notice", values=values, base_chain=single_wind,
                         entities=GROW_ENTITIES + [["constraint", "c_fixed", None]])
     step = list(run(tmp_path_factory, url, scen).values())[-1]
-    capsys.readouterr()
+    coded_log()
     bc.start_run({"user_constraint_prebuilt_nets_retirements": "77"})
     try:
         build(step.flex_data)
-        out = capsys.readouterr().out
+        out = coded_log()
         bc.start_run({})
         build(step.flex_data)
-        silent = capsys.readouterr().out
+        silent = coded_log()
     finally:
         bc.start_run({})
     lines = [ln for ln in out.splitlines() if "constraint_cumulative_pre_built_capacity_coeff" in ln]

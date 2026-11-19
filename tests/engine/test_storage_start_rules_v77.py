@@ -110,7 +110,7 @@ def _notice_lines(out: str) -> list[str]:
 
 
 @pytest.mark.parametrize("binding", ["bind_within_timeblock", "bind_forward_only"])
-def test_default_node_beside_a_start_value_starts_free_with_a_notice(tmp_path_factory, capsys, binding):
+def test_default_node_beside_a_start_value_starts_free_with_a_notice(tmp_path_factory, coded_log, binding):
     """ev_battery without its own method in an upgraded database, battery fix_start 0.1: before version 77 the
     default fix_start pinned ev_battery at 0 (battery's start value made p_state_start non-empty).  Now it starts
     free: its LP equals the twin where ev_battery says fix_nothing explicitly; the notice names ev_battery only
@@ -125,9 +125,9 @@ def test_default_node_beside_a_start_value_starts_free_with_a_notice(tmp_path_fa
     _as_v76(upgraded)
     url = _db(tmp_path_factory, f"upgraded_{binding}", upgraded)
     assert PREFIX + "storage_default_fix_nothing" in _markers(url)
-    capsys.readouterr()
+    coded_log()
     lp = _first_lp(tmp_path_factory, url, scen)
-    lines = [ln for ln in _notice_lines(capsys.readouterr().out) if "storage_start_end_method" in ln
+    lines = [ln for ln in coded_log.notices() if "storage_start_end_method" in ln
              and "default" in ln and "storage_end_matches_start" not in ln]
     assert len(lines) == 1
     affected = re.search(r"Affected storage nodes: ([^.]*)\.", lines[0]).group(1).split(", ")
@@ -231,7 +231,7 @@ def test_error_names_every_node_at_once(tmp_path_factory):
 # ---------------------------------------------------------------------------
 
 
-def test_upgrade_rewrites_a_fix_that_did_nothing(tmp_path_factory, capsys):
+def test_upgrade_rewrites_a_fix_that_did_nothing(tmp_path_factory, capsys, coded_log):
     """ev_battery fix_start (no value) in two scenarios without any start value: the fix did nothing, the
     upgrade makes it fix_nothing; the LP equals the twin that says fix_nothing, and the run names the rewrite."""
     upgraded = _data()
@@ -247,15 +247,16 @@ def test_upgrade_rewrites_a_fix_that_did_nothing(tmp_path_factory, capsys):
     capsys.readouterr()
     url = _db(tmp_path_factory, "rewrite_nothing", upgraded)
     assert "node ev_battery [ev]: fix_start -> fix_nothing" in capsys.readouterr().out
+    coded_log()
     marker = json.loads(_markers(url)[PREFIX + "storage_fix_method_rewritten"])
     assert marker["rewrites"] == [["ev_battery", "ev", "fix_start", "fix_nothing"]]
     lp = _first_lp(tmp_path_factory, url, scen)
-    lines = [ln for ln in _notice_lines(capsys.readouterr().out) if "rewrote" in ln]
+    lines = [ln for ln in coded_log.notices() if "rewrote" in ln]
     assert len(lines) == 1 and "ev_battery (alternative ev: fix_start -> fix_nothing)" in lines[0]
     assert lp == _first_lp(tmp_path_factory, _db(tmp_path_factory, "rewrite_nothing_twin", twin), scen)
 
 
-def test_upgrade_adds_a_zero_where_the_fix_pinned_at_zero(tmp_path_factory, capsys):
+def test_upgrade_adds_a_zero_where_the_fix_pinned_at_zero(tmp_path_factory, coded_log):
     """battery fix_start without its own value beside ev_battery's start value 0.5 (ev_battery fix_nothing) in
     both scenarios: the fix pinned battery at 0; the upgrade adds storage_state_start 0 in battery's alternative;
     the LP equals the twin with that value."""
@@ -271,10 +272,10 @@ def test_upgrade_adds_a_zero_where_the_fix_pinned_at_zero(tmp_path_factory, caps
     url = _db(tmp_path_factory, "rewrite_zero", upgraded)
     marker = json.loads(_markers(url)[PREFIX + "storage_fix_method_rewritten"])
     assert marker["rewrites"] == [["battery", "battery", "fix_start", "storage_state_start = 0"]]
-    capsys.readouterr()
+    coded_log()
     lp = _first_lp(tmp_path_factory, url, scen)
     assert any("battery (alternative battery: fix_start -> storage_state_start = 0)" in ln
-               for ln in _notice_lines(capsys.readouterr().out))
+               for ln in coded_log.notices())
     assert lp == _first_lp(tmp_path_factory, _db(tmp_path_factory, "rewrite_zero_twin", twin), scen)
 
 
@@ -304,7 +305,7 @@ def test_upgrade_leaves_a_fix_scenarios_used_differently(tmp_path_factory):
     assert "scenarios with_start, without_start used it differently" in text
 
 
-def test_upgrade_writes_the_old_default_on_a_node_with_its_own_start(tmp_path_factory, capsys):
+def test_upgrade_writes_the_old_default_on_a_node_with_its_own_start(tmp_path_factory, capsys, coded_log):
     """battery without its own method but with its storage_state_start 0.1 (alternative battery), ev_battery
     fix_nothing: the old default fix_start pinned battery at 0.1.  The upgrade writes fix_start on battery in
     alternative battery, so the LP equals the twin that says fix_start (as before the upgrade); the run names
@@ -320,10 +321,11 @@ def test_upgrade_writes_the_old_default_on_a_node_with_its_own_start(tmp_path_fa
     capsys.readouterr()
     url = _db(tmp_path_factory, "default_explicit", upgraded)
     assert "node battery [battery]: default fix_start -> fix_start" in capsys.readouterr().out
+    coded_log()
     marker = json.loads(_markers(url)[PREFIX + "storage_fix_method_rewritten"])
     assert marker["rewrites"] == [["battery", "battery", "default fix_start", "fix_start"]]
     lp = _first_lp(tmp_path_factory, url, scen)
-    lines = _notice_lines(capsys.readouterr().out)
+    lines = coded_log.notices()
     assert any("battery (alternative battery: default fix_start -> fix_start)" in ln for ln in lines), lines
     assert not [ln for ln in lines if "fix_nothing keeps the new behaviour" in ln], lines
     assert lp == _first_lp(tmp_path_factory, _db(tmp_path_factory, "default_explicit_twin", twin), scen)

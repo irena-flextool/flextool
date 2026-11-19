@@ -7,9 +7,11 @@ the registry merges them.
 * W-051x inputs of a solve: inflow scaling, limits, maps, time steps
 * W-052x lifetimes, investments and units
 * W-053x outputs of a solve and storage notes
+* W-06xx behaviour-change notices (their texts: :mod:`flextool.run_warnings._behaviour_specs`)
 """
 from __future__ import annotations
 
+from flextool.run_warnings._behaviour_specs import BEHAVIOUR_SPECS
 from flextool.run_warnings.registry import NOTE, WarningSpec
 
 _SOLVES = "Solves and realization"
@@ -341,4 +343,4 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "**How to fix:** nothing; this is how a rolling solve binds storage within a period."
         ),
     ),
-)
+) + BEHAVIOUR_SPECS

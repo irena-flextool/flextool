@@ -113,7 +113,7 @@ NOTICE_ID = "stochastic_branch_period_years"
 NOTICE_MARKER = f"flextool_behaviour_change:{NOTICE_ID}"
 
 
-def _notice_lines(tmp_path_factory, capsys, alt: str, chain: list[str], marker: bool) -> list[str]:
+def _notice_lines(tmp_path_factory, log, alt: str, chain: list[str], marker: bool) -> list[str]:
     from spinedb_api import DatabaseMapping
 
     from flextool.engine import run_chain_from_db
@@ -124,14 +124,14 @@ def _notice_lines(tmp_path_factory, capsys, alt: str, chain: list[str], marker: 
         with DatabaseMapping(url) as db:
             db.add_item("metadata", name=NOTICE_MARKER, value="77")
             db.commit_session("behaviour-change marker")
-    capsys.readouterr()
+    log()
     run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"))
     summary = BEHAVIOUR_CHANGES[NOTICE_ID].summary
-    return [ln for ln in capsys.readouterr().out.splitlines() if summary in ln]
+    return [ln for ln in log.notices() if summary in ln]
 
 
-def test_notice_names_the_investment_entities(tmp_path_factory, capsys) -> None:
-    lines = _notice_lines(tmp_path_factory, capsys, "fan_notice", ["init", "base", "stoch"], marker=True)
+def test_notice_names_the_investment_entities(tmp_path_factory, coded_log) -> None:
+    lines = _notice_lines(tmp_path_factory, coded_log, "fan_notice", ["init", "base", "stoch"], marker=True)
     assert len(lines) == 1
     assert "Affected entities: peaker." in lines[0] and NOTICE_MARKER in lines[0]
 
@@ -141,5 +141,5 @@ def test_notice_names_the_investment_entities(tmp_path_factory, capsys) -> None:
     (["init", "base"], True),
     (["init", "base", "stoch", "recourse"], True),
 ], ids=["no_marker", "deterministic", "recourse"])
-def test_no_notice(tmp_path_factory, capsys, chain, marker) -> None:
-    assert _notice_lines(tmp_path_factory, capsys, f"fan_no_notice_{len(chain)}_{marker}", chain, marker) == []
+def test_no_notice(tmp_path_factory, coded_log, chain, marker) -> None:
+    assert _notice_lines(tmp_path_factory, coded_log, f"fan_no_notice_{len(chain)}_{marker}", chain, marker) == []

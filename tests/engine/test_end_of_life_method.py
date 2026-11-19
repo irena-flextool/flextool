@@ -316,7 +316,7 @@ CHAIN_SOLVES = (solve_values("life_a", ["p2020"], [5.0], invest=["p2020"])
                 + solve_values("life_b", ["p2025", "p2030"], [5.0, 10.0]))
 
 
-def _notice_lines(tmp_path_factory, capsys, alt: str, values: list, solves: tuple[str, ...] = (SOLVE,),
+def _notice_lines(tmp_path_factory, log, alt: str, values: list, solves: tuple[str, ...] = (SOLVE,),
                   marker: bool = True) -> list[str]:
     """The printed lines of the ``end_of_life_closest_seam`` notice of a run of ``solves`` whose database carries
     the upgrade's marker naming coal_plant and wind_plant (none with ``marker`` False)."""
@@ -333,13 +333,13 @@ def _notice_lines(tmp_path_factory, capsys, alt: str, values: list, solves: tupl
             db.add_item("metadata", name=MARKER_PREFIX + NOTICE_ID,
                         value='{"since": 81, "entities": ["coal_plant", "wind_plant"]}')
             db.commit_session("behaviour-change marker")
-    capsys.readouterr()
+    log()
     run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"))
     summary = BEHAVIOUR_CHANGES[NOTICE_ID].summary
-    return [ln for ln in capsys.readouterr().out.splitlines() if summary in ln]
+    return [ln for ln in log.notices() if summary in ln]
 
 
-def test_notice_names_each_entity_whose_end_of_life_moves_once(tmp_path_factory, capsys) -> None:
+def test_notice_names_each_entity_whose_end_of_life_moves_once(tmp_path_factory, coded_log) -> None:
     """Over the chain life_a | life_b, coal_plant (existing 500 MW, lifetime_technical 12: Y = 12 → 10 instead of
     20) is named once, when the run places its existing cohort; wind_plant (no existing capacity, decided in p2020
     with lifetime_technical 12: Y = 12 → 10) is named by the solve that offers the decision."""
@@ -350,7 +350,7 @@ def test_notice_names_each_entity_whose_end_of_life_moves_once(tmp_path_factory,
         ["unit", WIND, "invest_cost", b64(1000.0, "float")],
         ["unit", WIND, "invest_max_period", _map({"p2020": 100.0})],
         ["unit", WIND, "lifetime_technical", b64(12.0, "float")]]
-    lines = _notice_lines(tmp_path_factory, capsys, "eol_notice_chain", values, solves=("life_a", "life_b"))
+    lines = _notice_lines(tmp_path_factory, coded_log, "eol_notice_chain", values, solves=("life_a", "life_b"))
     assert len(lines) == 2, lines
     assert "Affected entities: coal_plant." in lines[0]
     assert ("coal_plant (existing): end of life at year 12 of the run, out of service from p2030 (next_seam: in "
@@ -373,8 +373,8 @@ def test_notice_names_each_entity_whose_end_of_life_moves_once(tmp_path_factory,
     # no marker (a database that was not upgraded)
     ("eol_quiet_no_marker", coal(12.0) + wind_invest(7.0), False),
 ])
-def test_notice_is_silent_where_nothing_moves(tmp_path_factory, capsys, alt, values, marker) -> None:
-    lines = _notice_lines(tmp_path_factory, capsys, alt, solve_values(invest=["p2025"]) + values, marker=marker)
+def test_notice_is_silent_where_nothing_moves(tmp_path_factory, coded_log, alt, values, marker) -> None:
+    lines = _notice_lines(tmp_path_factory, coded_log, alt, solve_values(invest=["p2025"]) + values, marker=marker)
     assert lines == []
 
 
@@ -510,7 +510,7 @@ def test_lead_time_investment_reads_every_period_map_at_its_online_period(tmp_pa
     ({"p2020": 0.0, "p2025": 1000.0, "p2030": 1000.0}, False),
     ({"p2020": 1000.0, "p2025": 0.0, "p2030": 0.0}, True),
 ], ids=["cost_online", "no_cost_online"])
-def test_zero_cost_notice_reads_the_cost_of_the_online_period(tmp_path_factory, capsys, cost, named) -> None:
+def test_zero_cost_notice_reads_the_cost_of_the_online_period(tmp_path_factory, coded_log, cost, named) -> None:
     """With the ``invest_without_cost_offered`` marker, wind_plant decided in p2020 with a 5-year construction lead
     time comes online in p2025 and pays the invest_cost of p2025 (the plant as constructed): an invest_cost map
     with 0 only in p2020 has a cost, so wind_plant is not named; a map with 0 from p2025 on has none, so it is named
@@ -534,8 +534,8 @@ def test_zero_cost_notice_reads_the_cost_of_the_online_period(tmp_path_factory, 
     with DatabaseMapping(url) as db:
         db.add_item("metadata", name=MARKER_PREFIX + "invest_without_cost_offered", value="{}")
         db.commit_session("behaviour-change marker")
-    capsys.readouterr()
+    coded_log()
     run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"))
-    lines = [ln for ln in capsys.readouterr().out.splitlines() if "invest_without_cost_offered" in ln]
+    lines = [ln for ln in coded_log.notices() if "invest_without_cost_offered" in ln]
     listed = [ln for ln in lines if f"{WIND} (p2020)" in ln]
     assert bool(listed) == named, lines
