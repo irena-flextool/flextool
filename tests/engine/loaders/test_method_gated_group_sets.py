@@ -15,7 +15,6 @@ Expected values are from specs/bugfix/v1/oracle.md (by hand from the user docs),
 """
 from __future__ import annotations
 
-import logging
 
 import pytest
 
@@ -99,19 +98,18 @@ def test_co2_period_cap_set_is_the_lp_capped_groups(tmp_path_factory) -> None:
     assert _groups(st.flex_data, "group_co2_max_period") == {"co2_limit"}
 
 
-def test_co2_max_period_on_a_price_group_is_ignored_with_a_warning(tmp_path_factory, caplog) -> None:
+def test_co2_max_period_on_a_price_group_is_ignored_with_a_warning(tmp_path_factory, coded_log) -> None:
     """co2_extra: co2_method price, co2_price 10, co2_max_period 100 → not capped, not CO2-limited in the
-    outputs, the same LP as without its co2_max_period, and one warning naming the group, the alternative and
-    the method."""
+    outputs, the same LP as without its co2_max_period, and one warning naming the group (W-0103), with the
+    alternative and the method in its debug details."""
     priced = [["group", "co2_extra", "co2_method", text("price")],
               ["group", "co2_extra", "co2_price", num(10.0)]]
-    with caplog.at_level(logging.WARNING):
-        steps = _run(tmp_path_factory, "i84a_extra",
-                     priced + [["group", "co2_extra", "co2_max_period", num(100.0)]],
-                     CO2_CHAIN, entities=CO2_EXTRA_ENTITIES)
-    warnings = [r.getMessage() for r in caplog.records
-                if r.levelno == logging.WARNING and "co2_extra" in r.getMessage()]
+    steps = _run(tmp_path_factory, "i84a_extra",
+                 priced + [["group", "co2_extra", "co2_max_period", num(100.0)]],
+                 CO2_CHAIN, entities=CO2_EXTRA_ENTITIES)
+    log = coded_log()
     ref = _run(tmp_path_factory, "i84a_ref", priced, CO2_CHAIN, entities=CO2_EXTRA_ENTITIES)
+    assert "W-0103" not in coded_log()
     st, ref_st = _last(steps), _last(ref)
     assert _capped_groups(st) == {"co2_limit"}
     assert _groups(st.flex_data, "group_co2_max_period") == {"co2_limit"}
@@ -119,10 +117,11 @@ def test_co2_max_period_on_a_price_group_is_ignored_with_a_warning(tmp_path_fact
     _assert_same_objs(steps, ref)
     tmp = tmp_path_factory.mktemp("i84a_mps")
     assert _mps(st, tmp / "a.mps") == _mps(ref_st, tmp / "b.mps")
-    assert len(warnings) == 1, warnings
-    assert warnings[0] == (
-        "Group 'co2_extra' has co2_max_period (alternative 'i84a_extra') but its co2_method 'price' has no "
-        "period cap: the limit is ignored. Use a co2_method with 'period' in it to apply the limit.")
+    warnings = [line for line in log.splitlines() if line.startswith("Warning:") and "W-0103" in line]
+    assert warnings == [
+        "Warning: group has co2_max_period but its co2_method has no such cap; ignored ('co2_extra') [W-0103]"]
+    details = [line for line in log.splitlines() if line.startswith("W-0103 co2_extra: ")]
+    assert len(details) == 1 and "'i84a_extra'" in details[0] and "co2_method 'price' (no period cap)" in details[0]
 
 
 # ---------------------------------------------------------------------------
