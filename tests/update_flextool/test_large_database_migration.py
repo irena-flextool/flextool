@@ -22,6 +22,8 @@ from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool.db_migration import migrate_database
 from flextool.update_flextool.frozen import read_db_version_ro
 
+from tests.update_flextool._rerun import already_applied_records
+
 #: Units in the large database.  Each one deletes one input value and, on even units, one output leftover: 1650
 #: scattered values of one table, the input ones alone above the 1000 runs one SQLite DELETE accepts.
 LARGE = 1100
@@ -96,10 +98,11 @@ def large(tmp_path_factory: pytest.TempPathFactory) -> dict:
                        and (pv["entity_class_name"] == "unit__inputNode"
                             or from_database(pv["value"], pv["type"]) != 1.0)]
         scattered_runs = _run_count(removed_ids)
-    migrate_database(url)
+    with already_applied_records() as records:
+        migrate_database(url)
     with DatabaseMapping(url) as db:
         after = _values(db)
-    return {"path": path, "runs": scattered_runs, "after": after}
+    return {"path": path, "runs": scattered_runs, "after": after, "records": records}
 
 
 def test_the_removed_values_are_scattered(large) -> None:
@@ -110,6 +113,11 @@ def test_the_removed_values_are_scattered(large) -> None:
 def test_large_database_reaches_the_current_version(large) -> None:
     assert read_db_version_ro(large["path"]) == FLEXTOOL_DB_VERSION
     assert not Path(f"{large['path']}.premigration.bak").exists()
+
+
+def test_large_database_finds_nothing_already_applied(large) -> None:
+    """A clean migration trips no rerun guard of a step (``_already_applied``)."""
+    assert large["records"] == []
 
 
 def test_large_database_values_are_those_of_the_v70_rules(large) -> None:

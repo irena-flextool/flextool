@@ -1,9 +1,9 @@
 """The pre-migration backup of a database file: a migration either completes or leaves the file as it was found.
 
-A migration commits step by step and stamps the data version only at the end, so a failure part way would leave a
-half-migrated file.  :func:`restored_on_failure` copies the file to ``<db>.premigration.bak`` (beside it, as large as
-it) before the first write and, on any exception (a cancellation or Ctrl+C too), moves that copy back over the file
-in one atomic rename.  :func:`~flextool.update_flextool.db_migration.migrate_database` and the window's upgrade
+A migration commits step by step (each step's commit also carries the previous step's version stamp), so a failure
+part way would leave a half-migrated file.  :func:`restored_on_failure` copies the file to ``<db>.premigration.bak``
+(beside it, as large as it) before the first write and, on any exception (a cancellation or Ctrl+C too), moves that
+copy back over the file in one atomic rename.  :func:`~flextool.update_flextool.db_migration.migrate_database` and the window's upgrade
 (:mod:`flextool.gui.db_version_check`) both use it.
 
 Whenever the copy cannot be put back (a failure or an interruption during the restore), it is kept and its path is

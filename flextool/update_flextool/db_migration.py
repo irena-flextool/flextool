@@ -1,5 +1,6 @@
 import contextlib
 import json
+import math
 import os
 import argparse
 from dataclasses import dataclass
@@ -451,9 +452,9 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 # connection, node; and model-level discount_rate -> inflation_rate
                 # plus the two discount_offset_* -> inflation_offset_* renames.
                 #
-                # These renames must be collision-safe.  ``migrate_database``
-                # writes ``model.version`` only once, at the very end of the
-                # whole loop, so a migration interrupted/cancelled after a later
+                # These renames must be collision-safe.  Up to FlexTool 4.6.0
+                # ``migrate_database`` wrote ``model.version`` only once, at the
+                # very end of the whole loop, so a migration interrupted after a later
                 # step already created the *target* definition (the v28 rename
                 # itself, or the v48 ``add_update_item`` default-setter) but
                 # before the final version write leaves the DB with the target
@@ -621,12 +622,13 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                     "edge (e.g. heat output of an extraction CHP that may "
                     "drop to zero in pure-condensing mode)."
                 )
-                parameter_definitions = db.mapped_table("parameter_definition")
                 default_one_val, default_one_type = to_database(1.0)
                 for cls in ("unit__inputNode", "unit__outputNode"):
-                    param = db.item(parameter_definitions,
-                                    entity_class_name=cls, name="coefficient")
-                    if param:
+                    param = db.get_item("parameter_definition", entity_class_name=cls, name="coefficient")
+                    if not param and db.get_item("parameter_definition", entity_class_name=cls,
+                                                 name="flow_coefficient"):
+                        _already_applied(35, f"{cls}.coefficient is renamed to flow_coefficient")
+                    elif param:
                         _v35_drop_v23_flow_coefficient(db, cls)
                         db.update_parameter_definition(
                             id=param["id"],
@@ -712,6 +714,7 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 # with 1/x. Defaults (1.0) are left alone; 0 (hydro-
                 # pass-through marker) is left alone.
                 db.mapped_table("parameter_value")
+                caps = _float_values(db, "unit__outputNode", ("max_capacity_coefficient", "min_capacity_coefficient"))
                 for pv in list(db.find_parameter_values(
                         entity_class_name="unit__outputNode",
                         parameter_definition_name="flow_coefficient")):
@@ -722,6 +725,12 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                     if val == 0.0 or val == 1.0:
                         continue
                     inv = 1.0 / val
+                    key = (tuple(pv["entity_byname"]), pv["alternative_name"])
+                    if all(math.isclose(caps.get((name, *key), math.nan), inv, rel_tol=1e-12)
+                           for name in ("max_capacity_coefficient", "min_capacity_coefficient")):
+                        # v36 wrote max = min = the unflipped value: max = min = 1/flow means this one is flipped.
+                        _already_applied(37, f"unit__outputNode {key} flow_coefficient is flipped")
+                        continue
                     new_val, new_type = to_database(inv)
                     db.update_item(
                         "parameter_value",
@@ -927,11 +936,11 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                     ["node", "has_storage"],
                 ])
                 for vl_name in ("has_balance", "has_storage"):
-                    vl = db.item(
-                        db.mapped_table("parameter_value_list"), name=vl_name,
-                    )
+                    vl = db.get_item("parameter_value_list", name=vl_name)
                     if vl:
                         db.remove_items("parameter_value_list", vl["id"])
+                    else:
+                        _already_applied(38, f"value list {vl_name} is removed")
 
                 try:
                     _commit_step(db,
@@ -1943,7 +1952,7 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                     name="timeset_weights",
                     description="Per-timestep weight map (index: timestep name, value: float) defining *representativeness*: each timestep's share of the year. Drives the annualisation of demand, energy, and cost alike (the inflow scaling, the annual energy outputs, and the operating-cost objective all use this same weight), so the energy the model is scaled to serve, reports, and costs all coincide. Use for non-RP models where timesteps represent unequal fractions of the year (e.g. seasonal yearsplit on a coarse timeslice structure). Weights are normalized per period to sum to 1 and then scaled by the number of active timesteps so that uniform input reproduces the default (weight = 1 per step). Must not be combined with representative_period_weights on the same timeset.",
                 )
-                db.commit_session("Clarify inflow_method/timeset_duration/timeset_weights descriptions for timeslice weighting")
+                _commit_step(db, "Clarify inflow_method/timeset_duration/timeset_weights descriptions for timeslice weighting")
             elif next_version == 58:
                 _migrate_v58_carve_flowgroup_out_of_group(db)
             elif next_version == 59:
@@ -1958,7 +1967,7 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                     "building the optimisation problem. Reduces the numerical "
                     "range (conditioning) of the LP. Default 0.0001.",
                 )
-                db.commit_session("Added model.small_number_threshold parameter")
+                _commit_step(db, "Added model.small_number_threshold parameter")
             elif next_version == 60:
                 _migrate_v60_solve_decomposition(db)
             elif next_version == 61:
@@ -1981,9 +1990,7 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                         "on the same timeset."
                     ),
                 )
-                db.commit_session(
-                    "Added timeset.representative_period_weights parameter"
-                )
+                _commit_step(db, "Added timeset.representative_period_weights parameter")
             elif next_version == 62:
                 _migrate_v62_benders_rename(db)
             elif next_version == 63:
@@ -2028,6 +2035,7 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 _migrate_v82_schema_batch(db)
             else:
                 print("Version invalid")
+            _stage_version(db, next_version)
             last_completed_version = next_version
             next_version += 1
 
@@ -2046,6 +2054,48 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 _commit_step(db, "Refreshed existing / virtual_unitsize descriptions, added the current "
                                  "version's new definitions and replaced its superseded defaults")
             print(database_path+ " already up-to-date at version "+ str(version))
+
+def _float_values(db, entity_class_name: str, names) -> dict:
+    """``{(parameter, entity_byname, alternative): float}`` of the scalar *names* values of *entity_class_name*."""
+    out = {}
+    for name in names:
+        for pv in db.find_parameter_values(entity_class_name=entity_class_name, parameter_definition_name=name):
+            try:
+                out[(name, tuple(pv["entity_byname"]), pv["alternative_name"])] = float(pv["parsed_value"])
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
+def _stage_version(db, version: int) -> None:
+    """Write ``model.version = version`` into the session after step *version*, without a commit of its own.
+
+    The next commit carries it: the next step's first commit, or the final version commit.  A migration killed
+    outright (no restore of the copy) thus leaves the stamp at most one step behind what was committed, and the rerun
+    repeats only that step, which therefore must converge when its effect is already there (:func:`_already_applied`).
+    """
+    pdef = db.get_item("parameter_definition", entity_class_name="model", name="version")
+    if pdef:
+        val, typ = to_database(version)
+        db.update_item("parameter_definition", id=pdef["id"], default_value=val, default_type=typ)
+    else:
+        import_data(db, object_parameters=[["model", "version", version, None,
+                                            "[version number] Contains database version information."]])
+
+
+#: The fixed start of the INFO record :func:`_already_applied` writes.
+ALREADY_APPLIED_PREFIX = "Migration step already applied:"
+
+
+def _already_applied(version: int, what: str) -> bool:
+    """Log that step *version* finds its effect *what* already in the database and return ``True``.
+
+    That happens on a rerun of the step after a migration was killed during or right after it (the stamp lags by one
+    step, :func:`_stage_version`); a clean migration never logs it.
+    """
+    logging.info("%s v%d %s", ALREADY_APPLIED_PREFIX, version, what)
+    return True
+
 
 def _rename_or_drop_parameter_definition(db, entity_class_name, old_name, new_name, description=None):
     """Collision-safe parameter_definition rename within an entity class.
@@ -2239,8 +2289,8 @@ def change_optional_output_type(db, filepath):
 def _v25_already_applied(db) -> bool:
     """Whether the database already has the v25 time structure although its stamp is older.
 
-    Each step commits on its own and ``model.version`` is written only at the end, so a migration that failed at a
-    later step (v35, in FlexTool 4.0 to 4.5) left v25 applied under the old stamp.  Applied means: no ``timeblockSet``
+    Up to FlexTool 4.6.0 each step committed on its own and ``model.version`` was written only at the end, so a
+    migration that failed at a later step (v35, in FlexTool 4.0 to 4.5) left v25 applied under the old stamp.  Applied means: no ``timeblockSet``
     class, a ``timeset`` class with ``timeline`` and ``timeset_duration`` and ``solve.period_timeset``.  A database
     without ``timeblockSet`` that is not in that state stops with a message.
     """
@@ -3884,12 +3934,11 @@ def _migrate_v65_energy_and_capacity_margin_methods(db) -> None:
         )
 
     # --- 4. drop the old has_capacity_margin definition --------------
-    has_cm_def = db.item(
-        db.mapped_table("parameter_definition"),
-        entity_class_name="group", name="has_capacity_margin",
-    )
-    if has_cm_def is not None:
+    has_cm_def = db.get_item("parameter_definition", entity_class_name="group", name="has_capacity_margin")
+    if has_cm_def:
         db.remove_parameter_definition(id=has_cm_def["id"])
+    else:
+        _already_applied(65, "group.has_capacity_margin is removed")
 
     _commit_step(db,
         "v65: added node.energy_margin (+ energy_margin_method) and "
@@ -7301,9 +7350,10 @@ def _migrate_v52_solver_selection(db) -> None:
     # and dependent parameter_value rows keep their list_value_ref
     # entries through the migration.  Spine cascades the drop to
     # dependent rows, which made the drop-and-readd path unreliable.
-    pvl_table = db.mapped_table("parameter_value_list")
-    legacy_solver_list = db.item(pvl_table, name="solver")
-    if legacy_solver_list is not None:
+    legacy_solver_list = db.get_item("parameter_value_list", name="solver")
+    if not legacy_solver_list and db.get_item("parameter_value_list", name="solvers"):
+        _already_applied(52, "value list solver is renamed to solvers")
+    elif legacy_solver_list:
         legacy_id = legacy_solver_list["id"]
         # Add missing members: gurobi, xpress, copt.
         for member in ("gurobi", "xpress", "copt"):

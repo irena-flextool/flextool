@@ -30,6 +30,8 @@ from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool.db_migration import migrate_database
 from flextool.update_flextool.initialize_database import initialize_database
 
+from tests.update_flextool._rerun import restamp
+
 TEMPLATES = package_data_path("schemas/pre_v26")
 #: (class, unit, node, coefficient value) written before the coefficient steps.
 COEFFICIENTS = [("unit__inputNode", "u1", "n_in", 0.5), ("unit__outputNode", "u1", "n_out", 2.0)]
@@ -119,12 +121,6 @@ def test_oldest_version_migrates_with_its_coefficients(v2_path, v25_path) -> Non
     assert set(v25_path["definitions"]) == shipped
 
 
-def _restamp(db, version: int) -> None:
-    pdef = db.get_item("parameter_definition", entity_class_name="model", name="version")
-    val, typ = to_database(float(version))
-    db.update_parameter_definition(id=pdef["id"], default_value=val, default_type=typ)
-
-
 def _leave_failed_v35_state(url: str, stamp: int, stray_default: bytes | None = None) -> None:
     """The state a FlexTool 4.0..4.5 migration left on a pre-v25 database: each step commits on its own and the
     version is written only at the end, so its failed v35 left steps 23..34 applied (with the definitions its v23
@@ -135,7 +131,7 @@ def _leave_failed_v35_state(url: str, stamp: int, stray_default: bytes | None = 
             for name in ("flow_coefficient", "max_capacity_coefficient", "min_capacity_coefficient"):
                 kwargs = {"default_value": stray_default, "default_type": None} if stray_default is not None else {}
                 db.add_parameter_definition(entity_class_name=cls, name=name, parameter_type_list=("float",), **kwargs)
-        _restamp(db, stamp)
+        restamp(db, stamp)
         db.commit_session(f"steps 23..34 of a failed migration under stamp {stamp}")
 
 
