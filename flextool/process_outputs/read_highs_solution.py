@@ -463,6 +463,17 @@ VARIABLE_SPECS: list[VariableSpec] = [
         value_scale=_INV_SCALE_THE_OBJECTIVE,
         output_name="v_dual_co2_max_total",
     ),
+    # A stochastic solve with several scenario paths names the total cap
+    # ``co2_max_total_path[g, leaf]`` (one row per path, model/core.py
+    # _eq_co2_max_total) instead of ``co2_max_total[g]``.  Each path's dual
+    # carries the path's branch weight; read_variables sums them over the
+    # paths into ``dual_co2_max_total`` (item 183).
+    VariableSpec(
+        name="co2_max_total_path", col_names=("group", "leaf"),
+        has_time=False, has_period=False, source="row_dual",
+        value_scale=_INV_SCALE_THE_OBJECTIVE,
+        output_name="v_dual_co2_max_total_path",
+    ),
 
     # Not in VARIABLE_SPECS (handled by dedicated writers below):
     # * v_dual_node_balance — per-period inflation scaling needs a

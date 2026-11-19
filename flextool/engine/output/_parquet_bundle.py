@@ -228,6 +228,9 @@ for _spec in (
        note="CO2 cap dual (per-period); only emitted when CO2 cap set."),
     _v("v_dual_co2_max_total",    ("group",), has_period=False, has_time=False,
        note="CO2 cap dual (total horizon); only emitted when total CO2 cap set."),
+    _v("v_dual_co2_max_total_path", ("group", "leaf"), has_period=False, has_time=False,
+       note="CO2 cap dual (total horizon) per scenario path of a stochastic solve; only emitted when total "
+            "CO2 cap set."),
     _v("v_obj", ("objective",), has_period=False, has_time=False,
        note="Objective value (un-scaled); one row per solve."),
 ):
