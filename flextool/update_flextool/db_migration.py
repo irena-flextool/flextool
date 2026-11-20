@@ -315,7 +315,9 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 raise MigrationCancelled(last_completed_version=last_completed_version)
             if progress_callback is not None:
                 progress_callback(last_completed_version, new_version, next_version)
-            if next_version == 0:
+            if 1 <= next_version <= 11 and _template_step_superseded(db, next_version):
+                pass
+            elif next_version == 0:
                 add_version(db)
             elif next_version == 1:
                 add_new_parameters(db, _pre_v26_template('flextool_template_v2.json'))
@@ -661,7 +663,8 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 # are affected; those relying on the default 1.0 already
                 # get max/min = 1.0 from the defaults introduced in v35.
                 db.mapped_table("parameter_value")
-                for cls in ("unit__outputNode", "unit__inputNode"):
+                for cls in ("unit__outputNode", "unit__inputNode") if not _v38_ran(db, 36) else ():
+                    caps = _float_values(db, cls, ("max_capacity_coefficient", "min_capacity_coefficient"))
                     existing = list(db.find_parameter_values(
                         entity_class_name=cls,
                         parameter_definition_name="flow_coefficient"))
@@ -672,6 +675,9 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                             continue
                         # Skip default-valued rows — backfill is a no-op.
                         if coef == 1.0:
+                            continue
+                        if cls == "unit__outputNode" and coef != 0.0 and _v37_flipped(caps, pv, 1.0 / coef):
+                            _already_applied(36, f"{cls} {tuple(pv['entity_byname'])} flow_coefficient is flipped")
                             continue
                         if cls == "unit__outputNode":
                             max_cap = coef
@@ -710,7 +716,7 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 caps = _float_values(db, "unit__outputNode", ("max_capacity_coefficient", "min_capacity_coefficient"))
                 for pv in list(db.find_parameter_values(
                         entity_class_name="unit__outputNode",
-                        parameter_definition_name="flow_coefficient")):
+                        parameter_definition_name="flow_coefficient")) if not _v38_ran(db, 37) else ():
                     try:
                         val = float(pv["parsed_value"])
                     except (TypeError, ValueError):
@@ -718,11 +724,8 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                     if val == 0.0 or val == 1.0:
                         continue
                     inv = 1.0 / val
-                    key = (tuple(pv["entity_byname"]), pv["alternative_name"])
-                    if all(math.isclose(caps.get((name, *key), math.nan), inv, rel_tol=1e-12)
-                           for name in ("max_capacity_coefficient", "min_capacity_coefficient")):
-                        # v36 wrote max = min = the unflipped value: max = min = 1/flow means this one is flipped.
-                        _already_applied(37, f"unit__outputNode {key} flow_coefficient is flipped")
+                    if _v37_flipped(caps, pv, inv):
+                        _already_applied(37, f"unit__outputNode {tuple(pv['entity_byname'])} flow_coefficient is flipped")
                         continue
                     new_val, new_type = to_database(inv)
                     db.update_item(
@@ -876,17 +879,23 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 # v38 step — those need the stray node_type values cleaned
                 # up by hand.)
                 floor_alt = "default_node_type_from_migration"
-                db.add_update_item(
-                    "alternative",
-                    name=floor_alt,
-                    description=(
-                        "Auto-created by the v38 migration: carries the "
-                        "'commodity' fallback node_type (pre-v38 'no "
-                        "balance' default).  Pinned to the lowest rank of "
-                        "every scenario so any explicit 'balance'/'storage'/"
-                        "'balance_within_period' overrides it."
-                    ),
-                )
+                # The floor goes with the flags' removal (one commit): without both flags it is there, and the
+                # nodes and scenarios made since then must not get it.
+                write_floor = (any(db.get_item("parameter_definition", entity_class_name="node", name=name)
+                                   for name in ("has_balance", "has_storage"))
+                               or not _already_applied(38, "node.has_balance and has_storage are removed"))
+                if write_floor:
+                    db.add_update_item(
+                        "alternative",
+                        name=floor_alt,
+                        description=(
+                            "Auto-created by the v38 migration: carries the "
+                            "'commodity' fallback node_type (pre-v38 'no "
+                            "balance' default).  Pinned to the lowest rank of "
+                            "every scenario so any explicit 'balance'/'storage'/"
+                            "'balance_within_period' overrides it."
+                        ),
+                    )
 
                 # Add the floor alternative to every scenario at a rank
                 # strictly below the scenario's current minimum.
@@ -899,7 +908,7 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                     r = sa["rank"]
                     if sid not in min_rank_by_scenario or r < min_rank_by_scenario[sid]:
                         min_rank_by_scenario[sid] = r
-                for sid, min_rank in min_rank_by_scenario.items():
+                for sid, min_rank in min_rank_by_scenario.items() if write_floor else ():
                     db.add_update_item(
                         "scenario_alternative",
                         scenario_name=scen_name_by_id[sid],
@@ -912,7 +921,7 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 # 'balance_within_period') keep those in higher-ranked
                 # alternatives and are unaffected here.
                 commodity_val, commodity_type = to_database("commodity")
-                for ent in db.find_entities(entity_class_name="node"):
+                for ent in db.find_entities(entity_class_name="node") if write_floor else ():
                     db.add_update_item(
                         "parameter_value",
                         entity_class_name="node",
@@ -1845,7 +1854,8 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 # separately in D.2 because it gets a different new
                 # default (``upper_limit``); see
                 # ``_migrate_v56_set_unit_node_profile_default_upper_limit``.
-                _migrate_v56_add_profile_and_ramp_method_none(db)
+                none_before = _v56_none_members(db)
+                _migrate_v56_add_profile_and_ramp_method_none(db, none_before)
                 # Batch D.2 — flip
                 # ``unit__node__profile.profile_method`` default from
                 # ``null`` to ``upper_limit`` (the dominant authoring
@@ -1853,7 +1863,7 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 # legacy entities lacking an explicit method to
                 # ``none`` so the new default does not silently
                 # activate the constraint on pre-D.2 data.
-                _migrate_v56_set_unit_node_profile_default_upper_limit(db)
+                _migrate_v56_set_unit_node_profile_default_upper_limit(db, none_before)
                 # Batch D.3 — retype six boolean-as-enum parameters
                 # (connection.is_DC, group.has_capacity_margin,
                 # group.has_inertia, group.has_non_synchronous,
@@ -2054,6 +2064,34 @@ def _float_values(db, entity_class_name: str, names) -> dict:
             except (TypeError, ValueError):
                 continue
     return out
+
+
+def _v37_flipped(caps: dict, pv, inv: float) -> bool:
+    """v36 wrote ``max_capacity_coefficient = min_capacity_coefficient = flow_coefficient`` on the unit__outputNode
+    row *pv* (*caps*: :func:`_float_values`), v37 then flipped it: max = min = 1/flow (*inv*) means flipped.  (On
+    unflipped content max = min = flow, so that holds only for flow = 1, which both steps skip.)"""
+    key = (tuple(pv["entity_byname"]), pv["alternative_name"])
+    return all(math.isclose(caps.get((name, *key), math.nan), inv, rel_tol=1e-12)
+               for name in ("max_capacity_coefficient", "min_capacity_coefficient"))
+
+
+def _v38_ran(db, version: int) -> bool:
+    """v38 removed ``node.has_balance`` and its value list, which its clean run reads: both absent means v38 ran, and
+    v36 / v37 (step *version*) must not rescale or flip ``flow_coefficient`` again."""
+    if (db.get_item("parameter_value_list", name="has_balance")
+            or db.get_item("parameter_definition", entity_class_name="node", name="has_balance")):
+        return False
+    return _already_applied(version, "v38 removed node.has_balance")
+
+
+def _template_step_superseded(db, version: int) -> bool:
+    """Steps 1-11 import whole old templates.  On content from v12 on (``group.output_aggregate_flows`` from v12 to
+    v41, ``group.share_loss_of_load`` from v13 on; in no older template) they would bring back what later steps
+    removed or renamed: skip them (owner Q1).  A stamp 0-10 there comes from a hand edit or a lost ``model.version``."""
+    for name in ("share_loss_of_load", "output_aggregate_flows"):
+        if db.get_item("parameter_definition", entity_class_name="group", name=name):
+            return _already_applied(version, f"group.{name} (v12 / v13) is there")
+    return False
 
 
 def _stage_version(db, version: int) -> None:
@@ -2501,8 +2539,16 @@ def update_parameter_types_v23(db):
     (:func:`_upsert_definition`).  The ``unit__inputNode`` / ``unit__outputNode`` flow coefficient is ``coefficient`` here: v35 renames it to
     ``flow_coefficient`` and adds ``max_capacity_coefficient`` / ``min_capacity_coefficient`` (typed there).  Typing
     those v35 names here created ``flow_coefficient`` beside ``coefficient``, and the v35 rename collided with it.
+    Once v25 ran (``timeblockSet`` renamed ``timeset``, which v25's clean run needs), an absent entry is one a later
+    step removed (e.g. v38 ``node.has_balance``, which the v38 floor keys on) or one the v25 template never had: it
+    is not created.
     """
+    v25_ran = not db.get_item("entity_class", name="timeblockSet") and db.get_item("entity_class", name="timeset")
     for cls, name, types in get_parameter_type_list_v23():
+        if v25_ran and not db.get_item("parameter_definition", entity_class_name=cls, name=name):
+            if _later_definition(db, 23, cls, name) is None:
+                _already_applied(23, f"{cls}.{name} is not there after v25")
+                continue
         _upsert_definition(db, 23, cls, name, parameter_type_list=types)
 
 def get_parameter_type_list_v23():
@@ -9570,7 +9616,23 @@ def _migrate_v56_remove_solver_log_level(db) -> None:
             pass
 
 
-def _migrate_v56_add_profile_and_ramp_method_none(db) -> None:
+def _v56_none_members(db) -> frozenset[str]:
+    """Which of ``profile_methods`` / ``ramp_methods`` have the ``none`` member v56 D.1 adds (read before D.1)."""
+    return frozenset(name for name in ("profile_methods", "ramp_methods")
+                     if "none" in {lv["parsed_value"] for lv in db.find_list_values(parameter_value_list_name=name)})
+
+
+def _v56_backfilled(db, entity_class_name: str, name: str, target: str, none_before: frozenset[str]) -> bool:
+    """The default of *entity_class_name.name* is *target* and its list had ``none`` before D.1: the default and the
+    ``none`` backfill (one commit) are done, and a rerun must not backfill the entities made since."""
+    pdef = db.get_item("parameter_definition", entity_class_name=entity_class_name, name=name)
+    if (not pdef or pdef["parameter_value_list_name"] not in none_before
+            or from_database(pdef["default_value"], pdef["default_type"]) != target):
+        return False
+    return _already_applied(56, f"{entity_class_name}.{name} default is {target}")
+
+
+def _migrate_v56_add_profile_and_ramp_method_none(db, none_before: frozenset[str] = frozenset()) -> None:
     """Batch D.1 — introduce a ``none`` off-member for the
     ``profile_methods`` and ``ramp_methods`` value-lists, set the four
     user-facing defaults to ``none``, and backfill an explicit
@@ -9612,6 +9674,9 @@ def _migrate_v56_add_profile_and_ramp_method_none(db) -> None:
     ``"none"``; re-read each backfilled entity and confirm a
     ``parameter_value`` row exists.  Mismatch raises
     :class:`SpineDBAPIError`.
+
+    *none_before*: :func:`_v56_none_members` before this step; a target found done (:func:`_v56_backfilled`, a rerun
+    after a kill) is not backfilled again.
     """
     # ---- Step (a): extend profile_methods / ramp_methods ------------
     add_value_list_manual(
@@ -9628,6 +9693,8 @@ def _migrate_v56_add_profile_and_ramp_method_none(db) -> None:
         ("unit__outputNode",    "ramp_method"),
     )
 
+    done = {target for target in targets if _v56_backfilled(db, *target, "none", none_before)}
+
     # ---- Step (b): retype defaults to 'none' ------------------------
     for entity_class_name, name in targets:
         db.add_update_item(
@@ -9641,6 +9708,8 @@ def _migrate_v56_add_profile_and_ramp_method_none(db) -> None:
     # ---- Step (c): backfill legacy entities -------------------------
     backfilled_count = 0
     for entity_class_name, name in targets:
+        if (entity_class_name, name) in done:
+            continue
         entities_with_value = {
             pv["entity_byname"]
             for pv in db.find_parameter_values(
@@ -9695,7 +9764,7 @@ def _migrate_v56_add_profile_and_ramp_method_none(db) -> None:
     )
 
 
-def _migrate_v56_set_unit_node_profile_default_upper_limit(db) -> None:
+def _migrate_v56_set_unit_node_profile_default_upper_limit(db, none_before: frozenset[str] = frozenset()) -> None:
     """Batch D.2 — flip ``unit__node__profile.profile_method`` default
     from ``null`` to ``upper_limit`` and backfill legacy entities to
     ``none``.
@@ -9724,12 +9793,17 @@ def _migrate_v56_set_unit_node_profile_default_upper_limit(db) -> None:
 
     Verification: re-read the default and confirm it is
     ``"upper_limit"``.  Mismatch raises :class:`SpineDBAPIError`.
+
+    *none_before* as in :func:`_migrate_v56_add_profile_and_ramp_method_none` (a user-set ``upper_limit`` default
+    before v56 has no ``none`` member, so it still gets the backfill).
     """
     entity_class_name = "unit__node__profile"
     name = "profile_method"
 
     upper_limit_value, upper_limit_type = to_database("upper_limit")
     none_value, none_type = to_database("none")
+
+    done = _v56_backfilled(db, entity_class_name, name, "upper_limit", none_before)
 
     # ---- Step (a): flip default to upper_limit ----------------------
     db.add_update_item(
@@ -9749,7 +9823,7 @@ def _migrate_v56_set_unit_node_profile_default_upper_limit(db) -> None:
         )
     }
     backfilled_count = 0
-    for ent in db.find_entities(entity_class_name=entity_class_name):
+    for ent in db.find_entities(entity_class_name=entity_class_name) if not done else ():
         byname = ent["entity_byname"]
         if byname in entities_with_value:
             continue

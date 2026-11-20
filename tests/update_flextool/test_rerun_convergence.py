@@ -38,8 +38,10 @@ GUARDED_STEPS = (35, 37, 38, 52, 65)
 #: (stamp, content) of a database migrated by FlexTool 4.6.0 or older that failed or was killed after content was
 #: committed (the stamp was written only at the end): steps stamp+1..content run again on their own later results.
 #: Each needs the later names of definitions (``_DEFINITION_RENAMES``), parameter group ``output`` (v43) and the
-#: v62 list members (v51, v60).  Item 284: (31, 56).
-LEGACY_CASES = ((22, 35), (42, 44), (43, 56), (55, 65), (50, 62), (31, 56), (23, FLEXTOOL_DB_VERSION))
+#: v62 list members (v51, v60), and v36 / v37 must not rescale or flip ``flow_coefficient`` again ((35, 37), (14, 45)).
+#: Item 284: (31, 56).
+LEGACY_CASES = ((22, 35), (42, 44), (43, 56), (55, 65), (50, 62), (31, 56), (23, FLEXTOOL_DB_VERSION), (35, 37),
+                (14, 45), (34, 38))
 
 
 def _seed_data(path: Path, *, base: bool) -> None:
@@ -280,3 +282,48 @@ def test_the_rename_registry_matches_the_migration_chain(v2_chain) -> None:
     reused = sorted(key for key, versions in present.items()
                     if max(versions) - min(versions) + 1 != len(versions))
     assert reused == sorted(_REUSED_DEFINITIONS)
+
+
+@pytest.mark.parametrize("s", (22, 37, 55))
+def test_v75_database_restamped_below_its_entities_converges(v75_chain, tmp_path, s: int) -> None:
+    """Item 285: content current with entities made at v75 (after the v38 floor and the v56 ``none`` backfills),
+    stamp 22, 37 or 55, migrated to current equals the clean content: no floor, no backfill on those entities (and
+    v23 does not bring back the flags v38 removed)."""
+    k = FLEXTOOL_DB_VERSION
+    path = copy_db(v75_chain[k], tmp_path / "db.sqlite")
+    restamp_file(path, s)
+    with already_applied_records() as records:
+        migrate(path)
+    assert version_of(path) == k
+    assert diff(snapshot(v75_chain[k]), snapshot(path)) == []
+    assert any(" v56 " in r and "default is" in r for r in records), records
+    assert (s <= 37) == any(" v38 " in r and "has_storage are removed" in r for r in records), records
+
+
+@pytest.mark.parametrize("s", (0, 5, 10))
+def test_template_steps_skip_on_later_content(v2_chain, tmp_path, s: int) -> None:
+    """Owner Q1: a stamp 0-10 over current content (a hand edit) does not re-import the old templates."""
+    path = copy_db(v2_chain[FLEXTOOL_DB_VERSION], tmp_path / "db.sqlite")
+    restamp_file(path, s)
+    with already_applied_records() as records:
+        migrate(path)
+    assert diff(snapshot(v2_chain[FLEXTOOL_DB_VERSION]), snapshot(path)) == []
+    assert sum("share_loss_of_load" in r for r in records) == 11 - s, records
+
+
+def test_v56_backfills_a_user_set_upper_limit_default(v2_chain, tmp_path) -> None:
+    """A ``unit__node__profile.profile_method`` default set to ``upper_limit`` by hand before v56 (no ``none`` member
+    yet) is not taken for v56's own: the entity still gets its explicit ``none``."""
+    path = copy_db(v2_chain[55], tmp_path / "db.sqlite")
+    with DatabaseMapping(url_of(path)) as db:
+        pdef = db.get_item("parameter_definition", entity_class_name="unit__node__profile", name="profile_method")
+        val, typ = to_database("upper_limit")
+        db.update_parameter_definition(id=pdef["id"], default_value=val, default_type=typ)
+        db.commit_session("user default")
+    with already_applied_records() as records:
+        migrate(path, up_to=56)
+    assert records == []
+    with DatabaseMapping(url_of(path)) as db:
+        values = [(v["alternative_name"], v["parsed_value"]) for v in db.find_parameter_values(
+            entity_class_name="unit__node__profile", parameter_definition_name="profile_method")]
+    assert values == [("Base", "none")]
