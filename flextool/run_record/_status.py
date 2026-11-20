@@ -761,6 +761,24 @@ class RunRecorder:
             self._write()
 
     @_flushing
+    def solve_benders_final(self, *, accepted: bool, model_status: str | None, objective: float | None) -> None:
+        """The final solve of the running Benders solve (the whole model with the Benders investments fixed) ended.
+
+        Written to ``benders.final_solve``; the solve's ``acceptance`` / ``state`` stay the Benders verdict
+        (:meth:`solve_benders`), so a not-converged Benders solve stays ``not_converged`` and a failed final solve
+        does not fail the run."""
+        with self._lock:
+            entry = self._current
+            if entry is None:
+                return
+            benders = entry.get("benders")
+            if not isinstance(benders, dict):
+                benders = entry["benders"] = {}
+            benders["final_solve"] = {"accepted": bool(accepted), "model_status": model_status,
+                                      "objective": _finite(objective)}
+            self._write()
+
+    @_flushing
     def benders_progress(self, iteration: int, gap: float | None) -> None:
         """A Benders iteration finished (shown as ``progress`` until the solve ends)."""
         with self._lock:

@@ -269,7 +269,9 @@ def _check_coverage_and_sandwich(fd, frames: dict, gap: float, expect: set[str])
 
 @pytest.mark.solver
 @pytest.mark.parametrize("shape", sorted(CHAIN_SHAPES))
-def test_benders_decisions_cover_the_pinned_columns(shape, tmp_path_factory):
+def test_benders_decisions_cover_the_pinned_columns(shape, tmp_path_factory, monkeypatch):
+    # Final solve off: the step then keeps the Benders decisions (a SnapshotSolution of invest_solution_vars).
+    monkeypatch.setenv("FLEXTOOL_BENDERS_FINAL_SOLVE", "off")
     fixture, chain, values, solve, expect = CHAIN_SHAPES[shape]
     steps = _run(tmp_path_factory, alt=f"p287_{shape}", values=values, base_chain=chain, fixture_json=fixture)
     step = steps[solve]

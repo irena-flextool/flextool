@@ -309,10 +309,10 @@ def test_decomposition_benders_db_driven(
 
     1. ``run_chain_from_db`` returns without error and the solve's
        :class:`OrchestrationStep` carries the Benders objective in ``obj``,
-       a convergence flag in ``optimal``, and a ``SnapshotSolution`` invest
-       carrier (TIER 1).
-    2. The step is flagged ``is_benders`` (so cmd_run_flextool can SKIP
-       write_outputs for a standalone Benders solve).
+       a convergence flag in ``optimal``, and the real Solution of its final
+       solve (item 287: the whole model with the Benders investments fixed),
+       ``benders_results == "full"``.
+    2. The step is flagged ``is_benders``.
     3. The run emits live per-iteration LB/UB progress lines plus a final
        valid-lower-bound summary to stdout (the observability the
        orchestrator adds for Benders solves).
@@ -341,12 +341,11 @@ def test_decomposition_benders_db_driven(
     assert step.optimal in (True, False), (
         f"expected a bool convergence flag, got {step.optimal!r}"
     )
-    assert isinstance(step.solution, SnapshotSolution), (
-        "Benders step should carry a SnapshotSolution invest carrier, "
+    assert step.benders_results == "full"
+    assert step.solution is not None and not isinstance(step.solution, SnapshotSolution), (
+        "Benders step should carry its final solve's Solution, "
         f"got {type(step.solution).__name__}"
     )
-    # The step must be flagged Benders so cmd_run_flextool can emit the
-    # clear "no standalone outputs yet" notice and SKIP write_outputs.
     assert step.is_benders is True, (
         "Benders region-driven step must carry is_benders=True"
     )
@@ -384,64 +383,8 @@ def test_orchestration_step_is_benders_defaults_false() -> None:
     assert step.is_benders is False
 
 
-def test_cmd_run_flextool_benders_guard_skips_write_outputs(
-    monkeypatch, caplog,
-) -> None:
-    """The cmd_run_flextool guard reads ``last_step.is_benders`` and,
-    when True, emits the clear standalone-Benders notice and SKIPS
-    write_outputs.  Drive the exact guard expression + message branch in
-    isolation (a full subprocess run is heavy and unnecessary).
-    """
-    import logging
-
-    class _FakeStep:
-        is_benders = True
-        solve_name = "lh2_invest"
-
-    last_step = _FakeStep()
-    called = {"write_outputs": False}
-
-    def _fake_write_outputs(*_a, **_k):
-        called["write_outputs"] = True
-
-    # Mirror the guard's control flow exactly (the condition + the
-    # skip-vs-call decision are what we're locking down here).
-    wo_solve_name = (
-        last_step.solve_name if last_step else None
-    ) or "scenario"
-    with caplog.at_level(logging.INFO):
-        if last_step is not None and getattr(
-            last_step, "is_benders", False
-        ):
-            logging.info(
-                "Final solve '%s' ran under decomposition=benders and "
-                "does not yet produce processed outputs on its own.",
-                wo_solve_name,
-            )
-        else:
-            _fake_write_outputs()
-
-    assert called["write_outputs"] is False, (
-        "write_outputs must be SKIPPED when last_step.is_benders is True"
-    )
-    assert any(
-        "decomposition=benders" in r.getMessage() for r in caplog.records
-    ), "the clear standalone-Benders notice was not emitted"
-
-    # And the non-Benders path still calls write_outputs.
-    class _NormalStep:
-        is_benders = False
-        solve_name = "dispatch"
-
-    normal = _NormalStep()
-    called["write_outputs"] = False
-    if normal is not None and getattr(normal, "is_benders", False):
-        pass
-    else:
-        _fake_write_outputs()
-    assert called["write_outputs"] is True, (
-        "non-Benders last step must still call write_outputs"
-    )
+# The cmd_run_flextool guard that skips write_outputs for a Benders last solve without its final solve's results
+# (``benders_results != "full"``, item 287) is covered end to end by ``test_benders_final_solve.py`` (T3, T4, T9).
 
 
 # ---------------------------------------------------------------------------

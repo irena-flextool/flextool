@@ -106,8 +106,9 @@ def _build_trade_invest_db(tmp_path: Path) -> str:
 
 
 @pytest.mark.solver
+@pytest.mark.parametrize("final", ["on", "off"])
 def test_benders_routing_and_handoff_through_orchestrator(
-    tmp_path, capsys,
+    final, tmp_path, capsys, monkeypatch,
 ) -> None:
     """``run_chain_from_db`` on the trade-invest scenario, routed through
     Benders by the orchestrator:
@@ -120,7 +121,12 @@ def test_benders_routing_and_handoff_through_orchestrator(
        summary reached stdout (routing + logging wired);
     4. the TIER-1 invest handoff is DEPOSITED non-empty — the invested
        trade pipes carry forward positive capacity (handoff deposit wired).
+
+    With the final solve (item 287, on by default) the step holds the final
+    solve's real Solution and its full handoff (``benders_results`` ``full``);
+    with ``--benders-final-solve off`` the SnapshotSolution and TIER-1 handoff.
     """
+    monkeypatch.setenv("FLEXTOOL_BENDERS_FINAL_SOLVE", final)
     from flextool.engine import run_chain_from_db
     from flextool.engine.solve._orchestration import SnapshotSolution
 
@@ -143,10 +149,15 @@ def test_benders_routing_and_handoff_through_orchestrator(
         "step must be flagged is_benders — decomposition=benders routing "
         "did not fire through the orchestrator"
     )
-    assert isinstance(step.solution, SnapshotSolution), (
-        "Benders step should carry a SnapshotSolution invest carrier, "
-        f"got {type(step.solution).__name__}"
-    )
+    if final == "on":
+        assert step.benders_results == "full"
+        assert not isinstance(step.solution, SnapshotSolution)
+    else:
+        assert step.benders_results == "none"
+        assert isinstance(step.solution, SnapshotSolution), (
+            "Benders step should carry a SnapshotSolution invest carrier, "
+            f"got {type(step.solution).__name__}"
+        )
     assert step.optimal in (True, False), (
         f"expected a bool convergence flag, got {step.optimal!r}"
     )
@@ -196,7 +207,8 @@ def test_benders_routing_and_handoff_through_orchestrator(
 
 
 @pytest.mark.solver
-def test_invest_dispatch_chain_consumes_handoff_under_benders(tmp_path) -> None:
+@pytest.mark.parametrize("final", ["on", "off"])
+def test_invest_dispatch_chain_consumes_handoff_under_benders(final, tmp_path, monkeypatch) -> None:
     """Full TIER-1 invest→dispatch CONSUME chain, under Benders, over
     FIXED-CAPACITY trade pipes (the scenario the old master guard blocked).
 
@@ -212,7 +224,12 @@ def test_invest_dispatch_chain_consumes_handoff_under_benders(tmp_path) -> None:
        (real ``Solution``, optimal);
     4. the dispatch CONSUMES the handed-off investment — its FlexData
        carries positive ``p_entity_invested`` for the invested wind units.
+
+    Under the final solve (item 287, on by default) the invest step holds the
+    final solve's real Solution and the dispatch consumes its full handoff;
+    under ``--benders-final-solve off`` the SnapshotSolution / TIER-1 handoff.
     """
+    monkeypatch.setenv("FLEXTOOL_BENDERS_FINAL_SOLVE", final)
     from flextool.engine import run_chain_from_db
     from flextool.engine.solve._orchestration import SnapshotSolution
 
@@ -237,10 +254,15 @@ def test_invest_dispatch_chain_consumes_handoff_under_benders(tmp_path) -> None:
         "invest step must be flagged is_benders — decomposition=benders "
         "routing did not fire"
     )
-    assert isinstance(invest_step.solution, SnapshotSolution), (
-        "Benders invest step should carry a SnapshotSolution invest carrier, "
-        f"got {type(invest_step.solution).__name__}"
-    )
+    if final == "on":
+        assert invest_step.benders_results == "full"
+        assert not isinstance(invest_step.solution, SnapshotSolution)
+    else:
+        assert invest_step.benders_results == "none"
+        assert isinstance(invest_step.solution, SnapshotSolution), (
+            "Benders invest step should carry a SnapshotSolution invest carrier, "
+            f"got {type(invest_step.solution).__name__}"
+        )
     assert invest_step.handoff is not None, (
         "invest step has no handoff — orchestrator deposit did not fire"
     )
