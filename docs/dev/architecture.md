@@ -653,7 +653,7 @@ does for ladders) with the usual rules, and unions the groups into one `[entitie
 (`_axis_frame_resolved`). It raises only where those rules cannot place a group: keys on both axes, or an
 ambiguous group without a `period_filter`. With every level named, the reader places rows by label and no
 split happens. When an unnamed map's shape was read from its depth or keys, `resolve_param_shape` prints one
-note per (class, parameter) and run (`_behaviour_changes.warn_once`, `print(flush=True)`); ladders are left
+note per (class, parameter) and run (coded, `run_warnings`); ladders are left
 out (their levels are placed by depth by definition).
 
 `_param_shapes` is the **I/O contract only** — it validates user-authored
@@ -1610,12 +1610,13 @@ LP the solver gets can be solved accurately after Layers 2 and 3
   `error`, no database tier; the GUI's Solver options → Scaling guard sends
   the flag): an error raises `ScalingRangeError` (a
   `FlexToolConfigError`, so `cmd_run_flextool` prints it without a
-  traceback); `warn` prints it and solves; `off` checks nothing (Layer 3's
-  window clip still applies).  Warnings print once per run, keyed by base
-  solve, Benders region, group, level and the roll's own exponent (if a
-  recheck set one), so a later roll's error or new exponent still prints
-  (`_behaviour_changes.warn_once`; the once-per-run log of an adjusted
-  exponent uses `mark_once`, also reset by `start_run`).
+  traceback); `warn` shows it as a coded warning (W-0544) and solves; `off`
+  checks nothing (Layer 3's window clip still applies).  Warnings (W-0543..
+  W-0546: one line naming the solve, the full message in the debug log)
+  show once per run, keyed by base solve, Benders region, group, level and
+  the roll's own exponent (if a recheck set one), so a later roll's error
+  or new exponent still shows (`_behaviour_changes.mark_once`, also used by
+  the once-per-run log of an adjusted exponent; reset by `start_run`).
 * The message names the solve (and roll / region), the spread and window
   at the solve's `primal_feasibility_tolerance`, the family and up to five
   entries at each end (polar-high `locate_extremes`, warning / error only),
@@ -1628,7 +1629,7 @@ LP the solver gets can be solved accurately after Layers 2 and 3
 * `FLEXTOOL_AUTOSCALE_STRICT=1` raises also under `warn` / `off`, but only
   for an error Layer 2 caused (the pre-Layer-2 pool fitted).  A failure of
   the check itself (or of the range readout, monolith or Benders region)
-  prints "the scaling guard could not run" once per run and the solve goes
+  shows "the scaling guard could not run" (W-0547) once per run and the solve goes
   on (re-raised under strict).
 * Where it runs: after Layer 3 on the first solve of each LP shape (cold
   and warm paths; the verdict is cached in `_AutoscaleShapeCacheEntry` and

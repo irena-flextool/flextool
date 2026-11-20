@@ -161,6 +161,8 @@ class GuardMessage:
     group: str
     level: str
     text: str
+    #: The registry code of the console line (:func:`_code_of`).
+    code: str = ""
 
 
 @dataclass(frozen=True)
@@ -273,7 +275,7 @@ def _outcome(
             located=located.get(f.group, {}), level=eff, tol_source=tol_source,
             layer2_applied=layer2_applied, roll_of=roll_of, adjusted_from=adjusted_from,
         )
-        messages.append(GuardMessage(f.group, eff, text))
+        messages.append(GuardMessage(f.group, eff, text, _code_of(f.group, f.level)))
         if eff == "error" or (eff == "warn" and level == "ok"):
             level = eff
     return GuardOutcome(
@@ -507,14 +509,16 @@ def _format_bound_rhs(
 
 
 def enforce(outcome: GuardOutcome | None, *, base_solve: str) -> None:
-    """Act on ``outcome``: print each warning once per run (``warn_once``,
-    keyed by base solve, region and group, so the rolls of a solve print it
-    once), raise :class:`ScalingRangeError` for an error under ``error`` (or
-    a Layer-2-caused error under ``FLEXTOOL_AUTOSCALE_STRICT=1``), print an
-    error as a warning under ``warn``."""
+    """Act on ``outcome``: show each warning once per run (a coded line,
+    W-0543..W-0546, naming the solve; its report goes to the debug log),
+    keyed by base solve, region, group and level (:func:`_warn_key`, so the
+    rolls of a solve show it once), raise :class:`ScalingRangeError` for an
+    error under ``error`` (or a Layer-2-caused error under
+    ``FLEXTOOL_AUTOSCALE_STRICT=1``), show an error as a warning under
+    ``warn``."""
     if outcome is None:
         return
-    from flextool.engine._behaviour_changes import warn_once
+    from flextool.engine._behaviour_changes import mark_once
     from flextool.engine.input._solve_state import ScalingRangeError
 
     errors = [m for m in outcome.messages if m.level == "error"]
@@ -526,10 +530,23 @@ def enforce(outcome: GuardOutcome | None, *, base_solve: str) -> None:
         raise ScalingRangeError("\n".join(m.text for m in errors))
     if outcome.mode == "off":
         return
+    from flextool import run_warnings
+
+    name = outcome.solve_name or base_solve
+    if outcome.region:
+        name = f"{name}, Benders region {outcome.region}"
     for m in outcome.messages:
-        prefix = "Warning: " if not m.text.startswith("Warning") else ""
-        warn_once(_warn_key(base_solve, outcome.region, m.group, m.level,
-                            outcome.adjusted_bound_scale), prefix + m.text)
+        if mark_once(_warn_key(base_solve, outcome.region, m.group, m.level, outcome.adjusted_bound_scale)):
+            # The report (the span, where the extremes are, the violation) goes to the debug log.
+            run_warnings.warn_grouped(m.code or _code_of(m.group, m.level), [name], details={name: m.text})
+
+
+def _code_of(group: str, level: str) -> str:
+    """The registry code of a guard finding of ``group`` at the guard's ``level`` (before the policy: a commercial
+    solver's error is a warning, but still the "cannot be scaled" line)."""
+    if group == "bound_rhs":
+        return "W-0544" if level == "error" else "W-0543"
+    return "W-0545" if group == "cost" else "W-0546"
 
 
 def _warn_key(base_solve: str, region: str | None, group: str, level: str,
@@ -542,16 +559,18 @@ def _warn_key(base_solve: str, region: str | None, group: str, level: str,
 
 
 def warn_could_not_run(*, readout_failed: bool) -> bool:
-    """Print, once per run, that the guard could not judge a solve (the
-    monolith and every Benders region print the same text, under one key).
+    """Show, once per run, that the guard could not judge a solve (W-0547; the
+    monolith and every Benders region show the same line, under one key).
     ``readout_failed``: the Layer 3 range readout was missing; otherwise the
-    check itself failed.  Returns True when it printed (the caller then logs
-    the details)."""
-    from flextool.engine._behaviour_changes import warn_once
+    check itself failed.  Returns True the first time in a run (the caller
+    then logs the details)."""
+    from flextool import run_warnings
+    from flextool.engine._behaviour_changes import mark_once
 
-    why = " (the range readout failed)" if readout_failed else ""
-    return warn_once(("scaling_guard_failed",), f"Warning: the scaling guard could not run{why}; "
-                     "the solves go on unchecked (details in the log).")
+    if not mark_once(("scaling_guard_failed",)):
+        return False
+    run_warnings.warn_grouped("W-0547", why=" (the range readout failed)" if readout_failed else "")
+    return True
 
 
 # ---------------------------------------------------------------------------

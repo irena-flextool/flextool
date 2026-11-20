@@ -930,20 +930,14 @@ def warn_salvage_above_cost(cohort: pl.DataFrame | None) -> None:
     investment decision or a generation of its chain whose salvage credit exceeds its capital price
     (``a_cap − a_salv < 0``: the net_salvage_value at the end of its life is worth more than invest_cost at its
     discount_rate).  Every such plant earns money, so the model builds as much as the investment limits allow."""
-    from flextool.engine import _behaviour_changes
+    from flextool import run_warnings
     from flextool.engine.preprocess.params._cohorts import KIND_EXISTING
     if cohort is None or cohort.height == 0 or "root" not in cohort.columns:
         return
     rows = cohort.filter(~pl.col("root").str.starts_with(f"{KIND_EXISTING}:") & pl.col("a_cap").is_not_null()
                          & pl.col("a_salv").is_not_null() & (pl.col("a_cap") - pl.col("a_salv") < -1e-9))
     names = sorted({str(e) for e in rows["e"].cast(pl.Utf8).to_list()})
-    if names:
-        _behaviour_changes.warn_once_each(
-            "salvage_above_invest_cost", names,
-            lambda fresh: "Warning: " + ", ".join(fresh) + ": a plant the model can build has a net_salvage_value "
-            "worth more than its invest_cost (the salvage at the end of its life, discounted at discount_rate): "
-            "its yearly cost is below 0, so the model builds as much as the investment limits allow. Check "
-            "net_salvage_value against invest_cost (also in the periods a replacement comes online).")
+    run_warnings.warn_grouped("W-0527", names, per_run=True)
 
 
 def _set_generation_prices(flex_data: object,

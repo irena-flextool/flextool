@@ -131,7 +131,7 @@ def drop_groups_without_nodes(d) -> None:
     requirement sets and the (r, ud, g) parameters keep the other groups; with none left the reserve fields are
     None (the feature is off), as for a model without reserves.  Changes ``d`` in place.
     """
-    from flextool.engine import _behaviour_changes
+    from flextool import run_warnings
 
     rug = getattr(d, "reserve_upDown_group", None)
     if not _has_rows(rug):
@@ -144,12 +144,7 @@ def drop_groups_without_nodes(d) -> None:
     # A group with reserve_method no_reserve (the default) has no requirement to lose: left out silently.
     required = {str(g) for name in _RUG_SETS[1:] if _has_rows(getattr(d, name, None))
                 for g in getattr(d, name).get_column("g").cast(pl.Utf8).unique().to_list()}
-    lost = [g for g in empty if g in required]
-    if lost:
-        _behaviour_changes.warn_once_each(
-            "reserve_group_without_nodes", lost,
-            lambda names: (f"Warning: reserve group(s) {', '.join(names)} have no nodes in the solve (no "
-                           "group__node row): their reserve requirements are left out."))
+    run_warnings.warn_grouped("W-0586", [g for g in empty if g in required], per_run=True)
     keep = pl.col("g").cast(pl.Utf8).is_in(sorted(with_nodes))
     kept = rug.filter(keep)
     for name in _RUG_SETS:

@@ -59,15 +59,15 @@ def _model(*, spin: bool, main: bool) -> tuple[list, list]:
     return entities, values
 
 
-def _run(tmp_path_factory, capfd, alt: str, *, spin: bool, main: bool):
-    """Solve and write the csv outputs; returns (step, printed output)."""
+def _run(tmp_path_factory, coded_log, alt: str, *, spin: bool, main: bool):
+    """Solve and write the csv outputs; returns (step, the coded warnings logged)."""
     from flextool.engine import run_chain_from_db
     from flextool.process_outputs.write_outputs import write_outputs
 
     entities, values = _model(spin=spin, main=main)
     url, scen = make_db(tmp_path_factory, alt=alt, values=values, base_chain=["init"], entities=entities)
     work = tmp_path_factory.mktemp(f"{alt}_w")
-    capfd.readouterr()
+    coded_log()
     steps = run_chain_from_db(url, scenario_name=scen, work_folder=work, keep_solutions=True)
     assert len(steps) == 1 and all(s.optimal for s in steps.values()), list(steps)
     step = next(iter(steps.values()))
@@ -75,7 +75,7 @@ def _run(tmp_path_factory, capfd, alt: str, *, spin: bool, main: bool):
                   flex_data=step.flex_data, solution=step.solution, solve_name=step.solve_name,
                   flex_data_provider=getattr(step, "flex_data_provider", None),
                   raw_output_dir=str(work / "output_raw"))
-    return step, capfd.readouterr().out
+    return step, coded_log()
 
 
 def _shortfall_groups(step) -> list[str]:
@@ -86,23 +86,23 @@ def _shortfall_groups(step) -> list[str]:
     return sorted(utf8(vq).get_column("g").unique().to_list())
 
 
-def test_only_reserve_group_without_nodes_is_left_out(tmp_path_factory, capfd) -> None:
+def test_only_reserve_group_without_nodes_is_left_out(tmp_path_factory, coded_log) -> None:
     """spin alone: the reserve feature is off, the solve equals the model without a reserve."""
-    step, out = _run(tmp_path_factory, capfd, "rgn_spin", spin=True, main=False)
-    control, control_out = _run(tmp_path_factory, capfd, "rgn_control", spin=False, main=False)
-    assert "reserve group(s) spin have no nodes" in out, out
-    assert "have no nodes" not in control_out, control_out
+    step, out = _run(tmp_path_factory, coded_log, "rgn_spin", spin=True, main=False)
+    control, control_out = _run(tmp_path_factory, coded_log, "rgn_control", spin=False, main=False)
+    assert "Warning: reserve group has no nodes in the solve; its reserve is left out ('spin') [W-0586]" in out, out
+    assert "[W-0586]" not in control_out, control_out
     assert step.flex_data.reserve_upDown_group is None
     assert _shortfall_groups(step) == []
     assert float(step.obj) == pytest.approx(float(control.obj), rel=1e-9)
 
 
-def test_reserve_group_without_nodes_next_to_one_with_nodes(tmp_path_factory, capfd) -> None:
+def test_reserve_group_without_nodes_next_to_one_with_nodes(tmp_path_factory, coded_log) -> None:
     """spin and main: only spin is left out; main keeps its requirement, held by g1 (50 MW, no shortfall)."""
-    step, out = _run(tmp_path_factory, capfd, "rgn_both", spin=True, main=True)
-    main_only, main_out = _run(tmp_path_factory, capfd, "rgn_main", spin=False, main=True)
-    assert "reserve group(s) spin have no nodes" in out, out
-    assert "have no nodes" not in main_out, main_out
+    step, out = _run(tmp_path_factory, coded_log, "rgn_both", spin=True, main=True)
+    main_only, main_out = _run(tmp_path_factory, coded_log, "rgn_main", spin=False, main=True)
+    assert "Warning: reserve group has no nodes in the solve; its reserve is left out ('spin') [W-0586]" in out, out
+    assert "[W-0586]" not in main_out, main_out
     assert sorted(utf8(step.flex_data.reserve_upDown_group).get_column("g").to_list()) == ["main"]
     assert _shortfall_groups(step) == ["main"]
     held = utf8(step.solution.value("v_reserve"))

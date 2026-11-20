@@ -168,7 +168,7 @@ def test_replacement_is_reported_as_investment_pre_existing(tmp_path_factory) ->
 
 
 @pytest.mark.solver
-def test_free_replacement_with_salvage_is_named(tmp_path_factory, capsys, coded_log) -> None:
+def test_free_replacement_with_salvage_is_named(tmp_path_factory, coded_log) -> None:
     """No invest_cost, net_salvage_value 200: the replacement is free but keeps its salvage value; a warning names
     the entity once."""
     from flextool.engine import run_chain_from_db
@@ -176,16 +176,15 @@ def test_free_replacement_with_salvage_is_named(tmp_path_factory, capsys, coded_
     url, scen = make_db(tmp_path_factory, alt="er_free_warning", values=_values(salvage=200.0),
                         base_chain=_no_battery_invest(SINGLE))
     run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp("er_free_warning_w"))
-    out = capsys.readouterr().out
-    assert out.count(f"Warning: {PLANT}: the existing capacity (lifetime_method reinvest_automatic) is replaced") == 1
     notes = coded_log()
+    assert notes.count(f"Warning: free automatic replacement keeps its net_salvage_value ('{PLANT}') [W-0528]") == 1
     assert f"Note: existing capacity replaced at its end of life in the horizon ('{PLANT}') [W-0520]" in notes
     assert f"W-0520 {PLANT}: replaced from year 10 of the run" in notes
 
 
 @pytest.mark.solver
 @pytest.mark.parametrize("cost, salvage, named", [(None, 200.0, True), (100.0, 200.0, False)])
-def test_only_a_free_replacement_with_salvage_is_named(tmp_path_factory, capsys, cost, salvage, named) -> None:
+def test_only_a_free_replacement_with_salvage_is_named(tmp_path_factory, coded_log, cost, salvage, named) -> None:
     """The warning names a replacement without an invest_cost that keeps a salvage value, not a priced one,
     even when its salvage value discounted at r over its life (S·1.05^−10 = 122 782.65 for S 200 000) exceeds its
     cost C 100 000 (the owner's rule: no cap and no warning on a priced replacement)."""
@@ -195,8 +194,7 @@ def test_only_a_free_replacement_with_salvage_is_named(tmp_path_factory, capsys,
     url, scen = make_db(tmp_path_factory, alt=alt, values=_values(cost=cost, salvage=salvage),
                         base_chain=_no_battery_invest(SINGLE))
     run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"))
-    warned = f"Warning: {PLANT}: the existing capacity (lifetime_method reinvest_automatic) is replaced"
-    assert capsys.readouterr().out.count(warned) == (1 if named else 0)
+    assert coded_log().count(f"('{PLANT}') [W-0528]") == (1 if named else 0)
 
 
 @pytest.mark.solver

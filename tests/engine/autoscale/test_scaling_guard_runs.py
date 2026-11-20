@@ -196,7 +196,7 @@ def test_error_stops_before_any_solver_runs(dbs, tmp_path, monkeypatch):
     assert tree["guard"]["findings"]["bound_rhs"]["entries"]["max"][0]["family"] == "co2_max_period"
 
 
-def test_guard_that_cannot_run_says_so_once(dbs, tmp_path, monkeypatch, capsys):
+def test_guard_that_cannot_run_says_so_once(dbs, tmp_path, monkeypatch, coded_log):
     """A failing range readout (no verdict possible) is announced once and the run goes on (strict
     mode re-raises it instead, so it is off here)."""
     monkeypatch.delenv("FLEXTOOL_AUTOSCALE_STRICT", raising=False)
@@ -207,7 +207,7 @@ def test_guard_that_cannot_run_says_so_once(dbs, tmp_path, monkeypatch, capsys):
 
     monkeypatch.setattr(_orchestration, "_autoscale_run_guard", broken)
     _run(dbs["roll_adjust"], "roll_adjust", tmp_path)
-    assert capsys.readouterr().out.count("Warning: the scaling guard could not run") == 1
+    assert coded_log().count("Warning: the scaling guard could not run") == 1
 
 
 def test_error_is_not_swallowed_when_layer3_apply_fails(dbs, tmp_path, monkeypatch):
@@ -238,7 +238,7 @@ def test_cli_prints_the_error_without_a_traceback(dbs, tmp_path):
 
 
 def test_warning_prints_once_across_rolls_without_naming_walks_on_hits(
-        dbs, tmp_path, monkeypatch, capsys):
+        dbs, tmp_path, monkeypatch, coded_log):
     """Full mode: each 24 h roll carries half of the 48 h period's CO2 cap, 5e17 (model units), next to
     maxFlow 1: 1 … 5e17 = log10(5e17) = 17.7 decades before Layer 2 (> 17, so --scaling basic would stop,
     and the warning says so).  Layer 2 brings the pool to 0.5 … 7.6e12 (13.2 decades): a warning, and both
@@ -247,8 +247,8 @@ def test_warning_prints_once_across_rolls_without_naming_walks_on_hits(
     runs = _count_highs_runs(monkeypatch)
     steps = _run(dbs["roll_placeholder"], "roll_placeholder", tmp_path)
     assert steps and len(runs) == 2  # both rolls solved
-    printed = capsys.readouterr().out
-    assert printed.count(f"Warning: Solve {SOLVE}: limits and bounds span") == 1
+    printed = coded_log()
+    assert printed.count(f"Solve {SOLVE}: limits and bounds span") == 1
     assert "Layer 2 narrowed the span from 17.7 decades; under --scaling basic this would stop." in printed
     tree = _yaml(tmp_path)
     assert tree["layer2"] and tree["guard"]["verdict"] == "warn"
@@ -256,12 +256,12 @@ def test_warning_prints_once_across_rolls_without_naming_walks_on_hits(
     assert len(located.calls) == 2
 
 
-def test_off_checks_nothing_but_layer3_still_clips(dbs, tmp_path, monkeypatch, capsys):
+def test_off_checks_nothing_but_layer3_still_clips(dbs, tmp_path, monkeypatch, coded_log):
     monkeypatch.setenv("FLEXTOOL_SCALING", "basic")
     monkeypatch.setenv("FLEXTOOL_SCALING_GUARD", "off")
     planned = _Count(monkeypatch, _orchestration, "_autoscale_emit_layer1")
     _run(dbs["roll_adjust"], "roll_adjust", tmp_path)
-    assert "limits and bounds span" not in capsys.readouterr().out
+    assert "limits and bounds span" not in coded_log()
     exps = [k["layer3_plan"].user_bound_scale for _a, k in planned.calls]
     assert exps == [-19, -9]
     assert _yaml(tmp_path)["guard"]["verdict"] == "off"
@@ -271,13 +271,13 @@ def test_off_checks_nothing_but_layer3_still_clips(dbs, tmp_path, monkeypatch, c
 
 
 @pytest.mark.parametrize("warm", [True, False], ids=["warm_first_build", "cold_save_memory"])
-def test_roll_recheck_moves_roll_2_only(dbs, tmp_path, monkeypatch, capsys, warm):
+def test_roll_recheck_moves_roll_2_only(dbs, tmp_path, monkeypatch, coded_log, warm):
     monkeypatch.setenv("FLEXTOOL_SCALING", "basic")
     planned = _Count(monkeypatch, _orchestration, "_autoscale_emit_layer1")
     _run(dbs["roll_adjust"], "roll_adjust", tmp_path, warm=warm)
     assert [k["layer3_plan"].user_bound_scale for _a, k in planned.calls] == [-19, -9]
-    printed = capsys.readouterr().out
-    assert f"Warning: Solve {SOLVE}, roll 2: limits and bounds span 15.0 decades" in printed
+    printed = coded_log()
+    assert f"Solve {SOLVE}, roll 2: limits and bounds span 15.0 decades" in printed
     assert "This roll uses user_bound_scale -9 instead of -19" in printed
     guard = _yaml(tmp_path)["guard"]
     assert guard["roll_user_bound_scale"] == -9 and guard["verdict"] == "warn"
@@ -318,7 +318,7 @@ def test_later_roll_error_names_the_roll(dbs, tmp_path, monkeypatch, warm):
 # --------------------------------------------------------------------- strict mode
 
 
-def test_strict_raises_for_a_layer2_caused_error_only(dbs, tmp_path, monkeypatch, capsys):
+def test_strict_raises_for_a_layer2_caused_error_only(dbs, tmp_path, monkeypatch, coded_log):
     """1e24 is beyond HiGHS' infinite bound (no limit) until Layer 2 scales it into range (1.5e19):
     Layer 2 caused that error.  1e18 under --scaling basic is the model's own: strict leaves it to warn."""
     monkeypatch.setenv("FLEXTOOL_SCALING_GUARD", "warn")
@@ -332,10 +332,10 @@ def test_strict_raises_for_a_layer2_caused_error_only(dbs, tmp_path, monkeypatch
         _run(dbs["placeholder_1e18"], "placeholder_1e18", tmp_path / "basic")
     except FlexToolSolveError:
         pass  # not stopped by the guard; the solver may fail on this LP
-    assert f"Warning: Solve {SOLVE} cannot be scaled" in capsys.readouterr().out
+    assert f"Solve {SOLVE} cannot be scaled" in coded_log()
 
 
-def test_layer2_widening_is_named_in_the_warning(dbs, tmp_path, monkeypatch, capsys):
+def test_layer2_widening_is_named_in_the_warning(dbs, tmp_path, monkeypatch, coded_log):
     """Full mode, 1e24: before Layer 2 the value is a solver infinity; the message says Layer 2 made it a
     limit and how to avoid it.  Strict mode would raise for this Layer-2-caused error, so it is off."""
     from flextool.engine.input._solve_state import FlexToolSolveError
@@ -346,7 +346,7 @@ def test_layer2_widening_is_named_in_the_warning(dbs, tmp_path, monkeypatch, cap
         _run(dbs["placeholder_1e24"], "placeholder_1e24", tmp_path)
     except FlexToolSolveError:
         pass  # solved anyway, as asked: the solver may well fail on this LP; the warning came first
-    printed = capsys.readouterr().out
+    printed = coded_log()
     assert "Layer 2 widened the span from" in printed and "--scaling basic avoids that" in printed
     assert _yaml(tmp_path)["guard"]["findings"]["bound_rhs"]["caused_by_layer2"] is True
 
@@ -354,7 +354,7 @@ def test_layer2_widening_is_named_in_the_warning(dbs, tmp_path, monkeypatch, cap
 # --------------------------------------------------------------------- commercial solver
 
 
-def test_commercial_solver_only_warns(dbs, tmp_path, monkeypatch, capsys):
+def test_commercial_solver_only_warns(dbs, tmp_path, monkeypatch, coded_log):
     """Gurobi gets no FlexTool scaling: the 1e18 placeholder is judged at N = 0 and Gurobi's default
     feasibility tolerance 1e-6 (window [1e-5, 1e12]); it would stop a HiGHS solve, here it warns and the
     run reaches the solver call (stopped there by the test: no licence needed)."""
@@ -370,8 +370,8 @@ def test_commercial_solver_only_warns(dbs, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(_solver_dispatch, "run_one_solve", stop)
     with pytest.raises(_Reached):
         _run(dbs["gurobi_1e18"], "gurobi_1e18", tmp_path, warm=False)
-    printed = capsys.readouterr().out
-    assert f"Warning: Solve {SOLVE} (gurobi) cannot be scaled" in printed
+    printed = coded_log()
+    assert f"Solve {SOLVE} (gurobi) cannot be scaled" in printed
     assert "gurobi gets no FlexTool scaling, so this is a warning only" in printed
     guard = _yaml(tmp_path)["guard"]
     assert guard["solver"] == "gurobi" and guard["verdict"] == "warn"
@@ -381,7 +381,7 @@ def test_commercial_solver_only_warns(dbs, tmp_path, monkeypatch, capsys):
 # --------------------------------------------------------------------- h2_trade_parity
 
 
-def test_h2_trade_parity_warns_that_layer2_widened_the_span(h2_trade_parity_db_url, tmp_path, capsys):
+def test_h2_trade_parity_warns_that_layer2_widened_the_span(h2_trade_parity_db_url, tmp_path, coded_log):
     """The one fixture of the decision snapshot that warns: Layer 2 widens its limits from 10.8 to 13.8
     decades (2.14e-5 … 1.36e9 after it).  Layer 3 (tol 1e-8, smallest-side tier) aims the small end at
     100·tol: N = ceil(log2(1e-6 / 2.14e-5)) = -4 (the clamp-large tier value
@@ -390,7 +390,7 @@ def test_h2_trade_parity_warns_that_layer2_widened_the_span(h2_trade_parity_db_u
     work = tmp_path / "work"
     run_chain_from_db(input_db_url=h2_trade_parity_db_url, scenario_name="scenario_test_6h_no_carrier_storage",
                       work_folder=work, solver_config_dir=_solver_cfg(tmp_path))
-    printed = capsys.readouterr().out
+    printed = coded_log()
     assert "limits and bounds span 13.8 decades" in printed
     assert "Layer 2 widened the span from 10.8 decades: --scaling basic avoids that." in printed
     import yaml

@@ -7,9 +7,11 @@ the registry merges them.
 * W-051x inputs of a solve: inflow scaling, limits, maps, time steps
 * W-052x lifetimes, investments and units
 * W-053x outputs of a solve and storage notes
-* W-054x what the solver's outcome means (notes after a solve that ended optimal, but not cleanly)
+* W-054x what the solver's outcome means (notes after a solve that ended optimal, but not cleanly); from W-0543
+  the scaling guard (the solver's accuracy on the LP it gets)
 * W-055x warm start and how the solves are run (in this process or a separate one)
-* W-058x storage notes (continued from W-053x)
+* W-058x W-0580..W-0583 storage notes (continued from W-053x); from W-0584 the overflow of the full sub-ranges
+  (W-051x inputs, W-052x lifetimes: the topic of each code says which)
 * W-06xx behaviour-change notices (their texts: :mod:`flextool.run_warnings._behaviour_specs`)
 """
 from __future__ import annotations
@@ -24,6 +26,7 @@ _OUTPUTS = "Results of a solve"
 _STORAGE = "Storage"
 _SOLVER = "Solver outcome"
 _WARM = "Warm start and memory"
+_SCALING = "Scaling guard"
 
 _CROSSOVER_FIX = (
     "add `run_crossover` = `on` to the solve's `solver_arguments` to run crossover (or set `solver` = "
@@ -149,6 +152,21 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "**How to fix:** usually nothing; remove the unit or connection from the group "
             "(`group__unit` / `group__connection`) to silence the warning. Only the nodes of a group get its "
             "time step."
+        ),
+    ),
+    WarningSpec(
+        code="W-0508",
+        message="stochastic_branches forecasts where no solve or roll fans out; ignored",
+        title="Forecasts where no solve or roll fans out",
+        topic=_SOLVES,
+        body=(
+            "`stochastic_branches` declares forecasts (a solve, a period and an `analysis_time`) where no solve "
+            "or roll fans out, and FlexTool ignores them. A solve or roll fans out once, at its first reveal, and "
+            "its branches read the forecasts made then through the rest of its horizon. Each case is a complete "
+            "solve, a period and an analysis time; the debug log gives the forecast branches and the solve or "
+            "roll whose horizon reaches them.\n\n"
+            "**How to fix:** to use these forecasts, make a roll start there (`rolling_solve_jump`) or put the "
+            "later fan in a separate solve; otherwise remove these `stochastic_branches` rows."
         ),
     ),
     WarningSpec(
@@ -374,6 +392,46 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "The debug log gives the counts per period.\n\n"
             "**How to fix:** set `virtual_unitsize` to the size of one unit and `existing` to the number of "
             "units, or use `startup_method` `linear`."
+        ),
+    ),
+    WarningSpec(
+        code="W-0527",
+        message="net_salvage_value worth more than invest_cost: yearly cost below 0",
+        title="Salvage value above the investment cost",
+        topic=_LIFETIME,
+        body=(
+            "A plant the model can build (an investment, or a generation of its replacement chain) has a "
+            "`net_salvage_value` worth more than its `invest_cost` (the salvage at the end of its life, "
+            "discounted at `discount_rate`): its yearly cost is below 0, so the model builds as much as the "
+            "investment limits allow. Each entity is named once per run.\n\n"
+            "**How to fix:** check `net_salvage_value` against `invest_cost` (also in the periods a replacement "
+            "comes online)."
+        ),
+    ),
+    WarningSpec(
+        code="W-0528",
+        message="free automatic replacement keeps its net_salvage_value",
+        title="Free replacement with a salvage value",
+        topic=_LIFETIME,
+        body=(
+            "The existing capacity (`lifetime_method` `reinvest_automatic`) is replaced at its end of life by a "
+            "plant without an `invest_cost` that still has a `net_salvage_value`: the replacement is free and "
+            "keeps its salvage value, so keeping the capacity earns that salvage value and a retirement gives it "
+            "up. Each entity is named once per run.\n\n"
+            "**How to fix:** set `invest_cost` if the replacement, and so the retirement, should be priced."
+        ),
+    ),
+    WarningSpec(
+        code="W-0529",
+        message="building and retiring the capacity earns money",
+        title="Building to retire earns money",
+        topic=_LIFETIME,
+        body=(
+            "Building the capacity and retiring it earns money: the `net_salvage_value` received at retirement "
+            "is worth more than what the capacity costs until then (`invest_cost`, `fixed_cost`, "
+            "`discount_rate`). The model builds as much as the investment limits allow just to retire it; "
+            "without a limit the problem is unbounded. Each entity is named once per run.\n\n"
+            "**How to fix:** check `net_salvage_value` against `invest_cost`."
         ),
     ),
     WarningSpec(
@@ -610,6 +668,92 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
         ),
     ),
     WarningSpec(
+        code="W-0543",
+        message="limits and bounds span over 13 decades; small limits may be violated",
+        title="Scaling guard: wide span of limits and bounds",
+        topic=_SCALING,
+        body=(
+            "The scaling guard checks the LP the solver gets, after FlexTool's scaling, before the solve starts. "
+            "Here the limits and bounds (variable bounds and constraint right-hand sides) span more than 13 "
+            "decades: the solver may violate the smallest limits by up to its feasibility tolerance, scaled. The "
+            "case is the solve (with the roll or the Benders region). The debug log (`--debug`) gives the span, "
+            "the largest and smallest values and where they are, and how much the smallest limit could be "
+            "violated; the YAML audit `solve_data/autoscale_<solve>.yaml` has the numbers too. The solve "
+            "continues. A warning is shown once per run for each solve, Benders region and kind of finding; a "
+            "later roll that gets a scale of its own shows it again.\n\n"
+            "**How to fix:** a placeholder for \"no limit\" (`1e18`, `1e30`, ...): give `inf` instead. Tiny "
+            "values that are really zero: give `0`, or leave the parameter out. Genuinely different scales: "
+            "change units, or split the model. If the debug log says that Layer 2 widened the span, "
+            "`--scaling basic` avoids that. `--scaling-guard off` (`FLEXTOOL_SCALING_GUARD=off`; in the GUI: "
+            "Solver options, Scaling guard: Off) hides this check."
+        ),
+    ),
+    WarningSpec(
+        code="W-0544",
+        message="limits and bounds do not fit the solver's accurate range; solved anyway",
+        title="Scaling guard: limits and bounds cannot be scaled",
+        topic=_SCALING,
+        body=(
+            "The limits and bounds of the solve span more than the solver handles accurately at its feasibility "
+            "tolerance after FlexTool's scaling (more than 17 decades for HiGHS), or the scale given with "
+            "`--user-bound-scale` / `FLEXTOOL_USER_BOUND_SCALE` or `user_bound_scale` in the solver options puts "
+            "them outside that range. Under `--scaling-guard error` (the default) this stops the solve; it shows "
+            "as this warning under `--scaling-guard warn`, and always for a commercial solver (which gets no "
+            "FlexTool scaling). The solve goes on and may violate the smallest limits. The case is the solve "
+            "(with the roll or the Benders region). The debug log (`--debug`) gives the span, the largest and "
+            "smallest values and where they are, and how much the smallest limit could be violated.\n\n"
+            "**How to fix:** a placeholder for \"no limit\" (`1e18`, `1e30`, ...): give `inf` instead. Tiny "
+            "values that are really zero: give `0`, or leave the parameter out. Genuinely different scales: "
+            "change units, or split the model. If the debug log says that Layer 2 widened the span, "
+            "`--scaling basic` avoids that."
+        ),
+    ),
+    WarningSpec(
+        code="W-0545",
+        message="objective costs span over 13 decades or near zero after scaling",
+        title="Scaling guard: objective costs",
+        topic=_SCALING,
+        body=(
+            "After FlexTool's scaling, the costs of the objective span more than 13 decades (the cheapest choices "
+            "may be decided by rounding), or the smallest scaled cost is below 10 times the dual feasibility "
+            "tolerance (the solver may treat it as zero). The case is the solve (with the roll or the Benders "
+            "region). The debug log (`--debug`) gives the span and the objective terms at each end. The solve "
+            "continues.\n\n"
+            "**How to fix:** check the objective terms the debug log names (their units, or values that are "
+            "really zero). `--scaling-guard off` (`FLEXTOOL_SCALING_GUARD=off`; in the GUI: Solver options, "
+            "Scaling guard: Off) hides this check."
+        ),
+    ),
+    WarningSpec(
+        code="W-0546",
+        message="coefficient terms HiGHS drops or refuses",
+        title="Scaling guard: coefficients HiGHS drops or refuses",
+        topic=_SCALING,
+        body=(
+            "After FlexTool's scaling, some constraint coefficients are 1e-9 or less (HiGHS drops them from the "
+            "model) or 1e15 or more (HiGHS refuses such a model). The case is the solve (with the roll or the "
+            "Benders region). The debug log (`--debug`) gives the values and where they are. HiGHS equilibrates "
+            "the matrix itself; the solve continues.\n\n"
+            "**How to fix:** check the inputs behind the coefficients the debug log names (their units, or "
+            "values that are really zero). `--scaling-guard off` (`FLEXTOOL_SCALING_GUARD=off`; in the GUI: "
+            "Solver options, Scaling guard: Off) hides this check."
+        ),
+    ),
+    WarningSpec(
+        code="W-0547",
+        message="the scaling guard could not run{why}; the solves go on unchecked",
+        title="Scaling guard could not run",
+        topic=_SCALING,
+        entityless=True,
+        body=(
+            "The scaling guard could not judge a solve: the range readout of the LP failed, or the check itself "
+            "failed. The solves go on without the check. It is shown once per run; the debug log has the "
+            "details.\n\n"
+            "**How to fix:** nothing is needed for the solve. If it repeats, report it with the debug log "
+            "(`--debug`)."
+        ),
+    ),
+    WarningSpec(
         code="W-0550",
         message="warm-start basis not {step} for solve '{solve}'; {effect}",
         title="Warm-start basis not used",
@@ -733,6 +877,59 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "debug log gives both levels per node (MWh).\n\n"
             "**How to fix:** check that the storage capacity at the start (existing and invested) is the same in "
             "the lower solve as in the upper-level solve."
+        ),
+    ),
+    WarningSpec(
+        code="W-0584",
+        message="retirement option without existing capacity or an investment option",
+        title="Retirement option with nothing to retire",
+        topic=_LIFETIME,
+        body=(
+            "The entity has a retirement option (`invest_method`) but no `existing` capacity in any period (none "
+            "given, or 0 everywhere) and no investment option. Only existing capacity and capacity the model "
+            "builds can be retired, so there is no retirement variable; retired-capacity terms of user "
+            "constraints and group retirement limits are 0. Each entity is named once per run.\n\n"
+            "**How to fix:** give the entity `existing` capacity or an investment option, or choose an "
+            "`invest_method` without retirement."
+        ),
+    ),
+    WarningSpec(
+        code="W-0585",
+        message="capacity margin relative_of_peak_demand without demand; margin 0",
+        title="Relative capacity margin without demand",
+        topic=_INPUTS,
+        body=(
+            "The group has `capacity_margin_method` `relative_of_peak_demand` and a positive "
+            "`capacity_margin_relative`, but its nodes have no demand in some investment period: the peak demand "
+            "is 0 there, so the margin there is 0. The debug log names the periods.\n\n"
+            "**How to fix:** check the demand (`inflow`) of the group's nodes in those periods, or give the "
+            "margin with `capacity_margin_method` `absolute`."
+        ),
+    ),
+    WarningSpec(
+        code="W-0586",
+        message="reserve group has no nodes in the solve; its reserve is left out",
+        title="Reserve group without nodes",
+        topic=_INPUTS,
+        body=(
+            "The group has a `reserve_method` other than `no_reserve`, but no node in the solve (no `group__node` "
+            "row). No node of the group can hold its reserve, so its reserve requirements are left out of the "
+            "solve. Each group is named once per run.\n\n"
+            "**How to fix:** add the group's nodes (`group__node`), or remove the reserve from the group."
+        ),
+    ),
+    WarningSpec(
+        code="W-0587",
+        message="stochastic-time {parameter} has no folded value in the solve; not applied",
+        title="Stochastic-time value outside the solve's use",
+        topic=_INPUTS,
+        body=(
+            "The entity has a stochastic-time value (a map over branches and time) of the parameter, but the "
+            "solve does not use the parameter for it (the entity is outside the solve's use of the parameter), "
+            "so the value has no folded row in the solve and is not applied. Each entity is named once per run "
+            "and parameter.\n\n"
+            "**How to fix:** nothing, if the value is not meant for this solve; otherwise check that the entity "
+            "takes part in the solve with the parameter."
         ),
     ),
 ) + BEHAVIOUR_SPECS

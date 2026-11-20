@@ -1487,24 +1487,25 @@ def deactivate_stochastic_time_source(token: "contextvars.Token") -> None:
     _STOCHASTIC_TIME_SOURCE.reset(token)
 
 
-def _warn_once(kind: str, key: "tuple[str, str]", entities, message: str) -> None:
-    """One WARNING per (kind, class, parameter, entity) and run, naming the not yet warned entities sorted."""
+def _warn_once(kind: str, code: str, key: "tuple[str, str]", entities) -> None:
+    """One coded line (``code``, its ``{parameter}`` = ``class.parameter``) naming the entities not yet warned
+    about for (kind, class, parameter) in this run (the run's dedupe set of the stochastic-time source)."""
+    from flextool import run_warnings
+
     scope = _STOCHASTIC_TIME_SOURCE.get()
     warned = scope.warned if scope is not None else set()
     new = [tuple(e) for e in sorted(entities) if (kind, key[0], key[1], tuple(e)) not in warned]
     if not new:
         return
     warned.update((kind, key[0], key[1], e) for e in new)
-    _LOGGER.warning("%s.%s: the stochastic-time value of %s %s", key[0], key[1],
-                    ", ".join("/".join(e) for e in new), message)
+    run_warnings.warn_grouped(code, ["/".join(e) for e in new], parameter=f"{key[0]}.{key[1]}")
 
 
 def _warn_entities_without_fold(key: "tuple[str, str]", entities, covered: pl.DataFrame) -> None:
-    """Warn (once per run) for the stochastic-time entities with no folded row: the entity is outside the emit's
-    domain, so the solve does not use the parameter for it."""
+    """Warn (W-0587, once per run) for the stochastic-time entities with no folded row: the entity is outside the
+    emit's domain, so the solve does not use the parameter for it."""
     have = {tuple(r) for r in covered.unique().iter_rows()}
-    _warn_once("no_fold", key, [e for e in entities if tuple(e) not in have],
-               "has no folded value in this solve (outside the solve's use of the parameter); it is not applied.")
+    _warn_once("no_fold", "W-0587", key, [e for e in entities if tuple(e) not in have])
 
 
 def stochastic_time_values(

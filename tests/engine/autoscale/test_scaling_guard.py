@@ -92,15 +92,17 @@ def test_unscalable_spread_is_an_error_with_numbers_and_override():
     assert "cannot be scaled" in str(exc.value)
 
 
-def test_error_under_warn_prints_once_and_goes_on(capsys):
+def test_error_under_warn_prints_once_and_goes_on(coded_log):
     _plan, out = _guard_of(_report(0.5, 1e18), mode="warn")
     _guard.enforce(out, base_solve="s1")
     _guard.enforce(out, base_solve="s1")  # a later roll of the same solve
-    printed = capsys.readouterr().out
-    assert printed.count("Warning: Solve s1 cannot be scaled") == 1
+    printed = coded_log()
+    assert printed.count("W-0544 s1: Solve s1 cannot be scaled") == 1
+    assert printed.count("Warning: limits and bounds do not fit the solver's accurate range; solved anyway "
+                         "('s1') [W-0544]") == 1
 
 
-def test_spread_above_13_decades_warns_inside_the_window(capsys):
+def test_spread_above_13_decades_warns_inside_the_window(coded_log):
     plan, out = _guard_of(_report(1.6e-5, 1.3e9))
     assert out.level == "warn"
     assert -4 <= plan.user_bound_scale <= 6
@@ -108,7 +110,10 @@ def test_spread_above_13_decades_warns_inside_the_window(capsys):
     assert b.numbers["decades"] == pytest.approx(13.91, abs=0.005)
     assert "span 13.9 decades" in _text(out) and "more than 13" in _text(out)
     _guard.enforce(out, base_solve="s1")  # a warning never raises
-    assert "Warning: Solve s1: limits and bounds span 13.9 decades" in capsys.readouterr().out
+    printed = coded_log()
+    assert "W-0543 s1: Solve s1: limits and bounds span 13.9 decades" in printed
+    assert ("Warning: limits and bounds span over 13 decades; small limits may be violated ('s1') [W-0543]"
+            in printed)
 
 
 def test_off_runs_no_verdict_but_layer3_still_clips():
@@ -128,7 +133,7 @@ def test_manual_exponent_outside_the_window_is_an_error_naming_it():
     assert "9.77e-08 … 0.977" in text and "[-6, 26] fits" in text
 
 
-def test_strict_raises_only_for_a_layer2_caused_error(monkeypatch, capsys):
+def test_strict_raises_only_for_a_layer2_caused_error(monkeypatch, coded_log):
     monkeypatch.setenv("FLEXTOOL_AUTOSCALE_STRICT", "1")
     # Layer 2 caused it: the pre-Layer-2 pool fitted.
     _plan, caused = _guard_of(_report(0.5, 1e18), mode="warn", pre=_report(1.0, 1e3))
@@ -139,7 +144,7 @@ def test_strict_raises_only_for_a_layer2_caused_error(monkeypatch, capsys):
     _plan, own = _guard_of(_report(0.5, 1e18), mode="warn", pre=_report(0.5, 1e18))
     assert not own.strict_raise
     _guard.enforce(own, base_solve="s1")
-    assert "Warning: Solve s1 cannot be scaled" in capsys.readouterr().out
+    assert "s1: Solve s1 cannot be scaled" in coded_log()
     # Under off a Layer-2-caused error still raises with strict.
     _plan, off = _guard_of(_report(0.5, 1e18), mode="off", pre=_report(1.0, 1e3))
     with pytest.raises(ScalingRangeError):
@@ -149,14 +154,15 @@ def test_strict_raises_only_for_a_layer2_caused_error(monkeypatch, capsys):
 # --------------------------------------------------------------------- commercial solvers
 
 
-def test_commercial_solver_is_judged_unscaled_and_only_warns(capsys):
+def test_commercial_solver_is_judged_unscaled_and_only_warns(coded_log):
     _plan, out = _guard_of(_report(0.5, 1e18), solver="gurobi")
     assert out.verdict.bound_scale == 0 and out.verdict.window == pytest.approx((1e-5, 1e12))
     assert out.verdict.finding("bound_rhs").level == "error"  # what the solver gets
     assert out.level == "warn"
     assert "gurobi gets no FlexTool scaling, so this is a warning only" in _text(out)
     _guard.enforce(out, base_solve="s1")  # mode error, but no raise
-    assert "Warning: Solve s1 (gurobi)" in capsys.readouterr().out
+    printed = coded_log()
+    assert "W-0544 s1: Solve s1 (gurobi) cannot be scaled" in printed and "('s1') [W-0544]" in printed
 
 
 @pytest.mark.parametrize("solver", ["gurobi", "cplex", "xpress", "copt"])
@@ -184,14 +190,15 @@ def test_commercial_default_tolerance_without_the_parameter():
 # --------------------------------------------------------------------- cost and matrix
 
 
-def test_cost_spread_warns_only(capsys):
+def test_cost_spread_warns_only(coded_log):
     _plan, out = _guard_of(_report(1.0, 1e3, cost=(1e-8, 1e8)))
     cost = out.verdict.finding("cost")
     assert cost.level == "warn" and "spread" in cost.kind
     assert out.level == "warn"
     assert "the objective costs span 16.0 decades" in _text(out, "cost")
     _guard.enforce(out, base_solve="s1")
-    assert "Warning: Solve s1: the objective costs span" in capsys.readouterr().out
+    printed = coded_log()
+    assert "W-0545 s1: Solve s1: the objective costs span" in printed and "('s1') [W-0545]" in printed
 
 
 def test_matrix_warns_only_for_dropped_or_refused_terms():
@@ -251,7 +258,7 @@ def _first_roll_plan(tol: float):
     return recommend_scaling(roll1, ScalingConfig(), primal_feasibility_tolerance=tol)
 
 
-def test_roll_recheck_moves_the_exponent_when_the_cached_one_leaves_the_window(capsys):
+def test_roll_recheck_moves_the_exponent_when_the_cached_one_leaves_the_window(coded_log):
     tol = 1e-8
     plan = _first_roll_plan(tol)
     assert plan.user_bound_scale == -19 and plan.bound_tag.startswith("smallest-side")
@@ -265,8 +272,9 @@ def test_roll_recheck_moves_the_exponent_when_the_cached_one_leaves_the_window(c
     assert out == {"user_bound_scale": -9}
     assert hook.plan.user_bound_scale == -9 and hook.outcome.adjusted_bound_scale == -9
     assert hook.outcome.level == "warn"
-    printed = capsys.readouterr().out
+    printed = coded_log()
     assert "Solve s1, roll 2: limits and bounds span 15.0 decades" in printed
+    assert "('s1, roll 2') [W-0543]" in printed
     assert "This roll uses user_bound_scale -9 instead of -19" in printed
 
 
@@ -279,14 +287,14 @@ def test_roll_recheck_raises_when_no_exponent_fits():
         hook(_hook_ranges(1e-6, 1e12, tol), None)
 
 
-def test_roll_recheck_under_off_still_clips_silently(capsys):
+def test_roll_recheck_under_off_still_clips_silently(coded_log):
     tol = 1e-8
     hook = _guard.RollRecheck(_problem(tol), plan=_first_roll_plan(tol), config=ScalingConfig(),
                               mode="off", solve_name="s1, roll 2", base_solve="s1",
                               layer2_applied=False)
     assert hook(_hook_ranges(1e-3, 1e12, tol), None) == {"user_bound_scale": -9}
     assert hook.outcome.level == "off"
-    assert capsys.readouterr().out == ""
+    assert coded_log() == ""
 
 
 def test_roll_recheck_keeps_a_manual_exponent_and_judges_it():
@@ -428,7 +436,7 @@ def test_a_warning_layer2_narrowed_from_beyond_17_decades_says_basic_would_stop(
 # --------------------------------------------------------------------- once-per-run keys
 
 
-def test_a_later_error_or_new_exponent_is_not_silenced_under_warn(capsys):
+def test_a_later_error_or_new_exponent_is_not_silenced_under_warn(coded_log):
     from dataclasses import replace
 
     _plan, warn = _guard_of(_report(1.6e-5, 1.3e9), mode="warn")
@@ -438,9 +446,9 @@ def test_a_later_error_or_new_exponent_is_not_silenced_under_warn(capsys):
     _guard.enforce(replace(warn, adjusted_bound_scale=-9), base_solve="s1")  # a roll's own exponent
     _guard.enforce(replace(warn, adjusted_bound_scale=-9), base_solve="s1")  # the same again: silent
     _guard.enforce(warn, base_solve="s1")
-    printed = capsys.readouterr().out
-    assert printed.count("Warning: Solve s1: limits and bounds span 13.9 decades") == 2
-    assert printed.count("Warning: Solve s1 cannot be scaled") == 1
+    printed = coded_log()
+    assert printed.count("s1: Solve s1: limits and bounds span 13.9 decades") == 2
+    assert printed.count("s1: Solve s1 cannot be scaled") == 1
 
 
 def test_the_adjusted_exponent_log_is_once_per_run(caplog):

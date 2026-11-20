@@ -321,7 +321,7 @@ def test_constant_salvage_value_equals_its_period_map_with_built_retirement(tmp_
 
 
 @pytest.mark.solver
-def test_building_to_retire_is_warned(tmp_path_factory, capsys) -> None:
+def test_building_to_retire_is_warned(tmp_path_factory, coded_log) -> None:
     """net_salvage_value 450 above invest_cost 400: building and retiring at once earns (C − 450 000)·D(m) < 0, so
     the model builds to retire up to the limit; a warning names the entity."""
     from flextool.engine import _behaviour_changes
@@ -330,8 +330,7 @@ def test_building_to_retire_is_warned(tmp_path_factory, capsys) -> None:
     values = _values(extra=_pinned({"p2030": 10.0}, {"p2030": 10.0}), salvage=b64(450.0, "float"))
     url, scen = make_db(tmp_path_factory, alt="rb_warn", values=values, base_chain=_no_battery_invest(SINGLE))
     run(tmp_path_factory, url, scen)
-    out = capsys.readouterr().out
-    assert f"building and retiring {PLANT} earns money" in out
+    assert f"Warning: building and retiring the capacity earns money ('{PLANT}') [W-0529]" in coded_log()
 
 
 #: The two-period fan of ``stoch_two_period_hedge.json`` (p2035 at year 0, p2040 at year 1, one year each, horizon 2)

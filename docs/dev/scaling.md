@@ -124,7 +124,7 @@ Solve y2030 cannot be scaled into a range the solver handles accurately.
 ```
 
 At most five entries are listed at each end, and only those within 10x of
-it.  A warning ends with what the solver may accept: "With
+it.  A warning's message ends with what the solver may accept: "With
 user_bound_scale N, the smallest limit could be violated by up to X (model
 units); every limit by at most r %."
 
@@ -146,11 +146,14 @@ How to fix the model, in order of preference:
    `--scaling basic` runs without Layer 2.
 
 To run anyway: `--scaling-guard warn` (or `FLEXTOOL_SCALING_GUARD=warn`,
-or in the GUI Solver options → Scaling guard → Warn) prints the same
-message as a warning and solves; `--scaling-guard off` does not check.  A
-warning prints once per run for each solve, Benders region and kind of
-finding; a later roll whose finding becomes an error, or that gets a scale
-of its own, prints again.  A commercial solver (Gurobi, CPLEX, Xpress, COPT) gets no
+or in the GUI Solver options → Scaling guard → Warn) shows it as a coded
+warning and solves; `--scaling-guard off` does not check.  A warning is one
+console line naming the solve (W-0543 limits and bounds, W-0544 limits that
+cannot be scaled, W-0545 objective costs, W-0546 coefficients; see the
+warnings page); the message above, with the values and where they are,
+goes to the debug log (`--debug`).  It shows once per run for each solve,
+Benders region and kind of finding; a later roll whose finding becomes an
+error, or that gets a scale of its own, shows it again.  A commercial solver (Gurobi, CPLEX, Xpress, COPT) gets no
 FlexTool scaling, so the guard only warns there, judged at that solver's
 own feasibility tolerance.  A rolling solve is checked on its first roll
 and again on every later roll; a roll whose smallest limit no longer fits

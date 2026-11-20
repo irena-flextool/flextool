@@ -242,7 +242,8 @@ def test_entity_without_fold_rows_warns(caplog) -> None:
         deactivate_branch_anchor_pairs(branch_token)
         deactivate_stochastic_time_source(token)
     assert {k[0] for k in _cells(out)} == {"u3"}
-    assert any("u2_absent" in r.getMessage() and "no folded value" in r.getMessage() for r in caplog.records)
+    assert any(r.getMessage() == "Warning: stochastic-time unit.availability has no folded value in the solve; not "
+               "applied ('u2_absent') [W-0587]" for r in caplog.records)
 
 
 def test_broadcast_to_period_rejects_stochastic_entities() -> None:
