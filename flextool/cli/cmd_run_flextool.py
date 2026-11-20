@@ -749,6 +749,16 @@ def build_parser() -> argparse.ArgumentParser:
                              'is set per solve in the database.  Environment '
                              'variable: FLEXTOOL_BENDERS_WORKERS; the flag '
                              'wins.')
+    parser.add_argument('--benders-final-solve', choices=['on', 'off'], default=None,
+                        help='After a Benders solve, solve the whole model '
+                             'once with the Benders investments fixed, for '
+                             'the full results of the solve (default on). '
+                             'off skips it, for a model whose undecomposed '
+                             'LP does not fit in memory: the Benders solve '
+                             'then writes only its investments and their '
+                             'costs, or nothing when it is the last solve. '
+                             'Environment variable: '
+                             'FLEXTOOL_BENDERS_FINAL_SOLVE; the flag wins.')
     parser.add_argument(
         '--scaling',
         choices=['off', 'solver_only', 'basic', 'full'],

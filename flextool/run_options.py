@@ -267,6 +267,14 @@ OPTIONS: dict[str, OptionSpec] = {
             help="threads for the Benders region solves; unset or 0 uses min(regions, cores - 1)",
         ),
         _spec(
+            key="benders_final_solve", flag="--benders-final-solve", env="FLEXTOOL_BENDERS_FINAL_SOLVE", db=None,
+            parse=_choice("on", "off"), default="on", audience="user",
+            help="after a Benders solve, solve the whole model once with the Benders investments fixed, for the "
+                 "solve's full results (on, the default); off skips it when the undecomposed model does not fit "
+                 "in memory: the solve then writes only its investments and their costs, or nothing when it is "
+                 "the last solve",
+        ),
+        _spec(
             key="benders_in_out_weight", flag=None, env="FLEXTOOL_BENDERS_IN_OUT_WEIGHT",
             db="solve.benders_in_out_weight", parse=_in_out_weight, default=0.0, audience="dev",
             help="developer override of the solve's benders_in_out_weight, in [0, 1)",

@@ -30,6 +30,7 @@ SAMPLES: dict[str, tuple[object, str, object, object]] = {
     "solver_config_dir": (("/flag/cfg",), "/env/cfg", ("/env/cfg",), ("/db/cfg",)),
     "workspace_solver_config_dir": (("/flag/ws/solver_config",), "", None, ("/db/ws/solver_config",)),
     "benders_workers": (3, "5", 5, 2),
+    "benders_final_solve": ("off", " OFF ", "off", "off"),
     "benders_in_out_weight": (0.5, "0.3", 0.3, 0.7),
 }
 
@@ -79,6 +80,7 @@ def test_precedence_table(key, present):
         ("scaling_guard", "warning"),
         ("save_memory", "yes"),
         ("benders_in_out_weight", "1.0"),
+        ("benders_final_solve", "no"),
     ],
 )
 def test_malformed_env_warns_once_and_falls_through(key, bad, caplog):
@@ -211,6 +213,7 @@ def test_to_argv_round_trips_through_the_run_parser():
         "solver_mip_gap": 0.0005, "scaling": "basic", "user_bound_scale": -3,
         "scaling_guard": "warn",
         "save_memory": True, "warm_start": True, "basis_cache_dir": "/tmp/cache", "benders_workers": 2,
+        "benders_final_solve": "off",
         "solver_config_dir": ("/tmp/project/solver_config", "/tmp/solver_config"),
         "workspace_solver_config_dir": ("/tmp/project/solver_config", "/tmp/ws/solver_config"),
     }

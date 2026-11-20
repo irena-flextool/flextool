@@ -10,6 +10,7 @@ the registry merges them.
 * W-054x what the solver's outcome means (notes after a solve that ended optimal, but not cleanly); from W-0543
   the scaling guard (the solver's accuracy on the LP it gets)
 * W-055x warm start and how the solves are run (in this process or a separate one)
+* W-057x the results of a Benders solve: its final solve (the whole model with the Benders investments fixed)
 * W-058x W-0580..W-0583 storage notes (continued from W-053x); from W-0584 the overflow of the full sub-ranges
   (W-051x inputs, W-052x lifetimes: the topic of each code says which)
 * W-06xx behaviour-change notices (their texts: :mod:`flextool.run_warnings._behaviour_specs`)
@@ -817,6 +818,68 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "memory of this process low. Each solve takes some tens of seconds more for the file I/O. The results "
             "are not affected. The note is printed once per run.\n\n"
             "**How to fix:** nothing, if it was meant. For faster solves, leave `warm` at its default (`True`)."
+        ),
+    ),
+    WarningSpec(
+        code="W-0570",
+        message="benders solve '{solve}' is last and its final solve is off; no result tables written",
+        title="Benders solve without results",
+        topic=_OUTPUTS,
+        entityless=True,
+        body=(
+            "The named solve is decomposed with Benders (`decomposition` = `benders`), it is the last solve of the "
+            "run, and its final solve is off (`--benders-final-solve off` / `FLEXTOOL_BENDERS_FINAL_SOLVE=off`). "
+            "The final solve is what solves the whole model once with the investments the Benders solve found, "
+            "and it is what writes the solve's results. Without it no result table (csv, parquet, results "
+            "database, plots) is written. The Benders bounds and gap are in the log, and the run ends normally.\n\n"
+            "**How to fix:** drop `--benders-final-solve off` (and unset `FLEXTOOL_BENDERS_FINAL_SOLVE`) if the "
+            "whole model fits in memory. If it does not, add a dispatch solve after the Benders solve (for "
+            "example a rolling solve): it receives the investments, and the Benders solve then writes its "
+            "investments and their costs."
+        ),
+    ),
+    WarningSpec(
+        code="W-0571",
+        message="investment marginal values of benders solve '{solve}' are not in the results",
+        title="Benders solve without investment marginal values",
+        topic=_OUTPUTS,
+        severity=NOTE,
+        entityless=True,
+        body=(
+            "The named solve is decomposed with Benders and its final solve is off (`--benders-final-solve off` / "
+            "`FLEXTOOL_BENDERS_FINAL_SOLVE=off`). The solve writes its investment and retirement decisions, their "
+            "costs and its objective; its dispatch comes from the solves after it. The marginal values of the "
+            "investments (the `*_invest_marginal__d` and `dual_invest_*` tables) come only from a solve of the whole "
+            "model, which the final solve is, so they are not written for this solve. FlexTool does not "
+            "estimate them from the decomposition.\n\n"
+            "**How to fix:** drop `--benders-final-solve off` (and unset `FLEXTOOL_BENDERS_FINAL_SOLVE`) if the "
+            "whole model fits in memory."
+        ),
+    ),
+    WarningSpec(
+        code="W-0572",
+        message="final solve of benders solve '{solve}' {problem}",
+        title="Final solve of a Benders solve failed or disagrees",
+        topic=_OUTPUTS,
+        entityless=True,
+        body=(
+            "After a Benders solve, FlexTool solves the whole model once with the Benders investments fixed (the "
+            "final solve) and writes the solve's results from it. The line says what went wrong:\n\n"
+            "* **failed**: the final solve did not end with an accepted solution (infeasible, a time limit, the "
+            "solver process stopped). The run still ends normally, since the Benders result itself is valid. "
+            "When the Benders solve is followed by other solves, it writes its investments and their costs (as "
+            "with `--benders-final-solve off`) and the later solves give the dispatch; when it is the last solve, "
+            "no result table is written.\n"
+            "* **objective outside the Benders bounds**: the final solve's objective is not between the lower and "
+            "upper bound of the Benders solve (the line gives the three values). The results of the final solve "
+            "are written. The decomposed and the whole model then do not agree on the cost of the same "
+            "investments.\n\n"
+            "The Benders incumbent is a feasible plan of the whole model, so the final solve should always find a "
+            "solution at most the upper bound. A failure points to numerical trouble (scaling) or to a problem in "
+            "the decomposition.\n\n"
+            "**How to fix:** check the solver log of the final solve and the scaling lines (`--debug` shows "
+            "more). Try the solve without decomposition (`decomposition` = `none`) on a smaller case; if the "
+            "two disagree, report it with the debug log."
         ),
     ),
     WarningSpec(

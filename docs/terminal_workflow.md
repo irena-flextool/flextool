@@ -229,6 +229,7 @@ script); a given flag wins over the variable, and the variable over the solve's 
 | `--warm-start` | Reuse a cached HiGHS basis for solves of the same model structure, in-process and with `--save-memory` (Benders solves excepted); any mismatch falls back to a cold solve. Env fallback: `FLEXTOOL_WARM_START=1` |
 | `--basis-cache-dir PATH` | Folder of the `--warm-start` basis cache (default `<work folder>/basis_cache`); share one folder to reuse bases between runs. Env fallback: `FLEXTOOL_BASIS_CACHE_DIR` |
 | `--benders-workers N` | Threads for the region solves of a Benders solve (default, or `0`: the number of regions, at most cores minus one). Env fallback: `FLEXTOOL_BENDERS_WORKERS` |
+| `--benders-final-solve {on,off}` | After a Benders solve, solve the whole model once with the Benders investments fixed (default `on`); that solve writes every result table of the Benders solve, its investment marginal values included, and hands the full results on to the next solve. `off` skips it, for a model whose undecomposed LP does not fit in memory: the Benders solve then writes only its investments, their costs and its objective (the dispatch comes from the solves after it), or no result tables when it is the last solve. Env fallback: `FLEXTOOL_BENDERS_FINAL_SOLVE` |
 
 **Decomposition (Benders):**
 
@@ -237,8 +238,9 @@ via a CLI flag: set `solve.decomposition = benders` (plus the optional
 `solve.benders_max_iter` / `benders_tolerance` knobs) and declare at
 least two `group.decomposition_method = benders_regional` region groups.
 A single chain can mix schemes. See
-[decomposition.md](dev/decomposition.md). The one remaining CLI flag is
-the filter-only inspector:
+[decomposition.md](dev/decomposition.md). Besides `--benders-workers` and
+`--benders-final-solve` above, the one remaining Benders flag is the
+filter-only inspector:
 
 | Flag | Description |
 |---|---|
