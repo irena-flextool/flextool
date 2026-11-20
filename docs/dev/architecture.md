@@ -400,7 +400,9 @@ Same `build_flextool` body, three wrappers from `polar_high`:
   objective is a **valid lower bound** and the loop converges on the
   optimality gap. This replaces the earlier dual-subgradient scheme, which
   collapsed greenfield cross-region trade to autarky with an *invalid*
-  bound. See [decomposition.md](decomposition.md).
+  bound. The solve's results come from a final monolithic solve with the
+  Benders investments fixed (`--benders-final-solve`, decomposition.md
+  §2.9). See [decomposition.md](decomposition.md).
 
 #### Feature flags in `build_flextool`
 

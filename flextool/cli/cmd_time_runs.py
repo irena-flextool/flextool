@@ -22,9 +22,9 @@ is drawn.  A ``--db`` database is copied into the temporary folder first and the
 * **viewer**: ``Computed plot plans`` + ``Wrote dispatch metadata`` (what the result viewer needs; these run
   also with plots off);
 * **plots**: ``Plotted figures``;
-* **untimed**: what is left of the wall time.  A solve through Benders decomposition writes no per-solve
-  ``lp_build``, ``solve`` or ``handoff`` rows, so its problem building, solving and per-solve result writing land
-  here.
+* **untimed**: what is left of the wall time.  The Benders loop of a solve through Benders decomposition (its
+  master and region solves) writes no ``lp_build``, ``solve`` or ``handoff`` rows, so its time lands here; the
+  final solve after the loop writes them as any other solve.
 
 Only the rows named above are read.  ``per_iter/warm_used`` is a flag (1 = a warm start was used), not a time,
 and the ``handoff_part`` rows are parts of ``handoff``: neither is added.  The ``cumulative_s`` column is not
@@ -384,8 +384,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run scenarios one after another and show where each run's time goes (start-up, reading "
                     "the input, preprocessing, solving, outputs, viewer data, plots), so trainers can check "
                     "that exercises run fast enough. Default: every scenario of the example and how-to "
-                    "databases that come with FlexTool. A Benders solve writes no per-solve problem-building, "
-                    "solving or result-writing rows: that time is shown as untimed.",
+                    "databases that come with FlexTool. The Benders loop of a Benders solve writes no "
+                    "problem-building, solving or result-writing rows: that time is shown as untimed.",
     )
     parser.add_argument("--db", metavar="PATH", action="append", default=None,
                         help="A .sqlite input database (a path or a sqlite:/// URL) to run instead of the "

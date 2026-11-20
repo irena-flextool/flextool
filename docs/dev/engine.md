@@ -947,8 +947,14 @@ lower bound.
 The FlexTool wrapper handles the FlexTool-side concerns: regional
 unitsize, regional profiles, regional handoff state, and the RP-weight
 consistency that follows from building the master with the same emit as
-the monolith. See [decomposition.md](decomposition.md) for the
-user-facing story and the parameters that gate this path.
+the monolith. After the loop the solve's results come from the **final
+solve**: the orchestrator falls through to the monolithic path with the
+investment decisions pinned to the Benders incumbent
+(`_benders_final.pin_invest_decisions`); with `--benders-final-solve off`
+a chained Benders solve writes only its investment slice
+(`output/_benders_slice.py`). See [decomposition.md](decomposition.md)
+(§2.9 for the outputs) for the user-facing story and the parameters that
+gate this path.
 
 ## Solve-to-solve handoff
 

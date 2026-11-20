@@ -582,7 +582,7 @@ The table has one row per run, slowest first, in seconds; `!` marks a run over t
 | `outputs` | Writing the results (parquet) |
 | `viewer` | The data the result viewer needs (also written with plots off) |
 | `plots` | The scenario plots (png); zero with plots off |
-| `untimed` | The rest. A Benders solve writes no per-solve problem-building, solving or result-writing times, so those land here |
+| `untimed` | The rest. The Benders loop of a Benders solve (its master and region solves) writes no problem-building, solving or result-writing times, so those land here; its final solve is counted as any other solve |
 
 | Argument | Description |
 |---|---|
