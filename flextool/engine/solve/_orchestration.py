@@ -3376,7 +3376,7 @@ def _drive_cascade(
                 benders_gap=result.gap,
                 benders_tol=result.tol,
                 benders_iterations=result.iterations,
-                # P3 (invest slice) sets "invest_slice" for a chained solve whose final solve is off / failed.
+                # "invest_slice" once the investment-only results are written (final solve off or failed).
                 benders_results="none",
                 flex_data=data,
                 flex_data_provider=getattr(
@@ -3387,15 +3387,48 @@ def _drive_cascade(
             return 0
 
         def _benders_final_not_accepted(self, complete_solve_name: str, *, problem: str, details: str | None,
-                                        recorded: bool) -> int:
+                                        recorded: bool, bres, data) -> int:
             """The final solve of Benders solve *complete_solve_name* gave no accepted solution: W-0572, and the
             Benders step, its handoff and its run-record verdict stay (``benders.final_solve`` says it failed).
-            The run goes on (owner answer 287-Q6): the Benders result itself is valid.  P3 writes the invest
-            slice of a chained solve here."""
+            The run goes on (owner answer 287-Q6): the Benders result itself is valid.  With a later solve the
+            Benders solve writes its investment-only results (:meth:`_write_benders_invest_slice`); as the last
+            solve it writes none (the result tables need a dispatch, which no solve of the run then has)."""
             if not recorded:
                 run_record.active().solve_benders_final(accepted=False, model_status=None, objective=None)
             run_warnings.warn("W-0572", solve=complete_solve_name, problem=problem, details=details)
+            if self._later_solve_follows():
+                self._write_benders_invest_slice(complete_solve_name, bres, data)
             return 0
+
+        def _later_solve_follows(self) -> bool:
+            """Whether a solve of the run comes after the one running (``_run_model`` sets the flag per solve;
+            unknown → False)."""
+            _window = getattr(self.state, "current_committed_window_check", None)
+            return bool(_window[2]) if _window is not None else False
+
+        def _write_benders_invest_slice(self, complete_solve_name: str, bres, data) -> None:
+            """The investment-only results of Benders solve *complete_solve_name* (no final solve result):
+            its investment decisions, their costs and its objective (the upper bound) go to ``output_raw/``
+            (:func:`~flextool.engine.output._benders_slice.write_benders_invest_slice`); its step gets
+            ``benders_results = "invest_slice"``.  A failed write is logged and leaves the step at ``"none"``."""
+            from flextool.engine.output._benders_slice import write_benders_invest_slice
+
+            _user = (state.solve.scale_the_objective.get(complete_solve_name)
+                     or state.solve.scale_the_objective.get(re.sub(r"_roll_\d+$", "", complete_solve_name)))
+            try:
+                write_benders_invest_slice(
+                    bres.invest_solution_vars, bres.total_objective,
+                    work_folder=self.state.paths.work_folder, solve_name=complete_solve_name,
+                    flex_data=data, provider=getattr(self.state, "current_provider", None),
+                    scale_the_objective=_resolve_effective_obj_scale(_user),
+                )
+            except Exception as exc:  # noqa: BLE001 - as the monolithic writer: the run goes on, loudly
+                self.state.logger.error(
+                    f"writing the investment results of Benders solve {complete_solve_name} failed: {exc!r}")
+                return
+            step = self._all_steps.get(complete_solve_name)
+            if step is not None:
+                step.benders_results = "invest_slice"
 
         def check_run_inputs(self, steps_of_run) -> None:
             """Before the first solve: a group limit's time map covers every time step of the run's solves
@@ -3752,7 +3785,11 @@ def _drive_cascade(
                     and math.isfinite(_bres.total_objective)
                 )
                 if _rc != 0 or not _final_on or not _has_incumbent:
-                    # P3: a chained solve writes its invest slice here (off), with W-0571.
+                    # Final solve off and a later solve gives the dispatch: the Benders solve writes its
+                    # investment-only results (W-0571: no investment marginal values).  Last: nothing (W-0570).
+                    if _rc == 0 and not _final_on and _has_incumbent and self._later_solve_follows():
+                        run_warnings.warn("W-0571", solve=complete_solve_name)
+                        self._write_benders_invest_slice(complete_solve_name, _bres, data)
                     return _rc
                 _bfinal = _bres
                 # The final solve's step replaces the Benders one: the cold-path slim keeps the step before it.
@@ -4753,7 +4790,7 @@ def _drive_cascade(
                     # solution: the Benders result stands.
                     return self._benders_final_not_accepted(
                         complete_solve_name, problem="failed (the solver process stopped)",
-                        details=str(_solve_exc), recorded=False,
+                        details=str(_solve_exc), recorded=False, bres=_bfinal, data=data,
                     )
                 if _autoscale_hook is not None and _autoscale_hook.called:
                     # The roll's own recheck: report what it used.
@@ -4910,7 +4947,7 @@ def _drive_cascade(
                 if not _acc.accepted:
                     return self._benders_final_not_accepted(
                         complete_solve_name, problem=f"failed ({_acc.model_status or 'no solution'})",
-                        details=_acc.message, recorded=True,
+                        details=_acc.message, recorded=True, bres=_bfinal, data=data,
                     )
                 if sol.obj is not None:
                     from flextool.engine.solve._benders_final import check_final_objective

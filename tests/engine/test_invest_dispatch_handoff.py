@@ -178,7 +178,7 @@ def test_invest_dispatch_chain_handoff_reaches_dispatch(final, tmp_path, monkeyp
         assert invest_step.benders_results == "full"
         assert not isinstance(invest_step.solution, SnapshotSolution)
     else:
-        assert invest_step.benders_results == "none"
+        assert invest_step.benders_results == "invest_slice"  # its investment-only results (item 287 P3)
         assert isinstance(invest_step.solution, SnapshotSolution), (
             "invest step should carry a SnapshotSolution invest carrier, got "
             f"{type(invest_step.solution).__name__}"

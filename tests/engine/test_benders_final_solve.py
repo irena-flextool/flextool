@@ -1,4 +1,5 @@
-"""Item 287 P2: a Benders solve ends with its final solve, and the run writes the result tables of a monolithic run.
+"""Item 287 P2/P3: a Benders solve ends with its final solve, and the run writes the result tables of a monolithic
+run; without the final solve result a chained Benders solve writes its investment-only results (P3).
 
 After the Benders loop, the whole model of the solve is solved once with every investment decision fixed to the
 Benders incumbent (``_orchestration._run_one``), on the normal monolithic path.  Oracles are relational: each
@@ -17,6 +18,12 @@ the Benders solve (the values come from the twin, never from the new code).
   are written, the non-convergence banner fires, the run record keeps ``not_converged``, exit 0.
 * **T9** (the last-solve half) the final solve not accepted (acceptance patched): W-0572, the Benders step and its
   handoff stay, ``benders.final_solve.accepted`` false, no table, parquet ``skipped``, exit 0.
+* **T1** (P3) the chained Benders solve with ``--benders-final-solve off``: its investments, their costs and its
+  ``summary_solve`` row equal the monolithic chain's within the gap; ``existing + invested - divested = total``;
+  no investment marginal table, W-0571 once.
+* **T2** (P3) the same with built capacity retired (build 100 MW, retire 40): the retirement and salvage lines.
+* **T9** (P3, the chained half) the final solve of the chained Benders solve not accepted: W-0572 and the same
+  investment-only results as T1.
 
 The runs are CLI subprocesses (``cmd_run_flextool``), started together; T9 runs the CLI in this process.
 """
@@ -35,6 +42,7 @@ import pytest
 
 from flextool import run_record
 from tests.engine._unit_db import b64, make_db
+from tests.engine.test_benders_final_pin import RETIRE_BUILT
 
 pytestmark = pytest.mark.solver
 
@@ -65,6 +73,10 @@ RUNS = {
     "ti_one_iter": (TRADE_JSON, TRADE_CHAIN, [["solve", TRADE_SOLVE, "benders_max_iter", b64(1.0, "float")]], []),
     "inv_benders": (LH2_JSON, INVEST_CHAIN, [], []),
     "inv_mono": (LH2_JSON, INVEST_CHAIN, _none(INVEST_SOLVE), []),
+    # P3: the chained Benders solve with its final solve off writes its investment-only results.
+    "inv_off": (LH2_JSON, INVEST_CHAIN, [], ["--benders-final-solve", "off"]),
+    "ret_off": (LH2_JSON, INVEST_CHAIN, RETIRE_BUILT, ["--benders-final-solve", "off"]),
+    "ret_mono": (LH2_JSON, INVEST_CHAIN, RETIRE_BUILT + _none(INVEST_SOLVE), []),
 }
 
 
@@ -120,7 +132,7 @@ def runs(tmp_path_factory) -> dict[str, Run]:
         url, scenario = make_db(tmp_path_factory, alt=f"p287p2_{name}", values=values, base_chain=chain,
                                 fixture_json=fixture)
         jobs.append((name, url, scenario, tmp_path_factory.mktemp(f"p287p2_{name}_run"), flags))
-    with ThreadPoolExecutor(max_workers=min(len(jobs), 6)) as pool:
+    with ThreadPoolExecutor(max_workers=min(len(jobs), 9)) as pool:
         done = list(pool.map(lambda job: _cli(*job), jobs))
     return {run.name: run for run in done}
 
@@ -223,6 +235,7 @@ def test_benders_last_with_the_final_solve_off_writes_no_table(runs):
     off = runs["ti_off"]
     _ok(off)
     assert "W-0570" in off.codes(), off.out
+    assert "W-0571" not in off.codes(), "a Benders last solve with the final solve off writes no investment slice"
     assert not [p for p in off.csv.glob("*.csv") if p.name != "timings.csv"] if off.csv.exists() else True
     status = off.status()
     assert status["outputs"]["parquet_state"] == "skipped"
@@ -370,3 +383,111 @@ def test_final_solve_not_accepted_keeps_the_benders_step_and_handoff(monkeypatch
     assert step.is_benders and step.benders_results == "none" and step.optimal is True
     assert isinstance(step.solution, _orchestration.SnapshotSolution)
     assert step.handoff is not None and not step.handoff.is_empty()
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# P3, T1 / T2: a chained Benders solve with its final solve off writes its investment-only results
+# ---------------------------------------------------------------------------------------------------------------
+
+
+def _assert_investment_only_results(run: Run, mono: Run, *, capacities: bool = True) -> None:
+    """*run* (a chained Benders solve without a final solve result) against the monolithic chain *mono*: the cost
+    and summary tables within the gap, the capacity tables (*capacities*: the fixture's optimum is unique, invariant
+    4 of the design), the capacity rows add up, no investment marginal table."""
+    _ok(run)
+    _ok(mono)
+    atol = _tolerance(run, sum(s["objective"] for s in mono.status()["solves"]))
+    for name in COST_TABLES:
+        _assert_table_close(run, mono, name, atol)
+    if capacities:
+        for name in CAPACITY_TABLES:
+            _assert_table_close(run, mono, name, max(atol, 1e-6))
+    assert any(row and row[0] == INVEST_SOLVE for row in _cells(run, "summary_solve.csv")), "no summary_solve row"
+    rows = run.table("unit_capacity__d.csv")
+    assert any((_numeric(r["invested"]) or 0.0) > 0 for r in rows), "no investment in unit_capacity__d"
+    assert {r["solve"] for r in rows} == {INVEST_SOLVE}
+    for name in CAPACITY_TABLES:
+        for r in run.table(name):
+            if _numeric(r.get("in_construction", "")):
+                continue
+            got = (_numeric(r["existing"]) or 0.0) + (_numeric(r["invested"]) or 0.0) - (
+                _numeric(r["divested"]) or 0.0)
+            assert got == pytest.approx(_numeric(r["total"]) or 0.0, abs=1e-6), (name, r)
+    present = [n for n in INVEST_MARGINAL if (mono.csv / n).is_file()]
+    assert present, "the monolithic chain writes investment marginal values"
+    assert not [n for n in INVEST_MARGINAL if (run.csv / n).is_file()]
+    assert not (run.parquet / "dual_invest_effective_unit_d_e.parquet").exists()
+    assert run.status()["outputs"]["parquet_state"] == "written"
+
+
+def test_chained_benders_with_the_final_solve_off_writes_its_investments_and_costs(runs):
+    off, mono = runs["inv_off"], runs["inv_mono"]
+    _assert_investment_only_results(off, mono)
+    assert off.out.count("[W-0571]") == 1, off.out
+    assert "W-0570" not in off.codes() and "W-0572" not in off.codes()
+    assert off.codes() - {"W-0571"} == mono.codes(), (off.codes(), mono.codes())
+    assert "final solve: the whole model" not in off.out
+
+
+def test_chained_benders_with_the_final_solve_off_writes_its_retirements(runs):
+    off, mono = runs["ret_off"], runs["ret_mono"]
+    # The salvage makes the objective large and the Benders gap loose for wind_B (an investment of a few M CUR
+    # within the gap): the capacities are compared on the retiring unit only.
+    _assert_investment_only_results(off, mono, capacities=False)
+    [wind_off] = [r for r in off.table("unit_capacity__d.csv") if r["unit"] == "wind_A"]
+    [wind_mono] = [r for r in mono.table("unit_capacity__d.csv") if r["unit"] == "wind_A"]
+    assert (_numeric(wind_mono["invested"]), _numeric(wind_mono["divested"])) == (100.0, 40.0), wind_mono
+    for col in ("existing", "invested", "divested", "total"):
+        assert _numeric(wind_off[col]) == pytest.approx(_numeric(wind_mono[col]), rel=1e-6), (col, wind_off)
+    lines_off = {r[0]: _numeric(r[1]) for r in _cells(off, "costs_discounted.csv")[1:] if len(r) > 1}
+    lines_mono = {r[0]: _numeric(r[1]) for r in _cells(mono, "costs_discounted.csv")[1:] if len(r) > 1}
+    for line in ("retirement", "salvage"):
+        assert lines_mono[line], (line, lines_mono)
+        assert lines_off[line] == pytest.approx(lines_mono[line], rel=1e-6), line
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# P3, T9 (the chained half): the final solve of a chained Benders solve is not accepted
+# ---------------------------------------------------------------------------------------------------------------
+
+
+def test_chained_final_solve_not_accepted_writes_the_investment_only_results(runs, restore_env, monkeypatch,
+                                                                             tmp_path_factory, capsys, caplog):
+    import dataclasses
+
+    from flextool.cli import cmd_run_flextool
+    from flextool.engine.solve import _orchestration
+
+    real = _orchestration.classify_acceptance
+
+    def reject(sol, **kwargs):
+        acc = real(sol, **kwargs)
+        if kwargs.get("solve_name") != INVEST_SOLVE:
+            return acc
+        return dataclasses.replace(acc, accepted=False, near_optimal=False, model_status="kInfeasible",
+                                   message="patched: not accepted")
+
+    monkeypatch.setattr(_orchestration, "classify_acceptance", reject)
+    url, scenario = make_db(tmp_path_factory, alt="p287p3_reject", values=[], base_chain=INVEST_CHAIN,
+                            fixture_json=LH2_JSON)
+    root = tmp_path_factory.mktemp("p287p3_reject_run")
+    os.environ.pop("FLEXTOOL_BENDERS_FINAL_SOLVE", None)
+    monkeypatch.setattr(sys, "argv", [
+        "cmd_run_flextool", url, "--scenario-name", scenario, "--work-folder", str(root / "work"),
+        "--output-location", str(root / "out"), "--write-methods", "csv", "parquet",
+    ])
+    code = 0
+    try:
+        cmd_run_flextool.main()
+    except SystemExit as exc:
+        code = exc.code or 0
+    out = capsys.readouterr()
+    text = out.out + out.err + "\n".join(r.getMessage() for r in caplog.records)
+    assert code == 0, text
+    assert "failed (kInfeasible) [W-0572]" in text, text
+    assert "[W-0571]" not in text
+    rejected = Run("reject", scenario, root, subprocess.CompletedProcess([], 0, stdout=text, stderr=""))
+    _assert_investment_only_results(rejected, runs["inv_mono"])
+    entry = next(s for s in rejected.status()["solves"] if s["name"] == INVEST_SOLVE)
+    assert entry["acceptance"] == "converged" and entry["benders"]["final_solve"]["accepted"] is False
+

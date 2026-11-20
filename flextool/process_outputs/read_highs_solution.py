@@ -58,7 +58,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import NamedTuple, Sequence, TYPE_CHECKING
+from typing import Collection, NamedTuple, Sequence, TYPE_CHECKING
 
 import pandas as pd
 import polars as pl
@@ -2006,6 +2006,7 @@ def write_all_variables(
     scale_the_objective: float | None = None,
     provider: "object | None" = None,
     obj_offset: float = 0.0,
+    custom_writers: Collection[str] | None = None,
 ) -> list[Path]:
     """Iterate :data:`VARIABLE_SPECS` (or a custom list) and write parquets.
 
@@ -2014,6 +2015,8 @@ def write_all_variables(
     remaining ones, so one bad variable can't lose the whole run.
     ``obj_offset``: the objective constant ``h.getObjectiveValue()`` leaves
     out (``Solution.obj_offset``; see :func:`write_v_obj`).
+    ``custom_writers``: the labels of the custom writers to run (``"v_obj"``, ``"v_divest_built"``, ...); ``None``
+    runs them all.  The investment-only results of a Benders solve run a few (``_benders_slice``).
     """
     specs = specs if specs is not None else VARIABLE_SPECS
     written: list[Path] = []
@@ -2139,6 +2142,8 @@ def write_all_variables(
         # per-solve parquet.
     )
     for label, fn in _custom_writers:
+        if custom_writers is not None and label not in custom_writers:
+            continue
         try:
             result = fn()
             if isinstance(result, list):
