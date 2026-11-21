@@ -91,7 +91,9 @@ dependencies = [
     # the pre_run_check hook (Problem.solve, WarmProblem, write_mps), the
     # tolerance-window Layer 3 and the user-scaled KKT counters — required by
     # the scaling guard and by the solve acceptance in the space HiGHS solved.
-    "polar-high>=3.15.0",
+    # 3.16.0 adds kkt_report / tolerance_violation: HiGHS's tolerance-violation
+    # factor X of a user-scaled solve, which the W-0540 note gives.
+    "polar-high>=3.16.0",
     # Autoscale Layer 3 drives HiGHS' power-of-two objective conditioning
     # through the ``user_objective_scale`` option.  HiGHS renamed the older
     # ``user_cost_scale`` to ``user_objective_scale`` after 1.10.0, so older
