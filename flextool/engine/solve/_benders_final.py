@@ -35,6 +35,14 @@ PINNED_FAMILIES = ("v_invest_p", "v_invest_n", "v_divest_p", "v_divest_n",
 #: fixed: they follow from the pinned columns.
 AGGREGATE_FAMILIES = ("v_divested_built_p", "v_divested_built_n", "v_extended_p", "v_extended_n")
 
+#: Half-width of the band a pinned column gets around its Benders value (:func:`pin_invest_decisions`): relative
+#: to the value, absolute below 1.  The Benders master meets its rows only to the solver's feasibility tolerance,
+#: so a value can lie that far outside a row bound of the whole model (an investment floor, a group or cumulative
+#: limit); with every column of such a row fixed exactly, presolve would call the final solve infeasible.  The band
+#: lets the final solve move the value by at most this much to meet the row, and changes the objective by a
+#: relative amount of the same order, far inside the Benders gap.
+PIN_BAND = 1e-6
+
 #: Relative slack of :func:`check_final_objective`, on top of the solver's own tolerance.
 FINAL_OBJECTIVE_REL_SLACK = 1e-6
 
@@ -55,14 +63,17 @@ def pin_invest_decisions(pb: "Problem", frames: Mapping[str, pl.DataFrame]) -> N
     *pb* is the undecomposed model of the solve, built (``build_flextool``) and not yet scaled (call this before
     Layer 2: the values are in the model's own units, as ``Solution.value`` gives them).  *frames* is
     ``BendersResult.invest_solution_vars``: per family, the Var's dims then ``value``.  For each family of
-    :data:`PINNED_FAMILIES` that *pb* has, each column gets ``lower = upper = value``, the value first clamped into
-    the column's own bounds (a Benders value a solver tolerance outside them would make the LP infeasible).  A
-    column of an integer family gets the nearest whole number.  The aggregates (:data:`AGGREGATE_FAMILIES`) are
-    left free.
+    :data:`PINNED_FAMILIES` that *pb* has, the value is first clamped into the column's own bounds (a Benders value
+    a solver tolerance outside them would make the LP infeasible), then the column is bounded to
+    ``value ± PIN_BAND · max(1, |value|)`` (:data:`PIN_BAND`; within the column's bounds): a value a solver
+    tolerance outside a row bound of the whole model (a floor, a group or cumulative limit, all of whose columns
+    are pinned) can then still meet the row.  A column of an integer family is fixed at the nearest whole number.
+    The aggregates (:data:`AGGREGATE_FAMILIES`) are left free.
 
     Raises :class:`RuntimeError` (an internal error, not a configuration error) when a column of a pinned family
-    has no value, when *frames* has a value for no column of *pb* or two values for one column, or when *frames*
-    holds a family that *pb* does not have or that is no decision family at all.
+    has no value, when *frames* has a value for no column of *pb* (also for a family whose variable *pb* has with
+    no column) or two values for one column, or when *frames* holds a family that *pb* does not have or that is no
+    decision family at all.
     """
     for name in frames:
         if name in AGGREGATE_FAMILIES:
@@ -74,9 +85,12 @@ def pin_invest_decisions(pb: "Problem", frames: Mapping[str, pl.DataFrame]) -> N
                                f"undecomposed model does not have")
     for name in PINNED_FAMILIES:
         var = pb._vars.get(name)
-        if var is None or var.frame.height == 0:
-            continue
         frame = frames.get(name)
+        if var is None or var.frame.height == 0:
+            if var is not None and frame is not None and frame.height > 0:
+                raise RuntimeError(f"Benders final solve: the Benders solve has {frame.height} values for {name}, "
+                                   f"which has no column in the undecomposed model")
+            continue
         if frame is None:
             raise RuntimeError(f"Benders final solve: no Benders value for {name} of "
                                f"{_key_text(var.frame.row(0), var.dims)}")
@@ -86,8 +100,12 @@ def pin_invest_decisions(pb: "Problem", frames: Mapping[str, pl.DataFrame]) -> N
         values = np.minimum(np.maximum(values, lower), upper)
         if var.integer:
             values = np.round(values)
-        var.lower = values
-        var.upper = values.copy()
+            var.lower = values
+            var.upper = values.copy()
+            continue
+        band = PIN_BAND * np.maximum(1.0, np.abs(values))
+        var.lower = np.maximum(values - band, lower)
+        var.upper = np.minimum(values + band, upper)
     # The canonical matrix (built lazily by ``Problem.canonicalise`` for ``write_mps``) reads the bounds when it is
     # built; one built before this call would hold the old bounds.
     pb._canonical_dirty = True
@@ -152,6 +170,7 @@ __all__ = [
     "AGGREGATE_FAMILIES",
     "FINAL_OBJECTIVE_REL_SLACK",
     "PINNED_FAMILIES",
+    "PIN_BAND",
     "check_final_objective",
     "final_solve_on",
     "pin_invest_decisions",

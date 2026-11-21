@@ -5,8 +5,11 @@ life-extension decision fixed to the Benders incumbent (:func:`pin_invest_decisi
 
 * **T5 pin exact**: the monolithic LP of ``lh2_three_region_trade_invest`` (``decomposition none``) pinned with
   the monolith's **own** optimal decisions has the monolith's objective (rel 1e-9), and its MPS differs from the
-  unpinned one only in the bounds of the pinned columns, each fixed (``FX``) at the monolith's value.  A missing
-  column, a value for no column, two values for one column and a family the model lacks raise.  Run with the
+  unpinned one only in the bounds of the pinned columns, each bounded to the monolith's value ± ``PIN_BAND``.  A
+  missing column, a value for no column, two values for one column, a family the model lacks and values for a
+  family without columns raise.
+* **m3 band** (review): a value a fraction of the band below a binding investment floor (a row) is infeasible
+  fixed exactly and solves to the monolith's objective with the band.  Run with the
   axis Enums off and on, and with a Utf8 value frame against the Enum-typed model.
 * **T5b pin coverage**: on each Benders fixture shape, ``BendersResult.invest_solution_vars`` has a value for
   exactly the columns of each pinned family of the undecomposed model, and the model pinned with them solves to
@@ -26,6 +29,7 @@ import pytest
 
 from flextool.engine.solve._benders_final import (
     AGGREGATE_FAMILIES,
+    PIN_BAND,
     PINNED_FAMILIES,
     check_final_objective,
     final_solve_on,
@@ -109,7 +113,8 @@ def test_pin_with_own_decisions_keeps_the_objective(mono):
         got = utf8(sol.value("v_invest_p")).sort("p")
     assert float(sol.obj) == pytest.approx(obj, rel=1e-9)
     want = utf8(frames["v_invest_p"]).sort("p")
-    assert got["value"].to_list() == pytest.approx(want["value"].to_list(), abs=1e-12)
+    for g, w in zip(got["value"].to_list(), want["value"].to_list()):
+        assert abs(g - w) <= PIN_BAND * max(1.0, abs(w)) * (1 + 1e-9), (g, w)
 
 
 def _mps_sections(path: Path) -> tuple[list[str], list[str]]:
@@ -147,7 +152,8 @@ def test_pin_changes_only_the_bounds_of_the_pinned_columns(mono, tmp_path):
     want = {f"v_invest_p[{r['p']},{r['d']}]": r["value"] for r in utf8(frames["v_invest_p"]).iter_rows(named=True)}
     assert bounds.keys() == want.keys()
     for name, value in want.items():
-        assert bounds[name] == pytest.approx([value, value], abs=1e-15), name
+        band = PIN_BAND * max(1.0, abs(value))
+        assert bounds[name] == pytest.approx([max(0.0, value - band), value + band], abs=1e-15), name
 
 
 def test_pin_accepts_a_utf8_frame_against_the_model_axis(mono):
@@ -168,8 +174,8 @@ def test_pin_clamps_a_value_just_outside_the_bounds(mono):
     pb = _pinned_problem(fd, {"v_invest_p": frame})
     var = pb._vars["v_invest_p"]
     lower = dict(zip(utf8(var.frame)["p"].to_list(), var.lower))
-    assert lower["pipe_BC"] == 0.0
-    assert list(var.lower) == list(var.upper)
+    upper = dict(zip(utf8(var.frame)["p"].to_list(), var.upper))
+    assert (lower["pipe_BC"], upper["pipe_BC"]) == (0.0, PIN_BAND)
 
 
 def test_pin_raises_on_a_missing_column(mono):
@@ -206,6 +212,59 @@ def test_pin_raises_on_a_family_the_model_lacks(mono):
     # An aggregate family (an equality defines it) is not pinned and not an error.
     pinned = _pinned_problem(fd, {**frames, AGGREGATE_FAMILIES[0]: node})
     assert AGGREGATE_FAMILIES[0] not in pinned._vars
+
+
+def test_pin_raises_on_values_for_a_family_without_columns():
+    """A family the model has as a variable with no column, but for which the Benders solve has values: raised (not
+    silently ignored)."""
+    from types import SimpleNamespace
+
+    empty = SimpleNamespace(frame=pl.DataFrame({"n": [], "d": []}, schema={"n": pl.Utf8, "d": pl.Utf8}),
+                            dims=("n", "d"))
+    pb = SimpleNamespace(_vars={"v_invest_n": empty})
+    node = pl.DataFrame({"n": ["lh2_B"], "d": ["y2030"], "value": [1.0]})
+    with pytest.raises(RuntimeError, match=r"1 values for v_invest_n, which has no column"):
+        pin_invest_decisions(pb, {"v_invest_n": node})
+    pin_invest_decisions(pb, {"v_invest_n": node.head(0)})  # no values: nothing to pin
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Review m3: a Benders value a solver tolerance outside a row bound of the whole model
+# ---------------------------------------------------------------------------------------------------------------
+
+
+@pytest.mark.solver
+def test_pin_band_keeps_a_value_just_below_a_binding_floor_feasible(tmp_path_factory, monkeypatch):
+    """wind_A must build at least 100 MW in y2030 (invest_min_period, a row) and builds exactly that.  Its value a
+    fraction of the band below the floor (a solver-tolerance miss, as a Benders master can leave), fixed exactly,
+    makes the LP infeasible (the row has no other column); :func:`pin_invest_decisions` bounds it to the
+    :data:`PIN_BAND` band, so the final LP solves, to the monolith's objective."""
+    from flextool.engine.solve import _benders_final
+
+    steps = _run(tmp_path_factory, alt="p287_floor_band", values=INVEST_FLOOR + _none("lh2_invest"),
+                 base_chain=INVEST_CHAIN, fixture_json=LH2_JSON)
+    fd = steps["lh2_invest"].flex_data
+    free = build(fd)
+    with axis_vocabulary(fd):
+        sol = _solve(free)
+        mono_obj = float(sol.obj)
+        frames = {n: utf8(sol.value(n)) for n in _pinned_present(free)}
+    inv = frames["v_invest_p"]
+    [wind] = inv.filter(pl.col("p") == "wind_A")["value"].to_list()
+    assert wind > 0
+    below = wind - 0.2 * PIN_BAND * max(1.0, wind)
+    shifted = {**frames, "v_invest_p": inv.with_columns(
+        value=pl.when(pl.col("p") == "wind_A").then(below).otherwise(pl.col("value")))}
+    with axis_vocabulary(fd):
+        with monkeypatch.context() as mp:
+            mp.setattr(_benders_final, "PIN_BAND", 0.0)  # fixed exactly
+            exact = build(fd)
+            pin_invest_decisions(exact, shifted)
+            assert not exact.solve().optimal  # the floor row cannot be met
+        banded = build(fd)
+        pin_invest_decisions(banded, shifted)
+        got = _solve(banded)
+    assert float(got.obj) == pytest.approx(mono_obj, rel=1e-6)
 
 
 # ---------------------------------------------------------------------------------------------------------------

@@ -295,8 +295,12 @@ through to the monolithic path** under the same solve name and the same
 - `pin_invest_decisions(pb, bres.invest_solution_vars)`
   (`engine/solve/_benders_final.py`) right after `build_flextool`, before
   Layer 2: `v_invest` / `v_divest` / `v_divest_built` / `v_extend` (`_p`,
-  `_n`) get `lower = upper = value` in real units, clamped into the
-  column's bounds (rounded for an integer family). The aggregates
+  `_n`) get the bounds `value ± PIN_BAND · max(1, |value|)` (`PIN_BAND`
+  = 1e-6) in real units, the value first clamped into the column's bounds
+  (an integer family: fixed at the rounded value). The band absorbs a
+  Benders value a solver tolerance outside a row bound of the whole model
+  (a floor, a group or cumulative limit whose columns are all pinned),
+  which fixed exactly would make presolve call the final LP infeasible. The aggregates
   `v_divested_built_*` / `v_extended_*` are defined by equalities and not
   pinned. A column without a value, a value without a column, a duplicate
   or a family the model lacks is an internal `RuntimeError`.
