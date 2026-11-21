@@ -151,7 +151,9 @@ warning and solves; `--scaling-guard off` does not check.  A warning is one
 console line naming the solve (W-0543 limits and bounds, W-0544 limits that
 cannot be scaled, W-0545 objective costs, W-0546 coefficients; see the
 warnings page); the message above, with the values and where they are,
-goes to the debug log (`--debug`).  It shows once per run for each solve,
+goes to the run's `_run.log` (not the console; `run_warnings.warn_grouped(...,
+run_log=True)` through `run_record.write_log_only`, a `LOG_ONLY_PREFIX` line
+for a pipe owner) and, with `--debug`, to the debug log.  It shows once per run for each solve,
 Benders region and kind of finding; a later roll whose finding becomes an
 error, or that gets a scale of its own, shows it again.  A commercial solver (Gurobi, CPLEX, Xpress, COPT) gets no
 FlexTool scaling, so the guard only warns there, judged at that solver's

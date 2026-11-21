@@ -469,3 +469,32 @@ def test_the_adjusted_exponent_log_is_once_per_run(caplog):
         adjust()
     logged = [r for r in caplog.records if "leaves the tolerance window" in r.getMessage()]
     assert len(logged) == 2
+
+
+def test_warn_mode_report_goes_to_the_run_log_not_the_console(caplog):
+    """Review M2 (owner): under ``--scaling-guard warn`` the console gets the one coded line and the run's
+    ``_run.log`` the whole report (without ``--debug``); with the debug log on, the debug log has it instead."""
+    import logging
+
+    from flextool import run_record, run_warnings
+
+    caplog.set_level(logging.INFO, logger=run_warnings.LOGGER_NAME)
+    logged: list[str] = []
+    run_record.set_log_only_sink(logged.append)
+    try:
+        _plan, out = _guard_of(_report(0.5, 1e18), mode="warn")
+        _guard.enforce(out, base_solve="s1")
+        console = [r.getMessage() for r in caplog.records if r.name == run_warnings.LOGGER_NAME]
+        assert console == ["Warning: limits and bounds do not fit the solver's accurate range; solved anyway "
+                           "('s1') [W-0544]"]
+        text = "\n".join(logged)
+        assert text.startswith("W-0544 s1: Solve s1 cannot be scaled")
+        for part in ("span 18.3 decades", "the smallest limit could be violated by up to 1.68"):
+            assert part in text, part
+        logged.clear()
+        caplog.set_level(logging.DEBUG, logger=run_warnings.LOGGER_NAME)
+        _behaviour_changes.start_run(None)
+        _guard.enforce(out, base_solve="s1")
+        assert logged == []
+    finally:
+        run_record.set_log_only_sink(None)

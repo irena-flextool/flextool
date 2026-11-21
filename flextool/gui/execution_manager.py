@@ -1288,10 +1288,12 @@ class ExecutionManager:
                     # Control characters inside a line are shown as \xNN in the log window and _run.log.
                     stripped = printable(line.rstrip("\r\n"))
                     if not owner.feed(stripped):
-                        # The engine's run-record marker: its record now says "running".
-                        with self._lock:
-                            job.run_record_folder = owner.folder
-                        self._notify_status_change(job)
+                        # The engine's run-record marker (its record now says "running"), or a line for the
+                        # run log only (not shown).
+                        if job.run_record_folder != owner.folder:
+                            with self._lock:
+                                job.run_record_folder = owner.folder
+                            self._notify_status_change(job)
                         continue
                     with self._lock:
                         job.stdout_lines.append(stripped)

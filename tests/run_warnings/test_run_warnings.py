@@ -154,6 +154,51 @@ def test_a_later_roll_logs_only_the_details_of_its_new_names(records):
     assert "W-0004 c2: new" in debug and "W-0004 c1: again" not in debug
 
 
+def test_a_repeat_of_an_entityless_code_logs_its_details(records):
+    """Review m5: W-0550 (no entity) for three failing rolls of one solve: one line, and the error of each roll in
+    the debug log (a repeat has no new name, but its name-less details are logged)."""
+    for k in (1, 2, 3):
+        run_warnings.warn_grouped("W-0550", solve=f"d_roll_{k}", step="loaded", effect="the solve ran cold",
+                                  details=f"in 'd_roll_{k}': error {k}")
+    debug = records()
+    assert [m for m in debug if m.endswith("[W-0550]")] == [
+        "Warning: warm-start basis not loaded for solve 'd'; the solve ran cold [W-0550]"]
+    for k in (1, 2, 3):
+        assert f"W-0550 in 'd_roll_{k}': error {k}" in debug
+
+
+def test_per_run_logs_the_details_of_the_new_names_only(records):
+    """Review nit 7: with ``per_run`` and no solve, a later line logs the details of its new names only."""
+    run_warnings.warn_grouped("W-0004", ["c1"], per_run=True, details={"c1": "first"})
+    run_warnings.warn_grouped("W-0004", ["c1", "c2"], per_run=True, details={"c1": "again", "c2": "new"})
+    debug = records()
+    assert "W-0004 c2: new" in debug and "W-0004 c1: again" not in debug
+
+
+def test_run_log_details_go_to_the_run_log_without_the_debug_log(caplog):
+    """``run_log=True``: the details also go to ``_run.log`` (the log-only sink) when the debug log is off; with
+    the debug log on they are in it, and not written twice."""
+    from flextool import run_record
+
+    lines: list[str] = []
+    run_record.set_log_only_sink(lines.append)
+    try:
+        caplog.set_level(logging.INFO, logger=run_warnings.LOGGER_NAME)
+        run_warnings.start_run()
+        run_warnings.warn_grouped("W-0543", ["s1"], details={"s1": "line 1\n  line 2"}, run_log=True)
+        with run_warnings.collecting():
+            run_warnings.warn_grouped("W-0545", ["s1"], details={"s1": "cost report"}, run_log=True)
+            assert lines == ["W-0543 s1: line 1", "  line 2"]
+        assert lines[-1] == "W-0545 s1: cost report"
+        run_warnings.warn_grouped("W-0546", ["s1"], details={"s1": "not for the run log"})
+        assert lines[-1] == "W-0545 s1: cost report"
+        caplog.set_level(logging.DEBUG, logger=run_warnings.LOGGER_NAME)
+        run_warnings.warn_grouped("W-0544", ["s1"], details={"s1": "debug"}, run_log=True)
+        assert lines[-1] == "W-0545 s1: cost report"
+    finally:
+        run_record.set_log_only_sink(None)
+
+
 # -- scopes -----------------------------------------------------------------------------------------------------
 
 

@@ -1185,6 +1185,9 @@ Every engine run (`cmd_run_flextool.main`, once its scenario and output folder a
   the owner (`RunLogOwner`, `_owner.py`) writes the log from there, hiding the marker. Without an owner (Spine
   Toolbox, `python -m flextool.cli.cmd_run_flextool`, a Python console) the engine copies its own Python streams
   (`_tee.py`, `log_capture: "python"`). The log keeps its first 64 KiB and last `FLEXTOOL_RUN_LOG_MAX_BYTES`.
+  A line for the log only (the scaling guard's report under its coded line: `run_warnings.warn_grouped(...,
+  run_log=True)`) goes through `run_record.write_log_only`: printed with `LOG_ONLY_PREFIX` for an owner, which
+  writes it without the prefix and does not show it; written to the `RunLogWriter` directly without one.
 - When the engine dies without finishing its status (a crash, a kill, a signal), the owner finishes it from the
   exit code (`classify_exit`: `killed`, `interrupted`, `crashed`). Without an owner a reader derives `abandoned` from
   a stale `running` (`effective_state`).

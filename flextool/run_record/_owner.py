@@ -52,6 +52,11 @@ STATUS_SCHEMA_VERSION = 1
 #: The line the engine prints once for its pipe owner, followed by ``{"folder": ..., "run_id": ...}`` (ASCII).
 MARKER = "##flextool-run-record## "
 
+#: A line the engine prints with this prefix goes to ``_run.log`` only (without the prefix): the pipe owner writes it
+#: there and does not show it (:meth:`RunLogOwner.feed`).  For a report that belongs in the log but would crowd the
+#: console (the scaling guard's report under a coded warning line).
+LOG_ONLY_PREFIX = "##flextool-log-only## "
+
 #: Set by a pipe owner in its direct child's environment; the engine reads and removes it.
 RUN_LOG_OWNER_ENV = "FLEXTOOL_RUN_LOG_OWNER"
 #: The number of bytes ``_run.log`` keeps from the end of a long log.
@@ -539,8 +544,24 @@ class RunLogOwner:
         self._buffer_size = 0
 
     def feed(self, line: str) -> bool:
-        """Take one output line; return whether it is shown (``False`` for the engine's marker)."""
+        """Take one output line; return whether it is shown (``False`` for the engine's marker and for a
+        :data:`LOG_ONLY_PREFIX` line, which goes to the log only, without its prefix)."""
         with self._lock:
+            if line.startswith(LOG_ONLY_PREFIX):
+                line = line[len(LOG_ONLY_PREFIX):]
+                if self._closed:
+                    return False
+                if not self._marker_seen:
+                    self._buffer_line(line)
+                    return False
+                writer = self._writer
+                if writer is not None and not writer.closed:
+                    try:
+                        writer.write_line(line)
+                    except OSError as exc:
+                        _logger.warning("Cannot write the run log in %s: %s", self.folder, exc)
+                        writer.close()
+                return False
             if self._closed:
                 return True
             if not self._marker_seen:

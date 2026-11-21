@@ -149,12 +149,18 @@ def _start_run_record(*, args, run_options, scenario_name, output_location, outp
     run_warnings.add_cases_listener(rec.add_warning_cases)
     writer = None
     restore_tee = None
+    from flextool._safe_text import printable
+
     if log_capture == "parent":
         print(run_record.format_marker(parquet_dir, rec.run_id), flush=True)
+        # A line for _run.log only: the pipe owner writes it there and does not show it.
+        run_record.set_log_only_sink(
+            lambda line: print(run_record.LOG_ONLY_PREFIX + printable(line), flush=True))
     else:
         try:
             writer = run_record.RunLogWriter(parquet_dir / run_record.RUN_LOG_FILE)
             restore_tee = run_record.install_tee(writer)
+            run_record.set_log_only_sink(lambda line, w=writer: w.write_line(printable(line)))
         except OSError as exc:
             logging.warning("Cannot write the run log in %s (%s); the run continues without it.", parquet_dir, exc)
             if writer is not None:
@@ -162,6 +168,7 @@ def _start_run_record(*, args, run_options, scenario_name, output_location, outp
                 writer = None
 
     def cleanup():
+        run_record.set_log_only_sink(None)
         if restore_tee is not None:
             restore_tee()
         if writer is not None:

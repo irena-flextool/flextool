@@ -510,7 +510,8 @@ def _format_bound_rhs(
 
 def enforce(outcome: GuardOutcome | None, *, base_solve: str) -> None:
     """Act on ``outcome``: show each warning once per run (a coded line,
-    W-0543..W-0546, naming the solve; its report goes to the debug log),
+    W-0543..W-0546, naming the solve; its report goes to the run's ``_run.log``
+    and the debug log),
     keyed by base solve, region, group and level (:func:`_warn_key`, so the
     rolls of a solve show it once), raise :class:`ScalingRangeError` for an
     error under ``error`` (or a Layer-2-caused error under
@@ -537,8 +538,10 @@ def enforce(outcome: GuardOutcome | None, *, base_solve: str) -> None:
         name = f"{name}, Benders region {outcome.region}"
     for m in outcome.messages:
         if mark_once(_warn_key(base_solve, outcome.region, m.group, m.level, outcome.adjusted_bound_scale)):
-            # The report (the span, where the extremes are, the violation) goes to the debug log.
-            run_warnings.warn_grouped(m.code or _code_of(m.group, m.level), [name], details={name: m.text})
+            # The console gets the coded line; the report (the span, where the extremes are, the violation) goes
+            # to the run's _run.log (and the debug log).
+            run_warnings.warn_grouped(m.code or _code_of(m.group, m.level), [name], details={name: m.text},
+                                      run_log=True)
 
 
 def _code_of(group: str, level: str) -> str:
