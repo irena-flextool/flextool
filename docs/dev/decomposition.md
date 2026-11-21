@@ -306,9 +306,15 @@ through to the monolithic path** under the same solve name and the same
   stay the Benders verdict (a non-converged solve stays `not_converged`).
   Accepted → `check_final_objective(obj, LB, UB)` (slack
   `1e-6 · max(|obj|, |LB|, |UB|)`; a non-finite bound is not checked); outside →
-  W-0572, results still written. Not accepted (or a `RuntimeError` /
-  `FlexToolUserError` from the child) → W-0572, return 0 (the Benders step
-  and its TIER-1 handoff stay).
+  W-0572, results still written. Not accepted, a solve outcome raised by
+  the solver path (`_subprocess_solve.SolveOutcomeError` /
+  `_solver_dispatch.FlexToolSolveOutcomeError`: a status without a
+  solution, the watchdog's stop, a HiGHS child that crashed or was killed)
+  or a `MemoryError` while the whole model is built or its MPS written →
+  W-0572, return 0 (the Benders step and its TIER-1 handoff stay). Any
+  other exception (an option the solver refuses, a missing binary or
+  licence, an internal error) propagates: the run fails as without
+  Benders.
 - Accepted: `write_outputs_for_solve` and `build_handoff_from_solution` as
   for any monolithic solve. The final step overwrites the Benders
   `OrchestrationStep` but keeps `is_benders = True`, the gap / tolerance /

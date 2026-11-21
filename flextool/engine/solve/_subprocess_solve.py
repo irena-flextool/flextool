@@ -437,6 +437,18 @@ def _generic_row_id(name: str) -> int | None:
 _DUAL_CAPABLE_SOLVERS = frozenset({"cplex"})
 
 
+class SolveOutcomeError(RuntimeError):
+    """The solver ran and ended without a usable solution: it reported a status without one (infeasible,
+    unbounded, a limit), it went past its time limit and FlexTool stopped it, or its process was stopped or
+    crashed without a solution file (out of memory, killed).
+
+    A solve *outcome*, as opposed to a configuration, licence or internal error (a missing binary, an option
+    the solver refuses, a file that does not line up with the LP: those stay plain ``RuntimeError`` /
+    ``FlexToolUserError``).  The final solve of a Benders solve turns only these into W-0572 and goes on
+    (``_orchestration._run_one``).
+    """
+
+
 class SubprocessSolutionMismatch(RuntimeError):
     """The solver's ``.sol`` does not line up with the LP that was written.
 
@@ -2398,7 +2410,7 @@ def _solve_highs_subprocess(
                 f"MPS+options preserved at {out_dir} for inspection" if not cleanup
                 else "its temporary files are removed"
             )
-            raise RuntimeError(
+            raise SolveOutcomeError(
                 f"the HiGHS child (--save-memory) for solve {solve_name!r} {failure}; {kept}"
             )
         optimal = cp.returncode == 0
@@ -2799,7 +2811,7 @@ def _solve_commercial_subprocess(
         if run.timed_out:
             from flextool.engine.solve._solver_dispatch import _WATCHDOG_FACTOR, _WATCHDOG_GRACE_S
 
-            raise RuntimeError(
+            raise SolveOutcomeError(
                 f"{solver_name!r}{via} did not stop at its own time limit of "
                 f"{time_limit:g} s for solve {solve_name!r}: FlexTool stopped it "
                 f"after {watchdog:g} s ({_WATCHDOG_FACTOR:g} x the limit + {_WATCHDOG_GRACE_S:g} s). {log_ref}"
@@ -2828,7 +2840,7 @@ def _solve_commercial_subprocess(
             # check reads free log text, and a size-limited licence's banner (COPT: "No license
             # found. Starting COPT with size limitations") is not a failure.
             if status_str in _NO_SOLUTION_REASONS:
-                raise RuntimeError(
+                raise SolveOutcomeError(
                     f"{solver_name!r} reports that solve {solve_name!r} "
                     f"{_NO_SOLUTION_REASONS[status_str]}; there is no solution "
                     f"to use. {log_ref}"

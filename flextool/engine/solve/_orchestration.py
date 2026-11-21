@@ -3396,9 +3396,27 @@ def _drive_cascade(
             if not recorded:
                 run_record.active().solve_benders_final(accepted=False, model_status=None, objective=None)
             run_warnings.warn("W-0572", solve=complete_solve_name, problem=problem, details=details)
+            # The Benders step stays the solve's step (the final solve's step would have replaced it): the next
+            # solve's cold-path slim releases its input data.
+            self._prev_step_key = complete_solve_name
             if self._later_solve_follows():
                 self._write_benders_invest_slice(complete_solve_name, bres, data)
             return 0
+
+        def _benders_final_out_of_memory(self, complete_solve_name: str, exc: BaseException, *, bres,
+                                         data) -> int:
+            """Building or writing the whole model of the final solve of Benders solve *complete_solve_name* ran
+            out of memory: W-0572 (it names ``--benders-final-solve off``), the Benders result stands
+            (:meth:`_benders_final_not_accepted`)."""
+            import gc
+
+            gc.collect()
+            _try_malloc_trim()
+            return self._benders_final_not_accepted(
+                complete_solve_name, problem="failed (out of memory; see --benders-final-solve off)",
+                details=f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__,
+                recorded=False, bres=bres, data=data,
+            )
 
         def _later_solve_follows(self) -> bool:
             """Whether a solve of the run comes after the one running (``_run_model`` sets the flag per solve;
@@ -4415,12 +4433,20 @@ def _drive_cascade(
                 self._release_warm_problem()
                 pb = Problem()
                 _phase_prof("build_start")
-                build_flextool(pb, data, scale_the_objective=effective_obj_scale,
-                               solve_name=complete_solve_name)
-                if _bfinal is not None:
-                    # In the model's own units, before Layer 2 scales the columns.
-                    from flextool.engine.solve._benders_final import pin_invest_decisions
-                    pin_invest_decisions(pb, _bfinal.invest_solution_vars)
+                try:
+                    build_flextool(pb, data, scale_the_objective=effective_obj_scale,
+                                   solve_name=complete_solve_name)
+                    if _bfinal is not None:
+                        # In the model's own units, before Layer 2 scales the columns.
+                        from flextool.engine.solve._benders_final import pin_invest_decisions
+                        pin_invest_decisions(pb, _bfinal.invest_solution_vars)
+                except MemoryError as _mem_exc:
+                    if _bfinal is None:
+                        raise
+                    # The whole model of the final solve does not fit in the memory left.
+                    pb = None
+                    return self._benders_final_out_of_memory(complete_solve_name, _mem_exc,
+                                                             bres=_bfinal, data=data)
                 _phase_prof("build_done")
                 if _memrec_local is not None and _emit_phase:
                     _memrec_local.checkpoint(
@@ -4783,13 +4809,24 @@ def _drive_cascade(
                         ranges=_ranges_for_l1, layer2_plan=_autoscale_layer2_plan,
                         scaling_config=_scaling_cfg,
                     )
-                    from flextool.engine.solve._solver_dispatch import FlexToolUserError
-                    if _bfinal is None or not isinstance(_solve_exc, (RuntimeError, FlexToolUserError)):
+                    if _bfinal is None:
                         raise
-                    # The solver process of the final solve stopped (out of memory, killed) or gave no
-                    # solution: the Benders result stands.
+                    from flextool.engine.solve._solver_dispatch import FlexToolSolveOutcomeError
+                    from flextool.engine.solve._subprocess_solve import SolveOutcomeError
+                    if isinstance(_solve_exc, MemoryError):
+                        # Writing the MPS of the whole model ran out of memory.
+                        pb = None
+                        return self._benders_final_out_of_memory(complete_solve_name, _solve_exc,
+                                                                 bres=_bfinal, data=data)
+                    if not isinstance(_solve_exc, (SolveOutcomeError, FlexToolSolveOutcomeError)):
+                        # A configuration, licence or internal error (an option the solver refuses, a missing
+                        # binary or licence, a solution file that does not line up): the run fails, as it
+                        # would without Benders.  Only a genuine solve outcome is a failed final solve.
+                        raise
+                    # The solver ended without a solution (infeasible, unbounded, a limit, its process stopped
+                    # or killed): the Benders result stands.
                     return self._benders_final_not_accepted(
-                        complete_solve_name, problem="failed (the solver process stopped)",
+                        complete_solve_name, problem="failed (the solver gave no solution)",
                         details=str(_solve_exc), recorded=False, bres=_bfinal, data=data,
                     )
                 if _autoscale_hook is not None and _autoscale_hook.called:

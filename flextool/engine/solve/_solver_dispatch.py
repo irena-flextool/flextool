@@ -1016,6 +1016,13 @@ class FlexToolUserError(Exception):
     """
 
 
+class FlexToolSolveOutcomeError(FlexToolUserError):
+    """The solver ran and ended without a usable solution (infeasible, unbounded, a limit, stopped by the
+    watchdog): a :class:`FlexToolUserError` for every caller, which the final solve of a Benders solve tells
+    apart from a configuration or licence error (``_subprocess_solve.SolveOutcomeError`` on the commercial
+    path)."""
+
+
 # Per-solver native parameter names for the three "convenience" knobs
 # normalised by FlexTool.  Anything outside these three goes through
 # untranslated via ``SolverConfig.options``.  The one table for the
@@ -1711,6 +1718,12 @@ def run_one_solve(
         )
     except RuntimeError as e:
         msg = str(e)
+        from flextool.engine.solve._subprocess_solve import SolveOutcomeError
+
+        if isinstance(e, SolveOutcomeError):
+            raise FlexToolSolveOutcomeError(
+                f"Solver {solver_config.name!r} failed for solve {solve_name or 'solve'!r}: {msg}"
+            ) from e
         if msg.startswith("LICENSE: "):
             user_msg = (
                 f"Solver {solver_config.name!r} subprocess failed a "

@@ -25,6 +25,10 @@ the Benders solve (the values come from the twin, never from the new code).
 * **T9** (P3, the chained half) the final solve of the chained Benders solve not accepted: W-0572 and the same
   investment-only results as T1.
 
+* **M1** (review) the final solve's solver path raises: a solve outcome (``SolveOutcomeError`` /
+  ``FlexToolSolveOutcomeError``) or a ``MemoryError`` (writing the MPS, building the model) is W-0572 and exit 0;
+  a licence, configuration or internal error fails the run (non-zero exit, no W-0572).
+
 The runs are CLI subprocesses (``cmd_run_flextool``), started together; T9 runs the CLI in this process.
 """
 from __future__ import annotations
@@ -491,3 +495,102 @@ def test_chained_final_solve_not_accepted_writes_the_investment_only_results(run
     entry = next(s for s in rejected.status()["solves"] if s["name"] == INVEST_SOLVE)
     assert entry["acceptance"] == "converged" and entry["benders"]["final_solve"]["accepted"] is False
 
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Review M1: only a genuine solve outcome (or running out of memory) is a failed final solve; a configuration,
+# licence or internal error fails the run
+# ---------------------------------------------------------------------------------------------------------------
+
+
+def _cli_in_process(alt: str, monkeypatch, tmp_path_factory, capsys, caplog) -> tuple[int, str]:
+    """``cmd_run_flextool`` on the trade-invest chain (one Benders solve, the last), in this process: the exit
+    code and the console + log text."""
+    from flextool.cli import cmd_run_flextool
+
+    url, scenario = make_db(tmp_path_factory, alt=alt, values=[], base_chain=TRADE_CHAIN, fixture_json=TRADE_JSON)
+    root = tmp_path_factory.mktemp(f"{alt}_run")
+    monkeypatch.delenv("FLEXTOOL_BENDERS_FINAL_SOLVE", raising=False)
+    monkeypatch.setattr(sys, "argv", [
+        "cmd_run_flextool", url, "--scenario-name", scenario, "--work-folder", str(root / "work"),
+        "--output-location", str(root / "out"), "--write-methods", "csv",
+    ])
+    code = 0
+    try:
+        cmd_run_flextool.main()
+    except SystemExit as exc:
+        code = exc.code or 0
+    out = capsys.readouterr()
+    return code, out.out + out.err + "\n".join(r.getMessage() for r in caplog.records)
+
+
+def _final_solve_raises(monkeypatch, exc: BaseException) -> list[str]:
+    """The final solve's ``run_one_solve`` raises *exc* (the Benders loop does not go through it)."""
+    from flextool.engine.solve import _solver_dispatch
+
+    calls: list[str] = []
+
+    def failing(pb, cfg, **kwargs):
+        calls.append(kwargs.get("solve_name"))
+        raise exc
+
+    monkeypatch.setattr(_solver_dispatch, "run_one_solve", failing)
+    return calls
+
+
+@pytest.mark.parametrize("make_exc", [
+    lambda: __import__("flextool.engine.solve._subprocess_solve", fromlist=["x"]).SolveOutcomeError(
+        "'gurobi' reports that solve 'lh2_trade_invest' is infeasible; there is no solution to use."),
+    lambda: __import__("flextool.engine.solve._solver_dispatch", fromlist=["x"]).FlexToolSolveOutcomeError(
+        "Solver 'gurobi' failed for solve 'lh2_trade_invest': did not stop at its own time limit"),
+], ids=["outcome", "outcome_via_dispatch"])
+def test_final_solve_without_a_solution_is_w0572_and_exit_0(make_exc, restore_env, monkeypatch, tmp_path_factory,
+                                                             capsys, caplog):
+    calls = _final_solve_raises(monkeypatch, make_exc())
+    code, text = _cli_in_process("m1_outcome", monkeypatch, tmp_path_factory, capsys, caplog)
+    assert calls == [TRADE_SOLVE], calls
+    assert code == 0, text
+    assert "failed (the solver gave no solution) [W-0572]" in text, text
+
+
+@pytest.mark.parametrize("make_exc", [
+    lambda: __import__("flextool.engine.solve._solver_dispatch", fromlist=["x"]).FlexToolUserError(
+        "Solver 'gurobi' subprocess failed a license check.  Details: no licence."),
+    lambda: RuntimeError("'gurobi' CLI binary ('gurobi_cl') was not found on $PATH"),
+    lambda: ValueError("an internal error"),
+], ids=["licence", "configuration", "internal"])
+def test_final_solve_configuration_or_internal_error_fails_the_run(make_exc, restore_env, monkeypatch,
+                                                                    tmp_path_factory, capsys, caplog):
+    calls = _final_solve_raises(monkeypatch, make_exc())
+    code, text = _cli_in_process("m1_config", monkeypatch, tmp_path_factory, capsys, caplog)
+    assert calls == [TRADE_SOLVE], calls
+    assert code != 0, text
+    assert "[W-0572]" not in text, text
+
+
+def test_final_solve_out_of_memory_writing_the_mps_is_w0572(restore_env, monkeypatch, tmp_path_factory, capsys,
+                                                              caplog):
+    _final_solve_raises(monkeypatch, MemoryError())
+    code, text = _cli_in_process("m1_mem_write", monkeypatch, tmp_path_factory, capsys, caplog)
+    assert code == 0, text
+    assert "failed (out of memory; see --benders-final-solve off) [W-0572]" in text, text
+
+
+def test_final_solve_out_of_memory_building_the_model_is_w0572(restore_env, monkeypatch, tmp_path_factory, capsys,
+                                                                 caplog):
+    from flextool.engine.model import core
+
+    real = core.build_flextool
+    calls: list[str] = []
+
+    def failing(pb, data, **kwargs):
+        if kwargs.get("solve_name") == TRADE_SOLVE:  # the final solve (the Benders loop names no solve)
+            calls.append(TRADE_SOLVE)
+            raise MemoryError("Unable to allocate 40.0 GiB")
+        return real(pb, data, **kwargs)
+
+    monkeypatch.setattr(core, "build_flextool", failing)
+    code, text = _cli_in_process("m1_mem_build", monkeypatch, tmp_path_factory, capsys, caplog)
+    assert calls == [TRADE_SOLVE], calls
+    assert code == 0, text
+    assert "failed (out of memory; see --benders-final-solve off) [W-0572]" in text, text
