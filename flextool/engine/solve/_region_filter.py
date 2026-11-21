@@ -784,13 +784,39 @@ _GROUP_LIMIT_PARAM_FIELDS: tuple[str, ...] = (
 )
 
 
-def _limit_groups(data: FlexData) -> set[str]:
-    """The groups that carry an investment, retirement or cumulative-capacity limit (:data:`_GROUP_LIMIT_SET_FIELDS`)."""
-    out: set[str] = set()
+#: The group limit Params of :data:`_GROUP_LIMIT_PARAM_FIELDS` that are minima (the others are maxima).
+_GROUP_LIMIT_MIN_FIELDS: frozenset[str] = frozenset(f for f in _GROUP_LIMIT_PARAM_FIELDS if "_min_" in f)
+
+
+def _limit_groups(data: FlexData) -> dict[str, str]:
+    """``{group: "min" | "max"}``: the groups whose investment, retirement or cumulative-capacity limit has a value
+    that binds a sum over the group's members ("min" when one of them is a minimum).
+
+    A group counts only with an ``invest_method`` that enables its limit (it is in a set of
+    :data:`_GROUP_LIMIT_SET_FIELDS`) **and** a value of a limit parameter (:data:`_GROUP_LIMIT_PARAM_FIELDS`) in
+    the solve: a method alone (or a value in an alternative outside the scenario) makes no row.  A minimum is a
+    value > 0 (the readers drop 0 and ``-inf``); a maximum a finite value > 0: ``inf`` is no limit, and a maximum
+    of 0 splits exactly between regions (each region's members then build or retire nothing, as the whole group).
+    """
+    enabled: set[str] = set()
     for fld in _GROUP_LIMIT_SET_FIELDS:
         f = getattr(data, fld, None)
         if f is not None and f.height > 0 and "g" in f.columns:
-            out |= {str(g) for g in f.get_column("g").to_list()}
+            enabled |= {str(g) for g in f.get_column("g").to_list()}
+    out: dict[str, str] = {}
+    if not enabled:
+        return out
+    for fld in _GROUP_LIMIT_PARAM_FIELDS:
+        p = getattr(data, fld, None)
+        frame = getattr(p, "frame", None)
+        if frame is None or frame.height == 0 or "g" not in frame.columns or "value" not in frame.columns:
+            continue
+        value = pl.col("value").cast(pl.Float64)
+        binding = (value > 0) if fld in _GROUP_LIMIT_MIN_FIELDS else (value.is_finite() & (value > 0))
+        kind = "min" if fld in _GROUP_LIMIT_MIN_FIELDS else "max"
+        for g in frame.filter(binding).get_column("g").cast(pl.Utf8).unique().to_list():
+            if g in enabled and out.get(g) != "min":
+                out[g] = kind
     return out
 
 
@@ -806,7 +832,8 @@ def _validate_feature_groups_in_one_region(
     the requirement (the whole margin, inertia limit or share) would apply once per region instead of once for the
     group.  Only the families active in the solve are checked (``_group_slack.has_*``: a capacity margin needs
     investment periods; ``reduce_system_detail_method`` may leave inertia and non-synchronous out).  Nodes in no
-    region (shared, replicated into every region) do not count.  A limit group (:data:`_GROUP_LIMIT_SET_FIELDS`)
+    region (shared, replicated into every region) do not count.  A limit group (:func:`_limit_groups`: a limit
+    value set, not only the method)
     sums over its member entities (``group_entity``: nodes and processes, placed by ``region_nodes`` /
     ``region_procs``): each region would bound its own members' share by the whole limit.
     """
@@ -836,6 +863,7 @@ def _validate_feature_groups_in_one_region(
             if len(regions) > 1:
                 errors.append(f"{what} group {g!r} has nodes in regions {', '.join(regions)}")
     limit_groups = _limit_groups(data)
+    max_errors: list[str] = []
     ge = data.group_entity
     if limit_groups and ge is not None and ge.height > 0:
         entity_region = dict(region_of)
@@ -848,11 +876,20 @@ def _validate_feature_groups_in_one_region(
         for g in sorted(limit_groups):
             regions = sorted({entity_region[e] for e in entity_members.get(g, ()) if e in entity_region})
             if len(regions) > 1:
-                errors.append(f"investment limit group {g!r} has entities in regions {', '.join(regions)}")
-    if errors:
+                if limit_groups[g] == "min":
+                    errors.append(f"investment limit group {g!r} has entities in regions {', '.join(regions)}")
+                else:
+                    max_errors.append(f"investment maximum group {g!r} has entities in regions "
+                                      f"{', '.join(regions)}")
+    if errors or max_errors:
+        why = []
+        if errors:
+            why.append("each region would require all of a group's requirement")
+        if max_errors:
+            why.append("each region could use all of a group's maximum")
         raise RuntimeError(
-            "split: " + "; ".join(errors) + ". A group's requirement cannot be split between Benders region "
-            "subproblems (each region would require all of it). Use one group per region.")
+            "split: " + "; ".join(errors + max_errors) + ". A group's limit cannot be split between Benders "
+            f"region subproblems ({'; '.join(why)}). Use one group per region.")
 
 
 def _co2_master_partition(
@@ -2369,6 +2406,58 @@ def _validate_cross_region_connections(data: FlexData, cross: pl.DataFrame,
             "half-flows in each region: " + "; ".join(problems) + ".  Remove these from the connections, put "
             "both of their nodes in one region, or leave them out of the solve (reduce_system_detail_method "
             "reserves, reduce_unit_detail_method integers for exact, online for online variables).")
+    flow_refs = _cross_connection_flow_references(data, procs)
+    if flow_refs:
+        raise FlexToolConfigError(
+            "Benders decomposition: the flow of a connection between regions (or between a region and the "
+            "master) cannot be in a flow limit or a user constraint, because the split replaces the connection "
+            "with half-flows in each region, which neither sees: " + "; ".join(flow_refs) + ".  Put both nodes "
+            "of the connection in one region, or leave the connection out of the flowGroup limit or the user "
+            "constraint.")
+
+
+#: The flowGroup flow limits (``_cumulative_invest``: maxCumulative_flow_*, maxInstant_flow, ...): Params ``(g, ...)``.
+_FLOW_LIMIT_PARAM_FIELDS: tuple[str, ...] = (
+    "p_group_max_cumulative_flow", "p_group_min_cumulative_flow",
+    "pd_max_cumulative_flow", "pd_min_cumulative_flow",
+    "pdt_max_instant_flow", "pdt_min_instant_flow",
+)
+
+
+def _cross_connection_flow_references(data: FlexData, procs: set[str]) -> list[str]:
+    """What sees the flow of the severed connections *procs*: ``"flowGroup g (connection p)"`` for a flow-limited
+    group with the connection at only one of its member nodes (``group_process_node``; with both ends in the
+    group the connection's flow cancels and the limit does not depend on it), ``"user constraint cn (connection
+    p)"`` for a ``constraint_flow_coeff`` on it (``flow_constraint_idx``)."""
+    out: list[str] = []
+    gpn = getattr(data, "group_process_node", None)
+    limited: set[str] = set()
+    for fld in _FLOW_LIMIT_PARAM_FIELDS:
+        frame = getattr(getattr(data, fld, None), "frame", None)
+        if frame is not None and frame.height > 0 and "g" in frame.columns:
+            limited |= {str(g) for g in frame.get_column("g").cast(pl.Utf8).to_list()}
+    if limited and gpn is not None and gpn.height > 0:
+        ends: dict[str, set[str]] = {}
+        pss = data.process_source_sink
+        if pss is not None:
+            for p, src, snk in pss.select(pl.col("p").cast(pl.Utf8), pl.col("source").cast(pl.Utf8),
+                                          pl.col("sink").cast(pl.Utf8)).iter_rows():
+                if p in procs:
+                    ends.setdefault(p, set()).update((src, snk))
+        members: dict[tuple[str, str], set[str]] = {}
+        for g, p, n in gpn.select(pl.col("g").cast(pl.Utf8), pl.col("p").cast(pl.Utf8),
+                                  pl.col("n").cast(pl.Utf8)).iter_rows():
+            if g in limited and p in procs:
+                members.setdefault((g, p), set()).add(n)
+        for (g, p), nodes in sorted(members.items()):
+            if not ends.get(p, set()) <= nodes:
+                out.append(f"flowGroup {g!r} (connection {p!r})")
+    fci = getattr(data, "flow_constraint_idx", None)
+    if fci is not None and fci.height > 0 and "cn" in fci.columns:
+        hits = {(str(cn), str(p)) for p, cn in fci.select(pl.col("p").cast(pl.Utf8),
+                                                            pl.col("cn").cast(pl.Utf8)).iter_rows() if p in procs}
+        out += [f"user constraint {cn!r} (connection {p!r})" for cn, p in sorted(hits)]
+    return out
 
 
 def _warn_integer_region(region: str, rdata: FlexData) -> None:

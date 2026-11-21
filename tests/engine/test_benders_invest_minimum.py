@@ -126,3 +126,62 @@ def test_a_group_invest_minimum_straddling_regions_is_refused(tmp_path_factory) 
     with pytest.raises(RuntimeError, match=r"investment limit group 'wind_AB' has entities in regions "
                                            r"region_A, region_B"):
         run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp("r286_group_w"))
+
+
+def _run_with(tmp_path_factory, alt: str, values: list, entities: list):
+    from flextool.engine import run_chain_from_db
+
+    url, scen = make_db(tmp_path_factory, alt=alt, values=values, base_chain=BASE_CHAIN, entities=entities,
+                        fixture_json=LH2_JSON)
+    return run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"))
+
+
+_WIND_AB = [["group", "wind_AB", None], ["group__unit", ["wind_AB", WIND], None],
+            ["group__unit", ["wind_AB", "wind_B"], None]]
+
+
+@pytest.mark.solver
+def test_a_straddling_group_with_only_a_method_is_not_refused(tmp_path_factory) -> None:
+    """Review m1: a group over wind_A (region_A) and wind_B (region_B) with ``invest_method`` and no limit value
+    makes no limit row, so split does not refuse it: the Benders solve runs."""
+    values = [["group", "wind_AB", "invest_method", b64("invest_total", "str")],
+              ["unit", "wind_B", "invest_method", b64("invest_total", "str")],
+              ["unit", WIND, "invest_method", b64("invest_total", "str")]]
+    steps = _run_with(tmp_path_factory, "m1_method_only", values, _WIND_AB)
+    assert any(s.is_benders for s in steps.values())
+
+
+@pytest.mark.solver
+def test_a_group_invest_maximum_straddling_regions_is_refused_as_a_maximum(tmp_path_factory) -> None:
+    """Review m2: a straddling group with only a maximum is refused too (each region could use the whole maximum),
+    with a message that names it a maximum; a maximum of 0 splits exactly and is not refused."""
+    values = [["group", "wind_AB", "invest_method", b64("invest_total", "str")],
+              ["unit", "wind_B", "invest_method", b64("invest_total", "str")],
+              ["unit", WIND, "invest_method", b64("invest_total", "str")]]
+    with pytest.raises(RuntimeError, match=r"investment maximum group 'wind_AB' has entities in regions region_A, "
+                                           r"region_B.*each region could use all of a group's maximum"):
+        _run_with(tmp_path_factory, "m2_max", values + [["group", "wind_AB", "invest_max_total",
+                                                          b64(50.0, "float")]], _WIND_AB)
+    steps = _run_with(tmp_path_factory, "m2_max0", values + [["group", "wind_AB", "invest_max_total",
+                                                               b64(0.0, "float")]], _WIND_AB)
+    assert any(s.is_benders for s in steps.values())
+
+
+@pytest.mark.solver
+@pytest.mark.parametrize("what", ["flow_limit", "user_constraint"])
+def test_a_flow_limit_or_user_constraint_on_a_cross_region_pipe_is_refused(what, tmp_path_factory) -> None:
+    """Review m9: pipe_AB (lh2_A in region_A to lh2_B in region_B) becomes half-flows in each region, which no flow
+    limit and no user constraint sees: refused instead of silently dropped."""
+    if what == "flow_limit":
+        entities = [["flowGroup", "pipes", None], ["flowGroup__connection__node", ["pipes", "pipe_AB", "lh2_B"], None]]
+        values = [["flowGroup", "pipes", "max_instant_flow", b64(1.0e6, "float")]]
+        match = r"flowGroup 'pipes' \(connection 'pipe_AB'\)"
+    else:
+        entities = [["constraint", "pipe_cap", None], ["connection__node", ["pipe_AB", "lh2_B"], None]]
+        values = [["constraint", "pipe_cap", "sense", b64("less_than", "str")],
+                  ["constraint", "pipe_cap", "constant", b64(1.0e6, "float")],
+                  ["connection__node", ["pipe_AB", "lh2_B"], "constraint_flow_coeff",
+                   b64({"index_type": "str", "index_name": "constraint", "data": [["pipe_cap", 1.0]]}, "map")]]
+        match = r"user constraint 'pipe_cap' \(connection 'pipe_AB'\)"
+    with pytest.raises(Exception, match=match):
+        _run_with(tmp_path_factory, f"m9_{what}", values, entities)
