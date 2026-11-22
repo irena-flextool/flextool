@@ -11,7 +11,10 @@ history and the ``invest_methods`` list of a database that step 22 hit (as the d
 4. "after" values are written with spinedb_api (``cumulative_limits`` resolves to R, as in a real buggy file).
 
 The siblings keep the schema's commit (2, older than the session).  No ``tests.db_utils`` import, so the polars
-string cache stays on.  TODO(v5.0.0): remove with W-0490.
+string cache stays on.  TODO(v5.0.0): remove with W-0490 (except :func:`make_lost_defaults`, part B).
+
+:func:`make_lost_defaults` gives a version 82 copy of the schema database whose named list defaults are ``NULL``,
+as after an upgrade before 4.6.3 (part B of the tool, the run note W-0491).
 """
 from __future__ import annotations
 
@@ -81,6 +84,92 @@ def write_values(path: Path, items) -> None:
             db.add_parameter_value(entity_class_name=cls, entity_byname=(entity,), parameter_definition_name=
                                    "invest_method", alternative_name=alternative, value=value, type=typ)
         db.commit_session("Updated")
+
+
+def write_items(path: Path, values=(), scenarios=None) -> None:
+    """``(class, entity, parameter, alternative, value)`` values and ``{scenario: [alternative, ...]}`` (lowest rank
+    first), written with spinedb_api in one commit; entities (active in the value's alternative) and alternatives
+    are added as needed."""
+    if not values and not scenarios:
+        return
+    from spinedb_api import to_database
+
+    from flextool.update_flextool.db_handle import open_database_mapping
+
+    with open_database_mapping(f"sqlite:///{path}") as db:
+        alternatives = {a for _, _, _, a, _ in values} | {a for alts in (scenarios or {}).values() for a in alts}
+        for name in sorted(alternatives):
+            if not db.get_items("alternative", name=name):
+                db.add_alternative(name=name)
+        for cls, entity, param, alternative, value in values:
+            if not db.get_items("entity", entity_class_name=cls, name=entity):
+                db.add_entity(entity_class_name=cls, name=entity)
+            if not db.get_items("entity_alternative", entity_class_name=cls, entity_byname=(entity,),
+                                alternative_name=alternative):
+                db.add_entity_alternative(entity_class_name=cls, entity_byname=(entity,),
+                                          alternative_name=alternative, active=True)
+            val, typ = to_database(value)
+            db.add_parameter_value(entity_class_name=cls, entity_byname=(entity,), parameter_definition_name=param,
+                                   alternative_name=alternative, value=val, type=typ)
+        for scenario, alts in (scenarios or {}).items():
+            db.add_scenario(name=scenario)
+            for rank, alternative in enumerate(alts, start=1):
+                db.add_scenario_alternative(scenario_name=scenario, alternative_name=alternative, rank=rank)
+        db.commit_session("Updated")
+
+
+FINGERPRINT = "Added cumulative investments and parameter value types"
+FINGERPRINT_DATE = "2024-08-28"
+V77_COMMIT = "v77: storage_start_end_method default fix_nothing"
+V78_COMMIT = "v78: descriptions"
+UPGRADE_DATE = "2025-10-01"
+
+
+@dataclass(frozen=True)
+class LostCase:
+    """A made-up v82 file with lost list defaults and the commit ids its construction gave (the tests' oracle)."""
+
+    path: Path
+    emptied_commit: int  # the commit of the emptied definitions (a migration step)
+    v77_commit: int | None
+    last_version_commit: int
+
+
+def clear_defaults(path: Path, names, commit: int | None) -> None:
+    """Set the ``class.parameter`` definitions *names* to a ``NULL`` default with commit *commit*."""
+    for name in names:
+        cls, param = name.split(".")
+        rows = sql(path, "UPDATE parameter_definition SET default_value = NULL, default_type = NULL, commit_id = ? "
+                         "WHERE name = ? AND entity_class_id = (SELECT id FROM entity_class WHERE name = ?) "
+                         "RETURNING id", (commit, param, cls))
+        assert len(rows) == 1, name
+
+
+def make_lost_defaults(tmp_path: Path, names, fingerprint: bool = True, v77: bool = True, *, schema_db=None,
+                       name: str = "lost.sqlite", before=(), after=(), scenarios=None) -> LostCase:
+    """A version 82 copy of the schema database (*schema_db*, built here when ``None``) whose ``class.parameter``
+    defaults *names* are ``NULL``.  History by raw ``sqlite3``: *before* values (:func:`write_items`, with
+    *scenarios*), the FlexTool 3.x v22 step commit (the fingerprint, dated 2024-08-28) and the version commit
+    →22 when *fingerprint*, the v77 step commit when *v77*, the v78 step commit (the emptied definitions'
+    commit, as on real files) and the version commit →82; then *after* values."""
+    path = tmp_path / name
+    if schema_db is None:
+        from flextool.update_flextool.initialize_database import initialize_database
+
+        schema_db = tmp_path / f"{name}.schema.sqlite"
+        initialize_database(str(Path(__file__).resolve().parents[2] / "flextool" / "schemas" / "spinedb_schema.json"),
+                            str(schema_db))
+    shutil.copy2(Path(str(schema_db).removeprefix("sqlite:///")), path)
+    write_items(path, before, scenarios)
+    if fingerprint:
+        add_commit(path, FINGERPRINT, FINGERPRINT_DATE)
+        add_commit(path, VERSION_PREFIX + "22", FINGERPRINT_DATE)
+    v77_commit = add_commit(path, V77_COMMIT, UPGRADE_DATE) if v77 else None
+    emptied = add_commit(path, V78_COMMIT, UPGRADE_DATE)
+    clear_defaults(path, names, emptied)
+    last = add_commit(path, VERSION_PREFIX + "82", UPGRADE_DATE)
+    write_items(path, after)
+    return LostCase(path, emptied, v77_commit, last)
 
 
 def _repoint(path: Path, old: int, new: int) -> None:

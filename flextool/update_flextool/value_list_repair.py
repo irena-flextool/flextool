@@ -225,3 +225,23 @@ def _detect(con: sqlite3.Connection, f: vlh.Finding, base: dict) -> Analysis:
             return Analysis(state=RENAMED_BACK, h=r.commit, lost=r.value, position_proof=True,
                             restore=() if appended in values else (appended,), **{**base, "c": anchors[0]})
     return Analysis(state=UNCLEAR, reason="the list matches no known pattern", **base)
+
+
+def all_suspects(a: Analysis) -> tuple:
+    """Every suspect of the analysed snapshot in one list: part A (W-0490, ``value_list_suspects.suspects``), then
+    part B (``list_default_restore.part_b_suspects``: empty shipped defaults and storage nodes).  A definition that
+    is in both (an ``invest_method`` default on a W-0490 hit) is part A's only."""
+    from flextool.update_flextool.list_default_restore import part_b_suspects
+    from flextool.update_flextool.value_list_suspects import suspects
+
+    part_a = suspects(a)
+    seen = {s.item for s in part_a}
+    return part_a + tuple(s for s in part_b_suspects(a) if s.item not in seen)
+
+
+def part_b_line(a: Analysis) -> str:
+    """The line to print instead of part B for a snapshot older than the current data version (``""`` otherwise)."""
+    from flextool.update_flextool import FLEXTOOL_DB_VERSION
+    from flextool.update_flextool.list_default_restore import MIGRATE_FIRST
+
+    return MIGRATE_FIRST if a.version < FLEXTOOL_DB_VERSION else ""

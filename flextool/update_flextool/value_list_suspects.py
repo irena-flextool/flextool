@@ -72,6 +72,7 @@ class Context:
     relying_cost: int = 0
     relying_cap: int = 0
     uncapped: bool = False  # the reference reads cumulative_limits
+    invest: bool = True  # False for a part B suspect: no invest_cost / cap fields in the text
 
     @property
     def inert(self) -> bool:
@@ -79,11 +80,15 @@ class Context:
         return self.relying is None and not self.scenarios
 
     def text(self) -> str:
-        if self.relying is not None:
+        if self.relying is not None and not self.invest:
+            out = f"{self.relying} entities rely on it"
+        elif self.relying is not None:
             out = (f"{self.relying} entities rely on it: {self.relying_cost} with invest_cost, {self.relying_cap} "
                    "with a cumulative cap")
             if self.uncapped and self.relying > self.relying_cap:
                 out += f" (without one: {_UNCAPPED})"
+        elif not self.invest:
+            out = f"scenarios: {', '.join(self.scenarios)}" if self.scenarios else "scenarios: none (inert)"
         else:
             cap = "cumulative cap yes" if self.cap else (
                 f"no cumulative cap: {_UNCAPPED}" if self.uncapped else "cumulative cap no")
@@ -98,7 +103,8 @@ class Context:
 
 @dataclass(frozen=True)
 class Suspect:
-    """One item the user answers.  *item* is ``pv:<parameter_value id>`` or ``def:<definition id>``; *current* the
+    """One item the user answers.  *item* is ``pv:<parameter_value id>``, ``def:<definition id>`` or (part B)
+    ``sn:<node entity id>:<alternative id>``; *current* the
     member its reference reads now in its own list *list_id* (``""``: no member); *suggestion* the pre-selected
     answer (``set:<member>``) or ``None``; *reason* why (a class default); *keep_text* what ``keep`` means."""
 
@@ -118,6 +124,7 @@ class Suspect:
     reason: str = ""
     keep_text: str = ""
     archive: str | None = None  # the archive's member (archive mode)
+    part_b: bool = False  # an empty shipped default or a storage node (``list_default_restore``)
 
     @property
     def certain(self) -> bool:
@@ -132,6 +139,8 @@ class Group:
 
 def similarity_key(s: Suspect) -> tuple:
     c = s.context
+    if s.part_b and s.kind == DEFAULT:  # one question "restore N shipped defaults" per label
+        return (s.kind, "part B", s.label)
     return (s.kind, s.cls, s.label, s.suggestion, s.archive, c.invest_cost, c.cap, c.inert)
 
 
