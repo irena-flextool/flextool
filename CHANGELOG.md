@@ -16,6 +16,13 @@ connection or a line of a `dc_power_flow_with_angles` group that has an `efficie
   efficiency converts between the units of the nodes (e.g. MWh to t) and cannot model losses (W-0589, printed
   when it is not 1). For losses, use `transfer_method` *regular* or *exact*; for a variable cost, also
   *variable_cost_only*.
+- **A database whose migration history an old spinedb_api bug may have hit is named (W-0490).** spinedb_api
+  0.31 to 0.34 (in use until 2025-07-07) could overwrite the first member of a value list when a migration added
+  one; migration step 22 did that to `invest_methods` on databases migrated from data version 21, so `not_allowed`
+  and every default and value that used it read `cumulative_limits` (invest and retire without limit). FlexTool
+  reads the database's migration dates and warns at every run and when the GUI opens such a database; it changes
+  nothing. The warnings page has a checklist. The warning is temporary (removed in 5.0.0). A migration step that
+  adds value list members now stops if an existing member changes.
 
 ## Unreleased
 

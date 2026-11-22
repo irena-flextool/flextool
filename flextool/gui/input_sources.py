@@ -71,6 +71,8 @@ class InputSourceManager:
         # Frozen sources the user chose not to migrate this session: not asked
         # again, shown as "frozen, older version" and not runnable.
         self._frozen_declined: set[Path] = set()
+        # The sources whose W-0490 text was shown since the project was opened (TODO(v5.0.0): remove).
+        self._value_list_checked: set[Path] = set()
         # SHA-256 of frozen files by (path, size, mtime), for the migrated-copy check.
         self._sha_cache: dict[tuple[Path, int, int], str] = {}
 
@@ -616,7 +618,12 @@ class InputSourceManager:
                 continue
             candidates.append((ext_name, abs_path, True))
 
+        from flextool.update_flextool.value_list_history import gui_messages
+
         for name, path, external in candidates:
+            if path.resolve() not in self._value_list_checked:
+                self._value_list_checked.add(path.resolve())
+                planning_messages.extend(gui_messages(path))
             try:
                 frozen = self._frozen_needing_migration(path, target_version)
             except FrozenCheckError as exc:

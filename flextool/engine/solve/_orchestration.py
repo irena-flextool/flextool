@@ -5759,6 +5759,12 @@ def run_chain_from_db(
     # Behaviour-change notices fire only for an upgraded database's markers; each entity once per run.
     from flextool.engine import _behaviour_changes
     _behaviour_changes.start_run(_behaviour_changes.read_markers_from_url(db_url))
+    # W-0490: a migration history that an old spinedb_api bug may have hit (TODO(v5.0.0): remove).
+    try:
+        from flextool.update_flextool.value_list_history import warn_at_run_start
+        warn_at_run_start(db_url)
+    except Exception:  # noqa: BLE001 - a check of the history never stops a run
+        logging.getLogger(__name__).debug("value list history check failed", exc_info=True)
     _reset_solver_args_echo()
 
     if work_folder is None:

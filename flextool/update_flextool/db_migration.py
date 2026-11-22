@@ -2237,8 +2237,27 @@ def add_relationships_manual(db, new_relationships):
         print("These parameters have been added before, continuing") 
     return 0
 
+def _list_members(db, names) -> dict:
+    """``{database id: (list, value, type)}`` of the stored members of the value lists *names*."""
+    members = {}
+    for name in names:
+        for lv in db.get_items("list_value", parameter_value_list_name=name):
+            db_id = getattr(lv["id"], "db_id", lv["id"])
+            if db_id is not None:
+                members[db_id] = (lv["parameter_value_list_name"], lv["value"], lv["type"])
+    return members
+
+
 def add_value_list_manual(db, new_value_lists):
+    # Post-condition guard: an import adds members, it never rewrites one.  spinedb_api 0.31-0.34 could overwrite
+    # a list's first member here (and every default and value that used it), see value_list_history.
+    before = _list_members(db, dict.fromkeys(name for name, *_ in new_value_lists))
     (num,log) = import_data(db,parameter_value_lists = new_value_lists)
+    after = _list_members(db, dict.fromkeys(name for name, *_ in new_value_lists))
+    changed = sorted(f"{lst}: {from_database(v, t)!r}" for i, (lst, v, t) in before.items() if after.get(i) != (lst, v, t))
+    if changed:
+        raise FlexToolMigrationError("Adding value list members changed existing members (" + ", ".join(changed)
+                                     + "); the migration stops so that no default or value changes with them.")
     try:
         _commit_step(db,"Added new parameter value lists")
     except SpineDBAPIError:
