@@ -3,7 +3,8 @@
 Patch release: no new data version (input databases stay at 82). Requires `polar-high>=3.16.0`. Results can change
 for Benders solves followed by other solves, for flow groups and user constraints that include a
 `no_losses_no_variable_cost` or DC power-flow connection, for stochastic solves with a cumulative CO2 cap (the
-total CO2 price was missing before), and for the realization solves of stochastic solves with reserves.
+total CO2 price was missing before), for the realization solves of stochastic solves with reserves, and for
+models with units online (the first time step of each solve and period, and the end of the horizon).
 
 ### Fixes
 
@@ -54,6 +55,20 @@ total CO2 price was missing before), and for the realization solves of stochasti
   was below its inherited reserve. A solve with `contains_solves` can no longer be realized by the solve right
   after it: that is now a configuration error, as it already was for a `realized: yes` branch (before, the solves
   it contains took the units online meant for the realization solve).
+- **Units online at the first time step of a solve are chosen freely, with no start-up there.** A solve that does
+  not continue an earlier one, every forecast branch that starts at its first step, and every period that does not
+  continue the previous one (e.g. the next year of a multi-year model, also inside a rolling window) choose their
+  units online at that step without a start-up or a shut-down: no `startup_cost` and no start-up fuel or its CO2
+  there; no-load fuel and its CO2 count as usual. The minimum up and down times count from the first start-up or
+  shut-down after it. Before, that step was linked to the last step of its stretch, so a unit online at the start
+  paid a start-up when it was offline at the end, and the end of the horizon was pulled towards the state at the
+  start. Rolls and solves that continue an earlier one still carry its units online. The first steps after a gap
+  in the timeline and of a representative period still cycle within their block (also the first block of the
+  solve). Results of every model with units online can change (less start-up cost at the first step of each solve
+  or period, and a different commitment near the end of the horizon). It also fixes an infeasible realization
+  solve of a rolling two-stage model with linear units online and minimum up / down times: the stochastic roll
+  and its realization linked their first step to different steps (the end of the horizon and the end of the
+  jump), so the realization owed a start-up the stochastic roll had not made.
 - **A database migration that was interrupted (killed process, power loss) and whose backup copy is gone can be
   migrated again.** Each step's commit now also records the previous step's version, so a rerun replays at most
   the step that was interrupted. The steps recognise their own completed work and the definitions, parameter

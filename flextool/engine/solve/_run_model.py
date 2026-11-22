@@ -2707,8 +2707,8 @@ def native_run_model(state, solver) -> int:
             )
         # The roll-forward carriers tied to the realised end are routed, not taken from the sequential / parent
         # handoff: the latest state realised before this sub-solve at its nesting level or deeper (_carry_routing;
-        # none → the sub-solve is the first of its level: storage starts from fix_start, online and ramps from the
-        # solve's own wrap).  Both storage keys hold the same frame; the override translate below still wins.  The
+        # none → the sub-solve is the first of its level: storage starts from fix_start, units online start free
+        # and ramps have no row at the first step).  Both storage keys hold the same frame; the override translate below still wins.  The
         # running totals (cumulative_*) stay with the sequential predecessor, which passes them on.
         carry_router.start(solve)
         _first_step = _carry_routing.first_step(active_time_lists[solve])

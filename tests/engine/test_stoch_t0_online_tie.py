@@ -35,7 +35,7 @@ Hand-calc (H = 8760/3 = 2920 h/step):
     label p2035 has no dispatch.  Objective = Σ_branch w * 10 * 2920 * Σ_t output
       = 0.5*10*2920*(50*3)  [high]  = 2 190 000
       + 0.5*10*2920*(100*3) [low]   = 4 380 000  ->  6 570 000.
-    (Commitment constant over the horizon -> cyclic startup 0.)
+    (t0001 is a free start in both forecasts and the commitment is constant -> no start-up.)
   * SIBLING ``stoch_rd__realized_dispatch``: dispatches the realized rlz wind
     0.5 -> wind 50, peaker 50; the pin fixes v_online = 2.0 (the parent's
     commitment) — binding (free dispatch would pick 1.0) but feasible (min_load
@@ -220,8 +220,22 @@ def test_parent_realized_branch_excluded(sep_chain):
 
 
 @pytest.mark.solver
+def test_first_step_is_a_free_start_in_every_forecast(sep_chain):
+    """The fan starts at the solve's first step: t0001 is a free start in each forecast (no online_change row,
+    start-up and shut-down 0) and its units online are tied there (2.0, the hedge).  The realization's first step
+    is a free start too."""
+    for solve, periods in ((PARENT, (HIGH, LOW)), (SIBLING, (REALIZED,))):
+        for var in ("v_startup_linear", "v_shutdown_linear"):
+            fr = _online(sep_chain, solve, var)
+            for d in periods:
+                assert _at(fr, d, "t0001") == 0.0, (solve, var, d)
+    fr = _online(sep_chain, PARENT, "v_online_linear")
+    assert _at(fr, HIGH, "t0001") == pytest.approx(_at(fr, LOW, "t0001"), abs=1e-9)
+
+
+@pytest.mark.solver
 def test_parent_objective(sep_chain):
-    """Hand-calc parent objective (operational only; cyclic startup 0)."""
+    """Hand-calc parent objective (operational only; no start-up: a free first step, constant commitment)."""
     _, wf = sep_chain
     assert _obj(wf, PARENT) == pytest.approx(PARENT_OBJECTIVE, rel=1e-6)
 

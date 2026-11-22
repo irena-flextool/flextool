@@ -5,9 +5,10 @@ The look-back of a step ``(d, t)`` is the step itself plus its ancestors along t
 the ancestor to the start of ``(d, t)`` stays below the minimum time.  The chain stops at a step without such a
 predecessor: the first step of a solve, a period that does not continue the previous one, a gap in the timeline, the
 start of a representative period and the first step of a forecast branch that starts the solve.  There is no
-cyclic wrap.  Where the chain stops, the on-line state may still be linked to an earlier step (``online_change``
-wraps or lags there); a unit on-line at such a step may then shut down at the next step — an end effect, as at the
-end of the horizon.
+cyclic wrap.  Where the chain stops, the units online start free (the first step of a solve or of a period that
+does not continue the previous one: no start-up or shut-down there) or cycle within their stretch (after a gap, at a
+representative-block start); a unit online at such a step may then shut down at the next step — an end effect, as
+at the end of the horizon.
 
 The walk is vectorized over the depth of the chain (iterations = the number of steps inside the longest minimum
 time), on integer step indices; the step names are attached once at the output.

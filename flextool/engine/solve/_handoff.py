@@ -132,9 +132,10 @@ class SolveHandoff:
     # realized committed-jump-end ``v_online`` (unit-count space, NOT
     # ×unitsize) per online process so the next roll's ``online_change``
     # first-step row (``dt_online_carry``) sees the
-    # prior roll's commitment as its predecessor instead of the
-    # meaningless within-roll cyclic wrap.  Without it the startup cost is
-    # re-charged at every roll boundary even when the unit stays committed.
+    # prior roll's commitment as its predecessor instead of the free start
+    # of a step without a carry.  Without it the roll's first step could
+    # choose its units online freely, with no start-up even when the unit
+    # was offline at the end of the previous roll.
     # Producer: prior roll's v_online_{linear,integer} at its last
     # realized (d, t).
     # Consumer: next roll's ``p_roll_continue_online`` overlay (applied at

@@ -3741,8 +3741,8 @@ def _drive_cascade(
                 data, _cold = cold_start_online_flow_carry(data, _carry_left_out)
                 if _cold:
                     _cold_msg = (
-                        f"Solve {complete_solve_name}: ramp and commitment of {', '.join(_cold)} start cold "
-                        "(the solve it continues from left out online variables, "
+                        f"Solve {complete_solve_name}: ramp and commitment of {', '.join(_cold)} start as at "
+                        "the start of a solve (the solve it continues from left out online variables, "
                         "reduce_unit_detail_method).")
                     _cold_seen = self.__dict__.setdefault("_reduce_cold_printed", set())
                     if _reduce_base not in _cold_seen:

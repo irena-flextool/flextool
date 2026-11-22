@@ -903,11 +903,15 @@ def test_committed_window_in_forecasts_only_fan_online_only_solves(tmp_path_fact
 
 
 def _rolling_online_only_min_uptime(data: dict) -> None:
-    """:func:`_rolling_online_only` with the peaker's minimum up and down time 2 h (1 h steps)."""
+    """:func:`_rolling_online_only` with the peaker's minimum up and down time 2 h (1 h steps) and the demand
+    50 MW at t0001, 100 MW after (so a unit starts at t0002, after the solve's free first step)."""
     _rolling_online_only(data)
     for r in data["parameter_values"]:
         if r[1] == "peaker" and r[2] in ("min_uptime", "min_downtime"):
             r[3] = [base64.b64encode(json.dumps(2.0).encode()).decode(), "float"]
+        if r[1] == "elec" and r[2] == "inflow":
+            demand = {"index_type": "str", "data": [["t0001", -50.0], ["t0002", -100.0], ["t0003", -100.0]]}
+            r[3] = [base64.b64encode(json.dumps(demand).encode()).decode(), "map"]
 
 
 @pytest.mark.solver
@@ -917,7 +921,12 @@ def test_committed_window_in_forecasts_only_fan_carries_the_min_uptime(tmp_path_
     it and owe the start-ups of that committed step — on 1 h steps the committed step is 1 h before the next roll's
     first step (1 < 2), the step before it 2 h (not < 2).  So carry = v_startup of ``p2035_high`` at the committed
     step, at the first step of every forecast of the next roll, nothing later.  The history used to be stored under
-    the period label, where no forecast's look-back reached it."""
+    the period label, where no forecast's look-back reached it.
+    Hand derivation (2 units of 50 MW, min_load 0.5, start-up 50 per unit, 10 €/MWh, branches 0.5 each; wind 100 MW
+    at CF 0.8 / 0.0): roll 0 commits t0001 (50 MW): ``low`` needs 1 unit (2 would floor ``high``'s peaker at 50 MW
+    instead of 25, +125, to save ``low``'s later start-up, 25), and t0001 is a free start: no start-up there, so
+    nothing is carried into roll 1.  Roll 1 commits t0002 (100 MW): ``low`` needs both units, tied: a start-up of 1
+    from the carried 1, carried into the first step t0003 of both forecasts of roll 2."""
     tmp = tmp_path_factory.mktemp("label_committed_min_uptime")
     steps, _ = _run(_variant(T0_FIXTURE, tmp, "rolling_online_only_min_uptime", _rolling_online_only_min_uptime),
                     tmp)
@@ -937,7 +946,8 @@ def test_committed_window_in_forecasts_only_fan_carries_the_min_uptime(tmp_path_
         for key, v in want.items():
             assert got[key] == pytest.approx(v, abs=1e-9)
         carried += len(want)
-    assert carried > 0, "the witness starts no unit at a committed step"
+        assert expect == pytest.approx(0.0 if committed == "t0001" else 1.0, abs=1e-9), (committed, expect)
+    assert carried == 2, "the witness starts one unit at t0002, carried into both forecasts of roll 2"
 
 
 def _flowgroup_path(invest_method: str):

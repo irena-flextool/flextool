@@ -110,9 +110,10 @@ def test_one_step_reader_equals_the_full_reader(tmp_path_factory) -> None:
 
 def test_online_unit_is_coarse_with_one_column_per_day(tmp_path_factory) -> None:
     """coarse_uc: liquefier_A (linear online, min_load 0.3) is coarse.  Its units online, start-ups and shut-downs
-    have 7 columns (one per day, at the day's first hour), online_change / maxOnline / maxStartup 7 rows, the online
-    capacity and minimum load one averaged row per day (maxFlow_online_linear_coarse, minFlow_minload_linear_coarse)
-    and no hourly row; its v_flow has 7 columns."""
+    have 7 columns (one per day, at the day's first hour), maxOnline / maxStartup 7 rows and online_change 6 (none at
+    the solve's first step, a free start: its start-up and shut-down are bounded to 0), the online capacity and
+    minimum load one averaged row per day (maxFlow_online_linear_coarse, minFlow_minload_linear_coarse) and no hourly
+    row; its v_flow has 7 columns."""
     fd = last_stochastic(_lh2(tmp_path_factory, "co_struct", _UC)).flex_data
     assert _coarse_procs(fd) == LH2_COARSE
     pb = build(fd)
@@ -120,19 +121,22 @@ def test_online_unit_is_coarse_with_one_column_per_day(tmp_path_factory) -> None
         cols = _cols(pb, f"{var}[liquefier_A,")
         assert [_keys(c)[-1] for c in cols] == _DAYS, var
     assert [_keys(c)[-1] for c in _cols(pb, "v_flow[liquefier_A,h2_A,lh2_A,")] == _DAYS
-    for fam in ("online_change_linear", "maxOnline_linear", "maxStartup_linear", "minFlow_minload_linear_coarse"):
+    for fam in ("maxOnline_linear", "maxStartup_linear", "minFlow_minload_linear_coarse"):
         assert sorted(_keys(r)[-1] for r in row_terms(pb, fam, "liquefier_A,")) == _DAYS, fam
+    assert sorted(_keys(r)[-1] for r in row_terms(pb, "online_change_linear", "liquefier_A,")) == _DAYS[1:]
     assert len(row_terms(pb, "maxFlow_online_linear_coarse", "liquefier_A,h2_A,lh2_A,")) == 7
     assert not row_terms(pb, "maxFlow_online_linear", "liquefier_A,")
     assert not row_terms(pb, "minFlow_minload_linear", "liquefier_A,")
-    # The day-2 row: online − (online of day 1) − startup + shutdown = 0; day 1 wraps to day 7 (stretch start).
+    # The day-2 row: online − (online of day 1) − startup + shutdown = 0; day 1 starts free (no row, events 0).
     rows = row_terms(pb, "online_change_linear", "liquefier_A,y2030,t0025")
     assert rows["online_change_linear[liquefier_A,y2030,t0025]"] == pytest.approx({
         "v_online_linear[liquefier_A,y2030,t0025]": 1.0, "v_online_linear[liquefier_A,y2030,t0001]": -1.0,
         "v_startup_linear[liquefier_A,y2030,t0025]": -1.0, "v_shutdown_linear[liquefier_A,y2030,t0025]": 1.0})
-    first = row_terms(pb, "online_change_linear",
-                      "liquefier_A,y2030,t0001")["online_change_linear[liquefier_A,y2030,t0001]"]
-    assert first["v_online_linear[liquefier_A,y2030,t0145]"] == pytest.approx(-1.0)
+    canon = pb.canonicalise()
+    upper = dict(zip(canon.col_names, canon.col_ub))
+    for var in ("v_startup_linear", "v_shutdown_linear"):
+        assert upper[f"{var}[liquefier_A,y2030,t0001]"] == 0.0, var
+        assert upper[f"{var}[liquefier_A,y2030,t0025]"] == float("inf"), var
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +240,8 @@ def test_coarse_online_equals_tied_fine_model(tmp_path_factory, monkeypatch, cas
     in a single solve, a rolling solve (72 h / 48 h: the units online and the 30-h minimum times carried across the
     roll), a representative-period invest solve, with integer units online and with a min_load_efficiency section.
     The start-ups are counted once per day (the coarse model starts units; a representative day is one coarse
-    step that wraps to itself, so it has none).  Rolling: the lh2 level a roll ends with is not unique, and the next
+    step that wraps to itself, so it has none; the single solve's only start-up was at its first day, which now
+    starts free, so it has none either: the other cases count them).  Rolling: the lh2 level a roll ends with is not unique, and the next
     roll continues from it, so the tied model replays the coarse model's roll-end carry (each roll compared from
     the same start)."""
     kind = "integer" if case == "integer" else "linear"
@@ -249,7 +254,7 @@ def test_coarse_online_equals_tied_fine_model(tmp_path_factory, monkeypatch, cas
     tied = _uc_case(tmp_path_factory, case, f"co_tie_{case}_fine")
     assert len(coarse) == len(tied)
     assert _total_objective(coarse) == pytest.approx(_total_objective(tied), rel=1e-9)
-    assert (_startups(coarse, kind) > 1e-6) == (case != "rp")
+    assert (_startups(coarse, kind) > 1e-6) == (case not in ("rp", "single"))
     assert _startups(coarse, kind) == pytest.approx(_startups(tied, kind), rel=1e-6, abs=1e-9)
     if case == "integer":
         on = utf8(last_stochastic(coarse).solution.value("v_online_integer")).filter(pl.col("p") == "liquefier_A")
@@ -305,40 +310,43 @@ def test_roll_carry_of_coarse_units_online(tmp_path_factory) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Hand-built model (tests.json, 2 days of 1-h steps, period p2020): coal_market -> gen_d -> hd
+# Hand-built model (tests.json, 3 days of 1-h steps, period p2020): coal_market -> gen_d -> hd
 #
-# hd: a balance node in a 24-h group, demand 25 MW for the 24 hours of day 1 (600 MWh), 0 on day 2; penalty_up
-# 10000 and penalty_down 1000 €/MWh (P = 1000: a surplus costs P).  gen_d: coal_market (commodity, no balance: neutral;
-# coal price 20 €/MWh) -> hd, efficiency 1, existing 1 = one unit of 100 MW (virtual_unitsize 100), linear
-# online, min_load 0.5, startup_cost 1000 €/MW (1e5 € per unit started).  gen_d is coarse: on_k, su_k, sd_k once
-# per day k (k = 1, 2), flow F_k.
+# hd: a balance node in a 24-h group, demand 0 on day 1, 25 MW for the 24 hours of day 2 (600 MWh), 0 on day 3;
+# penalty_up 10000 €/MWh; penalty_down 1e5 €/MWh on day 1 and P = 1000 €/MWh on days 2-3 (a surplus costs P).
+# gen_d: coal_market (commodity, no balance: neutral; coal price 20 €/MWh) -> hd, efficiency 1, existing 1 = one unit
+# of 100 MW (virtual_unitsize 100), linear online, min_load 0.5, startup_cost 1000 €/MW (1e5 € per unit started).
+# gen_d is coarse: on_k, su_k, sd_k once per day k (k = 1, 2, 3), flow F_k.
 # Rows (EQ. headers of online_change, maxFlow_online_coarse, minFlow_minload_coarse, minimum_uptime):
-#   on_1 − on_2 = su_1 − sd_1 (day 1 is the stretch start: its predecessor wraps to the stretch's last step, day 2),
-#   on_2 − on_1 = su_2 − sd_2;  50·on_k ≤ F_k ≤ 100·on_k (MW);  day 1 balance F_1 = 25 (a shortfall costs 10000);
-#   day 2 surplus 24·F_2 MWh at P + 20 €/MWh (penalty and fuel).
-# (a) min_uptime 24 h: the day-2 row looks back to day 1 only if elapsed(day 1 -> day 2) = 24 < 24: no; the day-1 row
-#     has no ancestor (no wrap in the look-back).  Both hold only their own step: no minimum_uptime row.
-#     Cost 1e5·(su_1 + su_2) + 1200·(P + 20)·on_2 (F_2 = 50·on_2 at least) + fuel of day 1.  0.25 ≤ on_1 ≤ 0.5;
-#     su_1 ≥ on_1 − on_2.  on_2 = x > 0 saves at most 1e5·x of start-up and costs 1200·1020·x: on_2 = 0, on_1 = 0.25,
-#     su_1 = 0.25, sd_1 = 0, su_2 = 0, sd_2 = 0.25; F_1 = 25 MW, F_2 = 0.
-# (b) min_uptime 30 h: the day-2 row looks back to day 1 (24 < 30): on_2 ≥ su_1 + su_2.  With on_2 = y ≤ 0.25:
-#     su_1 ≥ 0.25 − y and y ≥ su_1 ⇒ y ≥ 0.125; cost 1e5·(0.25 − y) + 1200·1020·y rises with y ⇒ y = 0.125 (for any
-#     P > 1e5/1200 − 20 = 63.3).  on_1 = 0.25 (a higher on_1 needs a larger su_1 and y), su_1 = 0.125, sd_1 = 0,
-#     on_2 = 0.125, su_2 = 0, sd_2 = 0.125; F_1 = 25 MW, F_2 = 50·0.125 = 6.25 MW (150 MWh of surplus on day 2).
+#   day 1 is the solve's first step, a free start: no online_change row, su_1 = sd_1 = 0 (their upper bound);
+#   on_2 − on_1 = su_2 − sd_2, on_3 − on_2 = su_3 − sd_3;  50·on_k ≤ F_k ≤ 100·on_k (MW);  day 2 balance F_2 = 25 (a
+#   shortfall costs 10000); day-k surplus 24·F_k MWh at penalty_down + 20 €/MWh (penalty and fuel).
+# Day 1: a unit online there costs 24·50·(1e5 + 20) € per unit of surplus, more than any start-up it saves: on_1 = 0.
+# (a) min_uptime 24 h: a look-back reaches the previous day only if elapsed = 24 < 24: no; no minimum_uptime row.
+#     0.25 ≤ on_2 ≤ 0.5 and su_2 ≥ on_2 − on_1 = on_2: on_2 = 0.25 = su_2, sd_2 = 0.  on_3 = x > 0 costs 1200·1020·x
+#     and saves nothing (no end condition): on_3 = 0, sd_3 = 0.25; F = (0, 25, 0) MW.
+# (b) min_uptime 30 h: the day-2 and day-3 rows look back one day (24 < 30): on_2 ≥ su_1 + su_2, on_3 ≥ su_2 + su_3.
+#     su_2 ≥ on_2 ≥ 0.25, so on_3 ≥ 0.25: the cheapest is on_2 = su_2 = 0.25, on_3 = 0.25 (su_3 = sd_3 = 0);
+#     F = (0, 25, 12.5) MW (300 MWh of surplus on day 3, the minimum load the uptime holds).
 
 _HAND_CHAIN = ["init", "west", "coal"]
 _HAND_ENTITIES = [["node", "hd", None], ["unit", "gen_d", None], ["group", "daily", None],
                   ["unit__inputNode", ["gen_d", "coal_market"], None], ["unit__outputNode", ["gen_d", "hd"], None],
                   ["group__node", ["daily", "hd"], None]]
 _HOURS = [f"t{h:04d}" for h in range(1, 49)]
+_UC_HOURS = [f"t{h:04d}" for h in range(1, 73)]        # the hand-built UC model: three days
 
 
 def _hand_uc_values(min_uptime: float) -> list:
     demand = b64({"index_type": "str", "index_name": "time",
-                  "data": [[t, -25.0 if h < 24 else 0.0] for h, t in enumerate(_HOURS)]}, "map")
-    vals = [["group", "daily", "new_stepduration", _f(24.0)],
+                  "data": [[t, -25.0 if 24 <= h < 48 else 0.0] for h, t in enumerate(_UC_HOURS)]}, "map")
+    surplus = b64({"index_type": "str", "index_name": "time",
+                   "data": [[t, 1e5 if h < 24 else 1000.0] for h, t in enumerate(_UC_HOURS)]}, "map")
+    days = b64({"index_type": "str", "index_name": "time", "data": [["t0001", 72.0]]}, "map")
+    vals = [["timeset", "2day", "timeset_duration", days],
+            ["group", "daily", "new_stepduration", _f(24.0)],
             ["node", "hd", "node_type", _s("balance")], ["node", "hd", "inflow", demand],
-            ["node", "hd", "penalty_up", _f(10000.0)], ["node", "hd", "penalty_down", _f(1000.0)],
+            ["node", "hd", "penalty_up", _f(10000.0)], ["node", "hd", "penalty_down", surplus],
             ["unit", "gen_d", "conversion_method", _s("constant_efficiency")], ["unit", "gen_d", "efficiency", _f(1.0)],
             ["unit", "gen_d", "existing", _f(1.0)], ["unit", "gen_d", "virtual_unitsize", _f(100.0)],
             ["unit", "gen_d", "startup_method", _s("linear")], ["unit", "gen_d", "min_load", _f(0.5)],
@@ -353,37 +361,43 @@ def _hand_uc(tmp_path_factory, alt: str, min_uptime: float):
                                   base_chain=_HAND_CHAIN, entities=_HAND_ENTITIES))
 
 
-def _hourly(step, var: str) -> list[float]:
+def _hourly(step, var: str, hours: list = _UC_HOURS) -> list[float]:
     from flextool.engine.output._coarse_flows import var_values
 
     v = var_values(step.solution, step.flex_data, var)
     rows = utf8(v.drop("value")).with_columns(value=v["value"]).filter(pl.col("p") == "gen_d").sort("t")
-    assert rows["t"].to_list() == _HOURS
+    assert rows["t"].to_list() == hours
     return rows["value"].to_list()
 
 
 @pytest.mark.parametrize("min_uptime, on, su, sd", [
-    (24.0, (0.25, 0.0), (0.25, 0.0), (0.0, 0.25)),
-    (30.0, (0.25, 0.125), (0.125, 0.0), (0.0, 0.125)),
+    (24.0, (0.0, 0.25, 0.0), (0.0, 0.25, 0.0), (0.0, 0.0, 0.25)),
+    (30.0, (0.0, 0.25, 0.25), (0.0, 0.25, 0.0), (0.0, 0.0, 0.0)),
 ])
 def test_hand_built_coarse_unit_commitment(tmp_path_factory, min_uptime, on, su, sd) -> None:
     """The hand-built model (derivation above): units online, start-ups and shut-downs once per day, on every hour of
     the day for units online and at the day's first hour for start-ups / shut-downs (0 at its other hours); the
-    flow 25 MW on day 1 and 50 · on_2 MW on day 2; minimum_uptime rows only where the look-back reaches the previous
-    day (min_uptime 30 h: the day-2 row; 24 h: none)."""
+    flow 0 on day 1, 25 MW on day 2 and 50 · on_3 MW on day 3; minimum_uptime rows only where the look-back reaches
+    the previous day (min_uptime 30 h: the day-2 and day-3 rows; 24 h: none)."""
     step = _hand_uc(tmp_path_factory, f"co_hand_{int(min_uptime)}", min_uptime)
     assert "gen_d" in _coarse_procs(step.flex_data)
-    assert _hourly(step, "v_online_linear") == pytest.approx([on[0]] * 24 + [on[1]] * 24, abs=1e-9)
-    for var, (first, second) in (("v_startup_linear", su), ("v_shutdown_linear", sd)):
-        assert _hourly(step, var) == pytest.approx([first] + [0.0] * 23 + [second] + [0.0] * 23, abs=1e-9), var
-    assert [f * 100.0 for f in _hourly(step, "v_flow")] == pytest.approx([25.0] * 24 + [50.0 * on[1]] * 24, abs=1e-7)
+    assert _hourly(step, "v_online_linear") == pytest.approx([on[0]] * 24 + [on[1]] * 24 + [on[2]] * 24, abs=1e-9)
+    for var, days in (("v_startup_linear", su), ("v_shutdown_linear", sd)):
+        want = [x for day in days for x in [day] + [0.0] * 23]
+        assert _hourly(step, var) == pytest.approx(want, abs=1e-9), var
+    assert [f * 100.0 for f in _hourly(step, "v_flow")] == pytest.approx(
+        [0.0] * 24 + [25.0] * 24 + [50.0 * on[2]] * 24, abs=1e-7)
     rows = row_terms(build(step.flex_data), "minimum_uptime_linear", "gen_d,")
     if min_uptime == 24.0:
         assert not rows
     else:
-        assert rows == {"minimum_uptime_linear[gen_d,p2020,t0025]": pytest.approx(
-            {"v_online_linear[gen_d,p2020,t0025]": 1.0, "v_startup_linear[gen_d,p2020,t0001]": -1.0,
-             "v_startup_linear[gen_d,p2020,t0025]": -1.0})}
+        assert rows == {
+            "minimum_uptime_linear[gen_d,p2020,t0025]": pytest.approx(
+                {"v_online_linear[gen_d,p2020,t0025]": 1.0, "v_startup_linear[gen_d,p2020,t0001]": -1.0,
+                 "v_startup_linear[gen_d,p2020,t0025]": -1.0}),
+            "minimum_uptime_linear[gen_d,p2020,t0049]": pytest.approx(
+                {"v_online_linear[gen_d,p2020,t0049]": 1.0, "v_startup_linear[gen_d,p2020,t0025]": -1.0,
+                 "v_startup_linear[gen_d,p2020,t0049]": -1.0})}
 
 
 # ---------------------------------------------------------------------------
@@ -593,17 +607,17 @@ def test_notice_reasons_of_a_coarse_online_unit(tmp_path_factory) -> None:
 # unit started at the step's start averages SU_b = ml + ½·ρ_b over the step while ρ_b ≤ 1 − ml (it has not reached
 # full load), else 1 − (1 − ml)²/(2·ρ_b); SD_b likewise for a unit that stops at the step's end (EQ. headers of
 # maxFlow_online and _eq_ramp).  ml = 0.5, availability 1.
-# Rows (v_flow f_k in units of 100 MW): maxFlow_online_coarse day 1: f_1 ≤ on_1 − (1 − SU)·su_1 (red_sd − red_su = 0);
-#   maxFlow_online_shutdown_coarse day 1 (successor day 2): f_1 ≤ on_1 − (1 − SD)·sd_2; day 2 has no successor (the
-#   solve's last step: no shut-down reduction) and no start-up (below).  Ramp rows only between day 1 and day 2
-#   (ρ̄ = s·60·(24 + 24)/2 < 1; day 1 has no predecessor): down f_2 − f_1 ≥ −(ρ̄·(on_2 − su_2) + SD·sd_2) + F·su_2,
-#   up f_2 − f_1 ≤ ρ̄·(on_2 − su_2) + SU·su_2 − F·sd_2, F = ml = 0.5.
-# Optimum as case (a): on_2 = 0 (a day-2 unit costs 1200·1020 € per unit of surplus, more than its start-up), so
-#   su_1 = on_1 (the wrap), sd_2 = on_1, f_1 = 0.25 and the cheapest on_1 meets f_1 ≤ SU·on_1, f_1 ≤ SD·on_1 and the
-#   down ramp −0.25 ≥ −SD·on_1, all three on_1 ≥ 0.25 / SU (SU = SD); the up ramp −0.25 ≤ −0.5·on_1 holds; the min
-#   load 0.25 ≥ 0.5·on_1 holds for SU ≥ 0.5.
-#   s = 1e-4: ρ_b = 0.144 ≤ 0.5: SU = 0.5 + 0.072 = 0.572, on_1 = 0.25 / 0.572 = 0.437062937…
-#   s = 5e-4: ρ_b = 0.72 > 0.5 (full load after 16.7 h): SU = 1 − 0.25 / 1.44 = 0.826388…, on_1 = 0.302521008…
+# Rows (v_flow f_k in units of 100 MW; day 1 has on_1 = 0 as above, so the start-up is on day 2):
+#   maxFlow_online_coarse day 2: f_2 ≤ on_2 − (1 − SU)·su_2 (red_sd − red_su = 0);  maxFlow_online_shutdown_coarse
+#   day 2 (successor day 3): f_2 ≤ on_2 − (1 − SD)·sd_3; day 3 has no successor (the solve's last step: no shut-down
+#   reduction).  Ramp rows between day 1 and day 2 and between day 2 and day 3 (ρ̄ = s·60·(24 + 24)/2 < 1; day 1 has
+#   no predecessor): up into day 2  f_2 − f_1 ≤ ρ̄·(on_2 − su_2) + SU·su_2 − F·sd_2, down out of day 2
+#   f_3 − f_2 ≥ −(ρ̄·(on_3 − su_3) + SD·sd_3) + F·su_3, F = ml = 0.5.
+# Optimum as case (a): on_1 = 0, on_3 = 0, so su_2 = on_2 = sd_3, f_2 = 0.25 and the cheapest on_2 meets f_2 ≤ SU·on_2,
+#   f_2 ≤ SD·on_2, the up ramp 0.25 ≤ SU·on_2 and the down ramp −0.25 ≥ −SD·on_2, all on_2 ≥ 0.25 / SU (SU = SD); the
+#   other ramp directions (0.25 ≥ 0.5·on_2, −0.25 ≤ −0.5·on_2) and the min load 0.25 ≥ 0.5·on_2 hold for SU ≥ 0.5.
+#   s = 1e-4: ρ_b = 0.144 ≤ 0.5: SU = 0.5 + 0.072 = 0.572, on_2 = 0.25 / 0.572 = 0.437062937…
+#   s = 5e-4: ρ_b = 0.72 > 0.5 (full load after 16.7 h): SU = 1 − 0.25 / 1.44 = 0.826388…, on_2 = 0.302521008…
 
 def _ramp_values(speed: float) -> list:
     rel = ["gen_d", "hd"]
@@ -619,32 +633,33 @@ def _hand_ramp(tmp_path_factory, alt: str, speed: float, min_uptime: float = 24.
 
 @pytest.mark.parametrize("speed, su_share", [(1e-4, 0.572), (5e-4, 1.0 - 0.25 / 1.44)])
 def test_hand_built_coarse_startup_reduction(tmp_path_factory, speed, su_share) -> None:
-    """The hand-built model with a ramp limit (derivation above): gen_d is coarse, its day-1 units online are
+    """The hand-built model with a ramp limit (derivation above): gen_d is coarse, its day-2 units online are
     0.25 / SU with SU the mean start-up share over the day (also once the ramp reaches full load within the day),
-    started on day 1 and shut down at day 2's start; the reduction rows read the start-up of day 1 and the shut-down
-    of day 2 with the coefficient 1 − SU, the down ramp of day 2 its shut-down with SD = SU."""
+    started on day 2 and shut down at day 3's start; the reduction rows read the start-up of day 2 and the shut-down
+    of day 3 with the coefficient 1 − SU, the down ramp into day 3 its shut-down with SD = SU."""
     step = last_stochastic(_hand_ramp(tmp_path_factory, f"co_red_{speed:g}", speed))
     assert "gen_d" in _coarse_procs(step.flex_data)
-    on_1 = 0.25 / su_share
-    assert _hourly(step, "v_online_linear") == pytest.approx([on_1] * 24 + [0.0] * 24, abs=1e-9)
-    assert _hourly(step, "v_startup_linear") == pytest.approx([on_1] + [0.0] * 47, abs=1e-9)
-    assert _hourly(step, "v_shutdown_linear") == pytest.approx([0.0] * 24 + [on_1] + [0.0] * 23, abs=1e-9)
-    assert [f * 100.0 for f in _hourly(step, "v_flow")] == pytest.approx([25.0] * 24 + [0.0] * 24, abs=1e-7)
+    on_2 = 0.25 / su_share
+    assert _hourly(step, "v_online_linear") == pytest.approx([0.0] * 24 + [on_2] * 24 + [0.0] * 24, abs=1e-9)
+    assert _hourly(step, "v_startup_linear") == pytest.approx([0.0] * 24 + [on_2] + [0.0] * 47, abs=1e-9)
+    assert _hourly(step, "v_shutdown_linear") == pytest.approx([0.0] * 48 + [on_2] + [0.0] * 23, abs=1e-9)
+    assert [f * 100.0 for f in _hourly(step, "v_flow")] == pytest.approx(
+        [0.0] * 24 + [25.0] * 24 + [0.0] * 24, abs=1e-7)
     pb = build(step.flex_data)
     arc = "gen_d,coal_market,hd,p2020,"
     red = row_terms(pb, "maxFlow_online_linear_coarse", arc)
-    assert sorted(red) == [f"maxFlow_online_linear_coarse[{arc}t0001]", f"maxFlow_online_linear_coarse[{arc}t0025]"]
-    assert red[f"maxFlow_online_linear_coarse[{arc}t0001]"]["v_startup_linear[gen_d,p2020,t0001]"] == pytest.approx(
+    assert sorted(red) == [f"maxFlow_online_linear_coarse[{arc}{t}]" for t in ("t0001", "t0025", "t0049")]
+    assert red[f"maxFlow_online_linear_coarse[{arc}t0025]"]["v_startup_linear[gen_d,p2020,t0025]"] == pytest.approx(
         1.0 - su_share)
     sd_rows = row_terms(pb, "maxFlow_online_shutdown_linear_coarse", arc)
-    assert list(sd_rows) == [f"maxFlow_online_shutdown_linear_coarse[{arc}t0001]"]
-    assert sd_rows[f"maxFlow_online_shutdown_linear_coarse[{arc}t0001]"][
-        "v_shutdown_linear[gen_d,p2020,t0025]"] == pytest.approx(1.0 - su_share)
+    assert sorted(sd_rows) == [f"maxFlow_online_shutdown_linear_coarse[{arc}{t}]" for t in ("t0001", "t0025")]
+    assert sd_rows[f"maxFlow_online_shutdown_linear_coarse[{arc}t0025]"][
+        "v_shutdown_linear[gen_d,p2020,t0049]"] == pytest.approx(1.0 - su_share)
     assert not row_terms(pb, "maxFlow_online_linear", "gen_d,")
     assert not row_terms(pb, "maxFlow_online_shutdown_linear", "gen_d,")
     down = row_terms(pb, "ramp_sink_down_constraint", "gen_d,")
-    assert list(down) == [f"ramp_sink_down_constraint[{arc}t0025]"]
-    assert abs(down[f"ramp_sink_down_constraint[{arc}t0025]"]["v_shutdown_linear[gen_d,p2020,t0025]"]) == \
+    assert sorted(down) == [f"ramp_sink_down_constraint[{arc}{t}]" for t in ("t0025", "t0049")]
+    assert abs(down[f"ramp_sink_down_constraint[{arc}t0049]"]["v_shutdown_linear[gen_d,p2020,t0049]"]) == \
         pytest.approx(su_share)
 
 
@@ -665,8 +680,8 @@ def test_coarse_ramp_reduction_equals_24h_solve(tmp_path_factory, min_uptime, ro
     """With the ramp short of full load within a day (s = 1e-4 / min), the coarse unit's start-up / shut-down
     reduction, online ramps and minimum up time are those of the same model solved on 24-h steps (the fine rule
     min(1, ml + ½·ρ) equals the mean share there): gen_d's units online, start-ups, shut-downs and flows are the
-    same in every solve, also rolling (48-h horizon, 24-h jump: units online, the ramp's flow and the 30-h minimum up
-    time carried into day 2's roll).  gen_d and hd are a separate part of the model: the rest of tests.json changes
+    same in every solve, also rolling (48-h horizon, 24-h jump, three rolls: units online, the ramp's flow and the 30-h
+    minimum up time carried into the next day's roll).  gen_d and hd are a separate part of the model: the rest of tests.json changes
     with the solve's step, so the objectives differ.  (Once the ramp reaches full load within the step the coarse
     step takes the exact mean share 1 − (1 − ml)²/(2ρ), the fine rule caps at 1.)"""
     tag = f"{int(min_uptime)}{'r' if rolling else ''}"
@@ -676,7 +691,7 @@ def test_coarse_ramp_reduction_equals_24h_solve(tmp_path_factory, min_uptime, ro
                         values=_step_values(_hand_uc_values(min_uptime) + _ramp_values(1e-4) + extra),
                         base_chain=_HAND_CHAIN, entities=_HAND_ENTITIES)
     daily = without_realization(run(tmp_path_factory, url, scen))
-    assert len(coarse) == len(daily) == (2 if rolling else 1)
+    assert len(coarse) == len(daily) == (3 if rolling else 1)
     started = 0.0
     for c, f in zip(coarse.values(), daily.values()):
         assert "gen_d" in _coarse_procs(c.flex_data) and not _coarse_procs(f.flex_data)
@@ -920,7 +935,7 @@ def test_hand_built_coarse_reserve(tmp_path_factory, monkeypatch, ramp, held) ->
     assert "gen_d" in _coarse_procs(fd)
     res = _hourly_of(step, "v_reserve", p="gen_d")
     assert [50.0 * v for v in res[:24]] == pytest.approx([held] * 24, abs=1e-7)
-    assert [50.0 * f for f in _hourly(step, "v_flow")[:24]] == pytest.approx([25.0] * 24, abs=1e-7)
+    assert [50.0 * f for f in _hourly(step, "v_flow", _HOURS)[:24]] == pytest.approx([25.0] * 24, abs=1e-7)
     keys = ["r", "ud", "g", "d", "t"]
     vq = utf8(step.solution.value("vq_reserve")).filter(pl.col("g") == "hd_res")
     scale = utf8(reserve_shortfall_scale(fd).frame).filter(pl.col("g") == "hd_res").rename({"value": "__s"})

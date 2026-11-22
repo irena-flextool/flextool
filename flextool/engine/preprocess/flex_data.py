@@ -1389,7 +1389,8 @@ class FlexData:
     # (d, t, d_previous, t_previous), Utf8: the online predecessor of the steps without a ramp predecessor (a stretch
     # start: the first step of a solve or period, the step after a gap, a representative-block start) — the last step
     # of its own stretch of the period (params._ramp_links.online_stretch_wrap).  Set with dt_ramp_link
-    # (ramp_link_fields).
+    # (ramp_link_fields).  The model uses it only at the stretch starts of samples (after a gap, a representative-
+    # block start): the first step of a continuous period starts free (_ramp_links.online_free_start_cells).
     dt_online_wrap: pl.DataFrame | None = None
     # (d, t, d_previous, t_previous, duration_previous): first steps of a continuation roll that ramp from the
     # previous roll's realized flow at (d_previous, t_previous); p_roll_continue_flow holds that flow.
@@ -7206,8 +7207,8 @@ def build_handoff_from_solution(
     # OC1 — the online analog of ``roll_end_state`` (above).  Carries the
     # realized committed-jump-end ``v_online`` so the next roll's
     # ``online_change`` first-step row (``dt_online_carry``) sees the
-    # prior roll's commitment as predecessor instead of the within-roll
-    # cyclic wrap (which re-charges a startup at every boundary).  Kept in
+    # prior roll's commitment as predecessor instead of the free start of
+    # a first step without a carry (no start-up at every boundary).  Kept in
     # unit-count space (NOT ×unitsize): the online dynamics operate on
     # ``v_online ∈ [0, existing_count]``, the same units the cyclic lag
     # carries.  Read at the same last realized step as ``roll_end_state``

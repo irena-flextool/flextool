@@ -8,8 +8,8 @@ predecessor (``online_change``).  Each step takes its predecessor from exactly o
   previous roll, the previous roll's committed-jump-end ``v_online`` (``SolveHandoff.roll_end_online`` overlaid
   as ``FlexData.p_roll_continue_online``) enters as a constant, so a unit that stays committed across the roll
   boundary pays no start-up and a genuine OFF to ON start still does;
-* the stretch wrap (``dt_online_wrap``): any other step cycles to the last step of its own stretch of the period
-  in this roll.
+* none (a free start, ``online_free_start_cells``): the first step of the solve and of a period that does not
+  continue the previous one chooses its units online freely, with no start-up or shut-down there.
 
 Driven witness: ``coal_min_load_fullYear_roll`` (a ``min_load_efficiency`` coal unit on the fullYear timeline,
 ``rolling_solve_horizon=8``, ``rolling_solve_jump=4`` -> 72 rolls spanning p2020/p2025/p2030/p2035, so
@@ -17,9 +17,10 @@ multiple-period roll windows are exercised).
 
 The four periods reuse the fullYear timeset, so the first roll of p2025, p2030 and p2035 starts a new year that
 does not continue the previous roll's last realized step on the timeline.  Like ramp limits and the minimum up /
-down time carry, the commitment carry stops there: those rolls take no carry and their first step wraps.  The
+down time carry, the commitment carry stops there: those rolls take no carry and their first step starts free.  The
 realized start-up total is checked against the re-derivation Sum max(0, online[t] - predecessor[t]) over every
-step of every roll, with each roll's first-step predecessor being the carried value or the wrap target.
+step of every roll, with each roll's first-step predecessor being the carried value, or none at a free start (no
+start-up there).
 """
 from __future__ import annotations
 
@@ -124,23 +125,20 @@ def _produced_value(step, unit: str) -> float | None:
     return float(row["value"][0]) if row.height else 0.0
 
 
-def _first_step_predecessor(step, unit: str) -> tuple[str, float]:
+def _first_step_predecessor(step, unit: str) -> tuple[str, float | None]:
     """The online predecessor of the roll's first step: ``("carry", carried value)`` when the step takes the carry
-    (it is in ``dt_online_carry``), else ``("wrap", v_online at its dt_online_wrap target)`` from the roll's own
-    solution."""
+    (it is in ``dt_online_carry``), else ``("free", None)``: the step must then be a free start (the first step of a
+    period that does not continue the previous one), with no predecessor."""
+    from flextool.engine.preprocess.params._ramp_links import online_free_start_cells
+
     fd = step.flex_data
     first = fd.dt.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)).row(0)
     oc = fd.dt_online_carry
     if oc is not None and first in oc.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)).rows():
         return "carry", _carried_value(step, unit)
-    wrap = (fd.dt_online_wrap.select([pl.col(c).cast(pl.Utf8) for c in ("d", "t", "d_previous", "t_previous")])
-            .filter((pl.col("d") == first[0]) & (pl.col("t") == first[1])))
-    assert wrap.height == 1, f"first step {first} has neither a carry nor a wrap"
-    _, _, d_prev, t_prev = wrap.row(0)
-    on = step.solution.value("v_online_linear")
-    v = on.filter((pl.col("p").cast(pl.Utf8) == unit) & (pl.col("d").cast(pl.Utf8) == d_prev)
-                  & (pl.col("t").cast(pl.Utf8) == t_prev))
-    return "wrap", float(v["value"][0])
+    assert first in online_free_start_cells(fd.dt, fd.dt_online_wrap, fd.rp_block_first).rows(), (
+        f"first step {first} has neither a carry nor a free start")
+    return "free", None
 
 
 def test_all_rolls_optimal(rolling_uc):
@@ -186,24 +184,24 @@ def test_carrier_produced_and_consumed(rolling_uc):
 
 def test_total_startup_equals_the_online_increments(rolling_uc):
     """The yearly realized startup equals the honest increments of the realized online trajectory (the
-    Delta-online re-derivation of the module docstring): per roll, max(0, online_first - predecessor) at its first
-    step (the carried value, or the wrap at a new-year roll) plus max(0, online[k] - online[k-1]) at its other
+    Delta-online re-derivation of the module docstring): per roll, max(0, online_first - carried) at a carried
+    first step (0 at a free start: roll 0 and the new-year rolls) plus max(0, online[k] - online[k-1]) at its other
     realized steps.  Exactly the three new-year rolls take no carry, and the total stays below the every-boundary
     re-charge."""
     ordered = _ordered_steps(rolling_uc)
     on = _per_roll_frame(rolling_uc["workdir"], "v_online_linear")
     su = _per_roll_frame(rolling_uc["workdir"], "v_startup_linear")
     total = sum(float(df[UNIT].sum()) for df in su.values())
-    expected, wraps = 0.0, 0
+    expected, frees = 0.0, 0
     for i, (name, step) in enumerate(ordered):
         o = on[_roll_index(name)][UNIT].to_list()
+        kind, prev = _first_step_predecessor(step, UNIT)
         if i == 0:
-            kind, prev = "wrap", _first_step_predecessor(step, UNIT)[1]
+            assert kind == "free", "roll 0 starts free"
         else:
-            kind, prev = _first_step_predecessor(step, UNIT)
-            wraps += kind == "wrap"
-        expected += max(0.0, o[0] - prev) + sum(max(0.0, b - a) for a, b in zip(o, o[1:]))
-    assert wraps == NEW_YEAR_ROLLS
+            frees += kind == "free"
+        expected += (0.0 if kind == "free" else max(0.0, o[0] - prev)) + sum(max(0.0, b - a) for a, b in zip(o, o[1:]))
+    assert frees == NEW_YEAR_ROLLS
     assert total == pytest.approx(expected, abs=5e-3), (
         f"realized yearly v_startup={total} != the online increments {expected}")
     assert total < PREFIX_TOTAL_STARTUP
@@ -214,7 +212,8 @@ def test_boundary_startup_equals_increment(rolling_uc):
     increment ``max(0, v_online_first - carried)`` — NOT the full online
     (which the cyclic-wrap bug charged).  This single invariant encodes
     both suppression (committed → carried>0 → little/no startup) and the
-    cold-start charge (carried≈0 → full startup)."""
+    cold-start charge (carried≈0 → full startup).  A new-year roll's first
+    step is a free start: no start-up and no shut-down there."""
     ordered = _ordered_steps(rolling_uc)
     on = _per_roll_frame(rolling_uc["workdir"], "v_online_linear")
     su = _per_roll_frame(rolling_uc["workdir"], "v_startup_linear")
@@ -225,13 +224,15 @@ def test_boundary_startup_equals_increment(rolling_uc):
         online_first = float(on[r][UNIT][0])
         startup_first = float(su[r][UNIT][0])
         kind, carried = _first_step_predecessor(ordered[i][1], UNIT)
+        if kind == "free":
+            sd = _per_roll_frame(rolling_uc["workdir"], "v_shutdown_linear")
+            assert startup_first == 0.0 and float(sd[r][UNIT][0]) == 0.0, (r, startup_first)
+            continue
         expected = max(0.0, online_first - carried)
         assert startup_first == pytest.approx(expected, abs=1e-2), (
             f"roll {r}: startup_first={startup_first} != "
             f"max(0, online_first={online_first} - {kind}={carried})={expected}"
         )
-        if kind == "wrap":
-            continue
         # Suppression witness: a unit committed into this roll (carried>0)
         # whose first step keeps it on must NOT be re-charged the full online.
         if carried > 0.1 and online_first > carried + 1e-6:

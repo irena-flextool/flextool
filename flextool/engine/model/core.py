@@ -192,8 +192,9 @@ USER_CSTR: tuple[str, ...]   = ("p_constraint_constant",)
 PROFILES:  tuple[str, ...]   = ("p_profile_value", "p_process_existing_count")
 STORAGE:   tuple[str, ...]   = ("nodeState", "dtttdt",
                                 "p_state_upper", "p_state_unitsize")
-# Online reads its predecessors only from the ramp links (dt_ramp_link) and the stretch wrap (dt_online_wrap):
-# without them every step would start from zero units online (a start-up charged at every step).
+# Online reads its predecessors only from the ramp links (dt_ramp_link) and the stretch wrap (dt_online_wrap, with
+# the free starts of _ramp_links.online_free_start_cells): without them every step would start from zero units
+# online (a start-up charged at every step).
 ONLINE: tuple[str, ...] = (
     "process_online", "p_online_dt",
     "dt_ramp_link", "dt_online_wrap", "p_process_existing_count",

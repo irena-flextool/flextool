@@ -942,8 +942,8 @@ def cold_start_online_flow_carry(d: "FlexData", left_out: "set[str] | frozenset[
     — every online process under ``online*``, those without a use under ``integers*``): the producer realised the
     flows of their ramp arcs but no units online, so this solve gets a ramp-carry flow without an online carry,
     which ``params._ramp_links.check_online_ramp_carry_consistency`` refuses (the ramp split would read a false "0
-    units online before").  Their carried flow is dropped instead, so their ramp and commitment start cold, as at
-    the start of a solve.  The carry routing itself is unchanged.  Only the processes of ``left_out`` start cold: a
+    units online before").  Their carried flow is dropped instead, so their ramp and commitment start as at the
+    start of a solve (no ramp row, units online free at the first step).  The carry routing itself is unchanged.  Only the processes of ``left_out`` start cold: a
     process the producer kept online and still carries no online carry is a real inconsistency, and the check
     raises for it.  Returns the data (``d`` itself when nothing is dropped) and the sorted names of the processes
     that start cold.
