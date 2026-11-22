@@ -3120,17 +3120,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#eq-reserve_fix_eq" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        EQ. reserve_fix_eq
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#eq-connection_reserve_up-connection_reserve_down" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6420,17 +6409,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#eq-reserve_fix_eq" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        EQ. reserve_fix_eq
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#eq-connection_reserve_up-connection_reserve_down" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7051,13 +7029,13 @@ Capacities are in MW (MWh for storage) and costs in CUR, the default units of Fl
 <div class="highlight"><pre><span></span><code>v_flow[p,source,sink,d,t] ≥ 0   ∀ (p,source,sink,d,t) ∈ pss_dt
 </code></pre></div>
 <p>Flow on a process arc in units of unitsize: MW = v_flow · unitsize[p]. Input arcs of indirect units without invest/divest variables carry a per-element upper bound (their capacity is a constant); maxFlow caps every other arc.</p>
-<p>Source: <code>flextool/engine/model/core.py:1153</code> (<code>_declare_variables</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:1126</code> (<code>_declare_variables</code>)</p>
 <h3 id="var-v_flow-coarse-processes">VAR. <code>v_flow (coarse processes)</code></h3>
 <p>Names: <code>v_flow</code></p>
 <div class="highlight"><pre><span></span><code>v_flow[p,s,k,d,b] ≥ 0   ∀ p ∈ processCoarse, (p,s,k) arcs, (d,b) the coarse steps of p (b = first fine step)
 </code></pre></div>
 <p>The flow of a coarse process: one rate per coarse step, the same on its fine steps.  b.v_flow is indexed on every fine step (_coarse_flows.alias): a fine row of a coarse process reads its step's column.</p>
-<p>Source: <code>flextool/engine/model/core.py:1160</code> (<code>_declare_variables</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:1133</code> (<code>_declare_variables</code>)</p>
 <h3 id="var-v_ramp_up-v_ramp_down">VAR. <code>v_ramp_up / v_ramp_down</code></h3>
 <p>Names: <code>v_ramp_up</code>, <code>v_ramp_down</code></p>
 <div class="highlight"><pre><span></span><code>v_ramp_up[p,s,k,d,t] ≥ 0, v_ramp_down[p,s,k,d,t] ≥ 0   ∀ (p,s,k,d,t) ∈ R
@@ -7065,38 +7043,38 @@ Capacities are in MW (MWh for storage) and costs in CUR, the default units of Fl
   predecessor at (d,t) (dt_ramp_link or dt_ramp_carry; for a coarse process t = b, its coarse step)
 </code></pre></div>
 <p>The increase and the decrease of v_flow from the ramp predecessor, in units of unitsize (as v_flow).  Priced equally by the ramp cost, so at most one of them is &gt; 0 at an optimum (up + down = |Δv_flow|).  Declared only when some arc has a ramp cost.</p>
-<p>Source: <code>flextool/engine/model/core.py:1171</code> (<code>_declare_variables</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:1144</code> (<code>_declare_variables</code>)</p>
 <h3 id="var-vq_state_up-vq_state_down">VAR. <code>vq_state_up / vq_state_down</code></h3>
 <p>Names: <code>vq_state_up</code>, <code>vq_state_down</code></p>
 <div class="highlight"><pre><span></span><code>vq_state_up[n,d,t], vq_state_down[n,d,t] ≥ 0
   ∀ n ∈ nodeBalance ∪ nodeBalancePeriod, (d,t) ∈ dt
 </code></pre></div>
 <p>Balance slack in MW (shortfall / surplus); enters the balance times step_duration and is penalised in the objective.  Nodes with penalty_method = off have none, so their balance is a hard equality.</p>
-<p>Source: <code>flextool/engine/model/core.py:1186</code> (<code>_declare_variables</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:1159</code> (<code>_declare_variables</code>)</p>
 <h3 id="var-v_state">VAR. <code>v_state</code></h3>
 <div class="highlight"><pre><span></span><code>v_state[n,d,t] ≥ 0   ∀ (n,d,t) ∈ nodeState_dt
 </code></pre></div>
 <p>Storage state in units of the node's state unitsize: MWh = v_state · state_unitsize[n].  Its upper bound depends on invest/divest and is the maxState row.</p>
-<p>Source: <code>flextool/engine/model/core.py:1197</code> (<code>_declare_variables</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:1170</code> (<code>_declare_variables</code>)</p>
 <h3 id="var-v_state_inter-v_state_rp_start">VAR. <code>v_state_inter / v_state_rp_start</code></h3>
 <p>Names: <code>v_state_inter</code>, <code>v_state_rp_start</code></p>
 <div class="highlight"><pre><span></span><code>v_state_inter[n,d,b] ≥ 0        ∀ n ∈ nodeState_rp, (d,b) ∈ rp_base_period
 v_state_rp_start[n,d,t] ≥ 0     ∀ n ∈ nodeState_rp, (d,t) ∈ rp_block_first
 </code></pre></div>
 <p>Representative-period storage, in state units: the state at the end of base period b of period d, and the free starting state of each representative block.  Every period has its own base periods (two periods may share base-period names).  Upper bounds are the rows rp_inter_period_max_state and maxState_rp_start.</p>
-<p>Source: <code>flextool/engine/model/core.py:1206</code> (<code>_declare_variables</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:1179</code> (<code>_declare_variables</code>)</p>
 <h3 id="var-v_invest_p-v_divest_p-v_invest_n-v_divest_n">VAR. <code>v_invest_p / v_divest_p / v_invest_n / v_divest_n</code></h3>
 <p>Names: <code>v_invest_p</code>, <code>v_divest_p</code>, <code>v_invest_n</code>, <code>v_divest_n</code></p>
 <div class="highlight"><pre><span></span><code>v_invest_p[p,d] ≥ 0 ∀ (p,d) ∈ pd_invest_set;  v_divest_p[p,d] ≥ 0 ∀ (p,d) ∈ pd_divest_set
 v_invest_n[n,d] ≥ 0 ∀ (n,d) ∈ nd_invest_set;  v_divest_n[n,d] ≥ 0 ∀ (n,d) ∈ nd_divest_set
 </code></pre></div>
 <p>Capacity built / retired in period d, as a count of unitsize (process) or state unitsize (storage node).  Only pre-existing capacity can be retired: pd/nd_divest_set hold the periods where the entity has some (before its end of life).  Upper bounds are the maxInvest_var_bound / maxDivest_var_bound rows.</p>
-<p>Source: <code>flextool/engine/model/core.py:1224</code> (<code>_declare_variables</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:1197</code> (<code>_declare_variables</code>)</p>
 <h3 id="var-v_flow_back">VAR. <code>v_flow_back</code></h3>
 <div class="highlight"><pre><span></span><code>v_flow_back[p,source,sink,d,t] ≥ 0   ∀ (p,source,sink) ∈ twoway1var_arcs, (d,t) ∈ dt
 </code></pre></div>
 <p>Reverse flow (sink → source) of method_2way_1var_off and DC power-flow arcs, in units of unitsize; the signed flow is v_flow − v_flow_back. One variable serves both the balance and dc_flow_eq.  A coarse process has one per coarse step, as v_flow.</p>
-<p>Source: <code>flextool/engine/model/core.py:1248</code> (<code>_declare_variables</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:1221</code> (<code>_declare_variables</code>)</p>
 <h3 id="eq-rp_inter_period_balance">EQ. <code>rp_inter_period_balance</code></h3>
 <div class="highlight"><pre><span></span><code>v_state_inter[n,d,b] − v_state_inter[n,d′,b′] = drift[n,d,b]
   drift[n,d,b] = Σ_{(d,b,r) ∈ rp_base__rep, (d,r) ∈ rp_block_first, d ∈ periods of dt}
@@ -7106,7 +7084,7 @@ v_invest_n[n,d] ≥ 0 ∀ (n,d) ∈ nd_invest_set;  v_divest_n[n,d] ≥ 0 ∀ (n
     (d,d′) ∈ rp_period_previous, b = first base period of d, b′ = last of d′    (period to period)
 </code></pre></div>
 <p>Chains the storage state across the base periods of each period: a base period is represented by weighted representative blocks r, and the boundary state moves by the weighted net change of those blocks.  The across-solve variants continue from the last base period of the previous period in solve order, as bind_within_solve / bind_forward_only continue v_state across periods.  All terms are in state units.</p>
-<p>Source: <code>flextool/engine/model/core.py:1458</code> (<code>_eq_rp_storage_chain</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:1431</code> (<code>_eq_rp_storage_chain</code>)</p>
 <h3 id="eq-rp_inter_period_cyclic">EQ. <code>rp_inter_period_cyclic</code></h3>
 <div class="highlight"><pre><span></span><code>v_state_inter[n,d,b_first(d)] − v_state_inter[n,d′,b_last(d′)] = drift[n,d,b_first(d)]
   n ∈ bind_within_period_blended_weights: every rp period d, d′ = d
@@ -7114,7 +7092,7 @@ v_invest_n[n,d] ≥ 0 ∀ (n,d) ∈ nd_invest_set;  v_divest_n[n,d] ≥ 0 ∀ (n
     predecessor in rp_period_previous, d_last = the rp periods that are no period's predecessor
 </code></pre></div>
 <p>Closes the chain: the last boundary state connects back to the first. bind_within_period_blended_weights closes every period on itself, bind_within_solve_blended_weights closes once per path of the solve: deterministic, one pair (first period, last period).  In a stochastic solve the rp periods form a tree (rp_period_previous): a fan after the trunk period (the shared period before the split) has one d_first and one d_last per forecast branch, so every branch's last period ends at the level the trunk period starts from; a fan in the first period has N roots and N leaves, and the N × N pairs are the loop of each path plus an equal chain start of all the roots. bind_forward_only_blended_weights has no closure.</p>
-<p>Source: <code>flextool/engine/model/core.py:1495</code> (<code>_eq_rp_storage_chain</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:1468</code> (<code>_eq_rp_storage_chain</code>)</p>
 <h3 id="eq-rp_inter_period_fan_start">EQ. <code>rp_inter_period_fan_start</code></h3>
 <div class="highlight"><pre><span></span><code>v_state_inter[n,d,b_first(d)] − drift[n,d,b_first(d)]
   − v_state_inter[n,d″,b_first(d″)] + drift[n,d″,b_first(d″)] = 0
@@ -7125,7 +7103,7 @@ v_invest_n[n,d] ≥ 0 ∀ (n,d) ∈ nd_invest_set;  v_divest_n[n,d] ≥ 0 ∀ (n
     built from period_first_of_solve
 </code></pre></div>
 <p>Every forecast of a fan in the solve's first period starts its base-period chain from the same level: the chain start v_state_inter − drift of the first base period, which no other row binds in a forward-only chain.  A fix_start node is not included: rp_inter_period_start_fix pins each root's chain start at the share of that forecast's own capacity.  The bind_within_solve_blended_weights roots are already tied by rp_inter_period_cyclic; the base-period levels inside a tie window need no tie of their own (they follow from the tied net flows, the tied block starts and this shared chain start).</p>
-<p>Source: <code>flextool/engine/model/core.py:1541</code> (<code>_eq_rp_storage_chain</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:1514</code> (<code>_eq_rp_storage_chain</code>)</p>
 <h3 id="eq-rp_inter_period_max_state-maxstate_rp_start">EQ. <code>rp_inter_period_max_state / maxState_rp_start</code></h3>
 <p>Names: <code>rp_inter_period_max_state</code>, <code>maxState_rp_start</code></p>
 <div class="highlight"><pre><span></span><code>v_state_inter[n,d,b] + retired[n,d]
@@ -7135,7 +7113,7 @@ v_state_rp_start[n,d,t] + (same invest/divest terms)  ≤  state_upper[n,d]
   ∀ (n,d,t) ∈ nodeState_rp × rp_block_first
 </code></pre></div>
 <p>Capacity bounds of the boundary and block-start states, as maxState bounds v_state: a base period of d is bounded by d's capacity. state_upper = capacity / state_unitsize, so every term is in state units. Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of existing capacity counting until its end of life (none for reinvest_automatic).</p>
-<p>Source: <code>flextool/engine/model/core.py:1588</code> (<code>_eq_rp_storage_chain</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:1561</code> (<code>_eq_rp_storage_chain</code>)</p>
 <h3 id="eq-rp_inter_period_start_fix">EQ. <code>rp_inter_period_start_fix</code></h3>
 <div class="highlight"><pre><span></span><code>v_state_inter[n,d,b] − drift[n,d,b] − state_start[n]·invested[n,d] + state_start[n]·retired[n,d]
   = state_start[n] · capacity[n,d] / state_unitsize[n]
@@ -7143,7 +7121,7 @@ v_state_rp_start[n,d,t] + (same invest/divest terms)  ≤  state_upper[n,d]
     solve's first period; of each forecast branch of a fan in the first period)
 </code></pre></div>
 <p>The level at the start of the chain (the level the first base period starts from: its end level less the weighted net change of its blocks) is the share state_start of the storage capacity in service, in state units.  The block-internal states start from free offsets (v_state_rp_start), so the start is pinned on the chain, the absolute level, not on a state inside the first block.  With bind_within_solve_blended_weights / bind_within_period_blended_weights the closure (rp_inter_period_cyclic) then holds the cycle at that level, as storage_state_start_binding_cyclic_period does without representative periods.  Only where no state of the node was realised before this solve (the first solve of the model and of each nested level). Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of existing capacity counting until its end of life (none for reinvest_automatic).</p>
-<p>Source: <code>flextool/engine/model/core.py:1784</code> (<code>_eq_rp_chain_ends</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:1757</code> (<code>_eq_rp_chain_ends</code>)</p>
 <h3 id="eq-rp_inter_period_end_fix">EQ. <code>rp_inter_period_end_fix</code></h3>
 <div class="highlight"><pre><span></span><code>v_state_inter[n,d,b] − state_end[n]·invested[n,d] + state_end[n]·retired[n,d]
   = state_end[n] · capacity[n,d] / state_unitsize[n]
@@ -7153,13 +7131,13 @@ v_state_rp_start[n,d,t] + (same invest/divest terms)  ≤  state_upper[n,d]
     fix_usage on n
 </code></pre></div>
 <p>The level at the end of the chain (the end of the last base period) is the share state_end of the storage capacity in service, in every solve whose horizon holds the last step of the model, as storage_state_end_binding pins v_state without representative periods.</p>
-<p>Source: <code>flextool/engine/model/core.py:1816</code> (<code>_eq_rp_chain_ends</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:1789</code> (<code>_eq_rp_chain_ends</code>)</p>
 <h3 id="eq-rp_inter_period_start_carry">EQ. <code>rp_inter_period_start_carry</code></h3>
 <div class="highlight"><pre><span></span><code>(v_state_inter[n,d,b] − drift[n,d,b]) · state_unitsize[n] = roll_continue_state[n]
   ∀ n ∈ bind_forward_only_blended_weights ∩ nodeState_rp ∩ carried, (d,b) ∈ chain roots
 </code></pre></div>
 <p>A representative-period solve that follows another solve (a sequence, or a roll) starts the base-period chain of a forward node from the level realised before it (the carry, MWh, routed by the cascade), as a bind_forward_only node without representative periods does at its first step (owner decision).  Before, the chain started free.  The block-internal states keep their free offsets: only the chain is absolute.</p>
-<p>Source: <code>flextool/engine/model/core.py:1846</code> (<code>_eq_rp_chain_ends</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:1819</code> (<code>_eq_rp_chain_ends</code>)</p>
 <h3 id="eq-rp_inter_period_start_max_state-rp_inter_period_start_min_state">EQ. <code>rp_inter_period_start_max_state / rp_inter_period_start_min_state</code></h3>
 <p>Names: <code>rp_inter_period_start_max_state</code>, <code>rp_inter_period_start_min_state</code></p>
 <div class="highlight"><pre><span></span><code>v_state_inter[n,d,b] − drift[n,d,b] + retired[n,d] − invested[n,d]  ≤  state_upper[n,d]
@@ -7168,7 +7146,7 @@ v_state_inter[n,d,b] − drift[n,d,b]  ≥  0
     (d,b) ∈ chain roots
 </code></pre></div>
 <p>The level a forward chain starts from is a physical level: within the storage capacity in service, as every base-period level (rp_inter_period_max_state).  Without the bounds the start of a forward chain had no bound.</p>
-<p>Source: <code>flextool/engine/model/core.py:1874</code> (<code>_eq_rp_chain_ends</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:1847</code> (<code>_eq_rp_chain_ends</code>)</p>
 <h3 id="eq-rp_inter_period_end_match">EQ. <code>rp_inter_period_end_match</code></h3>
 <div class="highlight"><pre><span></span><code>v_state_inter[n,d′,b′] − (v_state_inter[n,d,b] − drift[n,d,b])  ≥  − state_start[n]·existing[n,d] / su[n]
   ∀ n ∈ bind_forward_only_blended_weights ∩ nodeState_rp whose start is a decision of the solve: a free start
@@ -7178,7 +7156,7 @@ v_state_inter[n,d,b] − drift[n,d,b]  ≥  0
     free start
 </code></pre></div>
 <p>The matching end: a forward chain whose start the solve chooses ends at least at that start, so the solve cannot take energy it never produced (a free start full, the end empty; or storage built as a fuel tank whose fix_start share is spent once).  With fix_start only the start on the capacity the solve adds must come back: the start on existing capacity is the user's explicit endowment (state units).  An inequality: a start of 0, or no investment, always meets it, so it never forces slack.  fix_end and use_reference_value still set the end; with a free start this bounds the start by that end.</p>
-<p>Source: <code>flextool/engine/model/core.py:1943</code> (<code>_eq_rp_chain_ends</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:1916</code> (<code>_eq_rp_chain_ends</code>)</p>
 <h3 id="eq-rp_inter_period_start_match">EQ. <code>rp_inter_period_start_match</code></h3>
 <div class="highlight"><pre><span></span><code>v_state_inter[n,d,b] · state_unitsize[n]  ≥  min(start[n], capacity[n,d])
   ∀ n ∈ storage_roll_end(match) ∩ bind_forward_only_blended_weights ∩ nodeState_rp, (d,b) ∈ chain leaves,
@@ -7186,7 +7164,7 @@ v_state_inter[n,d,b] − drift[n,d,b]  ≥  0
   start = the level (MWh) the node started the model from (a free start, recorded by the cascade)
 </code></pre></div>
 <p>The matching end of a carried chain: a later representative-period solve that reaches the end of the model ends the chain at least at the level the model started the node from, so the solves together return it.</p>
-<p>Source: <code>flextool/engine/model/core.py:1971</code> (<code>_eq_rp_chain_ends</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:1944</code> (<code>_eq_rp_chain_ends</code>)</p>
 <h3 id="eq-rp_inter_period_reference_value">EQ. <code>rp_inter_period_reference_value</code></h3>
 <div class="highlight"><pre><span></span><code>v_state_inter[n,d,b] − reference_value[n,d,t]·invested[n,d] + reference_value[n,d,t]·retired[n,d]
   = reference_value[n,d,t] · capacity[n,d] / state_unitsize[n]
@@ -7197,7 +7175,7 @@ a state inside the last block.  A reference value below the start share of a nod
 the matching end above stays (the solve cannot build storage to spend its start share) and caps the
 investment; a warning (_warn_reference_below_start).
 </code></pre></div>
-<p>Source: <code>flextool/engine/model/core.py:2003</code> (<code>_eq_rp_chain_ends</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:1976</code> (<code>_eq_rp_chain_ends</code>)</p>
 <h3 id="eq-nodebalance_eq">EQ. <code>nodeBalance_eq</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{(p,s,n) ∈ flow_to_n} v_flow[p,s,n,d,t]·unitsize[p]·Δt
   − Σ_{(p,n,k) ∈ flow_from_nodeBalance_eff}
@@ -7225,7 +7203,7 @@ investment; a warning (_warn_reference_below_start).
     (default 1 each; a zero coefficient keeps its uncapped-edge meaning instead, unscaled)
 </code></pre></div>
 <p>Energy conservation per node and time step, in MWh.  Storage nodes add the state change; the previous step t⁻ depends on storage_binding_method. nodeStateBlock nodes are balanced per timeset block (nodeBalanceBlock_eq), nodeCoarse nodes per coarse step (nodeBalanceCoarse_eq). The section term exists for min_load_efficiency units only.  The start-up term (core._startup_draw) is the start-up energy of the units with a start-up input node n (startup_input_method startup_and_input / startup_only), MWh per start-up event; a coarse process starts at the first fine step of its coarse step.  The flow, start-up and slack terms are b.node_balance_flow_terms.  Self-discharge: the content decays continuously at ln(1 + loss) per hour; flows within a step are spread evenly over the step.  Exact for any step length while the loss is constant within the step; a coarse step / block with a time-varying loss uses h_b = Σ Δt·λ_t, exact for the idle decay only (#152).  The decay is applied to a weighted average of the start and the end state (model/_self_discharge.py); the model folds it into the state change as (S⁻·(1 − β) − S·(1 + α))·state_unitsize.</p>
-<p>Source: <code>flextool/engine/model/core.py:2103</code> (<code>_eq_node_balance</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:2076</code> (<code>_eq_node_balance</code>)</p>
 <h3 id="eq-nodebalancecoarse_eq">EQ. <code>nodeBalanceCoarse_eq</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{t ∈ b} [ Σ_{(p,s,n) ∈ flow_to_n} v_flow[p,s,n,d,t]·unitsize[p]·Δt
   − Σ_{(p,n,k) ∈ flow_from_nodeBalance_eff}
@@ -7252,20 +7230,20 @@ v_state[n,d,b⁻] − v_state[n,d,b] (b⁻ = the coarse step before b by the nod
 binding methods, fix_start and the roll carry apply to coarse nodes as to fine ones.  Same orientation and
 units as nodeBalance_eq: its dual is the node's price (currency/MWh) over the coarse step.
 </code></pre></div>
-<p>Source: <code>flextool/engine/model/core.py:2195</code> (<code>_eq_node_balance_coarse</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:2168</code> (<code>_eq_node_balance_coarse</code>)</p>
 <h3 id="eq-stateconstantcoarse_eq">EQ. <code>stateConstantCoarse_eq</code></h3>
 <div class="highlight"><pre><span></span><code>v_state[n,d,t] − v_state[n,d,t_previous] = 0
   ∀ (n,d,t,t_previous) ∈ node_coarse_interior   (n ∈ nodeCoarse ∩ nodeState; t_previous: the step before t
   within its coarse step)
 </code></pre></div>
 <p>A coarse storage node keeps one state per coarse step.</p>
-<p>Source: <code>flextool/engine/model/core.py:2232</code> (<code>_eq_node_balance_coarse</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:2205</code> (<code>_eq_node_balance_coarse</code>)</p>
 <h3 id="eq-nodebalanceperiod_eq">EQ. <code>nodeBalancePeriod_eq</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_t w[d,t] · (flow, start-up and slack terms of nodeBalance_eq)[n,d,t]  =  −Σ_t w[d,t] · inflow[n,d,t]
   ∀ n ∈ nodeBalancePeriod, n ∉ nodeState, d ∈ periods of dt;   w = timestep_weight
 </code></pre></div>
 <p>Energy balance over a whole period instead of every step, in MWh.  The terms are b.node_balance_flow_terms (Δt already applied); period nodes are never storage, so there are no state terms. Every term, slacks included, carries the timestep weight: a per-step balance needs no weight, but a period sum without it would let low-weight timeslices offset high-weight ones.  The other op_factor parts (inflation_op, period_share) are per period and cancel in a row. Inflow is energy per step (no Δt), as in nodeBalance_eq.</p>
-<p>Source: <code>flextool/engine/model/core.py:2461</code> (<code>_eq_node_balance_period</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:2434</code> (<code>_eq_node_balance_period</code>)</p>
 <h3 id="eq-node_balance_fix_quantity_eq_lower">EQ. <code>node_balance_fix_quantity_eq_lower</code></h3>
 <div class="highlight"><pre><span></span><code>v_state[n,d,t] · state_unitsize[n]
   = Σ_{(d_up,d) ∈ period_branch, (d,t,t_up) ∈ dtt_timeline_matching} fix_storage_quantity[n,d_up,t_up]
@@ -7273,7 +7251,7 @@ units as nodeBalance_eq: its dual is the node's price (currency/MWh) over the co
   ∀ n ∈ n_fix_storage_quantity, d ∈ period_last, (n,d,t) ∈ nodeState_last_dt
 </code></pre></div>
 <p>Pins the storage state (MWh) at the last step of each last period to the state an upper-level (coarser) solve reached at the matching time.  Where the horizon ends inside an upper step, the cascade restates the target as the upper level interpolated at that instant (the upper solve's level is linear within its step; _run_model._nested_end_rows), not the step's end. Despite the name, the row is an equality.</p>
-<p>Source: <code>flextool/engine/model/core.py:2546</code> (<code>_eq_node_balance_fix_quantity</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:2519</code> (<code>_eq_node_balance_fix_quantity</code>)</p>
 <h3 id="eq-node_storage_usage_fix_le">EQ. <code>node_storage_usage_fix_le</code></h3>
 <div class="highlight"><pre><span></span><code>− Σ_{(p,s,n) ∈ process_source_sink, t} v_flow[p,s,n,d,t]·unitsize[p]·Δt
 + Σ_{(p,n,k) ∈ process_source_sink_eff, t}
@@ -7286,13 +7264,13 @@ units as nodeBalance_eq: its dual is the node's price (currency/MWh) over the co
     last one, RHS that cumulative cap
 </code></pre></div>
 <p>Caps the net energy drawn from storage node n over a whole period (MWh) by the usage an upper-level (coarser) solve planned for the coarse windows overlapping that period.  One row per period, at its last step; each coarse window counts once however many fine steps it covers.  The cascade restates the cap where that differs from the cumulative rule (_run_model._nested_end_rows): the upper usage from the period's start in the solve instance to the horizon end, each window pro rata to its hours in that span, less the usage the instance's earlier rolls realised in the period — so a rolling lower level uses at most what the upper planned. The section term exists for min_load_efficiency units only.  The process sink/source coefficient ratio is not applied (nor in the source-side variable cost); it is 1 in every current dataset.</p>
-<p>Source: <code>flextool/engine/model/core.py:2680</code> (<code>_eq_storage_usage_fix</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:2653</code> (<code>_eq_storage_usage_fix</code>)</p>
 <h3 id="eq-stateconstantwithinblock_eq">EQ. <code>stateConstantWithinBlock_eq</code></h3>
 <div class="highlight"><pre><span></span><code>v_state[n,d,t] − v_state[n,d,t_previous] = 0
   ∀ n ∈ nodeStateBlock, (d,t,t_previous) ∈ dtttdt_block_interior
 </code></pre></div>
 <p>Keeps the state of a nodeStateBlock node constant within each timeset block.  Interior steps never cross a period boundary.</p>
-<p>Source: <code>flextool/engine/model/core.py:2758</code> (<code>_eq_block_coupling</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:2731</code> (<code>_eq_block_coupling</code>)</p>
 <h3 id="eq-nodebalanceblock_eq">EQ. <code>nodeBalanceBlock_eq</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{t ∈ b} [ Σ_{(p,s,n) ∈ flow_to_n} v_flow[p,s,n,d,t]·unitsize[p]·Δt
   − Σ_{(p,n,k) ∈ flow_from_nodeBalance_eff}
@@ -7321,7 +7299,7 @@ the loop (its start and end are pinned separately): its blocks chain forward in 
 (_self_discharge.block_forward_nodes / block_forward_lag).  Same orientation and units as nodeBalance_eq: its
 dual is the node's price (currency/MWh) over the block.
 </code></pre></div>
-<p>Source: <code>flextool/engine/model/core.py:2775</code> (<code>_eq_block_coupling</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:2748</code> (<code>_eq_block_coupling</code>)</p>
 <h3 id="eq-maxflow">EQ. <code>maxFlow</code></h3>
 <div class="highlight"><pre><span></span><code>v_flow[p,s,k,d,t] + Σ_r v_reserve_up[p,r,k,d,t] + Σ_r v_reserve_down[p,r,s,d,t] · φ[p,s,k,d,t]
   − M·invested[p,d]
@@ -7335,20 +7313,20 @@ dual is the node's price (currency/MWh) over the block.
 <p>Caps every flow by the built capacity of its process (units of unitsize). existing_count[p,d] = existing_mw[p,d] / unitsize[p]: existing_mw from the cohorts (engine.md "Capacity symbols": the existing cohort with the user's existing of d, the investments earlier solves realized, minus their carried retirements). On indirect-unit input arcs M = input_share_max · full-load input · a, a = x(availability) = (slope·W(a₀) + section)/(slope·W(1) + section) (a₀ = availability, W(y) the output-side fuel width filled to y, section only for a unit with an online variable); a ≥ availability (never tighter than the physical derated input), = availability when every output shares one conversion_flow_coeff (#102). Uncapped arcs (conversion_flow_coeff = 0) have M = 1 and RHS = p_flow_upper.  Input arcs of units without invest/divest are bounded on v_flow instead (flow_bound_arcs).  The reserve terms are the reserve that raises the flow: upward reserve held at the sink, and downward reserve held at the source of a unit (it consumes more), converted to the arc's flow.  A bound input arc gets this row as well when it carries such a reserve (its v_flow bound stays, redundant). Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of existing capacity counting until its end of life (none for reinvest_automatic). A row whose RHS is inf (existing capacity inf: no limit; the Benders splitter's cross-region half-flows)</p>
 <div class="highlight"><pre><span></span><code>  is left out, here and in maxFlow_back.
 </code></pre></div>
-<p>Source: <code>flextool/engine/model/core.py:2830</code> (<code>_eq_max_flow</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:2803</code> (<code>_eq_max_flow</code>)</p>
 <h3 id="eq-maxflow_negcap">EQ. <code>maxFlow_negCap</code></h3>
 <div class="highlight"><pre><span></span><code>(maxFlow LHS)  ≥  M · existing_count[p,d]
   ∀ (p,s,k,d,t) ∈ pss_dt, (p,d) ∈ pd_neg_cap
 </code></pre></div>
 <p>Negative-capacity processes (unitsize \&lt; 0 and existing \&lt; 0): dividing v_flow·unitsize ≤ capacity by the negative unitsize flips the sense, so the capacity becomes a minimum output.  maxFlow keeps the ≤ side.</p>
-<p>Source: <code>flextool/engine/model/core.py:2882</code> (<code>_eq_max_flow</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:2855</code> (<code>_eq_max_flow</code>)</p>
 <h3 id="eq-maxflow_back">EQ. <code>maxFlow_back</code></h3>
 <div class="highlight"><pre><span></span><code>v_flow_back[p,s,k,d,t] − M·Σ v_invest_p[p,d′] + M·Σ v_divest_p[p,d′]
   ≤ M · existing_count[p,d]
   ∀ (p,s,k,d,t) ∈ pss_dt, (p,s,k) ∈ twoway1var_arcs
 </code></pre></div>
 <p>Caps the reverse flow of two-way one-variable arcs by the same built capacity, so |v_flow − v_flow_back| ≤ capacity.  No reserve term. Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of existing capacity counting until its end of life (none for reinvest_automatic).</p>
-<p>Source: <code>flextool/engine/model/core.py:2901</code> (<code>_eq_max_flow</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:2874</code> (<code>_eq_max_flow</code>)</p>
 <h3 id="eq-maxoutputsum-maxoutputsum_negcap">EQ. <code>maxOutputSum / maxOutputSum_negCap</code></h3>
 <p>Names: <code>maxOutputSum</code>, <code>maxOutputSum_negCap</code></p>
 <div class="highlight"><pre><span></span><code>Σ_k v_flow[p,p,k,d,t] + Σ_k Σ_r v_reserve_up[p,r,k,d,t]
@@ -7357,7 +7335,7 @@ dual is the node's price (currency/MWh) over the block.
   ∀ p ∈ process_indirect with an output arc k, (d,t);   av = availability[p,d,t]
 </code></pre></div>
 <p>The capacity of an indirect (multi-flow) unit is the maximum sum of its outputs; maxFlow caps each output arc alone.  capacity_max_coeff is not applied.  Negative-capacity (p,d) rows get only the ≥ twin maxOutputSum_negCap: with both, a k-output unit would need Σ out = c while maxFlow pins every arc to c. existing_count[p,d] is the value maxFlow's output arcs of p carry (all equal; max collapses them); a unit without an existing row gets 0. Availability defaults to 1.0 for processes without availability data. Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of existing capacity counting until its end of life (none for reinvest_automatic).</p>
-<p>Source: <code>flextool/engine/model/core.py:2937</code> (<code>_eq_max_output_sum</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:2910</code> (<code>_eq_max_output_sum</code>)</p>
 <h3 id="eq-ramp_sinksource_updown_constraint">EQ. <code>ramp_{sink,source}_{up,down}_constraint</code></h3>
 <p>Names: <code>ramp_sink_up_constraint</code>, <code>ramp_sink_down_constraint</code>, <code>ramp_source_up_constraint</code>, <code>ramp_source_down_constraint</code></p>
 <p>Units without online variables (as c14a): v_flow[p,s,k,d,t] − v_flow[p,s,k,d′,t′] + R↑[p,s,k,d,t]</p>
@@ -7404,7 +7382,7 @@ dual is the node's price (currency/MWh) over the block.
 <div class="highlight"><pre><span></span><code>  R↑ ≤ ρ·c·cap (up),  −R↓ ≥ −ρ·c·cap (down),  ρ = ramp_speed · 60 · step_duration[d,t] &lt; 1;
   cap = v_online[p,d,t] for units with online variables, built units otherwise.
 </code></pre></div>
-<p>Source: <code>flextool/engine/model/core.py:3022</code> (<code>_eq_ramp</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:2995</code> (<code>_eq_ramp</code>)</p>
 <h3 id="eq-ramp_sinksource_updown_reserve_coarse">EQ. <code>ramp_{sink,source}_{up,down}_reserve_coarse</code></h3>
 <p>Names: <code>ramp_sink_up_reserve_coarse</code>, <code>ramp_sink_down_reserve_coarse</code>, <code>ramp_source_up_reserve_coarse</code>, <code>ramp_source_down_reserve_coarse</code></p>
 <div class="highlight"><pre><span></span><code>R↑[p,s,k,d,b] ≤ room_b · cap (up),  −R↓[p,s,k,d,b] ≥ −room_b · cap (down)
@@ -7424,7 +7402,7 @@ dual is the node's price (currency/MWh) over the block.
   units only.
 </code></pre></div>
 <p>Limits the change of a flow between two consecutive steps, plus the reserve it holds in that direction, to its ramp room: ramp_speed is a share of capacity per minute and flows are step averages, so the room between two step averages is the speed × the distance between the two step centres (a valid bound for every trajectory that obeys the speed; it is the tight one for a linear ramp).  For a unit with online variables the units online in both steps change by at most ρ̄ each, a unit starting in step t reaches at most SU (half a step's ramp above min load, the startup-step limit of maxFlow_online) and a stopping unit drops from at least its floor F; downwards a stopping unit drops at most from SD′ (the pre-shutdown limit) and a starting unit rises to at least F.  v_startup / v_shutdown are relative to the same predecessor (online_change), so a start/stop pair with online unchanged gains c·(ml − ½·ρ·Δ) − F ≤ 0 of room on the only output of a unit (research_backbone_startup_ramp.md); on an input, or on one output of a multi-output unit, a pair can still gain up to the min-load share, paid by the startup cost.  A step has a predecessor (dt_ramp_link) only where it is adjacent on the timeline in the un-rolled solve: no cyclic wrap at the first step of a solve or of a period that does not continue the previous one, no row across a gap or at the start of a representative block.  Rows inside one period with ρ̄ ≥ 1 cannot bind and are not built (unchanged from c14a: every term of the online-capacity split is still implied there, design §1.4).  Cross-period and carried rows are always built (the capacity, or the online predecessor, can differ). c scales the room as the arc's capacity is scaled: capacity_max_coeff[p,k] on the sink side; on the source side input_share_max[p,s], or on an indirect unit's input arc p_indirect_input_cap.  v_flow and v_reserve are in units of unitsize, existing_count = capacity / unitsize.  Arcs with conversion_flow_coeff = 0 get no row. Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of existing capacity counting until its end of life (none for reinvest_automatic).</p>
-<p>Source: <code>flextool/engine/model/core.py:3063</code> (<code>_eq_ramp</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:3036</code> (<code>_eq_ramp</code>)</p>
 <h3 id="eq-ramp_change_eq">EQ. <code>ramp_change_eq</code></h3>
 <div class="highlight"><pre><span></span><code>v_flow[p,s,k,d,t] − v_flow[p,s,k,d′,t′] − v_ramp_up[p,s,k,d,t] + v_ramp_down[p,s,k,d,t] = 0
   ∀ (p,s,k) ∈ process_source_sink_ramp_cost, (d,t,d′,t′) ∈ dt_ramp_link   (every link, no room filter)
@@ -7432,7 +7410,7 @@ carried row (dt_ramp_carry): v_flow[p,s,k,d,t] − v_ramp_up + v_ramp_down = f̂
 coarse process: t = b (its coarse step, named by the first fine step), (d′,t′) = b⁻, as _coarse_flows.ramp_rows
 </code></pre></div>
 <p>Splits the change of a flow between a step and its ramp predecessor into an increase and a decrease, both priced by the ramp cost (OBJ. ramp_cost), in units of unitsize.  The predecessors are those of the ramp limits: no row at the first step of a solve, after a gap in the timeline, at a period that does not continue the previous one or at a representative-block start; cross-period links are kept; a stochastic branch's first step links to the shared predecessor; a continuation roll's first step ramps from the flow the previous roll realized, so a change at a roll boundary is charged once, in the roll that realizes it.  Arcs with conversion_flow_coeff = 0 have rows too (that parameter removes the ramp limits, not the cost).  Reserves are not part of the change.  An indirect unit's input and output arcs are priced separately, each by its own side.</p>
-<p>Source: <code>flextool/engine/model/core.py:3163</code> (<code>_eq_ramp_cost</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:3136</code> (<code>_eq_ramp_cost</code>)</p>
 <h3 id="eq-maxinvestdivest_var_bound_n">EQ. <code>max{Invest,Divest}_var_bound[_n]</code></h3>
 <p>Names: <code>maxInvest_var_bound</code>, <code>maxInvest_var_bound_n</code>, <code>maxDivest_var_bound</code>, <code>maxDivest_var_bound_n</code></p>
 <div class="highlight"><pre><span></span><code>v_invest_p[p,d] ≤ max_units[p,d]   ∀ (p,d) ∈ pd_invest_set     (maxInvest_var_bound)
@@ -7441,7 +7419,7 @@ v_invest_n[n,d] ≤ max_units[n,d]   ∀ (n,d) ∈ nd_invest_set     (maxInvest_
 v_divest_n[n,d] ≤ max_units[n,d]   ∀ (n,d) ∈ nd_divest_set     (maxDivest_var_bound_n)
 </code></pre></div>
 <p>Caps the units invested or divested in one period (max_units = p_entity_max_units). Emitted as rows, not as variable bounds.</p>
-<p>Source: <code>flextool/engine/model/core.py:3722</code> (<code>_eq_invest_max_units</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:3695</code> (<code>_eq_invest_max_units</code>)</p>
 <h3 id="eq-maxinvestdivest_entity_period_pn">EQ. <code>max{Invest,Divest}_entity_period_{p,n}</code></h3>
 <p>Names: <code>maxInvest_entity_period_p</code>, <code>maxInvest_entity_period_n</code>, <code>maxDivest_entity_period_p</code>, <code>maxDivest_entity_period_n</code></p>
 <div class="highlight"><pre><span></span><code>Σ_{(p,o,d) ∈ edd_invest_commission} v_invest_p[p,o] · unitsize[p] + carried_commission[p,d]
@@ -7455,7 +7433,7 @@ R_n[n,d] · state_unitsize[n]  ≤ divest_max_period[n,d]   ∀ (n,d) ∈ ed_div
   (p,d) and (n,d) whose invest_max_period / retire_max_period is inf have no row (no limit in that period)
 </code></pre></div>
 <p>Caps the capacity coming online or retired in one period for entities with a per-period limit (e.g. invest_method = invest_period_total).  An investment decided in o comes online in d = c(o) (construction lead time); without a lead time c(o) = o and the row is v_invest_p[p,d] · unitsize[p] ≤ invest_max_period[p,d] over ed_invest_period_set ∩ pd_invest_set, the form built when no decision of the solve has a lead time.  carried_commission is the capacity earlier solves of a chain decided that comes online in d.  The cap is raw capacity with unitsize on the LHS, as in the other invest caps, so the row dual is in objective units per unit of capacity.</p>
-<p>Source: <code>flextool/engine/model/core.py:3775</code> (<code>_eq_invest_period_caps</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:3748</code> (<code>_eq_invest_period_caps</code>)</p>
 <h3 id="eq-maxinvestdivest_entity_total_path_n">EQ. <code>max{Invest,Divest}_entity_total[_path][_n]</code></h3>
 <p>Names: <code>maxInvest_entity_total</code>, <code>maxInvest_entity_total_n</code>, <code>maxInvest_entity_total_path</code>, <code>maxInvest_entity_total_path_n</code>, <code>maxDivest_entity_total</code>, <code>maxDivest_entity_total_n</code>, <code>maxDivest_entity_total_path</code>, <code>maxDivest_entity_total_path_n</code></p>
 <div class="highlight"><pre><span></span><code>Σ_{d ∈ D(leaf)} v_invest_p[p,d] · unitsize[p]  ≤  max(0, invest_max_total[p] − prior_inv[p])
@@ -7471,7 +7449,7 @@ R_n[n,d] · state_unitsize[n]  ≤ divest_max_period[n,d]   ∀ (n,d) ∈ ed_div
     pairs that have the variable
 </code></pre></div>
 <p>Caps the amount built (retired) over the chain; reinvestments count, retirements do not reduce it.  Capacity in service is cumulative_max_capacity.  Rows only for entities that have the variable in this solve (#43).  If a user realizes a period in one solve and invests in it again in a later one, it is counted twice in prior_inv — same as the old (now-removed) max_d(p_entity_previously_invested_capacity) form; no fixture does this.</p>
-<p>Source: <code>flextool/engine/model/core.py:3855</code> (<code>_eq_invest_total_caps</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:3828</code> (<code>_eq_invest_total_caps</code>)</p>
 <h3 id="eq-maxretired_existing_pn">EQ. <code>maxRetired_existing_{p,n}</code></h3>
 <p>Names: <code>maxRetired_existing_p</code>, <code>maxRetired_existing_n</code></p>
 <div class="highlight"><pre><span></span><code>retired[p,d] · unitsize[p]  ≤  pre_existing[p,d] − retired_carried[p,d]
@@ -7489,7 +7467,7 @@ retired[n,d] · state_unitsize[n]  ≤  pre_existing[n,d] − retired_carried[n,
     chain realized and that still count in d; handoff realized_retire, engine.md "Capacity symbols")
 </code></pre></div>
 <p>Only capacity that existed before the run can be retired: the capacity retired so far and still counting in d stays within the pre-existing capacity of d (a declining existing map, or an entity that also invests, cannot retire more than was there).  A retirement option exists only where pre_existing &gt; 0.</p>
-<p>Source: <code>flextool/engine/model/core.py:3928</code> (<code>_eq_retired_existing</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:3901</code> (<code>_eq_retired_existing</code>)</p>
 <h3 id="eq-conversion_indirect">EQ. <code>conversion_indirect</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{s ∈ in(p)} v_flow[p,s,p,d,t] · unitsize[p] · conv_in[p,s]
   + Σ_s Σ_{(t_s,t,δ) ∈ delay} v_flow[p,s,p,d,t_s] · unitsize[p] · delay_weight[p,δ] · conv_in[p,s]
@@ -7507,7 +7485,7 @@ retired[n,d] · state_unitsize[n]  ≤  pre_existing[n,d] − retired_carried[n,
     (_reduce_detail module docstring, "Full-load efficiency")
 </code></pre></div>
 <p>Energy balance of an indirect (multi-flow) unit: weighted input equals weighted output times the slope. conv_in / conv_out = source / sink conversion_flow_coeff (default 1); unequal sink coefficients express e.g. the heat/electricity trade-off of an extraction CHP.  The first input sum covers undelayed units; delayed units take their inputs at the earlier source-side steps t_s (dtt__delay_duration, _delay.delayed_input_expr), t being the sink-side time. Section term (indirect min_load_efficiency units, linear and integer v_online): the input of an indirect unit is its own v_flow, so this is the only place the section fuel enters; node balance, commodity cost, CO2 and the reported inputs all read that v_flow.  It carries no conversion_flow_coeff; for a delayed unit it sits on the output side at time t.  Rows without a v_online column lack the term.</p>
-<p>Source: <code>flextool/engine/model/core.py:3982</code> (<code>_eq_conversion</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:3955</code> (<code>_eq_conversion</code>)</p>
 <h3 id="eq-conversion_piecewise">EQ. <code>conversion_piecewise</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{s ∈ in(p)} v_flow[p,s,p,d,t] · unitsize[p] · conv_in[p,s]
   + Σ_s Σ_{(t_s,t,δ) ∈ delay} v_flow[p,s,p,d,t_s] · unitsize[p] · delay_weight[p,δ] · conv_in[p,s]
@@ -7523,13 +7501,13 @@ retired[n,d] · state_unitsize[n]  ≤  pre_existing[n,d] − retired_carried[n,
     conversion_indirect, _reduce_detail._full_load_piecewise)
 </code></pre></div>
 <p>Part-load fuel curve of a piecewise_linear unit: its weighted input is at least each line of the curve, so the input follows the curve's upper envelope; the curve is convex (checked before the solve), so the cheapest feasible input lies on the curve.  Scaled by the units online (the perspective of the curve: a fleet at equal load), or by the units built for a unit without online variables.  conv_in / conv_out = conversion_flow_coeff (default 1); the load share is the weighted output per unit of U·unitsize, as the min_load_efficiency section.  An input without cost (or with a negative value) can be burnt above the curve; the post-solve check warns. A coarse process (processCoarse) has one row per line and coarse step (conversion_piecewise_coarse, _coarse_flows.add_cstr): the flows and v_online are one value per coarse step and the lines have no time axis, so the averaged row is the fine row at the coarse step.  A delayed unit's inputs are those at the earlier source-side steps t_s, as conversion_indirect.</p>
-<p>Source: <code>flextool/engine/model/core.py:4058</code> (<code>_eq_conversion_piecewise</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:4031</code> (<code>_eq_conversion_piecewise</code>)</p>
 <h3 id="eq-mininputshare">EQ. <code>minInputShare</code></h3>
 <div class="highlight"><pre><span></span><code>conv[p,s] · v_flow[p,s,p,d,t]  ≥  share_min[p,s] · Σ_{s′ ∈ in(p)} conv[p,s′] · v_flow[p,s′,p,d,t]
   ∀ (p,s) with share_min[p,s] &gt; 0, p ∈ process_indirect with ≥ 2 inputs, (p,d,t) ∈ process_indirect_dt
 </code></pre></div>
 <p>While the unit runs, input s supplies at least the share input_share_min of its current input energy (conv = source conversion_flow_coeff, default 1).  The row is homogeneous: with no input it reads 0 ≥ 0, so it needs no online variable.  unitsize cancels (v_flow is per unitsize on every input of p).</p>
-<p>Source: <code>flextool/engine/model/core.py:4183</code> (<code>_eq_min_input_share</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:4156</code> (<code>_eq_min_input_share</code>)</p>
 <h3 id="eq-co2_max_period">EQ. <code>co2_max_period</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{(p,s,k,c,g) ∈ flow_from_co2_capped, t}
     (v_flow[p,s,k,d,t]·unitsize[p]·slope[p,d,t] + v_online[p,d,t]·section[p,d,t]·unitsize[p])
@@ -7548,7 +7526,7 @@ retired[n,d] · state_unitsize[n]  ≤  pre_existing[n,d] − retired_carried[n,
   its period's realized history (the realization solve's carry)
 </code></pre></div>
 <p>Caps the annualised CO2 emissions of a group in each period (tonnes per year): dividing by period_share, the LHS is the emissions of the solve's own steps of d annualised over their hours. The RHS (_co2_period_cap_with_carry) is this period's remaining budget as of this roll: f_d_k[d] (1 outside rolling / chained solves) is the cumulative share of d's hours reached by the end of this roll's horizon, and the realized carrier (0 on the first solve of a chain) is what earlier rolls / solves already emitted for this exact period, net of removal credits (#19) — never negative by construction (#38, Q22; see the helper's own docstring).  Emissions come from the fuel that processes draw from the group's nodes when it carries a CO2-emitting commodity c, measured as in co2_price_eff (_eff_fuel_input): on eff processes the output flow times slope plus, for min_load_efficiency units (linear and integer v_online), the section fuel of the units online. noEff processes take neither slope nor section (applying them would over-count).  The removal term (#19, Q14) subtracts flows into the same group's node(s) — e.g. DAC/BECCS — unsplit, no slope, same measure as flow_to_co2_priced; it only loosens the cap, never tightens it.</p>
-<p>Source: <code>flextool/engine/model/core.py:4384</code> (<code>_eq_co2_max_period</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:4357</code> (<code>_eq_co2_max_period</code>)</p>
 <h3 id="eq-co2_max_total_path">EQ. <code>co2_max_total[_path]</code></h3>
 <p>Names: <code>co2_max_total</code>, <code>co2_max_total_path</code></p>
 <div class="highlight"><pre><span></span><code>Σ_{(p,s,k,c,g) ∈ flow_from_co2_capped_total, d∈D(leaf),t}
@@ -7565,10 +7543,11 @@ retired[n,d] · state_unitsize[n]  ≤  pre_existing[n,d] − retired_carried[n,
   with the share and years of the solve that realized them (the w_y its own row gave them)
 </code></pre></div>
 <p>Caps the CO2 emissions of a group over the horizon the solve represents (tonnes): each period's annualised emissions (as in co2_max_period, section fuel included) times the years the period represents, summed over the periods — the measure of the model CO2 output.  years_represented is not discounted.  The RHS (_co2_total_cap_with_carry) is the remaining budget as of this roll: without it, each solve of a chain and each roll of a rolling solve got the FULL cap again for only its own periods / window, over-allowing roughly by the number of rolls / chained solves (#38) — fixed the same way the commodity ladder's cumulative tier cap was (#89/#143): horizon_fraction_reached scales the fixed whole-horizon budget down to what's allocated so far, and the realized carrier (0 on the first solve of a chain) — net of removal credits (#19), weighted like the LHS (R_rep, not physical tonnes: a realized step counts years_represented / period_share times its tonnes, as it did in the row of the solve that realized it) — is subtracted; never negative by construction.  The removal term (#19, Q14) mirrors co2_max_period's: flows into the same group's node(s), unsplit, no slope; it only loosens the cap. _path (Q16, #52): under recourse every forecast branch got its own copy of the whole-horizon budget summed into ONE row, letting N branches spend N× the cap between them (the stochastic fan is parallel futures, not N consecutive years).  One row per (g, leaf) fixes it: the LHS sums only the leaf's own periods (shared pre-reveal trunk periods belong to every leaf, same as the invest/divest _path families); the RHS is the SAME remaining whole-horizon budget repeated per leaf (horizon_fraction_reached and the realized carry are chain-wide, not per-branch quantities — the carry is kept exactly as _co2_total_cap_with_carry computes it, same as the entity/group total-cap _path families reuse their own bare cap per leaf).</p>
-<p>Source: <code>flextool/engine/model/core.py:4528</code> (<code>_eq_co2_max_total</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:4501</code> (<code>_eq_co2_max_total</code>)</p>
 <h3 id="eq-process_constraint_equalless_thangreater_than_period">EQ. <code>process_constraint_{equal,less_than,greater_than}[_period]</code></h3>
 <p>Names: <code>process_constraint_equal</code>, <code>process_constraint_equal_period</code>, <code>process_constraint_less_than</code>, <code>process_constraint_less_than_period</code>, <code>process_constraint_greater_than</code>, <code>process_constraint_greater_than_period</code></p>
 <div class="highlight"><pre><span></span><code>Σ_{(p,s,k) ∈ flow_constraint[cn]} v_flow[p,s,k,d,t]·unitsize[p]·flow_coef[p,s,k,cn]
+  + Σ_{(p,s,k) ∈ flow_constraint[cn] ∩ twoway1var_arcs} v_flow_back[p,s,k,d,t]·unitsize[p]·flow_coef[p,s,k,cn]
   + Σ_n v_state[n,d,t]·state_unitsize[n]·node_state_coef[n,cn]
   + Σ_e inv[e,d]·invested_coef[e,cn]
   + Σ_e con[e,d]·in_construction_coef[e,cn]
@@ -7594,11 +7573,13 @@ where, for e a process p (us = unitsize, existing = capacity = existing_count·u
     model-built capacity retired so far, _retire_built, less v_extended, the capacity extended beyond its
     end of life, _extend: capacity, never in inv or con)
 </code></pre></div>
-<p>A linear constraint authored by the user over flows (MW), storage states (MWh) and capacities.  The invested term is the capacity that comes online in d (an investment decided in o with a construction lead time comes online in c(o); without one c(o) = o and inv[e,d] = v_invest[e,d]·us[e]); the in-construction term is the capacity decided but not yet online (zero without a lead time); the retired term counts the retirements of d; pre is the capacity in service at the start of d (existing plus earlier investments still alive, minus earlier retirements, also those of the same solve: a single solve and a chain of solves give the same row); cap is the capacity in service in d, the measure of maxFlow and the cumulative-capacity rows.  cap = pre + inv − retired, with or without a lead time.  carried_* are the investments earlier solves of a chain decided with a lead time (constants; existing holds them from their start of operation, so pre subtracts the part coming online in d). The online term counts the units online (of unitsize) in each step; integer with binary startup, continuous with linear.  v_online is the variable of the process's UC class (v_online_linear / v_online_integer). Terms without data are absent.  The existing-capacity terms are constants and enter as Param terms. A constraint without flow, state and online terms is the same in every step of a period, so it gets one row per period (the _period family) instead of one per step.  The constraint axis is cn (c is the commodity axis).  Dims: flow, state and online terms (cn, d, t); every capacity term (cn, d), broadcast over t on the per-step rows.  A row whose terms all vanish in the solve (its entities have no flow, state, investment or retirement there) is left out: a configuration error when the remaining existing-capacity constant sense constant cannot hold, else a warning naming the constraint. Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of existing capacity counting until its end of life (none for reinvest_automatic). Row rule (coarse steps): a per-step constraint whose flow and online terms are all on coarse processes and whose state terms are on coarse nodes gets one row per coarse step, process_constraint_*_coarse = the row's Δt-weighted mean over the step (_coarse_flows.add_cstr); its coefficients are constant, so it is the per-step row itself on one flow per step (the units online of a coarse process are one level per coarse step).  A constraint with a fine flow, online or state term keeps its rows per solve step and reads the coarse flows and units online at their constant value.</p>
-<p>Source: <code>flextool/engine/model/core.py:4618</code> (<code>_eq_user_constraints</code>)</p>
+<p>A linear constraint authored by the user over flows (MW), storage states (MWh) and capacities.  The invested term is the capacity that comes online in d (an investment decided in o with a construction lead time comes online in c(o); without one c(o) = o and inv[e,d] = v_invest[e,d]·us[e]); the in-construction term is the capacity decided but not yet online (zero without a lead time); the retired term counts the retirements of d; pre is the capacity in service at the start of d (existing plus earlier investments still alive, minus earlier retirements, also those of the same solve: a single solve and a chain of solves give the same row); cap is the capacity in service in d, the measure of maxFlow and the cumulative-capacity rows.  cap = pre + inv − retired, with or without a lead time.  carried_* are the investments earlier solves of a chain decided with a lead time (constants; existing holds them from their start of operation, so pre subtracts the part coming online in d). flow_coef[p,s,k,cn] is the sum of the constraint_flow_coeff of (p, s) and (p, k): a connection's coefficient at either end lands on both its arcs, so a two-variable connection counts by coef·(forward + reverse).  A one-variable two-way arc (no_losses_no_variable_cost, DC power flow; signed flow = v_flow − v_flow_back) gives its reverse flow v_flow_back the same coefficient: the same row for every transfer method (_user_constraint_flow_terms). The online term counts the units online (of unitsize) in each step; integer with binary startup, continuous with linear.  v_online is the variable of the process's UC class (v_online_linear / v_online_integer). Terms without data are absent.  The existing-capacity terms are constants and enter as Param terms. A constraint without flow, state and online terms is the same in every step of a period, so it gets one row per period (the _period family) instead of one per step.  The constraint axis is cn (c is the commodity axis).  Dims: flow, state and online terms (cn, d, t); every capacity term (cn, d), broadcast over t on the per-step rows.  A row whose terms all vanish in the solve (its entities have no flow, state, investment or retirement there) is left out: a configuration error when the remaining existing-capacity constant sense constant cannot hold, else a warning naming the constraint. Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of existing capacity counting until its end of life (none for reinvest_automatic). Row rule (coarse steps): a per-step constraint whose flow and online terms are all on coarse processes and whose state terms are on coarse nodes gets one row per coarse step, process_constraint_*_coarse = the row's Δt-weighted mean over the step (_coarse_flows.add_cstr); its coefficients are constant, so it is the per-step row itself on one flow per step (the units online of a coarse process are one level per coarse step).  A constraint with a fine flow, online or state term keeps its rows per solve step and reads the coarse flows and units online at their constant value.</p>
+<p>Source: <code>flextool/engine/model/core.py:4613</code> (<code>_eq_user_constraints</code>)</p>
 <h3 id="eq-process_constraint_equalless_thangreater_than_period_total">EQ. <code>process_constraint_{equal,less_than,greater_than}_period_total</code></h3>
 <p>Names: <code>process_constraint_equal_period_total</code>, <code>process_constraint_less_than_period_total</code>, <code>process_constraint_greater_than_period_total</code></p>
 <div class="highlight"><pre><span></span><code>Σ_t w[d,t]·( Σ_{(p,s,k) ∈ flow_constraint[cn]} v_flow[p,s,k,d,t]·unitsize[p]·flow_coef[p,s,k,cn]
+             + Σ_{(p,s,k) ∈ flow_constraint[cn] ∩ twoway1var_arcs} v_flow_back[p,s,k,d,t]·unitsize[p]
+                                                                  ·flow_coef[p,s,k,cn]
              + Σ_{p ∈ process_online} v_online[p,d,t]·online_coef[p,cn] )
   + H[d]·( Σ_e inv[e,d]·invested_coef[e,cn] + Σ_e con[e,d]·in_construction_coef[e,cn]
            + Σ_e v_divest[e,d]·us[e]·retired_coef[e,cn] + Σ_e pre[e,d]·prebuilt_coef[e,cn]
@@ -7606,10 +7587,11 @@ where, for e a process p (us = unitsize, existing = capacity = existing_count·u
   = / ≤ / ≥  constant[cn] (or constant[cn,d] for a period map)
   ∀ (cn,d) ∈ cdt_{eq,le,ge}, cn ∈ constraint_period_total, window_fraction[d] = 1
 w[d,t] = step_duration[d,t]·timestep_weight[d,t] / period_share[d];   H[d] = Σ_t w[d,t]
-inv, con, pre, cap, us and the existing / carried constants as in process_constraint_* (_eq_user_constraints).
+inv, con, pre, cap, us, the v_flow_back term and the existing / carried constants as in process_constraint_*
+(_eq_user_constraints).
 </code></pre></div>
 <p>One row per period over the period's time-integrated, annualised terms (per year: flows in MWh, units online in unit-hours, the constant in the constraint's unit per year), the weighting of co2_max_period.  H is the number of hours the period's modelled steps stand for in a year (8760 for a full year, also with representative periods, whose weights are normalised); computed, not 8760, so a roll window or a varying step duration gets its own.  Every capacity term, and the existing / carried capacity constants, are multiplied by H: each term is its per-step quantity integrated over the period, so a coefficient keeps its per-step meaning (flow − 0.3·capacity ≤ 0 caps the annual capacity factor at 0.3).  State terms are rejected by the reader (a state summed over steps is not an energy).  A row needs the whole period in the solve: a period that the solve holds in part (window_fraction \&lt; 1, the look-ahead tail of a roll) has no row; a rolling solve whose rolls do not each realize whole periods has none at all (user_constraint_period_total_off, the run's pre-solve check names the constraints and the solve).  Stochastic branch periods are their own d (no probability weight: each forecast meets the limit).  Coarse flows and units online enter through their alias on the fine steps (exact: Σ_t v·Δt).  Dims: flow and online terms (cn, d, t) summed over t; capacity terms and constants (cn, d).</p>
-<p>Source: <code>flextool/engine/model/core.py:4976</code> (<code>_eq_user_constraints_period_total</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:4975</code> (<code>_eq_user_constraints_period_total</code>)</p>
 <h3 id="eq-maxstate">EQ. <code>maxState</code></h3>
 <div class="highlight"><pre><span></span><code>v_state[n,d,t] + retired[n,d]
   − invested[n,d]  ≤  state_upper[n,d]
@@ -7749,7 +7731,7 @@ contradict) those values.
   ∀ (p,s,k,f) ∈ process_profile_{upper,lower,fixed}, (d,t) ∈ dt
 </code></pre></div>
 <p>Bounds a flow by a profile times the built capacity, in units of unitsize.  av = availability, 1 for processes without availability data.  The upper limit adds the reserve that raises the arc's flow (up at the sink; down at a unit's source), the lower limit subtracts the reserve that lowers it (down at the sink; up at a unit's source); a source-side reserve is converted to the arc's flow by φ (1 where v_flow is the input, 1/slope on a direct unit's input→output arc).  The fixed profile has no reserve term.  The invest/divest terms are restricted to the (p,f) pairs of the method's set. Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of existing capacity counting until its end of life (none for reinvest_automatic). The cached sums of _capacity, present only where a period is in service (no term over an empty domain).</p>
-<p>Source: <code>flextool/engine/model/core.py:6198</code> (<code>_eq_profiles</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:6192</code> (<code>_eq_profiles</code>)</p>
 <h3 id="obj-balance_slack_penalty">OBJ. <code>balance_slack_penalty</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{(n,d,t)} vq_state_up[n,d,t] · penalty_up[n,d,t] · ncs[n,d] · w_op[d,t]
   + Σ_{(n,d,t)} vq_state_down[n,d,t] · penalty_down[n,d,t] · ncs[n,d] · w_op[d,t]
@@ -7758,56 +7740,56 @@ contradict) those values.
   ncs = node_capacity_for_scaling, factor 1 when the parameter is absent;   currency
 </code></pre></div>
 <p>Prices the energy a node balance cannot supply (up) or absorb (down); penalty in currency/MWh. The slacks enter the balance without ncs, so with node_capacity_for_scaling ≠ 1 the effective penalty per MWh is penalty · ncs (unreachable today; known inconsistency).</p>
-<p>Source: <code>flextool/engine/model/core.py:6301</code> (<code>_obj_balance_slack</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:6295</code> (<code>_obj_balance_slack</code>)</p>
 <h3 id="obj-commodity_cost_eff">OBJ. <code>commodity_cost_eff</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{(p,s,k,c) ∈ flow_from_commodity_eff, (d,t)}
     (v_flow[p,s,k,d,t]·unitsize[p]·slope[p,d,t] + v_online[p,d,t]·section[p,d,t]·unitsize[p])
     · commodity_price[c,d,t] · w_op[d,t]
 </code></pre></div>
 <p>Cost of the commodity c bought from node s by processes with an efficiency: the input is the output flow times slope, plus the section input per online unit (min_load_efficiency units only, linear and integer online alike).  Price in currency/MWh.</p>
-<p>Source: <code>flextool/engine/model/core.py:6341</code> (<code>_obj_commodity</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:6335</code> (<code>_obj_commodity</code>)</p>
 <h3 id="obj-commodity_cost_noeff">OBJ. <code>commodity_cost_noEff</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{(p,s,k,c) ∈ flow_from_commodity_noEff, (d,t)} v_flow[p,s,k,d,t]·unitsize[p] · commodity_price[c,d,t] · w_op[d,t]
 </code></pre></div>
 <p>Cost of the commodity bought by processes without an efficiency: the input equals the flow.</p>
-<p>Source: <code>flextool/engine/model/core.py:6352</code> (<code>_obj_commodity</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:6346</code> (<code>_obj_commodity</code>)</p>
 <h3 id="obj-commodity_cost_startup">OBJ. <code>commodity_cost_startup</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{(p,n,c) ∈ startup_from_commodity, (d,t)}
     v_startup[p,d,t]·startup_energy[p,n,d]·unitsize[p] · commodity_price[c,d,t] · w_ev[d,t]
   w_ev = timestep_weight · inflation_op / period_share · branch_weight   (as startup_cost)
 </code></pre></div>
 <p>Cost of the start-up energy that units draw from the commodity node n of commodity c (startup_input_method startup_and_input / startup_only; core._startup_draw).  The draw is MWh per start-up event, so the weight has no step_duration.  Commodities with a price ladder are priced by _commodity_ladder.</p>
-<p>Source: <code>flextool/engine/model/core.py:6361</code> (<code>_obj_commodity</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:6355</code> (<code>_obj_commodity</code>)</p>
 <h3 id="obj-commodity_sales">OBJ. <code>commodity_sales</code></h3>
 <div class="highlight"><pre><span></span><code>− Σ_{(p,s,k,c) ∈ flow_to_commodity, (d,t)} v_flow[p,s,k,d,t]·unitsize[p] · commodity_price[c,d,t] · w_op[d,t]
 </code></pre></div>
 <p>Revenue from flows into a commodity node k, sold at the commodity price (negative cost).  Every process arc counts, with or without efficiency: the sink-side flow is the delivered energy.</p>
-<p>Source: <code>flextool/engine/model/core.py:6373</code> (<code>_obj_commodity</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:6367</code> (<code>_obj_commodity</code>)</p>
 <h3 id="obj-co2_price_eff">OBJ. <code>co2_price_eff</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{(p,s,k,c,g) ∈ flow_from_co2_priced, (d,t)}
     (v_flow[p,s,k,d,t]·unitsize[p]·slope[p,d,t] + v_online[p,d,t]·section[p,d,t]·unitsize[p])
     · co2_content[c] · co2_price[g,d,t] · w_op[d,t]
 </code></pre></div>
 <p>Cost of the CO2 emitted when processes with an efficiency draw a CO2-bearing commodity c from a node of a CO2-priced group g; content in t/MWh, price in currency/t.  The section term exists for min_load_efficiency units only.</p>
-<p>Source: <code>flextool/engine/model/core.py:6392</code> (<code>_obj_co2_price</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:6386</code> (<code>_obj_co2_price</code>)</p>
 <h3 id="obj-co2_removal_credit">OBJ. <code>co2_removal_credit</code></h3>
 <div class="highlight"><pre><span></span><code>− Σ_{(p,s,k,c,g) ∈ flow_to_co2_priced, (d,t)}
     v_flow[p,s,k,d,t]·unitsize[p] · co2_content[c] · co2_price[g,d,t] · w_op[d,t]
 </code></pre></div>
 <p>Credit for flows into the group's priced commodity node(s) — removal (e.g. DAC/BECCS modelled as a flow into a CO2-content commodity node of the priced group g).  No slope or section term: the delivered flow is the physical quantity removed, not a fuel input (mirrors flow_to_commodity, the commodity-sale term).  Ported from GMPL's "Receiving credits for removing CO2" (#19, Q14).</p>
-<p>Source: <code>flextool/engine/model/core.py:6404</code> (<code>_obj_co2_price</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:6398</code> (<code>_obj_co2_price</code>)</p>
 <h3 id="obj-co2_price_startup">OBJ. <code>co2_price_startup</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{(p,n,c,g) ∈ startup_from_co2_priced, (d,t)}
     v_startup[p,d,t]·startup_energy[p,n,d]·unitsize[p] · co2_content[c] · co2_price[g,d,t] · w_ev[d,t]
 </code></pre></div>
 <p>Cost of the CO2 of the start-up energy drawn from a node of a CO2-priced group g that carries the CO2-bearing commodity c (core._startup_draw); an event, so the weight w_ev has no step_duration.</p>
-<p>Source: <code>flextool/engine/model/core.py:6417</code> (<code>_obj_co2_price</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:6411</code> (<code>_obj_co2_price</code>)</p>
 <h3 id="obj-co2_price_noeff">OBJ. <code>co2_price_noEff</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{(p,s,k,c,g) ∈ flow_from_co2_priced_noEff, (d,t)}
     v_flow[p,s,k,d,t]·unitsize[p] · co2_content[c] · co2_price[g,d,t] · w_op[d,t]
 </code></pre></div>
 <p>As co2_price_eff for processes without an efficiency: the input equals the flow, no slope and no section term.</p>
-<p>Source: <code>flextool/engine/model/core.py:6436</code> (<code>_obj_co2_price_noEff</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:6430</code> (<code>_obj_co2_price_noEff</code>)</p>
 <h3 id="obj-variable_cost_noeff">OBJ. <code>variable_cost_noEff</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{(p,s,k,d,t) ∈ pssdt_varCost_noEff} v_flow[p,s,k,d,t]·unitsize[p] · varCost[p,s,k,d,t] · w_op[d,t]
 pssdt_varCost_noEff = {(p,s,k,d,t) : (p,s,k) ∈ process_source_sink_noEff, varCost[p,s,k,d,t] ≠ 0}
@@ -7815,7 +7797,7 @@ O&amp;M cost of the flows of processes without an efficiency; varCost (currency/
 combined process, source-side and sink-side other_operational_cost (every authored shape: constant,
 period, time, period × time, stochastic time).
 </code></pre></div>
-<p>Source: <code>flextool/engine/model/core.py:6458</code> (<code>_obj_variable_cost</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:6452</code> (<code>_obj_variable_cost</code>)</p>
 <h3 id="obj-variable_cost_eff_source">OBJ. <code>variable_cost_eff_source</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{(p,s,k,d,t) ∈ pssdt_varCost_eff_unit_source}
     (v_flow[p,s,k,d,t]·unitsize[p]·slope[p,d,t] + v_online[p,d,t]·section[p,d,t]·unitsize[p])
@@ -7828,27 +7810,27 @@ slope, plus the section input of min_load_efficiency units).  Added like the oth
 (GMPL subtracted it).  The sink/source coefficient ratio of the input is not applied (refactor
 bug 10).
 </code></pre></div>
-<p>Source: <code>flextool/engine/model/core.py:6471</code> (<code>_obj_variable_cost</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:6465</code> (<code>_obj_variable_cost</code>)</p>
 <h3 id="obj-variable_cost_eff_sink">OBJ. <code>variable_cost_eff_sink</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{(p,s,k,d,t) ∈ pssdt_varCost_eff_unit_sink} v_flow[p,s,k,d,t]·unitsize[p] · other_operational_cost_sink[p,k,d,t] · w_op[d,t]
 pssdt_varCost_eff_unit_sink = {(p,s,k) ∈ process_source_sink_eff} × dt where
     other_operational_cost_sink[p,k,d,t] ≠ 0 (every authored shape, as above).
 O&amp;M cost on the output side of units with an efficiency, priced on the output flow.
 </code></pre></div>
-<p>Source: <code>flextool/engine/model/core.py:6505</code> (<code>_obj_variable_cost</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:6499</code> (<code>_obj_variable_cost</code>)</p>
 <h3 id="obj-variable_cost_eff_connection">OBJ. <code>variable_cost_eff_connection</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{(p,s,k,d,t) ∈ pssdt_varCost_eff_connection} v_flow[p,s,k,d,t]·unitsize[p] · other_operational_cost[p,d,t] · w_op[d,t]
 pssdt_varCost_eff_connection = {(p,s,k) ∈ process_source_sink_eff} × dt where
     other_operational_cost[p,d,t] ≠ 0 (constant, period, time or period × time).
 O&amp;M cost of connections with an efficiency, priced on the flow of each direction.
 </code></pre></div>
-<p>Source: <code>flextool/engine/model/core.py:6517</code> (<code>_obj_variable_cost</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:6511</code> (<code>_obj_variable_cost</code>)</p>
 <h3 id="obj-startup_cost">OBJ. <code>startup_cost</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{(p,d,t) ∈ pdt_online_{linear,integer}} v_startup_{linear,integer}[p,d,t] · startup_cost[p,d] · unitsize[p] · w_ev[d,t]
   w_ev = timestep_weight · inflation_op / period_share · branch_weight
 </code></pre></div>
 <p>Cost of starting up units, startup_cost in currency/MW started.  A startup is an event, so the weight has no step_duration.</p>
-<p>Source: <code>flextool/engine/model/core.py:6538</code> (<code>_obj_startup_cost</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:6532</code> (<code>_obj_startup_cost</code>)</p>
 <h3 id="obj-ramp_cost">OBJ. <code>ramp_cost</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{(p,s,k,d,t) ∈ R} (v_ramp_up + v_ramp_down)[p,s,k,d,t] · unitsize[p] · rc[p,s,k] · w_ev[d,t]
   rc[p,s,k] = p_ramp_cost_arc = Σ_{side ∈ {source s, sink k}, ramp_method[p,side] ∈ {ramp_cost, both}}
@@ -7856,7 +7838,7 @@ O&amp;M cost of connections with an efficiency, priced on the flow of each direc
   w_ev = timestep_weight · inflation_op / period_share · branch_weight   (as startup_cost)
 </code></pre></div>
 <p>Cost of changing a flow, ramp_cost in currency per MW of change of the step-average flow, up and down alike.  A change is an event, as a start-up, so the weight has no step_duration: ramping 0 → X → 0 costs 2·rc·X whatever the step lengths.  A start-up from 0 pays both its startup cost and this cost.</p>
-<p>Source: <code>flextool/engine/model/core.py:6562</code> (<code>_obj_ramp_cost</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:6556</code> (<code>_obj_ramp_cost</code>)</p>
 <h3 id="obj-storage_reference_price">OBJ. <code>storage_reference_price</code></h3>
 <div class="highlight"><pre><span></span><code>− Σ_{(n,d,t) ∈ horizon_end, (n,d) ∈ reference_price}
     v_state[n,d,t]·state_unitsize[n] · reference_price[n,d] · w_ev[d,t]
@@ -7866,7 +7848,7 @@ O&amp;M cost of connections with an efficiency, priced on the flow of each direc
   w_ev = timestep_weight · inflation_op / period_share · branch_weight
 </code></pre></div>
 <p>Values the energy left in storage at the end of the solve horizon (revenue, hence the minus), reference_price in currency/MWh.  The price comes from use_reference_price nodes or from the storage-price handoff of a previous solve.  An end-of-horizon valuation is a point event, so the weight has no step_duration.  Rows with a zero price are kept.</p>
-<p>Source: <code>flextool/engine/model/core.py:6592</code> (<code>_obj_storage_reference_price</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:6586</code> (<code>_obj_storage_reference_price</code>)</p>
 <h3 id="obj-invest_cost_p">OBJ. <code>invest_cost_p</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{(p,d) ∈ pd_invest_set} v_invest_p[p,d]·unitsize[p] · annual_discounted[p,d] · bw[d]
   + Σ_{(p,d) ∈ pd_invest_set} v_invest_p[p,d]·unitsize[p] · lifetime_fixed_cost[p,d] · bw[d]
@@ -7894,7 +7876,7 @@ O&amp;M cost of connections with an efficiency, priced on the flow of each direc
     off_inv = discount_offset_investment: each payment falls off_inv years into its service year
 </code></pre></div>
 <p>Cost of process capacity decided in period d, currency/MW. Capital: the level yearly cost of a plant of its real lifetime (the present value of the loan, paid over payback_time at discount_rate, spread evenly over lifetime_technical years; the payments are sized for when they fall, so the loan taken when the capacity comes online is worth invest_cost at discount_rate for every off_inv), charged for each year the cohort is in service inside the horizon (discounted per period). end_of_life_method sets the years in service, not the price; payback_time and discount_rate set only the size (with discount_rate = social_discount_rate payback_time changes nothing for a whole number of years). The salvage value at the end of the real lifetime lowers the price: its present value at discount_rate, levelled over the lifetime_technical years (the textbook capital recovery with salvage when payback_time = lifetime_technical). A reinvest_automatic plant is replaced at the end of its life by a plant at the invest cost (and discount_rate, payback_time, lifetime_technical, salvage value) of the period the replacement comes online, and so on to the end of the horizon; each pays its own level yearly cost for its years in service (with constant values the chain charges the first plant's annuity for every period). The inflation-adjusted fixed cost of each period the capacity operates in is charged over the same periods (it stops at the rounded end of life), as for existing capacity. With a construction lead time the capacity operates from its start of operation c(d): both windows start there, and the invest cost, interest rate, payback time and lifetime are those of c(d): their period maps describe the plant as constructed (invest_cost is an overnight cost); without one c(d) = d. No w_op: both factors are already per period. A solve with invest variables and neither cost frame is an error, not a free investment.</p>
-<p>Source: <code>flextool/engine/model/core.py:6651</code> (<code>_obj_invest_divest</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:6645</code> (<code>_obj_invest_divest</code>)</p>
 <h3 id="obj-divest_cost_p">OBJ. <code>divest_cost_p</code></h3>
 <div class="highlight"><pre><span></span><code>− Σ_{(p,d) ∈ pd_divest_set} v_divest_p[p,d]·unitsize[p] · lifetime_fixed_cost_divest[p,d] · bw[d]
   − Σ_{(p,d) ∈ pd_divest_set} v_divest_p[p,d]·unitsize[p] · divest_salvage[p,d] · bw[d]
@@ -7914,25 +7896,25 @@ O&amp;M cost of connections with an efficiency, priced on the flow of each direc
   S̄_x[p,d] = Σ_{d′ ∈ history ∪ solve, y0 ≤ yr[d′] &lt; EOL[p], on d's lineage} inflation_inv[d′]
 </code></pre></div>
 <p>Saving from process capacity retired in period d, currency/MW: the fixed cost of the existing capacity it no longer pays (each period's, with the factor the existing fixed cost has), and its salvage settlement.  The investment in existing capacity is sunk; it holds its salvage value as a level credit a_x per year in service (existing_salvage); a retired MW receives its net salvage value at the start of d and gives back every credit, so it earns exactly S_d·D(d).  A kept plant's credits are counted inside the horizon only.  Existing reinvest_automatic capacity is replaced at its end of life (existing_replacement): retiring it also avoids every replacement still to come, and retiring a replacement settles that plant's contract as it ran (a replacement retired at its own start was never bought).</p>
-<p>Source: <code>flextool/engine/model/core.py:6703</code> (<code>_obj_invest_divest</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:6697</code> (<code>_obj_invest_divest</code>)</p>
 <h3 id="obj-invest_cost_n">OBJ. <code>invest_cost_n</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{(n,d) ∈ nd_invest_set} v_invest_n[n,d]·state_unitsize[n] · annual_discounted[n,d] · bw[d]
   + Σ_{(n,d) ∈ nd_invest_set} v_invest_n[n,d]·state_unitsize[n] · lifetime_fixed_cost[n,d] · bw[d]
 </code></pre></div>
 <p>As invest_cost_p for storage capacity, currency/MWh of storage.</p>
-<p>Source: <code>flextool/engine/model/core.py:6737</code> (<code>_obj_invest_divest</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:6731</code> (<code>_obj_invest_divest</code>)</p>
 <h3 id="obj-divest_cost_n">OBJ. <code>divest_cost_n</code></h3>
 <div class="highlight"><pre><span></span><code>− Σ_{(n,d) ∈ nd_divest_set} v_divest_n[n,d]·state_unitsize[n] · lifetime_fixed_cost_divest[n,d] · bw[d]
   − Σ_{(n,d) ∈ nd_divest_set} v_divest_n[n,d]·state_unitsize[n] · divest_salvage[n,d] · bw[d]
 </code></pre></div>
 <p>As divest_cost_p for storage capacity (W over the window of retired[n,·]).</p>
-<p>Source: <code>flextool/engine/model/core.py:6751</code> (<code>_obj_invest_divest</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:6745</code> (<code>_obj_invest_divest</code>)</p>
 <h3 id="obj-existing_fixed_cost">OBJ. <code>existing_fixed_cost</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{(e,d)} existing[e,d] · fixed_cost[e,d] · inflation_op[d] · bw[d]
   bw = pd_branch_weight, factor 1 when absent
 </code></pre></div>
 <p>Fixed cost of the capacity that exists in each period, currency (fixed_cost in currency/MW/year). A constant: it moves the objective value but not the solution.  Added only with include_existing_fixed_cost; when pd_branch_weight is present, periods without a weight row drop out. Multiplied by scale_the_objective like every other objective term.</p>
-<p>Source: <code>flextool/engine/model/core.py:6780</code> (<code>_obj_existing_fixed_cost</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:6774</code> (<code>_obj_existing_fixed_cost</code>)</p>
 <h3 id="obj-existing_salvage">OBJ. <code>existing_salvage</code></h3>
 <div class="highlight"><pre><span></span><code>− Σ_{(e,d) ∈ credit} (pre_existing[e,d] − retired_carried[e,d]) · a_x[e]·inflation_inv[d] · bw[d]
   pre_existing = p_entity_pre_existing (the existing cohort's size, lifetime-gated, MW, MWh),
@@ -7942,7 +7924,7 @@ O&amp;M cost of connections with an efficiency, priced on the flow of each direc
   bw = pd_branch_weight, factor 1 when absent
 </code></pre></div>
 <p>The salvage value of existing capacity, received at its end of life, as a level yearly income over its service years from the run start, the same credit as a built plant's (net of the retirements of earlier solves; a retirement in this solve gives its credits back through divest_cost_p).  A constant, added only with include_existing_fixed_cost, multiplied by scale_the_objective like every other objective term.</p>
-<p>Source: <code>flextool/engine/model/core.py:6814</code> (<code>_obj_existing_salvage</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:6808</code> (<code>_obj_existing_salvage</code>)</p>
 <h3 id="obj-existing_replacement">OBJ. <code>existing_replacement</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{(e,d) ∈ price} (pre_existing[e,d] − retired_carried[e,d]) · a_b[g(e,d)]·inflation_inv[d] · bw[d]
   price = ed_existing_replacement[e,d] = a_b[g(e,d)]·inflation_inv[d], g(e,d) the replacement of e's existing
@@ -7953,7 +7935,7 @@ O&amp;M cost of connections with an efficiency, priced on the flow of each direc
   pre_existing, retired_carried as in existing_salvage; bw = pd_branch_weight, factor 1 when absent
 </code></pre></div>
 <p>The replacement of existing capacity at its end of life, at the invest cost (and the other values) of the period the replacement comes online: no decision changes it except retiring the capacity first, whose retirement coefficient (divest_cost_p) gives the replacement back whether or not this constant is added.  A constant, added only with include_existing_fixed_cost, multiplied by scale_the_objective like every other objective term.</p>
-<p>Source: <code>flextool/engine/model/core.py:6848</code> (<code>_obj_existing_replacement</code>)</p>
+<p>Source: <code>flextool/engine/model/core.py:6842</code> (<code>_obj_existing_replacement</code>)</p>
 <h2 id="dc-power-flow">DC power flow</h2>
 <p>DC power flow: linearised AC flow on the connections of a DC power-flow network.</p>
 <h3 id="var-v_angle">VAR. <code>v_angle</code></h3>
@@ -7989,50 +7971,51 @@ O&amp;M cost of connections with an efficiency, priced on the flow of each direc
 <div class="highlight"><pre><span></span><code>v_online_linear[p,d,t], v_startup_linear[p,d,t], v_shutdown_linear[p,d,t] ≥ 0
   ∀ (p,d,t) ∈ p_online_dt, p ∈ process_online_linear
 </code></pre></div>
-<p>Units online, and units started / shut down: the change of units online, online_change (count of unitsize), continuous.</p>
-<p>Source: <code>flextool/engine/model/_online.py:46</code> (<code>add_variables</code>)</p>
+<p>Units online, and units started / shut down: the change of units online, online_change (count of unitsize), continuous.  v_startup = v_shutdown = 0 at a free start (free_start_rows: the first step of a solve without a carry, of a forecast branch starting there and of a period that does not continue the previous one), where the units online are chosen freely.</p>
+<p>Source: <code>flextool/engine/model/_online.py:47</code> (<code>add_variables</code>)</p>
 <h3 id="var-v_onlinesfx-v_startupsfx-v_shutdownsfx-coarse-processes">VAR. <code>v_online{sfx} / v_startup{sfx} / v_shutdown{sfx} (coarse processes)</code></h3>
 <p>Names: <code>v_online_linear</code>, <code>v_online_integer</code>, <code>v_startup_linear</code>, <code>v_startup_integer</code>, <code>v_shutdown_linear</code>, <code>v_shutdown_integer</code></p>
 <div class="highlight"><pre><span></span><code>on[p,d,b], su[p,d,b], sd[p,d,b]   ∀ p ∈ processCoarse ∩ process_online, (d,b) the coarse steps of p
   (b = its first fine step b_first)
 </code></pre></div>
-<p>Units online once per coarse step, held over its fine steps (a level: b.v_online_* is indexed on every fine step, _coarse_flows.alias); the units started / shut down at the step's start (events: registered at b only, not aliased, so a sum over t counts each once and a fine row of an interior step has no event term).</p>
-<p>Source: <code>flextool/engine/model/_online.py:52</code> (<code>add_variables</code>)</p>
+<p>Units online once per coarse step, held over its fine steps (a level: b.v_online_* is indexed on every fine step, _coarse_flows.alias); the units started / shut down at the step's start (events: registered at b only, not aliased, so a sum over t counts each once and a fine row of an interior step has no event term). A free start (free_start_rows): v_startup = v_shutdown = 0 there (upper bound 0), units online free.</p>
+<p>Source: <code>flextool/engine/model/_online.py:55</code> (<code>add_variables</code>)</p>
 <h3 id="var-v_online_integer-v_startup_integer-v_shutdown_integer">VAR. <code>v_online_integer / v_startup_integer / v_shutdown_integer</code></h3>
 <p>Names: <code>v_online_integer</code>, <code>v_startup_integer</code>, <code>v_shutdown_integer</code></p>
 <div class="highlight"><pre><span></span><code>v_online_integer[p,d,t] ∈ ℤ≥0, v_startup_integer[p,d,t], v_shutdown_integer[p,d,t] ≥ 0
   ∀ (p,d,t) ∈ p_online_dt, p ∈ process_online_integer
 </code></pre></div>
 <p>As the linear family, but units online are integer; startups and shutdowns stay continuous.  Continuous when the solve's reduce_unit_detail_method relaxes integers (d.relax_integrality; same names, rows and _integer class).</p>
-<p>Source: <code>flextool/engine/model/_online.py:64</code> (<code>add_variables</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:69</code> (<code>add_variables</code>)</p>
 <h3 id="eq-maxonline_linearinteger">EQ. <code>maxOnline_{linear,integer}</code></h3>
 <p>Names: <code>maxOnline_linear</code>, <code>maxOnline_integer</code></p>
 <div class="highlight"><pre><span></span><code>v_online[p,d,t] − Σ v_invest_p[p,d′] + Σ v_divest_p[p,d′]  ≤ existing_count[p,d]
   ∀ (p,d,t) ∈ p_idx
 </code></pre></div>
 <p>Units online cannot exceed the units built. Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of existing capacity counting until its end of life (none for reinvest_automatic).</p>
-<p>Source: <code>flextool/engine/model/_online.py:155</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:216</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-online_change_linearinteger">EQ. <code>online_change_{linear,integer}</code></h3>
 <p>Names: <code>online_change_linear</code>, <code>online_change_integer</code></p>
 <div class="highlight"><pre><span></span><code>v_online[p,d,t] − v_online_prev[p,d,t] − v_startup[p,d,t] + v_shutdown[p,d,t]  =  0
-  ∀ (p,d,t) ∈ p_idx;   v_online_prev as derived above (three pieces)
+  ∀ (p,d,t) ∈ p_idx \ free_start;   v_online_prev as derived above (three pieces)
 </code></pre></div>
-<p>The change in units online is the units started minus the units shut down (Backbone's q_startshut).  With maxStartup / maxShutdown below, a startup without a unit coming online, or a shutdown without one going offline, is impossible; a fleet (unitsize \&lt; built) can still start and stop units in the same step (both cost nothing extra on the ramp rows of a single-output arc, part C) — a single integer unit cannot (maxStartup / maxShutdown forbid it there).</p>
-<p>Source: <code>flextool/engine/model/_online.py:230</code> (<code>add_constraints</code>)</p>
+<p>The change in units online is the units started minus the units shut down (Backbone's q_startshut).  None at a free start (above): its units online are free, and its start-ups and shut-downs are 0 (no start-up cost or start-up fuel there; the units online still burn no-load fuel). Forecast branches that start at the solve's first step each choose their own units online there unless the step is tied (non_anticipativity_online).  With maxStartup / maxShutdown below, a startup without a unit coming online, or a shutdown without one going offline, is impossible; a fleet (unitsize \&lt; built) can still start and stop units in the same step (both cost nothing extra on the ramp rows of a single-output arc, part C) — a single integer unit cannot (maxStartup / maxShutdown forbid it there).</p>
+<p>Source: <code>flextool/engine/model/_online.py:287</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-maxstartup_linearinteger">EQ. <code>maxStartup_{linear,integer}</code></h3>
 <p>Names: <code>maxStartup_linear</code>, <code>maxStartup_integer</code></p>
 <div class="highlight"><pre><span></span><code>v_startup[p,d,t] − v_online[p,d,t]  ≤  0                                 ∀ (p,d,t) ∈ p_idx
 </code></pre></div>
 <p>Units started in a step are online in it.</p>
-<p>Source: <code>flextool/engine/model/_online.py:243</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:304</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-maxshutdown_linearinteger">EQ. <code>maxShutdown_{linear,integer}</code></h3>
 <p>Names: <code>maxShutdown_linear</code>, <code>maxShutdown_integer</code></p>
 <div class="highlight"><pre><span></span><code>v_shutdown[p,d,t] + v_online[p,d,t] − Σ v_invest_p[p,d″] + Σ v_divest_p[p,d″]  ≤  existing_count[p,d]
   ∀ (p,d,t) ∈ p_idx whose online predecessor is v_online of the SAME period d (a dt_ramp_link with
-  d_previous = d, or a dt_online_wrap; the same-period predecessor keeps the shutdown bound)
+  d_previous = d, or a dt_online_wrap; the same-period predecessor keeps the shutdown bound), and at a
+  free start (redundant there: v_shutdown = 0)
 </code></pre></div>
 <p>Units shut down in a step are offline in it.  Not built where the predecessor is in another period or carried from an earlier roll (capacity may differ there — a unit online at the end of the previous period / roll must still be able to "shut down" even if this step's capacity is lower); sd ≤ v_online_prev follows there from online_change + maxStartup instead (su ≤ on_t ⇒ sd = su − on_t + on_prev ≤ on_prev). Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of existing capacity counting until its end of life (none for reinvest_automatic).</p>
-<p>Source: <code>flextool/engine/model/_online.py:250</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:311</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-maxflow_online_linearinteger">EQ. <code>maxFlow_online_{linear,integer}</code></h3>
 <p>Names: <code>maxFlow_online_linear</code>, <code>maxFlow_online_integer</code></p>
 <div class="highlight"><pre><span></span><code>v_flow[p,s,k,d,t] + Σ_r v_reserve_up[p,r,k,d,t] + Σ_r v_reserve_down[p,r,s,d,t] · φ[p,s,k,d,t]
@@ -8041,7 +8024,7 @@ O&amp;M cost of connections with an efficiency, priced on the flow of each direc
   ∀ (p,s,k) capped arc of an online process, (d,t) ∈ dt;   φ as in maxFlow, units only;
   κ = capacity_max_coeff[p,s,k]
 </code></pre></div>
-<p>Source: <code>flextool/engine/model/_online.py:280</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:342</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-maxflow_online_shutdown_linearinteger">EQ. <code>maxFlow_online_shutdown_{linear,integer}</code></h3>
 <p>Names: <code>maxFlow_online_shutdown_linear</code>, <code>maxFlow_online_shutdown_integer</code></p>
 <div class="highlight"><pre><span></span><code>(maxFlow_online LHS)
@@ -8049,7 +8032,7 @@ O&amp;M cost of connections with an efficiency, priced on the flow of each direc
            − max(0, red_su − red_sd) · v_startup[p,d,t] )
   ∀ rows of maxFlow_online with red_sd &gt; 0 and a UNIQUE successor t⁺
 </code></pre></div>
-<p>Source: <code>flextool/engine/model/_online.py:287</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:349</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-maxflow_online_shutdown_branch_linearinteger">EQ. <code>maxFlow_online_shutdown_branch_{linear,integer}</code></h3>
 <p>Names: <code>maxFlow_online_shutdown_branch_linear</code>, <code>maxFlow_online_shutdown_branch_integer</code></p>
 <div class="highlight"><pre><span></span><code>(maxFlow_online LHS)
@@ -8074,14 +8057,14 @@ red_su = max(0, availability − SU),
   it; SD_b with the down speed: a unit stopping at the end of b); κ its step mean.
 </code></pre></div>
 <p>A unit's flow and the reserve that raises it — upward reserve at the arc's sink and "consume more" downward reserve at its source — are limited by the units online (spinning reserve: an offline unit holds neither).  The reserve terms are maxFlow's (units only; an online connection's reserve is in connection_reserve_*_online_*). Units starting in step t reach at most SU of their capacity on average over the step (synchronised at min load, then ramping as fast as they may: half a step's ramp on average; owner question Q-c14a-A), units shutting down after step t at most SD in t.  Two rows, so capacity online for a single step gets the smaller of the two limits instead of both reductions (exact for any mix of starts and stops; GMPL's one row with both reductions forbids one-step runs).  At a branch point (several successors of one (d,t): several mid-horizon branches continuing from the same trunk step) the shutdown cross-term cannot be split across the single maxFlow_online row (one v_flow[t] variable, one row); it is dropped there (maxFlow_online keeps only its startup term, a valid — looser — bound) and maxFlow_online_shutdown_branch gives the tight, correctly-isolated bound per branch instead: summing the branches' v_shutdown into one row would let several mutually-exclusive branches each buy back a whole unit of ramp room from the trunk step.  Only capped arcs (direct arcs and indirect output arcs, see _capped_arcs): indirect input arcs are tied to the outputs by conversion_indirect, and conversion_flow_coeff = 0 arcs are uncapped.  Availability and capacity_max_coeff are densified to their 1.0 defaults so an unauthored unit keeps its row.  The reduction is per arc (a multi-output unit's maxOutputSum_online is not reduced).</p>
-<p>Source: <code>flextool/engine/model/_online.py:292</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:354</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-maxflow_back_online_linearinteger">EQ. <code>maxFlow_back_online_{linear,integer}</code></h3>
 <p>Names: <code>maxFlow_back_online_linear</code>, <code>maxFlow_back_online_integer</code></p>
 <div class="highlight"><pre><span></span><code>v_flow_back[p,s,k,d,t]  ≤  κ[p,s,k] · availability[p,d,t] · v_online[p,d,t]
   ∀ (p,s,k) ∈ twoway1var_arcs with p online, (d,t) ∈ dt;   κ = capacity_max_coeff (1.0 defaults)
 </code></pre></div>
 <p>The reverse flow of a one-variable connection is limited by the units online, as its v_flow is by maxFlow_online: one online status covers both directions (the mirror of maxFlow_back).  No reserve term (connection reserve has its own rows, connection_reserve_*).  DC power-flow lines never get here (a startup_method on them raises in core._prepare).</p>
-<p>Source: <code>flextool/engine/model/_online.py:394</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:456</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-maxinputflow_online_linearinteger">EQ. <code>maxInputFlow_online_{linear,integer}</code></h3>
 <p>Names: <code>maxInputFlow_online_linear</code>, <code>maxInputFlow_online_integer</code></p>
 <div class="highlight"><pre><span></span><code>v_flow[p,s,p,d,t] + Σ_r v_reserve_down[p,r,s,d,t]
@@ -8091,14 +8074,14 @@ red_su = max(0, availability − SU),
     ramp limit with a reduction, (d,t) ∈ dt
   input_cap = p_indirect_input_cap (input_share_max × full-load input per unit of capacity)
 </code></pre></div>
-<p>Source: <code>flextool/engine/model/_online.py:418</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:480</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-maxinputflow_online_shutdown_linearinteger">EQ. <code>maxInputFlow_online_shutdown_{linear,integer}</code></h3>
 <p>Names: <code>maxInputFlow_online_shutdown_linear</code>, <code>maxInputFlow_online_shutdown_integer</code></p>
 <div class="highlight"><pre><span></span><code>(maxInputFlow_online LHS) ≤ input_cap · ( v_online · x(availability) − red_sd · v_shutdown[p,d,t⁺]
                                           − max(0, red_su − red_sd) · v_startup[p,d,t] )
   ∀ rows of maxInputFlow_online with red_sd &gt; 0 and a UNIQUE successor t⁺
 </code></pre></div>
-<p>Source: <code>flextool/engine/model/_online.py:426</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:488</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-maxinputflow_online_shutdown_branch_linearinteger">EQ. <code>maxInputFlow_online_shutdown_branch_{linear,integer}</code></h3>
 <p>Names: <code>maxInputFlow_online_shutdown_branch_linear</code>, <code>maxInputFlow_online_shutdown_branch_integer</code></p>
 <div class="highlight"><pre><span></span><code>(maxInputFlow_online LHS) ≤ input_cap · ( v_online · x(availability) − red_sd · v_shutdown[p,d⁺,t⁺]
@@ -8122,14 +8105,14 @@ red_su = max(0, x(availability) − SU_in), SU_in = min(1, x(min_load) / input_s
   (SU_in_b, SD_in_b from the step-mean x(min_load) / input_share_max and ρ_b).
 </code></pre></div>
 <p>The online analogue of maxFlow on an indirect unit's input arc: consuming more needs online capacity, and a starting (stopping) unit draws at most its startup (pre-shutdown) share of the input.  The other inputs and the outputs are not adjusted (the per-arc simplification of the input-side floors).</p>
-<p>Source: <code>flextool/engine/model/_online.py:430</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:492</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-maxoutputsum_online_linearinteger">EQ. <code>maxOutputSum_online_{linear,integer}</code></h3>
 <p>Names: <code>maxOutputSum_online_linear</code>, <code>maxOutputSum_online_integer</code></p>
 <div class="highlight"><pre><span></span><code>Σ_k v_flow[p,p,k,d,t] + Σ_k Σ_r v_reserve_up[p,r,k,d,t]  ≤  v_online[p,d,t] · availability[p,d,t]
   ∀ p ∈ process_indirect online with an output arc k, (p,d,t) ∈ p_idx
 </code></pre></div>
 <p>The online analogue of maxOutputSum: the sum of an indirect unit's outputs and of the upward reserve it holds at those outputs is limited by the units online.  No capacity_max_coeff term; availability defaults to 1.0.</p>
-<p>Source: <code>flextool/engine/model/_online.py:454</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:516</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-minimum_uptime_linearinteger">EQ. <code>minimum_uptime_{linear,integer}</code></h3>
 <p>Names: <code>minimum_uptime_linear</code>, <code>minimum_uptime_integer</code></p>
 <div class="highlight"><pre><span></span><code>v_online[p,d,t]  ≥  Σ_{(p,d′,t′,d,t) ∈ uptime_lookback} v_startup[p,d′,t′] + carry_up[p,d,t]
@@ -8151,7 +8134,7 @@ red_su = max(0, x(availability) − SU_in), SU_in = min(1, x(min_load) / input_s
   look-back holds only its own step and no carry (the previous coarse step lasts ≥ min_uptime) is maxStartup
   and is not built.
 </code></pre></div>
-<p>Source: <code>flextool/engine/model/_online.py:485</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:547</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-minimum_downtime_linearinteger">EQ. <code>minimum_downtime_{linear,integer}</code></h3>
 <p>Names: <code>minimum_downtime_linear</code>, <code>minimum_downtime_integer</code></p>
 <div class="highlight"><pre><span></span><code>v_online[p,d,t] + Σ_{(p,d′,t′,d,t) ∈ downtime_lookback} v_shutdown[p,d′,t′] + carry_dn[p,d,t]
@@ -8162,15 +8145,15 @@ red_su = max(0, x(availability) − SU_in), SU_in = min(1, x(min_load) / input_s
 <div class="highlight"><pre><span></span><code>  whose look-back holds only its own step and no carry is implied by maxShutdown / online_change).
 </code></pre></div>
 <p>carry_dn: as carry_up with shutdown[p,h] and min_downtime[p] (d.downtime_carry, 0-filled). Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of existing capacity counting until its end of life (none for reinvest_automatic).</p>
-<p>Source: <code>flextool/engine/model/_online.py:527</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:589</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-online_fix_eq_linearinteger">EQ. <code>online_fix_eq_{linear,integer}</code></h3>
 <p>Names: <code>online_fix_eq_linear</code>, <code>online_fix_eq_integer</code></p>
 <div class="highlight"><pre><span></span><code>v_online[p,d,t] = p_fix_online[p,d,t]   ∀ (p,d,t) ∈ online_rows with a p_fix_online value
   (a coarse process: at the first fine step of each coarse step; its pin is the same on every fine step of
   the step, or the process keeps the solve's step, flex_data.coarse_pin_varies)
 </code></pre></div>
-<p>In a separate-dispatch solve, pins units online to the commitment of the parent solve. Only declared v_online cells are pinned.  p_fix_online is Utf8-keyed: it is joined to the native-typed index through Utf8 copies of (p, d, t).</p>
-<p>Source: <code>flextool/engine/model/_online.py:568</code> (<code>add_constraints</code>)</p>
+<p>In a realization solve, pins the units online of the processes with integer (binary) online variables to the parent's commitment, also when the solve relaxes integers (reduce_unit_detail_method integers*); linear units online are not pinned (p_fix_online has none: the realization re-decides them with the realized data), so online_fix_eq_linear has no rows.  At a free start of the realization (its roll 0, a single-solve realization, a period that does not continue the previous one) its units online are free like the parent's; a free start relaxes any predecessor the parent had, so the pinned commitment stays feasible.  A later roll carries the previous realization's units online in both stages (the stochastic roll k and realization roll k). Only declared v_online cells are pinned.  p_fix_online is Utf8-keyed: it is joined to the native-typed index through Utf8 copies of (p, d, t).</p>
+<p>Source: <code>flextool/engine/model/_online.py:630</code> (<code>add_constraints</code>)</p>
 <h2 id="the-exact-transfer-method">The exact transfer method</h2>
 <p>The exact transfer method: a connection flows in one direction per time step.</p>
 <h3 id="var-v_exact_forward">VAR. <code>v_exact_forward</code></h3>
@@ -8444,13 +8427,13 @@ v_flow[p,b,a,d,t] + Ū[p,b,a,d,t] · v_exact_forward[p,d,t]  ≤  Ū[p,b,a,d,t] 
 <div class="highlight"><pre><span></span><code>  Σ_{K} (counted capacity − flow into N(g)) + vq ≥ M + Σ_n q_up − (slack energy of S(g)) / Δt:
 </code></pre></div>
 <p>only firm and VRE headroom holds the margin.  Each counted capacity bounds the unit's dispatch into N(g) (maxFlow, profile_flow_*, maxOutputSum), so the headroom is never negative.  Storage-backed units, imports, exports and the group's own consumption count by their flow: imports and storage help by displacing firm output, exports add to the requirement.  Energy dumped with vq_state_down does not count, and neither does energy that a storage node's balance slack makes (it could be stored and sent at the binding step).  Lines and lossy converters inside g are left out, so their losses are not part of the requirement and shedding the demand behind them cannot lower it: unserved energy (q_up) leaves the row unchanged where counted capacity served it, and is priced once, by penalty_up.  Units fed from fuel or commodity nodes count at capacity: the fuel is assumed to last through the peak.  Existing capacity is a constant and moves to the right-hand side. The row is scaled by icap, which makes the slack a fraction of group_capacity_for_scaling. Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of existing capacity counting until its end of life (none for reinvest_automatic). Row rule (coarse steps): a group whose flow members (the processes of B¬FV) are all coarse processes gets one row per coarse step, capacityMargin_coarse = the row's Δt-weighted mean over the step (_coarse_flows.add_cstr): availability, the profile, the inflow and the slope act through their step means, so the margin covers the step-mean demand, not its peak (named in the coarse-flow behaviour notice). Otherwise the rows stay per solve step.</p>
-<p>Source: <code>flextool/engine/model/_group_slack.py:724</code> (<code>_eq_capacity_margin</code>)</p>
+<p>Source: <code>flextool/engine/model/_group_slack.py:725</code> (<code>_eq_capacity_margin</code>)</p>
 <h3 id="eq-capacitymargin_slack_energy">EQ. <code>capacityMargin_slack_energy</code></h3>
 <div class="highlight"><pre><span></span><code>v_capacity_margin_slack_energy[s,d] = Σ_{t : (d,t) ∈ dt} vq_state_up[s,d,t] · Δt[d,t]
   ∀ (s,d) of v_capacity_margin_slack_energy
 </code></pre></div>
 <p>The energy made by storage node s's upward balance slack over the period's steps.  Energy made at any step can be stored and sent into the group at the binding step, so the capacityMargin row takes back the whole period's slack energy, in MW at its own step (÷ Δt): one variable per (s,d) keeps the rows sparse.</p>
-<p>Source: <code>flextool/engine/model/_group_slack.py:918</code> (<code>_eq_slack_energy</code>)</p>
+<p>Source: <code>flextool/engine/model/_group_slack.py:919</code> (<code>_eq_slack_energy</code>)</p>
 <h3 id="eq-inertia_constraint">EQ. <code>inertia_constraint</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{side ∈ {source, sink}} Σ_{(p,s,k) ∈ arcs_side(g)} x[p,·,d,t] · inertia_constant[p,side] · unitsize[p]
   + vq_inertia[g,d,t] · inertia_limit[g,d,t]
@@ -8464,7 +8447,7 @@ v_flow[p,b,a,d,t] + Ū[p,b,a,d,t] · v_exact_forward[p,d,t]  ≤  Ū[p,b,a,d,t] 
   x = v_online[p,d,t] for p ∈ process_online (linear or integer), else v_flow[p,s,k,d,t]
 </code></pre></div>
 <p>Synchronous machines connected to the group's nodes supply inertia (MWs) in proportion to the units online, or to their flow when they have no online variable; the shortfall is penalised.  The slack is a fraction of the limit. Row rule (coarse steps): a group whose inertia providers are all coarse processes gets one row per coarse step, inertia_constraint_coarse = the row's mean over the step (_coarse_flows.add_cstr), on one slack per step; the limit enters as its Δt-weighted step mean, and a limit that varies within a coarse step is named in the coarse-flow behaviour notice.  Otherwise per solve step.</p>
-<p>Source: <code>flextool/engine/model/_group_slack.py:1315</code> (<code>_eq_inertia</code>)</p>
+<p>Source: <code>flextool/engine/model/_group_slack.py:1316</code> (<code>_eq_inertia</code>)</p>
 <h3 id="eq-non_sync_constraint">EQ. <code>non_sync_constraint</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_{(p,s,k) ∈ in_ns(g)} v_flow[p,s,k,d,t] · unitsize[p] · Δt[d,t] · icap[g,d]
   + Σ_{(p,s,k) ∈ back_in_ns(g)} v_flow_back[p,s,k,d,t] · unitsize[p] · Δt[d,t] · icap[g,d]
@@ -8493,7 +8476,7 @@ v_flow[p,b,a,d,t] + Ū[p,b,a,d,t] · v_exact_forward[p,d,t]  ≤  Ū[p,b,a,d,t] 
   inflow before the invest-solve energy margin
 </code></pre></div>
 <p>Non-synchronous infeed into the group (flagged unit arcs, DC connections, positive exogenous inflow) is at most ns_limit times the group's supply, measured as the energy its nodes deliver to processes, exports and the real demand (an energy margin does not count); the excess is penalised. Flows between nodes of the group are neither (inside).  The reverse flow of a one-variable / DC arc arrives at the arc's source and leaves its sink, lossless, as in nodeBalance_eq.  The slack has no icap, which makes it a fraction of group_capacity_for_scaling.  slope already holds the sink/source coefficient ratio of multi-arc processes. Row rule (coarse steps): a group whose processes are all coarse gets one row per coarse step, non_sync_constraint_coarse = the row's Δt-weighted mean over the step (_coarse_flows.add_cstr), on one slack per step: the non-synchronous share then holds for the step's energy, with the inflow, the slope and the limit through their step means (named in the coarse-flow behaviour notice).  Otherwise per solve step.</p>
-<p>Source: <code>flextool/engine/model/_group_slack.py:1386</code> (<code>_eq_non_sync</code>)</p>
+<p>Source: <code>flextool/engine/model/_group_slack.py:1387</code> (<code>_eq_non_sync</code>)</p>
 <h3 id="obj-inertia-non-synchronous-capacity-margin-slack">OBJ. <code>inertia / non-synchronous / capacity margin slack</code></h3>
 <p>Names: <code>inertia_penalty</code>, <code>non_synchronous_penalty</code>, <code>capacity_margin_penalty</code></p>
 <div class="highlight"><pre><span></span><code>+ Σ_{(g,d,t)} vq_inertia[g,d,t] · inertia_limit[g,d,t] · penalty_inertia[g,d] · w_op[d,t]
@@ -8504,39 +8487,39 @@ v_flow[p,b,a,d,t] + Ū[p,b,a,d,t] · v_exact_forward[p,d,t]  ≤  Ū[p,b,a,d,t] 
   bw = pd_branch_weight[d], 1 where it has no row (deterministic and pre-reveal periods)
 </code></pre></div>
 <p>Each slack is scaled back to physical units (MWs, MW) and priced per hour of operation.  The capacity margin is a planning quantity: it is priced once per period, weighted by pd_branch_weight, without step weights, and its penalty is authored in CUR/kW (× 1000 to CUR/MW).  In a stochastic fan each forecast branch period keeps its own slack and pays it with its probability.  The output layer (calc_slacks) reports the same costs for the realized periods (weight 1).</p>
-<p>Source: <code>flextool/engine/model/_group_slack.py:1526</code> (<code>objective_terms</code>)</p>
+<p>Source: <code>flextool/engine/model/_group_slack.py:1527</code> (<code>objective_terms</code>)</p>
 <h2 id="reserves">Reserves</h2>
 <p>Reserves: capacity held back from the energy market to cover a reserve requirement of a node group.</p>
 <h3 id="var-v_reserve">VAR. <code>v_reserve</code></h3>
 <div class="highlight"><pre><span></span><code>v_reserve[p,r,ud,n,d,t] ≥ 0   ∀ (p,r,ud,n,d,t) ∈ prundt
 </code></pre></div>
 <p>Reserve r in direction ud (up / down) that process p holds for node n, in units of unitsize like v_flow: MW = v_reserve · unitsize[p].</p>
-<p>Source: <code>flextool/engine/model/_reserve.py:534</code> (<code>add_variables</code>)</p>
+<p>Source: <code>flextool/engine/model/_reserve.py:530</code> (<code>add_variables</code>)</p>
 <h3 id="var-v_reserve-coarse-processes">VAR. <code>v_reserve (coarse processes)</code></h3>
 <p>Names: <code>v_reserve</code></p>
 <div class="highlight"><pre><span></span><code>v_reserve[p,r,ud,n,d,b] ≥ 0   ∀ p ∈ processCoarse, (p,r,ud,n) of prundt, (d,b) the coarse steps of p
   (b = its first fine step b_first)
 </code></pre></div>
 <p>One reserve per coarse step, held over its fine steps (a level: b.v_reserve is indexed on every fine step, _coarse_flows.alias); the requirement rows still read it at every solve step.</p>
-<p>Source: <code>flextool/engine/model/_reserve.py:539</code> (<code>add_variables</code>)</p>
+<p>Source: <code>flextool/engine/model/_reserve.py:535</code> (<code>add_variables</code>)</p>
 <h3 id="var-vq_reserve">VAR. <code>vq_reserve</code></h3>
 <div class="highlight"><pre><span></span><code>0 ≤ vq_reserve[r,ud,g,d,t] ≤ 1   ∀ (r,ud,g) ∈ reserve_upDown_group, (d,t) ∈ dt
 </code></pre></div>
 <p>Shortfall of the reserve requirement of group g, as a fraction of the largest requirement: MW = vq_reserve · scale[r,ud,g,d,t] (reserve_shortfall_scale).</p>
-<p>Source: <code>flextool/engine/model/_reserve.py:548</code> (<code>add_variables</code>)</p>
+<p>Source: <code>flextool/engine/model/_reserve.py:544</code> (<code>add_variables</code>)</p>
 <h3 id="var-v_reserve_total">VAR. <code>v_reserve_total</code></h3>
 <div class="highlight"><pre><span></span><code>v_reserve_total[r,ud,g,d,t] ≥ 0   ∀ (r,ud,g) ∈ rug_total, (d,t) ∈ dt
   rug_total = (r,ud,g) with an n-1 row (in fail_g) and at least one provider in pruna_g
 </code></pre></div>
 <p>Reserve held for group g by all its providers, MW: at most reserve_sum (reserve_total_upper).  Lets each n-1 row subtract the failing process's own reserve instead of repeating every other provider, and replaces reserve_sum in the timeseries / dynamic rows of the same group.  No cost.</p>
-<p>Source: <code>flextool/engine/model/_reserve.py:557</code> (<code>add_variables</code>)</p>
+<p>Source: <code>flextool/engine/model/_reserve.py:553</code> (<code>add_variables</code>)</p>
 <h3 id="eq-reservebalance_timeseries_eq">EQ. <code>reserveBalance_timeseries_eq</code></h3>
 <div class="highlight"><pre><span></span><code>reserve_sum[r,ud,g,d,t] + vq_term[r,ud,g,d,t]  ≥ reservation[r,ud,g,d,t]
   ∀ (r,ud,g) ∈ reserve_upDown_group_method_timeseries, (d,t) ∈ dt
   reserve_sum is replaced by v_reserve_total for (r,ud,g) ∈ rug_total
 </code></pre></div>
 <p>Reserve held for a group covers its authored reservation timeseries, or the shortfall is penalised.  RHS 0 when no reservation is authored. Reserve of every provider counts at full MW (no efficiency slope). A group that also has n-1 rows uses its total v_reserve_total: it is at most reserve_sum, enters only ≥ rows and has no cost, so the rows are equivalent (same optimal value for every right-hand side).</p>
-<p>Source: <code>flextool/engine/model/_reserve.py:691</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_reserve.py:687</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-reservebalance_dynamic_eq">EQ. <code>reserveBalance_dynamic_eq</code></h3>
 <div class="highlight"><pre><span></span><code>reserve_sum[r,ud,g,d,t] + vq_term[r,ud,g,d,t]
   ≥ Σ_{(p,s,n) ∈ process_source_sink, (p,r,ud,n) ∈ irr_g} v_flow[p,s,n,d,t] · unitsize[p] · ratio[p,r,ud,n]
@@ -8558,7 +8541,7 @@ v_flow[p,b,a,d,t] + Ū[p,b,a,d,t] · v_exact_forward[p,d,t]  ≤  Ū[p,b,a,d,t] 
   reserve_sum is replaced by v_reserve_total for (r,ud,g) ∈ rug_total
 </code></pre></div>
 <p>The requirement grows with the flows into and out of the group's nodes (e.g. variable generation and consumption), in the upward and the downward rows alike: the ratio stands for the flow's variability, which can go either way (unlike large_failure, which is directional).  A flow out of a node counts as drawn from it, as in nodeBalance_eq: on an efficiency arc the input is v_flow · slope plus the min-load section (_drawn_terms).  The reverse flow of a one-variable (and DC) arc arrives at the arc's source and leaves its sink, as in nodeBalance_eq (lossless, no slope).  The group term adds the demand of the group's nodes (negative inflow only; a node with positive inflow does not count) times the group's ratio (group_demand_requirement).  RHS 0 when nothing drives it.  A group that also has n-1 rows uses v_reserve_total, as in the timeseries rows.</p>
-<p>Source: <code>flextool/engine/model/_reserve.py:714</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_reserve.py:710</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-reservebalance_up_n_1_eq-reservebalance_down_n_1_eq">EQ. <code>reserveBalance_up_n_1_eq / reserveBalance_down_n_1_eq</code></h3>
 <p>Names: <code>reserveBalance_up_n_1_eq</code>, <code>reserveBalance_down_n_1_eq</code></p>
 <div class="highlight"><pre><span></span><code>v_reserve_total[r,ud,g,d,t]
@@ -8580,7 +8563,7 @@ v_flow[p,b,a,d,t] + Ū[p,b,a,d,t] · v_exact_forward[p,d,t]  ≤  Ū[p,b,a,d,t] 
   ratio   = large_failure_ratio;   f is the row dim p_fail;   eff_out, section as in the dynamic row
 </code></pre></div>
 <p>Reserve covers the loss of each large process f separately (the largest failure binds): upward reserve the loss of its output into the group, downward reserve the loss of its consumption from the group.  The failing process's own reserve, at every node of the group, does not count: it is subtracted from the group total.  All rows of a group share vq_term, so the priced shortfall is the largest deficit.  The lost consumption is the flow the process draws from the node, as in nodeBalance_eq (output · slope plus the min-load section on an efficiency arc); a lost output counts at unitsize.  A one-variable (or DC) connection also fails while flowing backwards: its v_flow_back arrives at the arc's source and leaves its sink (lossless).  No row for a group without a failing process; a group without providers (or without reliability data) has no v_reserve_total term.  Nonzeros grow with providers + failing processes per group.</p>
-<p>Source: <code>flextool/engine/model/_reserve.py:796</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_reserve.py:792</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-reserve_total_upper">EQ. <code>reserve_total_upper</code></h3>
 <div class="highlight"><pre><span></span><code>v_reserve_total[r,ud,g,d,t] − reserve_sum[r,ud,g,d,t]  ≤  0   ∀ (r,ud,g) ∈ rug_total, (d,t) ∈ dt
 v_reserve_total enters only ≥ requirement rows, with a positive sign,
@@ -8590,7 +8573,7 @@ reserve not counted) with v_reserve_total = reserve_sum, and the
 timeseries / dynamic rows of the group are those with reserve_sum.
 </code></pre></div>
 <p>This needs reserve_sum ≥ 0, which holds because providers have reliability &gt; 0 (process_reserve_upDown_node_active) and unitsize &gt; 0; otherwise v_reserve_total ≥ 0 would add a constraint.  When v_reserve_total &gt; 0, the magnitude of this row's dual is the sum of the duals of the group-step's rows that use v_reserve_total (opposite sign convention: ≤ row against ≥ rows).</p>
-<p>Source: <code>flextool/engine/model/_reserve.py:870</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_reserve.py:866</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-reserve_process_upward-reserve_process_downward">EQ. <code>reserve_process_upward / reserve_process_downward</code></h3>
 <p>Names: <code>reserve_process_upward</code>, <code>reserve_process_downward</code></p>
 <div class="highlight"><pre><span></span><code>v_reserve[p,r,ud,n,d,t] − max_share[p,r,ud,n] · c[p,n,d,t] · invested[p,d]
@@ -8608,14 +8591,7 @@ timeseries / dynamic rows of the group are those with reserve_sum.
                                        conversion_flow_coeff = 0 inputs
 </code></pre></div>
 <p>A process holds at most max_share of the built capacity of its flow at that node as reserve (units of unitsize; built = existing + invested − retired, also for units with online variables).  At an input node the capacity is the input's (_input_capacity_factor).  max_share not authored → no reserve (RHS 0). Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of existing capacity counting until its end of life (none for reinvest_automatic).</p>
-<p>Source: <code>flextool/engine/model/_reserve.py:889</code> (<code>add_constraints</code>)</p>
-<h3 id="eq-reserve_fix_eq">EQ. <code>reserve_fix_eq</code></h3>
-<div class="highlight"><pre><span></span><code>v_reserve[p,r,ud,n,d,t] = p_fix_reserve[p,r,ud,n,d,t]   ∀ (p,r,ud,n,d,t) ∈ prundt with a p_fix_reserve value
-  (a coarse process: at the first fine step of each coarse step; its pin is the same on every fine step of
-  the step, or the process keeps the solve's step, flex_data.coarse_pin_varies)
-</code></pre></div>
-<p>In a realization solve, pins the reserve each process holds to the non-anticipativity-tied reserve of the stochastic solve it realizes (that solve's reference forecast on its tied steps).  Only declared v_reserve cells are pinned.  p_fix_reserve is Utf8-keyed: it is joined to the native-typed index through Utf8 copies.</p>
-<p>Source: <code>flextool/engine/model/_reserve.py:957</code> (<code>_add_reserve_fix</code>)</p>
+<p>Source: <code>flextool/engine/model/_reserve.py:885</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-connection_reserve_up-connection_reserve_down">EQ. <code>connection_reserve_up / connection_reserve_down</code></h3>
 <p>Names: <code>connection_reserve_up</code>, <code>connection_reserve_down</code></p>
 <div class="highlight"><pre><span></span><code>x_in[p,n,d,t] − s_out[p,n,d,t] · x_out[p,n,d,t] + Σ_r v_reserve[p,r,up,n,d,t]
@@ -8632,13 +8608,13 @@ x_out[p,n,d,t] − x_in[p,n,d,t] / s_out[p,n,d,t] + Σ_r v_reserve[p,r,down,n,d,
           b.flow_cap_mult: capacity_max_coeff · availability · existing_count and coef · availability)
   a channel p does not have contributes nothing (x = 0, C = 0, M = 0, s_out = 1)
 </code></pre></div>
-<p>Source: <code>flextool/engine/model/_reserve.py:1108</code> (<code>_add_connection_reserve_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_reserve.py:1071</code> (<code>_add_connection_reserve_constraints</code>)</p>
 <h3 id="eq-connection_reserve_updown_online_linearinteger">EQ. <code>connection_reserve_{up,down}_online_{linear,integer}</code></h3>
 <p>Names: <code>connection_reserve_up_online_linear</code>, <code>connection_reserve_up_online_integer</code>, <code>connection_reserve_down_online_linear</code>, <code>connection_reserve_down_online_integer</code></p>
 <div class="highlight"><pre><span></span><code>  same LHS without invest terms  ≤  κ · availability · v_online[p,d,t]   (κ, availability of the up row's
   in-channel arc / the down row's out-channel arc)   ∀ rows above with p online and that channel present
 </code></pre></div>
-<p>Source: <code>flextool/engine/model/_reserve.py:1123</code> (<code>_add_connection_reserve_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_reserve.py:1086</code> (<code>_add_connection_reserve_constraints</code>)</p>
 <h3 id="eq-connection_reserve_updown_exact">EQ. <code>connection_reserve_{up,down}_exact</code></h3>
 <p>Names: <code>connection_reserve_up_exact</code>, <code>connection_reserve_down_exact</code></p>
 <div class="highlight"><pre><span></span><code>  same LHS − Ū · v_exact_forward[p,d,t]  ≤  0     when that channel is the exact connection's forward arc
@@ -8649,7 +8625,7 @@ x_out[p,n,d,t] − x_in[p,n,d,t] / s_out[p,n,d,t] + Σ_r v_reserve[p,r,down,n,d,
 <div class="highlight"><pre><span></span><code>  (_coarse_flows.add_cstr): one reserve and one flow per step under the step-mean capacity and availability.
 </code></pre></div>
 <p>A connection's reserve at a node is limited by its net position there: upward reserve by the free capacity into n plus the flow out of n it can stop, downward reserve by the flow into n it can stop plus the free capacity out of n (converted to power at n by the efficiency).  One row per capacity bound (built, online, exact direction) of the channel whose capacity the reserve uses, so each row holds one channel's capacity.  A one-way connection gets a floor at its sending node (upward reserve ≤ what it draws there) and its old capacity row at the receiving node; a one-variable connection's rows bound the reserve by its signed flow (C ∓ f).  Reserve at a node the connection does not link is 0.  maxFlow / maxFlow_online carry the upward reserve of units only (b.reserve_up_to_sink_units); the profile cap profile_flow_upper_limit keeps the connection's in-arc term (conservative: it does not count stopping the out-flow). Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of existing capacity counting until its end of life (none for reinvest_automatic).</p>
-<p>Source: <code>flextool/engine/model/_reserve.py:1126</code> (<code>_add_connection_reserve_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_reserve.py:1089</code> (<code>_add_connection_reserve_constraints</code>)</p>
 <h3 id="eq-reserve_storage_up_floor">EQ. <code>reserve_storage_up_floor</code></h3>
 <div class="highlight"><pre><span></span><code>v_state[n,d,t] · state_unitsize[n]
   − Σ_{(p,r,ud,nb,g) ∈ providers_up(n)} v_reserve[p,r,ud,nb,d,t] · unitsize[p] · duration[r,ud,g] · slope[p,d,t]
@@ -8659,7 +8635,7 @@ x_out[p,n,d,t] − x_in[p,n,d,t] / s_out[p,n,d,t] + Σ_r v_reserve[p,r,down,n,d,
     one-variable / DC connection whose arc runs nb → n (its reverse flow v_flow_back runs n → nb; slope 1)
 </code></pre></div>
 <p>Upward reserve from storage is backed by stored energy (MWh) for the reserve duration (hours); slope = 1/η converts output to energy drawn. Reliability is not applied: the energy matches the full committed MW. No slack: with v_reserve = 0 the row is v_state ≥ 0, so a provider that cannot sustain the duration commits less and the group pays the shortfall penalty.  Couples to the intra-period state v_state only, not to the representative-period state v_state_inter. Row rule: a storage node n whose state is coarse (constant within its coarse step, stateConstantCoarse_eq) and whose providers are all coarse processes gets one row per coarse step, reserve_storage_up_floor_coarse (the row's mean over the step of the providers' partition, _coarse_flows.add_cstr): the reserve, the state and the step-mean slope are then all one value per step.  Otherwise the row stays per solve step and reads a coarse provider's reserve at its constant value.  The same for reserve_storage_down_headroom.</p>
-<p>Source: <code>flextool/engine/model/_reserve.py:1499</code> (<code>_add_storage_energy_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_reserve.py:1462</code> (<code>_add_storage_energy_constraints</code>)</p>
 <h3 id="eq-reserve_storage_down_headroom">EQ. <code>reserve_storage_down_headroom</code></h3>
 <div class="highlight"><pre><span></span><code>v_state[n,d,t] · state_unitsize[n]
   + Σ_{(p,r,ud,nb,g) ∈ providers_down(n)} v_reserve[p,r,ud,nb,d,t] · unitsize[p] · duration[r,ud,g] / slope[p,d,t]
@@ -8671,13 +8647,13 @@ x_out[p,n,d,t] − x_in[p,n,d,t] / s_out[p,n,d,t] + Σ_r v_reserve[p,r,down,n,d,
     one-variable / DC connection whose arc runs n → nb (its reverse flow runs nb → n; slope 1)
 </code></pre></div>
 <p>Downward reserve into storage needs free storage capacity (MWh) for the reserve duration; 1/slope = η converts input to energy stored.  The capacity terms are those of maxState, in MWh.  Same notes as the floor. Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of existing capacity counting until its end of life (none for reinvest_automatic).</p>
-<p>Source: <code>flextool/engine/model/_reserve.py:1532</code> (<code>_add_storage_energy_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_reserve.py:1495</code> (<code>_add_storage_energy_constraints</code>)</p>
 <h3 id="obj-reserve-shortfall">OBJ. <code>reserve shortfall</code></h3>
 <p>Names: <code>reserve_shortfall_penalty</code></p>
 <div class="highlight"><pre><span></span><code>+ Σ_{(r,ud,g,d,t)} vq_reserve[r,ud,g,d,t] · scale[r,ud,g,d,t] · penalty_reserve[r,ud,g] · w_op[d,t]
 </code></pre></div>
 <p>Prices the shortfall in MW (vq_reserve · scale, the multiplier of the reserveBalance rows) per hour of operation.  penalty_reserve is the authored value, else the default (reserve_penalty).  w_op = b.op_factor.</p>
-<p>Source: <code>flextool/engine/model/_reserve.py:1592</code> (<code>objective_terms</code>)</p>
+<p>Source: <code>flextool/engine/model/_reserve.py:1555</code> (<code>objective_terms</code>)</p>
 <h2 id="investment-floors-cumulative-capacity-limits-group-investment-limits-and-flow-group-limits">Investment floors, cumulative capacity limits, group investment limits and flow-group limits</h2>
 <p>Investment floors, cumulative capacity limits, group investment limits and flow-group limits.</p>
 <h3 id="eq-mininvestdivest_entity_period_pn">EQ. <code>min{Invest,Divest}_entity_period_{p,n}</code></h3>
@@ -8692,7 +8668,7 @@ R_n[n,d] · state_unitsize[n]  ≥ divest_min_period[n,d]   ∀ (n,d) ∈ ed_div
   B = the (e,d) of cd_divest_built (_retire_built)
 </code></pre></div>
 <p>Forces a minimum capacity to come online or be retired in a period; the floor twin of max{Invest,Divest}_entity_period in model/core.py.  Capacity in MW (MWh for storage nodes).  Without a construction lead time c(o) = o: v_invest_p[p,d] · unitsize[p] ≥ invest_min_period[p,d] over ed_invest_period_set ∩ pd_invest_set.  With one, a period of an entity with a lead time where nothing can come online (no decision early enough in the solve) and the carried capacity is below the floor is a configuration error.</p>
-<p>Source: <code>flextool/engine/model/_cumulative_invest.py:215</code> (<code>_eq_min_entity_period</code>)</p>
+<p>Source: <code>flextool/engine/model/_cumulative_invest.py:233</code> (<code>_eq_min_entity_period</code>)</p>
 <h3 id="eq-mininvest_entity_total_path_pn">EQ. <code>minInvest_entity_total_path_{p,n}</code></h3>
 <p>Names: <code>minInvest_entity_total_path_p</code>, <code>minInvest_entity_total_path_n</code></p>
 <div class="highlight"><pre><span></span><code>Σ_{d ∈ D(leaf)} v_invest_p[p,d] · unitsize[p]  ≥  max(0, invest_min_total[p] − prior_inv[p])
@@ -8701,7 +8677,7 @@ R_n[n,d] · state_unitsize[n]  ≥ divest_min_period[n,d]   ∀ (n,d) ∈ ed_div
   _n: the node analogue with v_invest_n and state_unitsize[n]
 </code></pre></div>
 <p>The part of the minimum not met by earlier solves of the chain must be met in this solve (Q3).  One row per entity over the chain horizon, replacing the old per-period "invested and still alive" row; the capacity in service is not read.  Always named _path, even with one scenario leaf: a single row summed over alternative branches would let one branch meet the minimum for all, so the per-leaf row shape is load-bearing, not cosmetic.</p>
-<p>Source: <code>flextool/engine/model/_cumulative_invest.py:274</code> (<code>_eq_min_invest_total</code>)</p>
+<p>Source: <code>flextool/engine/model/_cumulative_invest.py:292</code> (<code>_eq_min_invest_total</code>)</p>
 <h3 id="eq-mindivest_entity_total_path_pn">EQ. <code>minDivest_entity_total_path_{p,n}</code></h3>
 <p>Names: <code>minDivest_entity_total_path_p</code>, <code>minDivest_entity_total_path_n</code></p>
 <div class="highlight"><pre><span></span><code>Σ_{d ∈ D(leaf)} R_p[p,d] · unitsize[p]  ≥  max(0, divest_min_total[p] − prior_div[p])
@@ -8712,7 +8688,7 @@ R_n[n,d] · state_unitsize[n]  ≥ divest_min_period[n,d]   ∀ (n,d) ∈ ed_div
   _n: the node analogue with v_divest_n and state_unitsize[n]
 </code></pre></div>
 <p>Forces the part of the minimum not retired by earlier solves of the chain to be retired in this solve (Q3).  Always named _path, for the same reason as minInvest.</p>
-<p>Source: <code>flextool/engine/model/_cumulative_invest.py:317</code> (<code>_eq_min_divest_total</code>)</p>
+<p>Source: <code>flextool/engine/model/_cumulative_invest.py:335</code> (<code>_eq_min_divest_total</code>)</p>
 <h3 id="eq-maxmincumulative_capacity_pn">EQ. <code>{max,min}Cumulative_capacity_{p,n}</code></h3>
 <p>Names: <code>maxCumulative_capacity_p</code>, <code>maxCumulative_capacity_n</code>, <code>minCumulative_capacity_p</code>, <code>minCumulative_capacity_n</code></p>
 <div class="highlight"><pre><span></span><code>invested[p,d] · unitsize[p]
@@ -8727,7 +8703,7 @@ R_n[n,d] · state_unitsize[n]  ≥ divest_min_period[n,d]   ∀ (n,d) ∈ ed_div
   _n: the node analogue with v_invest_n / v_divest_n and state_unitsize[n].
 </code></pre></div>
 <p>Keeps the capacity of an entity in a period (existing + invested and still alive − every retirement up to and including d, #29, processes and storage nodes) within its cumulative limits, MW (MWh for storage nodes).  Existing capacity is a constant on the right-hand side. Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of existing capacity counting until its end of life (none for reinvest_automatic).</p>
-<p>Source: <code>flextool/engine/model/_cumulative_invest.py:363</code> (<code>_eq_cumulative_capacity</code>)</p>
+<p>Source: <code>flextool/engine/model/_cumulative_invest.py:381</code> (<code>_eq_cumulative_capacity</code>)</p>
 <h3 id="eq-maxmininvestdivestgroup_entity_period_pn">EQ. <code>{max,min}{Invest,Divest}Group_entity_period_{p,n}</code></h3>
 <p>Names: <code>maxInvestGroup_entity_period_p</code>, <code>maxInvestGroup_entity_period_n</code>, <code>maxDivestGroup_entity_period_p</code>, <code>maxDivestGroup_entity_period_n</code>, <code>minInvestGroup_entity_period_p</code>, <code>minInvestGroup_entity_period_n</code>, <code>minDivestGroup_entity_period_p</code>, <code>minDivestGroup_entity_period_n</code></p>
 <div class="highlight"><pre><span></span><code>Σ_{p : (g,p) ∈ group_entity} v_invest_p[p,d] · unitsize[p]  ≤ group_invest_max_period[g,d]   (max…_p)
@@ -8745,7 +8721,7 @@ R_n[n,d] · state_unitsize[n]  ≥ divest_min_period[n,d]   ∀ (n,d) ∈ ed_div
   time: the form above).
 </code></pre></div>
 <p>Bounds the capacity a group of entities builds or retires in one period, MW (MWh for storage nodes); processes and storage nodes of a group get separate rows.  Group retire_{max,min}_period is not a schema parameter, so the divest rows are reachable only with off-schema data.  Under recourse ``gd_invest_period`` / ``gd_divest_period`` list a group's own invest/divest period's branch periods too (#67); a branch period with no member actually invest/divest-eligible there (e.g. a branch's own 0 beating the anchor's cost, #82) gets no row, not a vacuous 0 ≥ a positive floor.</p>
-<p>Source: <code>flextool/engine/model/_cumulative_invest.py:461</code> (<code>_eq_group_entity_period</code>)</p>
+<p>Source: <code>flextool/engine/model/_cumulative_invest.py:479</code> (<code>_eq_group_entity_period</code>)</p>
 <h3 id="eq-maxinvestgroup_entity_total_path_pn-mininvestgroup_entity_total_path_pn">EQ. <code>maxInvestGroup_entity_total[_path]_{p,n} / minInvestGroup_entity_total_path_{p,n}</code></h3>
 <p>Names: <code>maxInvestGroup_entity_total_p</code>, <code>maxInvestGroup_entity_total_n</code>, <code>maxInvestGroup_entity_total_path_p</code>, <code>maxInvestGroup_entity_total_path_n</code>, <code>minInvestGroup_entity_total_path_p</code>, <code>minInvestGroup_entity_total_path_n</code></p>
 <div class="highlight"><pre><span></span><code>Σ_{p:(g,p)∈group_entity} Σ_{d∈D(leaf)} v_invest_p[p,d]·unitsize[p]
@@ -8761,7 +8737,7 @@ R_n[n,d] · state_unitsize[n]  ≥ divest_min_period[n,d]   ∀ (n,d) ∈ ed_div
     one branch meet the floor for every branch (Q3, same reason as the entity min side)
 </code></pre></div>
 <p>Changed from per-(g,d) "invested and still alive" rows to one row per group (per leaf); processes and storage nodes of a group get separate rows.</p>
-<p>Source: <code>flextool/engine/model/_cumulative_invest.py:595</code> (<code>_eq_group_invest_total</code>)</p>
+<p>Source: <code>flextool/engine/model/_cumulative_invest.py:613</code> (<code>_eq_group_invest_total</code>)</p>
 <h3 id="eq-maxdivestgroup_entity_total_path_pn-mindivestgroup_entity_total_path_pn">EQ. <code>maxDivestGroup_entity_total[_path]_{p,n} / minDivestGroup_entity_total_path_{p,n}</code></h3>
 <p>Names: <code>maxDivestGroup_entity_total_p</code>, <code>maxDivestGroup_entity_total_n</code>, <code>maxDivestGroup_entity_total_path_p</code>, <code>maxDivestGroup_entity_total_path_n</code>, <code>minDivestGroup_entity_total_path_p</code>, <code>minDivestGroup_entity_total_path_n</code></p>
 <div class="highlight"><pre><span></span><code>Σ_{p:(g,p)∈group_entity} Σ_{d∈D(leaf)} R_p[p,d]·unitsize[p]
@@ -8779,7 +8755,7 @@ R_n[n,d] · state_unitsize[n]  ≥ divest_min_period[n,d]   ∀ (n,d) ∈ ed_div
     for every branch)
 </code></pre></div>
 <p>Bounds the capacity a group retires over the chain; processes and storage nodes of a group get separate rows.  Group retire_{max,min}_total is not a schema parameter, so these rows are reachable only with off-schema data.</p>
-<p>Source: <code>flextool/engine/model/_cumulative_invest.py:657</code> (<code>_eq_group_divest_total</code>)</p>
+<p>Source: <code>flextool/engine/model/_cumulative_invest.py:675</code> (<code>_eq_group_divest_total</code>)</p>
 <h3 id="eq-maxmininvestgroup_entity_cumulative">EQ. <code>{max,min}InvestGroup_entity_cumulative</code></h3>
 <p>Names: <code>maxInvestGroup_entity_cumulative</code>, <code>minInvestGroup_entity_cumulative</code></p>
 <div class="highlight"><pre><span></span><code>Σ_{p : (g,p) ∈ group_entity} invested[p,d] · unitsize[p]
@@ -8793,36 +8769,37 @@ R_n[n,d] · state_unitsize[n]  ≥ divest_min_period[n,d]   ∀ (n,d) ∈ ed_div
   cumulative_max_capacity is inf (no limit in that period)
 </code></pre></div>
 <p>Keeps the capacity of a group in a period (existing + invested and still alive − every retirement up to and including d, #30b) within its cumulative limits (schema "[MW or MWh]"); processes and storage nodes share one row.  Max rows: groups that author the cap at all (any period), restricted to periods the group actually has a candidate (g, d) row for; FA-12 (check_max_cap) then catches a period that same group's own map leaves out — mirrors the entity-level cumulative row (previously this family had no FA-12 check at all, unlike the entity-level row).  Min rows: the periods with a value other than 0 (a min of 0 is no floor).  A period map that leaves out an investment period of the solve cannot reach here: pass 1b refuses it (``require_period_coverage``).  Capacity invested by earlier solves of a chain is not counted (pre-existing, separate item). Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of existing capacity counting until its end of life (none for reinvest_automatic).</p>
-<p>Source: <code>flextool/engine/model/_cumulative_invest.py:731</code> (<code>_eq_group_invest_cumulative</code>)</p>
+<p>Source: <code>flextool/engine/model/_cumulative_invest.py:749</code> (<code>_eq_group_invest_cumulative</code>)</p>
 <h3 id="eq-maxmincumulative_flow_solve_path">EQ. <code>{max,min}Cumulative_flow_solve[_path]</code></h3>
 <p>Names: <code>maxCumulative_flow_solve</code>, <code>maxCumulative_flow_solve_path</code>, <code>minCumulative_flow_solve</code>, <code>minCumulative_flow_solve_path</code></p>
 <div class="highlight"><pre><span></span><code>Σ_{d,t} F[g,d,t]·w_y[d,t]  ≤ max_cumulative_flow[g] · Σ_{d,t} w_y[d,t]   (max…)
                            ≥ min_cumulative_flow[g] · Σ_{d,t} w_y[d,t]   (min…)
   ∀ g with a max / min_cumulative_flow (, per leaf under recourse) — an inf max / −inf min is no limit (no row)
-  F = net flow into the group (_group_flow)
+  F = net flow into the group (_group_flow; a one-variable connection by v_flow − v_flow_back)
   w_y[d,t] = step_duration[d,t]·timestep_weight[d,t]·r[d]
   r[d] = (years_represented[d]/period_share[d]) / max_d′(years_represented[d′]/period_share[d′])
 </code></pre></div>
 <p>Limits the energy flowing into a flow group over the solve to an average power times the weighted hours of the solve — the same weighting every operational cost term already carries (op_factor), so a representative period or an unequal roll window does not under/over-count its hours.  Under recourse each scenario path gets its own row (_path, one per (g, leaf), leaf_rows): a plain per-group row, summed across branches, would let one branch's surplus cover another's deficit.  Constraints carry no stochastic branch weight — each branch must respect the limit on its own, unlike the objective (owner decision).</p>
-<p>Source: <code>flextool/engine/model/_cumulative_invest.py:871</code> (<code>_eq_cumulative_flow_solve</code>)</p>
+<p>Source: <code>flextool/engine/model/_cumulative_invest.py:889</code> (<code>_eq_cumulative_flow_solve</code>)</p>
 <h3 id="eq-maxmincumulative_flow_period">EQ. <code>{max,min}Cumulative_flow_period</code></h3>
 <p>Names: <code>maxCumulative_flow_period</code>, <code>minCumulative_flow_period</code></p>
 <div class="highlight"><pre><span></span><code>Σ_t F[g,d,t]·sd[d,t]·tw[d,t]  ≤ max_cumulative_flow[g,d] · Σ_t sd[d,t]·tw[d,t]   (max…)
                               ≥ min_cumulative_flow[g,d] · Σ_t sd[d,t]·tw[d,t]   (min…)
   ∀ (g,d) with a max / min_cumulative_flow (the reader leaves out an inf max / −inf min: no limit in d)
-  F = net flow into the group (_group_flow); sd = step_duration, tw = timestep_weight
+  F = net flow into the group (_group_flow; a one-variable connection by v_flow − v_flow_back)
+  sd = step_duration, tw = timestep_weight
 </code></pre></div>
 <p>Limits the energy flowing into a flow group in each period to an average power times the weighted hours of the period — the same timestep_weight every operational cost term already carries (op_factor), so a representative-period step does not count as a full unweighted hour.  A branch period that authors no value of its own reads its anchor's value (broadcast_to_period's branch-period inheritance); it still gets its own (g,d) row here, not merged with the anchor's — the continuation fan always starts at a solve's first step (_branch.py, d_leaf_lf), so no period is ever split into an anchor fragment and a branch fragment within one solve, and there is nothing to merge.</p>
-<p>Source: <code>flextool/engine/model/_cumulative_invest.py:933</code> (<code>_eq_cumulative_flow_period</code>)</p>
+<p>Source: <code>flextool/engine/model/_cumulative_invest.py:951</code> (<code>_eq_cumulative_flow_period</code>)</p>
 <h3 id="eq-maxmininstant_flow">EQ. <code>{max,min}Instant_flow</code></h3>
 <p>Names: <code>maxInstant_flow</code>, <code>minInstant_flow</code></p>
 <div class="highlight"><pre><span></span><code>F[g,d,t]  ≤ max_instant_flow[g,d,t]   (maxInstant_flow)
           ≥ min_instant_flow[g,d,t]   (minInstant_flow)
   ∀ (g,d,t) ∈ _instant_flow_support(cap, dt); the reader leaves out an inf max / −inf min (no limit there)
-  F = net flow into the group (_group_flow), MW
+  F = net flow into the group (_group_flow; a one-variable connection by v_flow − v_flow_back), MW
 </code></pre></div>
 <p>Limits the net power flowing into a flow group in every step.  The cap may be authored as a scalar, period map, time map or period-time map; the rows cover every active step of its shape. Row rule (coarse steps): a flow group whose processes are all coarse gets one row per coarse step, {max,min}Instant_flow_coarse = the row's Δt-weighted mean over the step (_coarse_flows.add_cstr): the step's constant net flow against the step-mean cap (named in the coarse-flow behaviour notice when the cap varies within a step).  A group with a fine process keeps its rows per solve step.</p>
-<p>Source: <code>flextool/engine/model/_cumulative_invest.py:971</code> (<code>_eq_instant_flow</code>)</p>
+<p>Source: <code>flextool/engine/model/_cumulative_invest.py:990</code> (<code>_eq_instant_flow</code>)</p>
 <h2 id="commodity-price-ladder">Commodity price ladder</h2>
 <p>Commodity price ladder: a commodity bought in tiers, each with its own price and quantity.</p>
 <h3 id="var-v_trade">VAR. <code>v_trade</code></h3>
@@ -8904,21 +8881,21 @@ construction instead of approximately-compliant). Unlimited tiers (quantity ≥ 
   section only for p ∈ process_min_load_eff (v_online = v_online_linear or v_online_integer)
 </code></pre></div>
 <p>The net flow into a stochastic node is the same in every forecast over the tied steps: exactly the flow terms of nodeBalance_eq, built by the same helper (_balance_terms.balance_flow_terms).  It ties the flows, not v_state, and leaves out the balance slacks: they could otherwise absorb a flow difference.  The section input counts because efficiency and min_load may differ between forecasts.  A node of the group without an energy balance (e.g. a commodity node) has no balance flow terms to tie.  A coarse process has one flow column per coarse step, so a tie at one of its steps holds the whole step; it is coarse only where each of its coarse steps is wholly tied or wholly untied (flex_data.coarse_tie_straddles). Row rule (coarse steps): a node whose processes are all coarse gets one tie per wholly tied coarse step, non_anticipativity_storage_use_coarse = the row's Δt-weighted mean over the step (_coarse_flows.add_cstr, the weights of forecast d's coarse step, which the reference forecast b shares over the tied steps): the forecasts' net energy into n over the step is the same, with a forecast-specific slope or section through its step mean.  A node with a fine process keeps its ties per solve step, reading the coarse flows constant.</p>
-<p>Source: <code>flextool/engine/model/_non_anticipativity.py:209</code> (<code>add_dispatch_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_non_anticipativity.py:193</code> (<code>add_dispatch_constraints</code>)</p>
 <h3 id="eq-non_anticipativity_storage_state_first">EQ. <code>non_anticipativity_storage_state_first</code></h3>
 <div class="highlight"><pre><span></span><code>v_state[n,d,t_first(d)] − v_state[n,b,t_first(d)] = 0
   ∀ n ∈ nodes of groupStochastic, (d,b) ∈ forecast star, t_first(d) = first tied step of d,
     only where the tied steps of d are fewer than the v_state steps of (n,d)
 </code></pre></div>
 <p>The net-charge tie above fixes the shape of the state over the tied steps but leaves a constant offset between forecasts; this row removes it.  Where the tied steps cover the whole horizon the state is already bound at both ends (start and reference value) and the row is redundant, so it is emitted only when untied steps follow (rolling). The offset is pinned at the optimum, not by construction: interior drift stays feasible where balance slack or forecast-specific inflow absorbs it.  v_online and v_reserve need no analogue: their ties pin the variable itself at every tied step.</p>
-<p>Source: <code>flextool/engine/model/_non_anticipativity.py:255</code> (<code>add_dispatch_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_non_anticipativity.py:239</code> (<code>add_dispatch_constraints</code>)</p>
 <h3 id="eq-non_anticipativity_rp_block_start">EQ. <code>non_anticipativity_rp_block_start</code></h3>
 <div class="highlight"><pre><span></span><code>v_state_rp_start[n,d,t] − v_state_rp_start[n,b,t] = 0
   ∀ n ∈ nodes of groupStochastic ∩ nodeState_rp, (d,b) ∈ forecast star, (d,t) ∈ tied steps,
     (d,t) and (b,t) ∈ rp_block_first, (n,d,b,t) ∉ the rows of non_anticipativity_storage_state_first
 </code></pre></div>
 <p>A representative block starts from a free level; inside the tie window it is a decision taken before the forecast is known, so it is the same in every forecast (the net-flow tie fixes only the shape of the state within the block).  A block whose first step already has a non_anticipativity_storage_state_first row is left out: there v_state at t_first (the end of the block's first step) is tied, so its start is tied up to the forecasts' difference in balance slack (and inflow) over that step; the net flows of the step are tied already.  The base-period levels v_state_inter need no tie of their own: inside the window they follow from the tied net flows, these block starts and the shared chain start (the trunk period's end level, or rp_inter_period_fan_start).</p>
-<p>Source: <code>flextool/engine/model/_non_anticipativity.py:280</code> (<code>add_dispatch_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_non_anticipativity.py:264</code> (<code>add_dispatch_constraints</code>)</p>
 <h3 id="eq-non_anticipativity_online_integerlinear">EQ. <code>non_anticipativity_online_{integer,linear}</code></h3>
 <p>Names: <code>non_anticipativity_online_integer</code>, <code>non_anticipativity_online_linear</code></p>
 <div class="highlight"><pre><span></span><code>v_online[p,d,t] − v_online[p,b,t] = 0
@@ -8926,13 +8903,13 @@ construction instead of approximately-compliant). Unlimited tiers (quantity ≥ 
     (p,d,t) and (p,b,t) ∈ p_online_dt
 </code></pre></div>
 <p>Units online are the same in every forecast over the tied steps, the committed section decided before the forecast is known (inside a fan: the committed cells of its period label, solve_data/committed_in_fan). With no tied step (shared_operation_periods = [], or a rolling fan only in the look-ahead) they are free. A coarse process (processCoarse) is tied once per coarse step, at its first fine step: it is coarse only where each of its coarse steps is wholly tied or wholly untied and both forecasts have the same coarse steps (flex_data.coarse_tie_straddles).</p>
-<p>Source: <code>flextool/engine/model/_non_anticipativity.py:327</code> (<code>add_dispatch_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_non_anticipativity.py:311</code> (<code>add_dispatch_constraints</code>)</p>
 <h3 id="eq-non_anticipativity_reserve">EQ. <code>non_anticipativity_reserve</code></h3>
 <div class="highlight"><pre><span></span><code>v_reserve[p,r,ud,n,d,t] − v_reserve[p,r,ud,n,b,t] = 0
   ∀ (p,r,ud,n) ∈ process_reserve_upDown_node_active, (d,b) ∈ forecast star, (d,t) ∈ tied steps
 </code></pre></div>
 <p>Reserve offered is the same in every forecast over the tied steps.  A coarse process is tied once per coarse step, at its first fine step (coarse only where each coarse step is wholly tied or untied, as the units online).</p>
-<p>Source: <code>flextool/engine/model/_non_anticipativity.py:366</code> (<code>add_dispatch_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_non_anticipativity.py:350</code> (<code>add_dispatch_constraints</code>)</p>
 <h3 id="eq-non_anticipativity_investdivest_pn">EQ. <code>non_anticipativity_{invest,divest}_{p,n}</code></h3>
 <p>Names: <code>non_anticipativity_invest_p</code>, <code>non_anticipativity_invest_n</code>, <code>non_anticipativity_divest_p</code>, <code>non_anticipativity_divest_n</code></p>
 <div class="highlight"><pre><span></span><code>v_invest[e,d] − v_invest[e,b] = 0,   v_divest[e,d] − v_divest[e,b] = 0
@@ -8940,7 +8917,7 @@ construction instead of approximately-compliant). Unlimited tiers (quantity ≥ 
     e = process (p) or node (n); the divest sets hold the periods with pre-existing capacity only
 </code></pre></div>
 <p>Investment and divestment inside the window are the same in every branch.  Divestment must be tied too: under recourse it has a column per branch like investment, and a free divestment would let the net capacity existing + invest − divest differ across branches. pd_non_anticipativity.b holds period labels typed on the branch axis; it is re-typed on the period axis, the axis of the invest sets' d and of the variable view's b.  The (e,b) check drops every pair when the branches have no invest column of their own.</p>
-<p>Source: <code>flextool/engine/model/_non_anticipativity.py:412</code> (<code>add_invest_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_non_anticipativity.py:396</code> (<code>add_invest_constraints</code>)</p>
 <h2 id="coarse-processes">Coarse processes</h2>
 <p>Coarse processes: one value per coarse step of their nodes (FlexData.processCoarse).</p>
 <h3 id="eq-family_coarse-maxflow_coarse-maxflow_negcap_coarse-maxflow_back_coarse-maxoutputsum_coarse-maxoutputsum_negcap_coarse-conversion_indirect_coarse-conversion_piecewise_coarse-mininputshare_coarse-profile_flow_upper_limitlower_limitfixed_coarse-maxflow_onlinesfx_coarse-maxflow_online_shutdownsfx_coarse-maxflow_online_shutdown_branchsfx_coarse-maxflow_back_onlinesfx_coarse-maxinputflow_onlinesfx_coarse-maxinputflow_online_shutdownsfx_coarse-maxinputflow_online_shutdown_branchsfx_coarse-maxoutputsum_onlinesfx_coarse-minflow_minloadsfx_coarse-minflow_output_floorsfx_coarse-minflow_reserve_coarse-minflow_reserve_arc_coarse-reserve_process_upwarddownward_coarse-connection_reserve_updown_coarse-connection_reserve_updown_onlinesfx_coarse-connection_reserve_updown_exact_coarse-reserve_storage_up_floor_coarse-reserve_storage_down_headroom_coarse-maxflow_exact_forwardreverse_coarse-by-the-row-rule-add_row_rule_cstr-dc_flow_eq_coarse-capacitymargin_coarse-inertia_constraint_coarse-non_sync_constraint_coarse-maxmininstant_flow_coarse-process_constraint_equalless_thangreater_than_coarse-non_anticipativity_storage_use_coarse-sfx-_linear-_integer">EQ. <code>&lt;family&gt;_coarse: maxFlow_coarse, maxFlow_negCap_coarse, maxFlow_back_coarse, maxOutputSum_coarse, maxOutputSum_negCap_coarse, conversion_indirect_coarse, conversion_piecewise_coarse, minInputShare_coarse, profile_flow_{upper_limit,lower_limit,fixed}_coarse, maxFlow_online{sfx}_coarse, maxFlow_online_shutdown{sfx}_coarse, maxFlow_online_shutdown_branch{sfx}_coarse, maxFlow_back_online{sfx}_coarse, maxInputFlow_online{sfx}_coarse, maxInputFlow_online_shutdown{sfx}_coarse, maxInputFlow_online_shutdown_branch{sfx}_coarse, maxOutputSum_online{sfx}_coarse, minFlow_minload{sfx}_coarse, minFlow_output_floor{sfx}_coarse, minFlow_reserve_coarse, minFlow_reserve_arc_coarse, reserve_process_{upward,downward}_coarse, connection_reserve_{up,down}_coarse, connection_reserve_{up,down}_online{sfx}_coarse, connection_reserve_{up,down}_exact_coarse, reserve_storage_up_floor_coarse, reserve_storage_down_headroom_coarse, maxFlow_exact_{forward,reverse}_coarse; by the row rule (add_row_rule_cstr): dc_flow_eq_coarse, capacityMargin_coarse, inertia_constraint_coarse, non_sync_constraint_coarse, {max,min}Instant_flow_coarse, process_constraint_{equal,less_than,greater_than}_coarse, non_anticipativity_storage_use_coarse   ({sfx} = _linear / _integer)</code></h3>

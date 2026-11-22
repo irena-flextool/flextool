@@ -2688,6 +2688,12 @@ read (for example <code>FLEXTOOL_HIGHS_THREADS=many</code>) is ignored with one 
 <td>positive integer</td>
 <td>Threads for the region solves of a Benders solve. Unset or <code>0</code>: the number of regions, at most the number of cores minus one.</td>
 </tr>
+<tr>
+<td><code>FLEXTOOL_BENDERS_FINAL_SOLVE</code></td>
+<td><code>--benders-final-solve</code></td>
+<td><code>on</code> / <code>off</code></td>
+<td>After a Benders solve, solve the whole model once with the Benders investments fixed; that solve writes the solve's results (default <code>on</code>). <code>off</code> skips it, for a model whose undecomposed LP does not fit in memory: the Benders solve then writes only its investments and their costs, or no result tables when it is the last solve.</td>
+</tr>
 </tbody>
 </table>
 <h2 id="process-and-gui-settings">Process and GUI settings</h2>

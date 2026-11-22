@@ -2877,8 +2877,14 @@ lower bound.</p>
 <p>The FlexTool wrapper handles the FlexTool-side concerns: regional
 unitsize, regional profiles, regional handoff state, and the RP-weight
 consistency that follows from building the master with the same emit as
-the monolith. See <a href="../decomposition/">decomposition.md</a> for the
-user-facing story and the parameters that gate this path.</p>
+the monolith. After the loop the solve's results come from the <strong>final
+solve</strong>: the orchestrator falls through to the monolithic path with the
+investment decisions pinned to the Benders incumbent
+(<code>_benders_final.pin_invest_decisions</code>); with <code>--benders-final-solve off</code>
+a chained Benders solve writes only its investment slice
+(<code>output/_benders_slice.py</code>). See <a href="../decomposition/">decomposition.md</a>
+(§2.9 for the outputs) for the user-facing story and the parameters that
+gate this path.</p>
 <h2 id="solve-to-solve-handoff">Solve-to-solve handoff</h2>
 <p>When a solve is part of a cascade (rolling-window, nested, or stochastic
 sub-solves), each completed solve produces a <code>SolveHandoff</code> that seeds
@@ -3151,10 +3157,10 @@ it.  Order per sub-solve: non-RP downgrade → <code>_reject_rolling_rp</code> /
 <code>_reject_rolling_with_gaps</code> / <code>_warn_plain_cyclic_in_rp_solve</code> /
 <code>_reject_plain_forward_in_rp_solve</code> → fix_start_end → rolling timeblock.
 <code>_restore_methods</code> captures the frame after these rewrites.</p>
-<p>Storage warnings and notices print one line per message type and complete
-solve, naming how many nodes and the first
-(<code>_behaviour_changes.storage_message</code>, <code>notice(..., solve=...)</code>); the
-values per node go to the <code>flextool.engine.storage</code> logger at debug level.</p>
+<p>Storage warnings and notices print one line per code and complete solve,
+naming how many nodes and the first (<code>run_warnings.warn_grouped(code, names,
+solve=...)</code>: W-0534..W-0539, W-0580..W-0583; <code>notice(..., solve=...)</code>); the
+values per node go to the <code>flextool.warnings</code> logger at debug level.</p>
 <h2 id="output-writer-shape-adaptation">Output-writer shape adaptation</h2>
 <p>The Phase E.1 work made the post-solve output writers in
 <code>flextool/process_outputs/read_parameters.py</code> shape-aware. The

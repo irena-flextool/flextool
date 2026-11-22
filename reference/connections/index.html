@@ -2663,7 +2663,7 @@
 <h2 id="connection__node-per-endpoint-properties">connection__node (per-endpoint properties)</h2>
 <p>On the membership entity between a <code>connection</code> and one of its endpoint <code>node</code>s:</p>
 <ul>
-<li><code>constraint_flow_coeff</code> - A map of coefficients (Index: constraint name, value: coefficient) placing this connection-to-node flow variable on the left side of a user-defined <code>constraint</code>. Applied per timestep. See <a href="../user_constraints/">User constraints</a>.</li>
+<li><code>constraint_flow_coeff</code> - A map of coefficients (Index: constraint name, value: coefficient) placing this connection-to-node flow variable on the left side of a user-defined <code>constraint</code>. Applied per timestep. The flow counts in both directions (coefficient × (forward + reverse)), for every <code>transfer_method</code>. See <a href="../user_constraints/#the-coefficient-parameters">User constraints</a>.</li>
 </ul>
 
 

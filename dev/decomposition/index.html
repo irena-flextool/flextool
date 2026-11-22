@@ -1009,10 +1009,19 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#29-reference-implementation">
+<a class="md-nav__link" href="#29-outputs-the-final-solve">
 <span class="md-ellipsis">
       
-        2.9 Reference implementation
+        2.9 Outputs: the final solve
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#210-reference-implementation">
+<span class="md-ellipsis">
+      
+        2.10 Reference implementation
       
     </span>
 </a>
@@ -1406,10 +1415,19 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#29-reference-implementation">
+<a class="md-nav__link" href="#29-outputs-the-final-solve">
 <span class="md-ellipsis">
       
-        2.9 Reference implementation
+        2.9 Outputs: the final solve
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#210-reference-implementation">
+<span class="md-ellipsis">
+      
+        2.10 Reference implementation
       
     </span>
 </a>
@@ -1872,14 +1890,104 @@ groups.</p>
 owner-selected invested trade + in-region capacity into a whole-system
 <code>SolveHandoff</code> (the TIER-1 invest→dispatch chain) so a downstream rolling
 or monolithic dispatch solve consumes the realised capacity exactly as it
-would after any other invest solve. The orchestrator records which Benders
-solves produced an invest handoff and threads it forward; a downstream
+would after any other invest solve. With the final solve on (§2.9) the
+final solve's full handoff replaces this TIER-1 one. The orchestrator
+records which Benders solves produced an invest handoff
+(<code>_benders_invest_handoff_names</code>) and threads it forward; a downstream
 solve that would consume a Benders solve which produced none is rejected
 loudly rather than silently dropping the link.</p>
+<h3 id="29-outputs-the-final-solve">2.9 Outputs: the final solve</h3>
+<p>The master and the regions are never assembled into whole-system results
+(their prices would not be the whole model's, and there would be no
+investment marginal values). Instead, after the loop
+(<code>_PolarHighCascadeSolver._run_one</code>, Benders branch) the solve <strong>falls
+through to the monolithic path</strong> under the same solve name and the same
+<code>FlexData</code>, with the <code>BendersResult</code> as <code>_bfinal</code>:</p>
+<ul>
+<li><code>final_solve_on(run_options)</code> reads <code>--benders-final-solve</code> /
+  <code>FLEXTOOL_BENDERS_FINAL_SOLVE</code> (<code>on</code> default; no DB setting). The final
+  solve runs when it is on, the Benders rc is 0 and there is a finite
+  incumbent; a model without investments runs it too (nothing is pinned).</li>
+<li>Before the build: <code>gc.collect()</code> + <code>_try_malloc_trim()</code> (the master /
+  region <code>WarmProblem</code>s are gone) and two console lines,
+  <code>[benders &lt;s&gt;] final solve: the whole model with these investments fixed</code>
+  and the <code>--benders-final-solve off</code> hint.</li>
+<li>Cold build only (<code>warm_active = False</code>); on HiGHS forced through the
+  MPS subprocess (<code>_save_memory = True</code>), so a killed or out-of-memory
+  child is a failed final solve, not a lost run; commercial solvers take
+  their normal cold path with the solve's own options.</li>
+<li><code>pin_invest_decisions(pb, bres.invest_solution_vars)</code>
+  (<code>engine/solve/_benders_final.py</code>) right after <code>build_flextool</code>, before
+  Layer 2: <code>v_invest</code> / <code>v_divest</code> / <code>v_divest_built</code> / <code>v_extend</code> (<code>_p</code>,
+  <code>_n</code>) get the bounds <code>value ± PIN_BAND · max(1, |value|)</code> (<code>PIN_BAND</code>
+  = 1e-6) in real units, the value first clamped into the column's bounds
+  (an integer family: fixed at the rounded value). The band absorbs a
+  Benders value a solver tolerance outside a row bound of the whole model
+  (a floor, a group or cumulative limit whose columns are all pinned),
+  which fixed exactly would make presolve call the final LP infeasible. The aggregates
+  <code>v_divested_built_*</code> / <code>v_extended_*</code> are defined by equalities and not
+  pinned. A column without a value, a value without a column, a duplicate
+  or a family the model lacks is an internal <code>RuntimeError</code>.</li>
+<li>Acceptance: the run record gets <code>solve_benders_final(accepted,
+  model_status, objective)</code> (<code>benders.final_solve</code> in <code>_run_status.json</code>)
+  instead of <code>solve_classified</code>, so the solve's <code>acceptance</code> / <code>state</code>
+  stay the Benders verdict (a non-converged solve stays <code>not_converged</code>).
+  Accepted → <code>check_final_objective(obj, LB, UB)</code> (slack
+  <code>1e-6 · max(|obj|, |LB|, |UB|)</code>; a non-finite bound is not checked); outside →
+  W-0572, results still written. Not accepted, a solve outcome raised by
+  the solver path (<code>_subprocess_solve.SolveOutcomeError</code> /
+  <code>_solver_dispatch.FlexToolSolveOutcomeError</code>: a status without a
+  solution, the watchdog's stop, a HiGHS child that crashed or was killed)
+  or a <code>MemoryError</code> while the whole model is built or its MPS written →
+  W-0572, return 0 (the Benders step and its TIER-1 handoff stay). Any
+  other exception (an option the solver refuses, a missing binary or
+  licence, an internal error) propagates: the run fails as without
+  Benders.</li>
+<li>Accepted: <code>write_outputs_for_solve</code> and <code>build_handoff_from_solution</code> as
+  for any monolithic solve. The final step overwrites the Benders
+  <code>OrchestrationStep</code> but keeps <code>is_benders = True</code>, the gap / tolerance /
+  iterations, <code>optimal = converged</code>, <code>near_optimal = False</code> (so the
+  non-convergence banner of <code>_scan_cascade_optimality</code> still fires), and
+  sets <code>benders_results = "full"</code>.</li>
+<li><code>_dump_solve_inputs</code> and the <code>output_horizon</code> dump run once, from the
+  final solve; <code>warn_benders_no_dump</code> only with the final solve off.</li>
+</ul>
+<p><code>OrchestrationStep.benders_results</code> records what the Benders solve wrote:</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>When</th>
+<th>Written under the solve's name</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>full</code></td>
+<td>Final solve accepted</td>
+<td>Every table, the full handoff</td>
+</tr>
+<tr>
+<td><code>invest_slice</code></td>
+<td>Final solve off (W-0571) or not accepted (W-0572), and a later solve follows (<code>_later_solve_follows</code>)</td>
+<td><code>write_benders_invest_slice</code> (<code>engine/output/_benders_slice.py</code>): <code>_solve_order</code> entry, <code>v_obj</code> = UB, the invest / divest / extend parquets, <code>cohort_capacity</code>, the per-solve realized param / set slices, through the read-only <code>_FrameHighs</code> view of <code>invest_solution_vars</code>. No dispatch, duals, investment marginals, reserve / capacity-margin reports or handoff CSVs. TIER-1 handoff.</td>
+</tr>
+<tr>
+<td><code>none</code></td>
+<td>Last solve with the final solve off (W-0570) or not accepted (W-0572); or the slice write failed (logged at ERROR)</td>
+<td>Nothing. As the last step, the CLI end-of-run skip (<code>is_benders and benders_results != "full"</code>) records <code>outputs_skipped</code> (<code>parquet_state = "skipped"</code>), exit 0</td>
+</tr>
+</tbody>
+</table>
+<p>The dispatch-free slice cannot be the last solve's output: the output
+post-processing (<code>read_variables</code>, the <code>calc_*</code> steps) indexes the
+dispatch columns, so an investment-only table set for a Benders last solve
+is not built (4.7 candidate). Known limit of the slice: periods the
+Benders solve realizes but no later solve does have no dispatch rows.</p>
 <p>The <code>--region &lt;GROUP_NAME&gt;</code> flag is a separate, filter-only entry
 point that emits a per-region input directory and exits without
 solving — useful for inspecting how the rewriter sees a given region.</p>
-<h3 id="29-reference-implementation">2.9 Reference implementation</h3>
+<h3 id="210-reference-implementation">2.10 Reference implementation</h3>
 <table>
 <thead>
 <tr>
@@ -1895,6 +2003,14 @@ solving — useful for inspecting how the rewriter sees a given region.</p>
 <tr>
 <td><code>BendersResult</code> — return type</td>
 <td>same</td>
+</tr>
+<tr>
+<td><code>pin_invest_decisions</code>, <code>check_final_objective</code>, <code>final_solve_on</code> (final solve, §2.9)</td>
+<td><code>flextool/engine/solve/_benders_final.py</code></td>
+</tr>
+<tr>
+<td><code>write_benders_invest_slice</code> (investment-only results, §2.9)</td>
+<td><code>flextool/engine/output/_benders_slice.py</code></td>
 </tr>
 <tr>
 <td><code>Coupling</code>, <code>_build_arcs</code>, the master + cut loop</td>
@@ -2216,7 +2332,7 @@ features. Quick map (full text in
 <tr>
 <td>Benders + nested</td>
 <td>Partial</td>
-<td>The outer (parent) solve can be Benders, but the parent's handoff to children propagates only the invest→dispatch capacity, not per-region operational state. Treat as untested beyond the invest→dispatch chain.</td>
+<td>The outer (parent) solve can be Benders. With the final solve on (default, §2.9) the children get the full handoff of the parent's final solve, as from an undecomposed parent (storage quotas / prices, cumulative carriers); with <code>--benders-final-solve off</code> only the invest→dispatch capacity (TIER-1). Treat as untested beyond the invest→dispatch chain.</td>
 </tr>
 <tr>
 <td>Flex-temporal + rolling</td>

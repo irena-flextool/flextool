@@ -2786,7 +2786,7 @@
 <p><code>timeset</code>: timesets are sets of time with a start (from timeline) and a duration (number of time steps)</p>
 </li>
 <li>
-<p><em>timeset_duration</em> a map with index <em>timestep_name</em> that starts the timeset and value that defines the duration of the timeset (how many timesteps). A block must start at a time step of the timeset's timeline; otherwise the run stops with an error that names the timeset and the block. A block length that is not a whole number gets a warning (the whole part is used). A block longer than the rest of the timeline is cut at the end of the timeline, with a warning that says how many time steps are not used (for a timeset with <code>representative_period_weights</code> this is an error: a representative period cannot be cut). Only the timesets that the solves of the model use are checked. The stochastic forecast branches of a period use the period's timeset, its representative periods included (every branch has the same selection and weights).</p>
+<p><em>timeset_duration</em> a map with index <em>timestep_name</em> that starts the timeset and value that defines the duration of the timeset (how many timesteps). A block must start at a time step of the timeset's timeline; otherwise the run stops with an error that names the timeset and the block. A block length that is not a whole number gets a warning (the whole part is used). A block longer than the rest of the timeline is cut at the end of the timeline, with a warning that says how many time steps are not used (for a timeset with <code>representative_period_weights</code> this is an error: a representative period cannot be cut). Only the timesets that the solves of the model use are checked. Blocks that touch (one starts right after the previous one ends) are treated as one block by the <em>bind_intraperiod_blocks</em> storage method; leave a gap of at least one time step between blocks that should stay apart. The stochastic forecast branches of a period use the period's timeset, its representative periods included (every branch has the same selection and weights).</p>
 </li>
 <li><em>timeline</em> The name of the timeline that the timeset uses. (String)</li>
 <li>
@@ -2934,7 +2934,7 @@ floors, the minimum up and down times, the part-load curve of a <em>min_load_eff
 <em>piecewise_linear</em> unit whose efficiency rises from the first point of its curve to the second, a
 <code>constraint_online_coeff</code> term in a user constraint of the solve, a reserve that the unit or connection holds,
 inertia (an <code>inertia_constant</code> at a node of a group with <code>has_inertia</code>), ramp limits (their start-up and
-shut-down allowance) and, in a realization solve, the units online it takes from its parent solve. A reserve or
+shut-down allowance) and, in a realization solve, the units online of binary units that it takes from its parent solve. A reserve or
 an inertia limit that <code>reduce_system_detail_method</code> leaves out is no use. The ties that make the forecast branches
 of a stochastic solve have the same units online are no use either. For example, under <code>integers_min_limits</code> a
 unit with only a <code>min_load</code> loses its online variables, a unit with a start-up cost or a reserve keeps them; under
@@ -3061,8 +3061,8 @@ more; at full output the fuel is the same. CO2 limits read that fuel.</p>
 its parent's. A Benders decomposition can split connections whose reserves, online variables or <code>exact</code> method
 the solve leaves out.</p>
 <p><strong>Realization and continuing solves.</strong> A realization solve (the dispatch of a stochastic solve's realized branch)
-uses its parent solve's levels, whatever is set on it, since it takes the parent's units online and reserves. A
-warning names a different value set on a declared realization solve. A solve that continues the ramp of a solve
+uses its parent solve's levels, whatever is set on it, so that its online variables and reserve rows match those
+of the solve it realizes. A warning names a different value set on a declared realization solve. A solve that continues the ramp of a solve
 without online variables starts its commitment and ramps cold, with an info line.</p>
 <p><strong>Run log and run status.</strong> A solve with a level other than <code>none</code> writes one info line to the run log at its
 first roll: what each level left out, for how many units, connections and groups, and the interactions above.

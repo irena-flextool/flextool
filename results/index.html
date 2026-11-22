@@ -1586,6 +1586,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#results-of-a-benders-solve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Results of a Benders solve
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#plotted-data-as-csv" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3034,6 +3045,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#results-of-a-benders-solve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Results of a Benders solve
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#plotted-data-as-csv" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3117,7 +3139,7 @@
 <p>The CSV / Excel / plot files are <strong>derived</strong> from the parquets, so deleting or regenerating them is safe. <code>summary_solve.csv</code> is a diagnostic file aimed at a quick overview of a solve — it lists objective decomposition, period weighting, CO2 total, and any non-zero slack uses.</p>
 <p>All annualized numbers are scaled to <strong>a full year of operation</strong> by dividing through by <code>complete_period_share_of_year</code>. All values are returned in user units — auto-scaling (see <a href="../dev/scaling/">LP scaling pipeline</a>) and time-block aggregation under flex-temporal decomposition are unwound before they reach the parquets, so users always read MW / MWh / [CUR] in the original problem space.</p>
 <p>For stochastic models the parquets carry only the <strong>realised / committed</strong> results of each solve by default — the investment decisions, the operations of the periods before the reveal and, where a branch is designated realized, the realization dispatch of the fan — not the individual forecast branches. A forecasts-only fan has no realized operation, so its operational results are empty (the period label of the fan has no dispatch) and its operating costs and CO2 total are zero; its results hold the investment decisions and the investment and fixed costs (see <a href="#costs-of-a-run-of-several-solves">Costs of a run of several solves</a>). The same holds for a rolling solve: only the realized steps of each roll (up to <code>rolling_solve_jump</code>) are reported, never its look-ahead. This does not depend on the <code>model</code> parameter <code>output_horizon</code> — the unrealized rows are only in its separate raw dump, below (see also <a href="../how_to/stochastics/#how-to-use-stochastics-representing-uncertainty">How to use stochastics</a>).</p>
-<p>With <code>output_horizon = yes</code> (a debug option), <code>output_parquet/&lt;scenario&gt;/horizon/</code> holds a <strong>raw LP dump</strong>: one parquet per LP variable and constraint, named as in the model (<code>v_flow.parquet</code>, <code>v_invest_p.parquet</code>, <code>nodeBalance_eq.parquet</code>, …), with every row of every solve — realized and unrealized (forecast branches, rolling look-ahead) alike — appended over the solves and rolls. Columns: the LP index columns (<code>p</code>, <code>n</code>, <code>d</code>, <code>t</code>, …), <code>solve</code>, <code>roll</code>, <code>realized</code> (<code>true</code> for the rows that also reach the normal results; empty for a variable or constraint without a period index), and <code>value</code> + <code>reduced_cost</code> for a variable or <code>dual</code> for a constraint. The values are raw solver values: primal values per unitsize as in the LP, duals and reduced costs only divided by <code>scale_the_objective</code> (HiGHS sign convention, probability and time weights included, empty for a MIP solve) — no unitsize, price or cost conversion. A solve decomposed with Benders is not dumped. The dump keeps every constraint's index until the solve's outputs are written, so it raises peak memory on large models.</p>
+<p>With <code>output_horizon = yes</code> (a debug option), <code>output_parquet/&lt;scenario&gt;/horizon/</code> holds a <strong>raw LP dump</strong>: one parquet per LP variable and constraint, named as in the model (<code>v_flow.parquet</code>, <code>v_invest_p.parquet</code>, <code>nodeBalance_eq.parquet</code>, …), with every row of every solve — realized and unrealized (forecast branches, rolling look-ahead) alike — appended over the solves and rolls. Columns: the LP index columns (<code>p</code>, <code>n</code>, <code>d</code>, <code>t</code>, …), <code>solve</code>, <code>roll</code>, <code>realized</code> (<code>true</code> for the rows that also reach the normal results; empty for a variable or constraint without a period index), and <code>value</code> + <code>reduced_cost</code> for a variable or <code>dual</code> for a constraint. The values are raw solver values: primal values per unitsize as in the LP, duals and reduced costs only divided by <code>scale_the_objective</code> (HiGHS sign convention, probability and time weights included, empty for a MIP solve) — no unitsize, price or cost conversion. A solve decomposed with Benders is dumped from its final solve (the whole model with the Benders investments fixed, see <a href="#results-of-a-benders-solve">Results of a Benders solve</a>); with <code>--benders-final-solve off</code> it is not dumped, and a warning says so. The dump keeps every constraint's index until the solve's outputs are written, so it raises peak memory on large models.</p>
 <ul>
 <li><a href="#units-in-the-files">Units in the files</a></li>
 <li><a href="#costs">Costs</a></li>
@@ -3138,6 +3160,7 @@
 <li><a href="#ramps">Ramps</a></li>
 <li><a href="#dc-power-flow">DC power flow</a></li>
 <li><a href="#slack-and-penalty-values">Slack and penalty values</a></li>
+<li><a href="#results-of-a-benders-solve">Results of a Benders solve</a></li>
 <li><a href="#plotted-data-as-csv">Plotted data as CSV</a></li>
 </ul>
 <h2 id="units-in-the-files">Units in the files</h2>
@@ -3332,7 +3355,7 @@ from the start of the run with the solve's own factors over the solve's own peri
 <li><code>node</code> entity <code>price_t</code> parameter — [CUR/MWh] the cost of one more MWh of demand at that node and time step (the dual of the node's energy balance; positive when more demand would cost more), for every node that maintains an energy balance. It is in the price base of the cost inputs: the discount factor of the period and the years it represents are removed, and it is not weighted by the timestep weight (<code>timeset_weights</code>, representative-period weights) or by the branch probability — in a stochastic solve each forecast branch reports its own price, not its probability-weighted contribution (the cost outputs per step are probability-weighted, so price × flow is not the branch's cost row). A step that the objective does not weigh (e.g. a step that <code>timeset_weights</code> leaves out) has no price (empty). A node of a group with a coarser <code>new_stepduration</code> (and a <code>bind_intraperiod_blocks</code> storage node) has one balance per coarse step (per timeset block); its price is that balance's dual, the same at every time step of the coarse step when the steps have the same weight. Within a coarse step the energy may be moved freely between time steps, so for such a node the hour at which a slack (or any flow that only the coarse balance limits) is reported is one of several equally good choices; with a time-varying penalty the solver picks the cheapest hour. For a storage node the price is the value of stored energy.</li>
 <li>table <code>reserve_prices_dt_ppg</code> (<code>group__reserve__upDown</code>, not in the results database) — [CUR/MWh] the cost of one more MW of reserve requirement held for one hour (in the same price base and with the same weights removed as <code>price_t</code>): the sum of the duals of the group's requirement constraints at the step (the timeseries requirement, the dynamic requirement and the large-failure requirement of every failing unit or connection), i.e. the cost of one more MW of every requirement of the group at once. Reported for every group with a requirement. When the requirement is not met it equals <code>penalty_reserve</code>.</li>
 <li>table <code>co2_price_period_d_g</code> (<code>group</code>, not in the results database) — [CUR/tCO2] shadow price of the per-period CO2 cap (nominal currency, sign-flipped so a binding cap shows positive). In a rolling solve where a period's hours are split across more than one roll, the reported price is the hour-weighted average of the rolls that realize it (weighted by the hours each roll keeps of the period). In a stochastic solve each scenario path reports its own price, not its price times the path's branch probability.</li>
-<li>table <code>co2_price_total_d_g</code> (<code>group</code>, not in the results database) — [CUR/tCO2] shadow price of the cumulative CO2 cap, per tonne over the represented years (NPV currency, broadcast across periods)</li>
+<li>table <code>co2_price_total_d_g</code> (<code>group</code>, not in the results database) — [CUR/tCO2] shadow price of the cumulative CO2 cap, per tonne over the represented years (NPV currency, broadcast across periods). In a stochastic solve each scenario path has its own cumulative cap (the same budget, the path's own emissions); the price is the sum of the paths' shadow prices (each already weighted by its path's branch probability): the value of one more tonne of the budget in every path. With identical paths it equals the deterministic price.</li>
 </ul>
 <h2 id="energy-flows">Energy flows</h2>
 <ul>
@@ -3666,7 +3689,15 @@ each comes with a CSV file. The band colours are <code>categories: ramp_envelope
 <li><code>group</code> entity <code>slack_nonsync_t</code> / <code>slack_nonsync</code> — [MW] non-synchronous-share shortfall, timestep / annualized</li>
 <li><code>group__reserve__upDown</code> entity <code>slack_reserve_t</code> / <code>slack_reserve</code> — [MW] reserve shortfall, timestep / annualized; the requirement it falls short of, and what each provider counts, is in <a href="#reserves">Reserves</a> (<code>reserve__upDown__group__dt</code>)</li>
 </ul>
-<p>For the sign / direction conventions of slacks, see <a href="../dev/slack_convention/">Slack convention</a>. For how block-aware solves (flex-temporal decomposition) and spatial Benders decomposition feed into these tables, see <a href="../dev/decomposition/">Decomposition</a> — the result writers always operate on the fine-timeline, full-spatial solution, so the parquet tables look identical to a monolithic run.</p>
+<p>For the sign / direction conventions of slacks, see <a href="../dev/slack_convention/">Slack convention</a>. For how block-aware solves (flex-temporal decomposition) feed into these tables, see <a href="../dev/decomposition/">Decomposition</a> — the result writers operate on the fine-timeline solution, so the tables look as those of a solve without coarse groups. For a solve decomposed with Benders, see the next section.</p>
+<h2 id="results-of-a-benders-solve">Results of a Benders solve</h2>
+<p>A solve with <code>decomposition</code> = <em>benders</em> (see <a href="../how_to/performance/#how-to-use-benders-decomposition-spatial">How to use Benders decomposition</a>) ends with a <strong>final solve</strong>: after the Benders loop, FlexTool solves the whole model once with every investment, retirement and life-extension decision fixed to the Benders result. The log says so in two lines (<code>[benders &lt;solve&gt;] final solve: the whole model with these investments fixed</code> and a reminder of <code>--benders-final-solve off</code>). The final solve is an ordinary solve of the undecomposed model under the Benders solve's name, so it writes every result table — dispatch, prices, costs, <code>summary_solve</code>, capacities and the investment marginal values — and hands the next solve the same results as an undecomposed solve would (capacities, cumulative CO2 and commodity totals, storage levels and targets of nested solves). Its tables equal those of the same model solved without decomposition up to the Benders optimality gap (<code>benders_tolerance</code>): the investments are the Benders ones, the dispatch and prices are those of the whole model with them. A Benders solve that did not converge (it reached <code>benders_max_iter</code>) still runs the final solve with its best investments; the run says the solve did not converge, and the run status file (<code>_run_status.json</code>) records the solve as <code>not_converged</code>. The final solve's outcome is in that file under the solve's <code>benders.final_solve</code> (<code>accepted</code>, <code>model_status</code>, <code>objective</code>). The solve's own <code>objective</code> in that file stays the Benders upper bound; <code>summary_solve</code> and <code>benders.final_solve.objective</code> give the final solve's objective, which differs from it by at most the optimality gap.</p>
+<p>The final solve needs the memory of the whole model. If the whole model does not fit, <code>--benders-final-solve off</code> (<code>FLEXTOOL_BENDERS_FINAL_SOLVE=off</code>) skips it:</p>
+<ul>
+<li><strong>A Benders solve followed by other solves</strong> writes its investment and retirement decisions, their costs, its capacity tables and its row of <code>summary_solve</code> (objective = the Benders upper bound); the <code>solve</code> column names the Benders solve. Its dispatch, prices and operational costs come from the solves after it: a period the Benders solve covers but no later solve does has no dispatch rows. The investment marginal values (<code>*_invest_marginal__d</code>, <code>dual_invest_*</code>) are not written for it (note W-0571). The next solve receives the invested capacity.</li>
+<li><strong>A Benders solve that is the last solve</strong> writes no result tables (warning W-0570); the run ends normally, with <code>outputs.parquet_state</code> = <code>skipped</code> in the run status file. Add a dispatch solve after it to get results.</li>
+</ul>
+<p>If the final solve fails (infeasible, stopped by a time limit without a solution, its solver process stopped, or the whole model does not fit in memory), the run says so (warning W-0572) and goes on: a Benders solve followed by other solves writes its investment results as with <code>off</code>, a last one writes none. If the final solve's objective is outside the Benders bounds, W-0572 says so too and the final solve's results are written. The Benders investments are a feasible plan of the whole model, so either case points to numerical trouble or a fault in the decomposition.</p>
 <h2 id="plotted-data-as-csv">Plotted data as CSV</h2>
 <p>With <strong>Write plotted data (CSV)</strong> in the GUI's Png settings, <code>--write-plot-data</code> on <code>flextool-run</code>,
 <code>flextool-write-outputs</code> or <code>flextool-scenario-results</code> (Spine Toolbox users can add it to the tool's command-line

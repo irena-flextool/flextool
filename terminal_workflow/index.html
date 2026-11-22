@@ -4002,7 +4002,7 @@ script); a given flag wins over the variable, and the variable over the solve's 
 </tr>
 <tr>
 <td><code>--scaling-guard {error,warn,off}</code></td>
-<td>What to do when a solve's limits and bounds span more than the solver enforces accurately after FlexTool's scaling (more than 17 decades for HiGHS): <code>error</code> (default) stops before the solve with a message naming the largest and smallest values; <code>warn</code> prints it and solves; <code>off</code> does not check. Spreads above 13 decades and cost / coefficient problems only warn, and so does everything for a commercial solver. See <a href="../dev/scaling/#the-scaling-guard">The scaling guard</a>. Env fallback: <code>FLEXTOOL_SCALING_GUARD</code></td>
+<td>What to do when a solve's limits and bounds span more than the solver enforces accurately after FlexTool's scaling (more than 17 decades for HiGHS): <code>error</code> (default) stops before the solve with a message naming the largest and smallest values; <code>warn</code> shows a coded warning (the full message in the run log <code>_run.log</code>) and solves; <code>off</code> does not check. Spreads above 13 decades and cost / coefficient problems only warn, and so does everything for a commercial solver. See <a href="../dev/scaling/#the-scaling-guard">The scaling guard</a>. Env fallback: <code>FLEXTOOL_SCALING_GUARD</code></td>
 </tr>
 <tr>
 <td><code>--user-bound-scale N</code></td>
@@ -4056,6 +4056,10 @@ script); a given flag wins over the variable, and the variable over the solve's 
 <td><code>--benders-workers N</code></td>
 <td>Threads for the region solves of a Benders solve (default, or <code>0</code>: the number of regions, at most cores minus one). Env fallback: <code>FLEXTOOL_BENDERS_WORKERS</code></td>
 </tr>
+<tr>
+<td><code>--benders-final-solve {on,off}</code></td>
+<td>After a Benders solve, solve the whole model once with the Benders investments fixed (default <code>on</code>); that solve writes every result table of the Benders solve, its investment marginal values included, and hands the full results on to the next solve. <code>off</code> skips it, for a model whose undecomposed LP does not fit in memory: the Benders solve then writes only its investments, their costs and its objective (the dispatch comes from the solves after it), or no result tables when it is the last solve. Env fallback: <code>FLEXTOOL_BENDERS_FINAL_SOLVE</code></td>
+</tr>
 </tbody>
 </table>
 <p><strong>Decomposition (Benders):</strong></p>
@@ -4064,8 +4068,9 @@ via a CLI flag: set <code>solve.decomposition = benders</code> (plus the optiona
 <code>solve.benders_max_iter</code> / <code>benders_tolerance</code> knobs) and declare at
 least two <code>group.decomposition_method = benders_regional</code> region groups.
 A single chain can mix schemes. See
-<a href="../dev/decomposition/">decomposition.md</a>. The one remaining CLI flag is
-the filter-only inspector:</p>
+<a href="../dev/decomposition/">decomposition.md</a>. Besides <code>--benders-workers</code> and
+<code>--benders-final-solve</code> above, the one remaining Benders flag is the
+filter-only inspector:</p>
 <table>
 <thead>
 <tr>
@@ -4667,7 +4672,7 @@ keeps single quotes as part of the name). On Windows, open the terminal with the
 </tr>
 <tr>
 <td><code>untimed</code></td>
-<td>The rest. A Benders solve writes no per-solve problem-building, solving or result-writing times, so those land here</td>
+<td>The rest. The Benders loop of a Benders solve (its master and region solves) writes no problem-building, solving or result-writing times, so those land here; its final solve is counted as any other solve</td>
 </tr>
 </tbody>
 </table>

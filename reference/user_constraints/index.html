@@ -2708,7 +2708,7 @@
 <tr>
 <td><code>constraint_flow_coeff</code></td>
 <td><code>unit__inputNode</code>, <code>unit__outputNode</code>, <code>connection__node</code></td>
-<td>The flow between the unit or connection and the node, in each time step.</td>
+<td>The flow between the unit or connection and the node, in each time step. For a connection, the flow in both directions (see below).</td>
 <td>MW</td>
 </tr>
 <tr>
@@ -2755,6 +2755,7 @@
 </tr>
 </tbody>
 </table>
+<p><strong>Connections.</strong> A <code>constraint_flow_coeff</code> on a <code>connection__node</code> counts the connection's flow in both directions with the same coefficient: the row reads coefficient × (forward flow + reverse flow), not the net flow. This holds for every <code>transfer_method</code>, also for <code>no_losses_no_variable_cost</code> and DC power-flow lines, which carry both directions in one variable. A <em>less_than</em> row with coefficient 1 and <code>constant</code> 30 therefore limits the line to 30 MW in either direction. A coefficient on either end of the connection gives the same term; on both ends, the two coefficients add up. On a line with no losses and no cost, a <em>greater_than</em> or <em>equal</em> row (or a negative coefficient in a <em>less_than</em> row) can therefore be met by sending the same amount both ways at once, with no net flow. For a limit on the net flow into a node, use a flow group (<code>max_instant_flow</code> / <code>min_instant_flow</code>, see <a href="../flow_groups/">Flow groups</a>).</p>
 <p>The full descriptions are with each entity: <a href="../nodes/#data-for-nodes">nodes</a>, <a href="../units/#investment-parameters-for-capacity-expansion">units</a>, <a href="../units/#properties-of-unit-inputnode-and-unit-outputnode-entities">unit flows</a> and <a href="../connections/#investment-parameters-for-connections">connections</a>.</p>
 <h2 id="rows-per-period-or-per-time-step">Rows per period or per time step</h2>
 <p><strong>Capacity terms only.</strong> A constraint that has only capacity terms is the same in every time step of a period. The model writes it once per period, and a period map in <code>constant</code> gives each period its own right-hand side.</p>
