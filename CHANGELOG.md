@@ -1,3 +1,83 @@
+## Unreleased
+
+Patch release: no new data version (input databases stay at 82). Requires `polar-high>=3.16.0`. Results can change
+for Benders solves followed by other solves, for flow groups and user constraints that include a
+`no_losses_no_variable_cost` or DC power-flow connection, and for stochastic solves with a cumulative CO2 cap (the
+total CO2 price was missing before).
+
+### Fixes
+
+- **A Benders solve ends with one solve of the whole model with its investments fixed**, so it writes all result
+  tables, including the investment marginal values, and hands the next solve the same carriers as an
+  undecomposed solve (cumulative CO2 and commodity budgets, storage targets of nested solves). Results of
+  existing Benders chains that use these carriers change to what the undecomposed chain gives. Before, a Benders
+  solve wrote no investment costs, `invested` capacity or `summary_solve` row, and a Benders last solve wrote no
+  tables, without a warning.
+- **New option `--benders-final-solve off`** (`FLEXTOOL_BENDERS_FINAL_SOLVE=off`) skips that solve for a model
+  whose whole LP does not fit in memory: a Benders solve followed by other solves then writes its investments,
+  retirements, their costs and its row of `summary_solve` (no investment marginal values, note W-0571); a Benders
+  last solve writes no tables and says so (W-0570). The default is `on`.
+- **If the final solve fails, or its objective is outside the Benders bounds, the run says so (W-0572) and goes
+  on:** a chained Benders solve writes its investment results as with `off`, a last one writes none. Only a solver
+  outcome (infeasible, numerical trouble, a killed solver process) or running out of memory is treated this way;
+  a solver configuration or licence error stops the run. The run status file records the final solve under
+  `benders.final_solve`.
+- **An investment or retirement minimum of one entity no longer makes a Benders solve fail** (`invest_min_period`,
+  `retire_min_period`, the total minima, `cumulative_min_capacity`). The regions that do not own the entity built
+  the row without its capacity (0 ≥ minimum) and their subproblems were infeasible.
+- **Benders refuses limits it cannot split between regions, instead of solving them wrongly** (configuration
+  error, `split:`): a group investment, retirement or cumulative-capacity limit with a value whose entities lie
+  in more than one region (a minimum would be required in every region, a maximum could be used in every region;
+  a maximum of 0 splits and stays allowed; a group with only a method and no value is not refused), and a flow
+  group flow limit or a user constraint's `constraint_flow_coeff` on a connection between two regions (the
+  decomposition replaces that connection with import and export flows, which neither saw, so the limit was
+  silently dropped). Use one group per region.
+- **Flow-group flow limits (`max/min_instant_flow`, `max/min_cumulative_flow`) count a
+  `no_losses_no_variable_cost` or DC power-flow connection by its net flow**, as every other transfer method.
+  These connections carry their reverse flow in a separate variable, which the limits did not see: a model with
+  such a connection in a flow-limited flow group can solve differently, and can become infeasible (or pay
+  penalties) where the limit was being bypassed.
+- **A user constraint's `constraint_flow_coeff` on a `no_losses_no_variable_cost` or DC power-flow connection
+  also counts the reverse flow**: coefficient × (forward + reverse), as for every other transfer method. The
+  reverse direction escaped the constraint before, so such models can solve differently (or become infeasible).
+  This deliberately differs from the old GMPL model, which read the net flow (forward − reverse) for these
+  connections but the sum of both directions for two-variable connections; FlexTool now treats every
+  connection the same way. For a limit on the net flow into a node, use a flow group.
+- **A stochastic solve with a cumulative CO2 cap (`co2_max_total`) reports its total CO2 price**
+  (`co2_price_total_d_g`): the sum of the forecast paths' prices, i.e. the value of one more tonne of the budget
+  in every path. It equals the deterministic price when the paths are identical. Before, the table was missing.
+- **A database migration that was interrupted (killed process, power loss) and whose backup copy is gone can be
+  migrated again.** Each step's commit now also records the previous step's version, so a rerun replays at most
+  the step that was interrupted. The steps recognise their own completed work and the definitions, parameter
+  groups and list members that later versions renamed (e.g. a database below v32 killed after v56 no longer
+  stops with a missing `constraint_invested_capacity_coefficient`). A rerun no longer rescales or flips
+  conversion coefficients a second time, no longer writes the v38 `commodity` node type or the v56 `none`
+  methods onto nodes, units and profiles created after those steps, no longer brings back removed defaults
+  (e.g. `capacity_min_coeff` 1.0 → 0.0) and list members, and no longer re-imports the pre-v12 templates over
+  newer content. Databases that FlexTool 4.6.0 or older already migrated twice in this way are not detected or
+  repaired.
+
+### Improvements
+
+- **More warnings carry a code** (`[W-xxxx]`, explained on the *Warnings and notes* page of the documentation) and
+  print one line per solve or per run: the storage messages (W-0534..W-0539, W-0580..W-0583), the once-per-run
+  input, lifetime and scaling-guard warnings (W-0508, W-0527..W-0529, W-0543..W-0547, W-0584..W-0587) and the
+  warm-start messages, which were not shown at all before (W-0550 a warm-start basis not loaded or saved; notes
+  W-0551..W-0553 for save-memory mode, a solver without warm start and `warm=False`). Per-entity values and the
+  scaling guard's full report go to the run log (`_run.log`); the console keeps the coded line.
+- **The note on a HiGHS solve accepted at a multiple of its tolerances (W-0540) gives the factor HiGHS itself
+  logs** ("no more than X"), also when the autoscale has user-scaled the problem (needs `polar-high>=3.16.0`,
+  HiGHS 1.15.x). It no longer appears when only the relative counters of a simplex or crossover solve are above
+  tolerance, and no longer misses solves whose HiGHS check failed. A rolling solve gets one W-0540 line after its
+  rolls, with the number of rolls and the largest factor. The W-0541 note on HiGHS's interior-point warnings is
+  printed once per run, at the first interior-point solve without crossover.
+- **Documentation:** what a Benders solve writes, its final solve and its memory use (results, performance and
+  decomposition pages); anti-energy (negative `existing`) behaviour and its unsupported combinations; touching
+  timeset blocks form one *bind_intraperiod_blocks* block; user constraints count a connection's two directions
+  added up; a link to GitHub Discussions.
+- Developers: the `[dev]` extra pins pytest 9.2+ (below 10) and includes setuptools; CI installs `.[dev]`, so
+  local and CI test tooling match.
+
 ## Release 4.6.0 (19.11.2026) — investment vintages: technical lifetime and payback time, age of existing capacity, retiring built capacity, life extension, replacement at the end of life; continuous storage across rolls and representative periods; clearer execution log with coded warnings (schema v82)
 
 Input databases move to data version 82. The FlexTool window, the Spine Toolbox workflow and `flextool-run
