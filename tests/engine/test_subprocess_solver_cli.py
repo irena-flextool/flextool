@@ -915,3 +915,21 @@ def test_an_xpress_mip_runs_mipoptimize_and_stops_without_an_integer_solution(tm
                                          work_folder=work)
     script = (work / "solve_data" / "subprocess" / "stdin.txt").read_text(encoding="utf-8").splitlines()
     assert "mipoptimize" in script and "lpoptimize" not in script
+
+
+def test_an_unbounded_integer_column_is_not_capped_at_1_through_the_mps_file(tmp_path: Path) -> None:
+    """An integer column with bounds [0, +inf] (as ``v_online_integer``) solved through the MPS file of the
+    ``--save-memory`` HiGHS child reaches 3 (min x, x ≥ 2.5).  Before polar-high 3.16.1, ``write_mps`` wrote no
+    bound for it, which MPS reads as a binary column, so the child solved with x ≤ 1 (infeasible here)."""
+    import polars as pl
+    from polar_high import Problem, Sum
+
+    from flextool.engine.solve._subprocess_solve import solve_via_subprocess
+
+    pb = Problem()
+    x = pb.add_var("x", ("i",), pl.DataFrame({"i": ["a"]}), lower=0.0, integer=True)
+    pb.add_cstr("floor", sense=">=", lhs_terms={"x": Sum(x, over=("i",))}, rhs_terms={"c": 2.5})
+    pb.set_objective(Sum(x, over=("i",)))
+    sol = solve_via_subprocess(pb, "highs", {}, solve_name="s", work_folder=tmp_path / "work")
+    assert sol.optimal
+    assert sol.obj == pytest.approx(3.0)

@@ -1,6 +1,6 @@
 ## Unreleased
 
-Patch release: no new data version (input databases stay at 82). Requires `polar-high>=3.16.0`. Results can change
+Patch release: no new data version (input databases stay at 82). Requires `polar-high>=3.16.1`. Results can change
 for Benders solves followed by other solves, for flow groups and user constraints that include a
 `no_losses_no_variable_cost` or DC power-flow connection, for stochastic solves with a cumulative CO2 cap (the
 total CO2 price was missing before), for the realization solves of stochastic solves with reserves or with
@@ -88,6 +88,9 @@ of the horizon).
   (e.g. `capacity_min_coeff` 1.0 → 0.0) and list members, and no longer re-imports the pre-v12 templates over
   newer content. Databases that FlexTool 4.6.0 or older already migrated twice in this way are not detected or
   repaired.
+- **Solves via an MPS file no longer cap an unbounded integer variable at 1** (the `--save-memory` HiGHS child
+  and the commercial solvers, e.g. the integer units online of a unit with more than one unit). Needs
+  polar-high 3.16.1.
 
 ### Improvements
 

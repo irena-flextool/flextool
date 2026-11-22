@@ -93,7 +93,9 @@ dependencies = [
     # the scaling guard and by the solve acceptance in the space HiGHS solved.
     # 3.16.0 adds kkt_report / tolerance_violation: HiGHS's tolerance-violation
     # factor X of a user-scaled solve, which the W-0540 note gives.
-    "polar-high>=3.16.0",
+    # 3.16.1: write_mps writes an explicit PL bound for an integer column [0, +inf] (MPS reads a column
+    # without one as binary, so an --save-memory / commercial solve capped it at 1).
+    "polar-high>=3.16.1",
     # Autoscale Layer 3 drives HiGHS' power-of-two objective conditioning
     # through the ``user_objective_scale`` option.  HiGHS renamed the older
     # ``user_cost_scale`` to ``user_objective_scale`` after 1.10.0, so older
