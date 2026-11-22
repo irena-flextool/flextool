@@ -20,6 +20,7 @@ from spinedb_api.temp_id import resolve
 
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool.db_migration import migrate_database
+from flextool.update_flextool.db_handle import open_database_mapping
 from flextool.update_flextool.frozen import read_db_version_ro
 
 from tests.update_flextool._rerun import already_applied_records
@@ -59,7 +60,7 @@ def _build_v69_large(url: str) -> None:
             ["unit__outputNode", (u, "elec"), "capacity_max_coeff", _output_max(i), "Base"],
             ["unit__outputNode", (u, "elec"), "capacity_min_coeff", _output_max(i) if i % 2 == 0 else 1.0, "Base"],
         ]
-    with DatabaseMapping(url, create=True) as db:
+    with open_database_mapping(url, create=True) as db:
         _, errors = import_data(
             db,
             entity_classes=[
@@ -92,7 +93,7 @@ def large(tmp_path_factory: pytest.TempPathFactory) -> dict:
     path = (tmp_path_factory.mktemp("v70_large") / "v69.sqlite").resolve()
     url = f"sqlite:///{path}"
     _build_v69_large(url)
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         removed_ids = [resolve(pv["id"]) for pv in db.get_parameter_value_items()
                        if pv["parameter_definition_name"] == "capacity_min_coeff"
                        and (pv["entity_class_name"] == "unit__inputNode"
@@ -100,7 +101,7 @@ def large(tmp_path_factory: pytest.TempPathFactory) -> dict:
         scattered_runs = _run_count(removed_ids)
     with already_applied_records() as records:
         migrate_database(url)
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         after = _values(db)
     return {"path": path, "runs": scattered_runs, "after": after, "records": records}
 

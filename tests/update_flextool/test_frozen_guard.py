@@ -24,6 +24,7 @@ from flextool.gui.input_sources import InputSourceManager
 from flextool.update_flextool import FLEXTOOL_DB_VERSION, db_handle, db_migration
 from flextool.update_flextool import frozen as fz
 from flextool.update_flextool.db_migration import migrate_database
+from flextool.update_flextool.db_handle import open_database_mapping
 from tests.db_utils import json_to_db
 
 SEED = Path(__file__).resolve().parent / "data" / "v75_seed_stoch_two_period.json"
@@ -274,14 +275,14 @@ def test_engine_refuses_an_unmigrated_database(tmp_path: Path, old_db_template: 
     import logging
 
     db = _copy(old_db_template, tmp_path / "old")
-    with DatabaseMapping(f"sqlite:///{db}") as mapping:
+    with open_database_mapping(f"sqlite:///{db}") as mapping:
         with pytest.raises(FlexToolConfigError) as excinfo:
             check_version(mapping, logging.getLogger(__name__))
     message = str(excinfo.value)
     assert f"version {OLD}" in message and f"needs version {FLEXTOOL_DB_VERSION}" in message
     assert f"flextool-migrate-database {db}" in message and "--copy-to" in message
     current = _copy(current_db_template, tmp_path / "current")
-    with DatabaseMapping(f"sqlite:///{current}") as mapping:
+    with open_database_mapping(f"sqlite:///{current}") as mapping:
         check_version(mapping, logging.getLogger(__name__))
 
 
@@ -449,7 +450,7 @@ def test_a_newer_database_is_left_alone_and_the_engine_asks_for_an_update(tmp_pa
     assert cmd_migrate_database.main([str(db)]) == 0
     assert cmd_migrate_database.main([str(db), "--allow-migrate-frozen"]) == 0
     assert fz.sha256_of(db) == digest
-    with DatabaseMapping(f"sqlite:///{db}") as mapping:
+    with open_database_mapping(f"sqlite:///{db}") as mapping:
         with pytest.raises(FlexToolConfigError, match="newer than this FlexTool.*Update FlexTool"):
             check_version(mapping, logging.getLogger(__name__))
 
@@ -471,7 +472,7 @@ def test_migrate_hints_quote_a_path_with_spaces(tmp_path: Path, old_db_template:
     with pytest.raises(fz.FrozenDatabaseError, match=re.escape(f'flextool-migrate-database "{db}" --copy-to')):
         fz.frozen_guard(db)
     plain = _copy(old_db_template, tmp_path / "my models", "plain.sqlite")
-    with DatabaseMapping(f"sqlite:///{plain}") as mapping:
+    with open_database_mapping(f"sqlite:///{plain}") as mapping:
         with pytest.raises(FlexToolConfigError, match=re.escape(f'flextool-migrate-database "{plain}"')):
             check_version(mapping, logging.getLogger(__name__))
 

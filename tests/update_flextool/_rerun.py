@@ -13,6 +13,7 @@ from pathlib import Path
 from spinedb_api import DatabaseMapping, from_database, to_database
 
 from flextool.update_flextool.db_migration import ALREADY_APPLIED_PREFIX, migrate_database
+from flextool.update_flextool.db_handle import open_database_mapping
 
 
 class Kill(BaseException):
@@ -46,13 +47,13 @@ def restamp(db, version: int) -> None:
 
 
 def restamp_file(path: Path, version: int) -> None:
-    with DatabaseMapping(url_of(path)) as db:
+    with open_database_mapping(url_of(path)) as db:
         restamp(db, version)
         db.commit_session(f"restamp {version}")
 
 
 def version_of(path: Path) -> float:
-    with DatabaseMapping(url_of(path)) as db:
+    with open_database_mapping(url_of(path)) as db:
         pdef = db.get_item("parameter_definition", entity_class_name="model", name="version")
         return from_database(pdef["default_value"], pdef["default_type"])
 
@@ -110,7 +111,7 @@ def _value(val, typ) -> str:
 
 def snapshot(path: Path) -> dict:
     """Everything a migration changes, keyed by name (not id), for :func:`diff`."""
-    with DatabaseMapping(url_of(path)) as db:
+    with open_database_mapping(url_of(path)) as db:
         lists: dict = {}
         for x in db.get_items("list_value"):
             lists.setdefault(x["parameter_value_list_name"], []).append((x["index"], _value(x["value"], x["type"])))

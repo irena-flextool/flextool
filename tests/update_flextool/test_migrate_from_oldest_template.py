@@ -23,11 +23,12 @@ import json
 from pathlib import Path
 
 import pytest
-from spinedb_api import DatabaseMapping, SpineDBAPIError, from_database, to_database
+from spinedb_api import SpineDBAPIError, from_database, to_database
 
 from flextool._resources import package_data_path
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool.db_migration import migrate_database
+from flextool.update_flextool.db_handle import open_database_mapping
 from flextool.update_flextool.initialize_database import initialize_database
 
 from tests.update_flextool._rerun import restamp
@@ -52,7 +53,7 @@ def _build(path: Path, template: str, up_to: int) -> str:
     url = "sqlite:///" + str(path)
     _quiet(initialize_database, str(TEMPLATES / template), str(path))
     _quiet(migrate_database, url, up_to=up_to)
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         assert _version(db) == up_to
         db.add_alternative(name="a1")
         db.add_entity(entity_class_name="unit", name="u1")
@@ -68,13 +69,13 @@ def _build(path: Path, template: str, up_to: int) -> str:
 
 
 def _definitions(url: str) -> dict:
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         return {(d["entity_class_name"], d["name"]): (tuple(d["parameter_type_list"] or ()), d["parameter_value_list_name"])
                 for d in db.get_items("parameter_definition")}
 
 
 def _unit_node_values(url: str) -> dict:
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         assert _version(db) == FLEXTOOL_DB_VERSION
         return {(v["entity_class_name"], tuple(v["entity_byname"]), v["parameter_definition_name"], v["alternative_name"]):
                 from_database(v["value"], v["type"])
@@ -90,7 +91,7 @@ def v25_path(tmp_path_factory) -> dict:
 
 
 def _full_definitions(url: str) -> dict:
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         return {(d["entity_class_name"], d["name"]): (tuple(d["parameter_type_list"] or ()),
                                                       from_database(d["default_value"], d["default_type"]),
                                                       d["parameter_value_list_name"], d["description"],
@@ -102,7 +103,7 @@ def _full_definitions(url: str) -> dict:
 def v2_path(tmp_path_factory) -> dict:
     """The clean path: a v24 database from the v2 template (version 0) migrated to the current version."""
     url = _build(tmp_path_factory.mktemp("v2_template") / "db.sqlite", "flextool_template_v2.json", 24)
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         for cls in ("unit__inputNode", "unit__outputNode"):
             assert not db.get_item("parameter_definition", entity_class_name=cls, name="flow_coefficient")
     _quiet(migrate_database, url)
@@ -126,7 +127,7 @@ def _leave_failed_v35_state(url: str, stamp: int, stray_default: bytes | None = 
     version is written only at the end, so its failed v35 left steps 23..34 applied (with the definitions its v23
     created: flow_coefficient, max_capacity_coefficient and min_capacity_coefficient of type float) under the old
     stamp.  *url* is at 34."""
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         for cls in ("unit__inputNode", "unit__outputNode"):
             for name in ("flow_coefficient", "max_capacity_coefficient", "min_capacity_coefficient"):
                 kwargs = {"default_value": stray_default, "default_type": None} if stray_default is not None else {}
@@ -153,7 +154,7 @@ def test_an_empty_flow_coefficient_with_a_null_default_is_removed(tmp_path_facto
     NULL); it is still the empty flow_coefficient (stamp 34: only v35 and later run)."""
     url = _build(tmp_path_factory.mktemp("null_default") / "db.sqlite", "flextool_template_v2.json", 34)
     _leave_failed_v35_state(url, 34, stray_default=to_database(None)[0])
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         stray = db.get_item("parameter_definition", entity_class_name="unit__inputNode", name="flow_coefficient")
         assert stray["default_value"] == b"null"
     _quiet(migrate_database, url)
@@ -164,7 +165,7 @@ def test_a_flow_coefficient_with_values_stops_v35(tmp_path_factory) -> None:
     """A ``flow_coefficient`` holding a value beside ``coefficient`` is not the empty one of v23: v35 stops with a
     message and the database stays at 34."""
     url = _build(tmp_path_factory.mktemp("both_valued") / "db.sqlite", "flextool_template_v2.json", 34)
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         db.add_parameter_definition(entity_class_name="unit__outputNode", name="flow_coefficient",
                                     parameter_type_list=("float",))
         val, typ = to_database(3.0)
@@ -173,19 +174,19 @@ def test_a_flow_coefficient_with_values_stops_v35(tmp_path_factory) -> None:
         db.commit_session("a valued flow_coefficient")
     with pytest.raises(SpineDBAPIError, match="both coefficient and flow_coefficient"):
         _quiet(migrate_database, url)
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         assert _version(db) == 34
 
 
 def test_a_v24_database_without_either_time_structure_stops_v25(tmp_path_factory) -> None:
     """Without ``timeblockSet`` and without the v25 result, v25 stops with a message (it does not skip)."""
     url = _build(tmp_path_factory.mktemp("no_timeblockset") / "db.sqlite", "flextool_template_v2.json", 24)
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         db.remove_entity_class(id=db.get_item("entity_class", name="timeblockSet")["id"])
         db.commit_session("no timeblockSet")
     with pytest.raises(SpineDBAPIError, match="v25: the database has no timeblockSet class"):
         _quiet(migrate_database, url)
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         assert _version(db) == 24
 
 
@@ -196,7 +197,7 @@ def test_a_deleted_v22_definition_is_recreated_by_v23(tmp_path_factory, v2_path,
     so v23 creates the definition again (as it always did) and the migration ends with the clean path's
     definitions."""
     url = _build(tmp_path_factory.mktemp(f"deleted_{name}") / "db.sqlite", "flextool_template_v2.json", 22)
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         db.remove_parameter_definition(id=db.get_item("parameter_definition", entity_class_name=cls, name=name)["id"])
         db.commit_session(f"deleted {cls}.{name}")
     _quiet(migrate_database, url)
