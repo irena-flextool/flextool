@@ -1,4 +1,4 @@
-## Unreleased
+## Release 4.6.1 (22.11.2026) — fixes: Benders results with a final solve, migration reruns converge, reverse flows of one-variable connections, stochastic CO2 price, two-stage realization; precise HiGHS solver note
 
 Patch release: no new data version (input databases stay at 82). Requires `polar-high>=3.16.1`. Results can change
 for Benders solves followed by other solves, for flow groups and user constraints that include a
