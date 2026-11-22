@@ -123,6 +123,7 @@ jobs:
           python-version: ${{ matrix.python }}
 
       - name: Install dependencies
+        id: install
         run: |
           pip install -e ".[dev]"
 
@@ -137,5 +138,5 @@ jobs:
       - name: Run CSV reload contract tests
         # tests/csv_reload is opt-in (its conftest skips it unless -m names csv_reload), so neither the PR
         # `test` job nor the step above runs it; ~1.5 min on 8 local workers.
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pytest -m csv_reload tests/csv_reload -v --tb=short -n logical

@@ -747,7 +747,7 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
     ),
     WarningSpec(
         code="W-0547",
-        message="the scaling guard could not run{why}; the solves go on unchecked",
+        message="scaling guard could not run{why}; solves go on unchecked",
         title="Scaling guard could not run",
         topic=_SCALING,
         entityless=True,

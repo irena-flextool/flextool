@@ -28,9 +28,10 @@ def _commit_step(db, message):
     the requested rows already exist with identical fields (a step that
     has been hand-applied or carried in by an earlier partial migration
     that never bumped ``model.version``).  Treating that signal as
-    fatal aborts the rest of the migration mid-chain and the version
-    bump never persists, leaving the DB stuck at the pre-step version.
-    Log and continue so subsequent steps still run.
+    fatal would abort the rest of the migration mid-chain.  Log and
+    continue so subsequent steps still run.  The version stamp is not
+    committed here on its own: :func:`_stage_version` puts it in the
+    session and the next commit carries it.
     """
     try:
         db.commit_session(message)
@@ -2069,7 +2070,11 @@ def _float_values(db, entity_class_name: str, names) -> dict:
 def _v37_flipped(caps: dict, pv, inv: float) -> bool:
     """v36 wrote ``max_capacity_coefficient = min_capacity_coefficient = flow_coefficient`` on the unit__outputNode
     row *pv* (*caps*: :func:`_float_values`), v37 then flipped it: max = min = 1/flow (*inv*) means flipped.  (On
-    unflipped content max = min = flow, so that holds only for flow = 1, which both steps skip.)"""
+    unflipped content max = min = flow, so that holds only for flow = 1, which both steps skip.)
+
+    Known limit (review m10): on genuine v35 / v36 content a user value max = min = 1/flow in the row's alternative
+    reads as flipped, and v36 / v37 then keep it unflipped.  No release shipped DB version 35 or 36 (v3.23.0 is 31,
+    v3.24.0 is 37), so only dev databases can meet it."""
     key = (tuple(pv["entity_byname"]), pv["alternative_name"])
     return all(math.isclose(caps.get((name, *key), math.nan), inv, rel_tol=1e-12)
                for name in ("max_capacity_coefficient", "min_capacity_coefficient"))
@@ -2077,7 +2082,9 @@ def _v37_flipped(caps: dict, pv, inv: float) -> bool:
 
 def _v38_ran(db, version: int) -> bool:
     """v38 removed ``node.has_balance`` and its value list, which its clean run reads: both absent means v38 ran, and
-    v36 / v37 (step *version*) must not rescale or flip ``flow_coefficient`` again."""
+    v36 / v37 (step *version*) must not rescale or flip ``flow_coefficient`` again.  It (and v38's floor) keys on the
+    definitions, not on content: a pre-38 database whose user deleted both definitions skips the rescaling and the
+    floor (review m11; very unlikely)."""
     if (db.get_item("parameter_value_list", name="has_balance")
             or db.get_item("parameter_definition", entity_class_name="node", name="has_balance")):
         return False

@@ -71,7 +71,7 @@ jobs:
 
       - name: Build the web docs
         # The hook (tools/mkdocs_hooks.py) generates the formulation page and the results catalogue.
-        run: mkdocs build
+        run: mkdocs build --strict
 
   gui-tests:
     # The Tk tests (the modules in tests/conftest.py _GUI_DISPLAY_MODULES and

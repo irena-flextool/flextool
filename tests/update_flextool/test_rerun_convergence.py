@@ -265,6 +265,56 @@ def test_every_kill_inside_a_step_converges(v2_chain, v75_chain, tmp_path) -> No
     assert failures == []
 
 
+#: The restamp grid (review m12): stamps s × contents k, s < k.
+GRID_STAMPS = (11, 18, 24, 31, 37, 43, 50, 55, 60, 64, 70, 75)
+GRID_CONTENTS = (38, 45, 56, 62, 65, 75, FLEXTOOL_DB_VERSION)
+
+
+@pytest.fixture(scope="module")
+def v25_chain(tmp_path_factory) -> dict:
+    """``{k: path}`` for k 25..current: the v25 template with the seed data (no ``Base``), migrated one step at a
+    time."""
+    folder = tmp_path_factory.mktemp("v25_chain")
+    current = folder / "current.sqlite"
+    quiet(initialize_database, str(TEMPLATES / "flextool_template_v25.json"), str(current))
+    _seed_data(current, base=False)
+    chain = {int(version_of(current)): copy_db(current, folder / "k_seed.sqlite")}
+    for k in range(min(chain) + 1, FLEXTOOL_DB_VERSION + 1):
+        migrate(current, up_to=k)
+        chain[k] = copy_db(current, folder / f"k{k}.sqlite")
+    return chain
+
+
+@pytest.mark.nightly_heavy  # PR CI skips it; runs nightly (pyproject markers)
+@pytest.mark.timeout(3600)
+def test_every_restamp_of_the_grid_converges(v2_chain, v25_chain, v75_chain, tmp_path) -> None:
+    """Content k of the v2, v25 and v75 chains under every grid stamp s < k (a hand edit, a lost or a legacy
+    stamp), migrated to k, equals the clean content k."""
+    failures = []
+    cases = 0
+    for name, chain in (("v2", v2_chain), ("v25", v25_chain), ("v75", v75_chain)):
+        for k in GRID_CONTENTS:
+            if k not in chain:
+                continue
+            for s in GRID_STAMPS:
+                if s >= k:
+                    continue
+                cases += 1
+                path = copy_db(chain[k], tmp_path / f"{name}_{s}_{k}.sqlite")
+                restamp_file(path, s)
+                try:
+                    migrate(path, up_to=k)
+                except Exception as exc:  # noqa: BLE001 - collect, report all
+                    failures.append((name, s, k, repr(exc)[:200]))
+                    continue
+                found = diff(snapshot(chain[k]), snapshot(path))
+                if version_of(path) != k or found:
+                    failures.append((name, s, k, version_of(path), found[:3]))
+                path.unlink()
+    assert cases > 100
+    assert failures == []
+
+
 @pytest.mark.nightly_heavy  # PR CI skips it; runs nightly (pyproject markers)
 def test_the_rename_registry_matches_the_migration_chain(v2_chain) -> None:
     """Every rename of ``_DEFINITION_RENAMES`` happens at its version in the clean chain (the old name there before,

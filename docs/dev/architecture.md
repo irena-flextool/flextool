@@ -1634,7 +1634,7 @@ LP the solver gets can be solved accurately after Layers 2 and 3
 * `FLEXTOOL_AUTOSCALE_STRICT=1` raises also under `warn` / `off`, but only
   for an error Layer 2 caused (the pre-Layer-2 pool fitted).  A failure of
   the check itself (or of the range readout, monolith or Benders region)
-  shows "the scaling guard could not run" (W-0547) once per run and the solve goes
+  shows "scaling guard could not run" (W-0547) once per run and the solve goes
   on (re-raised under strict).
 * Where it runs: after Layer 3 on the first solve of each LP shape (cold
   and warm paths; the verdict is cached in `_AutoscaleShapeCacheEntry` and

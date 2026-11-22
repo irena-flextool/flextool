@@ -110,8 +110,12 @@ def _group_flow(b: _Build) -> Expr | None:
     and DC power flow, twoway1var_arcs; signed flow = v_flow − v_flow_back) with the nodeBalance signs
     (``_dc_power_flow.nodeBalance_back_flow_terms``), so such a connection counts by its net flow at the
     member node, as a two-variable connection does through its reverse arc.  The back term carries no
-    slope while the forward flow's source side goes through ``_eff_fuel_input``: deliberate, as in
-    nodeBalance_eq — these arcs are lossless (slope ≡ 1).  With both ends of the arc in g the terms cancel.
+    slope while the forward flow's source side goes through ``_eff_fuel_input``, as in nodeBalance_eq.  The
+    arcs are not lossless by construction: a ``no_losses_no_variable_cost`` connection with a user
+    ``efficiency`` ≠ 1 keeps its slope (1/efficiency) on the forward flow only, so its two directions are
+    then asymmetric here, in nodeBalance_eq and in the objective, unlike a two-variable connection
+    (pre-existing; the fix, a warning for efficiency ≠ 1 and ignoring variable_cost, is deferred).  With both
+    ends of the arc in g the terms cancel.
     """
     d, v_flow = b.d, b.v_flow
     gpn = d.group_process_node

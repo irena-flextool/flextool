@@ -3568,7 +3568,7 @@ def check_limit_values(out: "Param | None", entity_keys: "tuple[str, ...]", *, e
     limit no solution can meet.  A finite value of 1e15 or more is kept as given (the limit applies), but such a
     value is mostly meant as "no limit" and, as a right-hand side, spoils the numerical scaling: the warning names
     the parameter, the entity, the periods and the value and suggests ``inf``.  Rolls and repeated solves of a run
-    warn once per entity and parameter (:func:`_behaviour_changes.warn_once`).
+    warn once per entity and parameter (W-0514, ``run_warnings.warn_grouped(..., per_run=True)``).
     """
     if out is None:
         return

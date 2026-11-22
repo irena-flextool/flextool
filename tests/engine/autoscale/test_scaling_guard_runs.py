@@ -207,7 +207,7 @@ def test_guard_that_cannot_run_says_so_once(dbs, tmp_path, monkeypatch, coded_lo
 
     monkeypatch.setattr(_orchestration, "_autoscale_run_guard", broken)
     _run(dbs["roll_adjust"], "roll_adjust", tmp_path)
-    assert coded_log().count("Warning: the scaling guard could not run") == 1
+    assert coded_log().count("Warning: scaling guard could not run") == 1
 
 
 def test_error_is_not_swallowed_when_layer3_apply_fails(dbs, tmp_path, monkeypatch):

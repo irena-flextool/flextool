@@ -49,6 +49,13 @@ def test_registry_codes_and_fields():
         assert len(line) <= 100 or code in LONG_LINE_OK, line
 
 
+def test_real_field_values_fit_the_line():
+    """Codes whose field is a fixed text: the registry test above fills it with ``x`` (review m6)."""
+    for code, fmt in (("W-0547", {"why": " (the range readout failed)"}),):
+        line = run_warnings.format_line(code, [], **fmt)
+        assert len(line) <= 100, line
+
+
 def test_docs_url_and_page_path_agree_with_the_docs_build():
     assert WARNINGS_PAGE == scope.WARNINGS_PAGE and WARNINGS_PAGE in scope.WEB_PAGES
     site = WEB_PAGE_URL.rsplit("parameter_catalogue/", 1)[0]

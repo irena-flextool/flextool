@@ -88,7 +88,7 @@ def test_a_region_whose_readout_fails_says_the_guard_could_not_run(monkeypatch, 
     for region in ("region_X", "region_Y"):
         assert _benders._apply_region_autoscale(_wide_region(), _BASIC, region, guard=guard) is None
     printed = coded_log()
-    assert printed.count("Warning: the scaling guard could not run (the range readout failed); the solves "
+    assert printed.count("Warning: scaling guard could not run (the range readout failed); solves "
                          "go on unchecked [W-0547]") == 1
     assert "cannot be scaled" not in printed
 
