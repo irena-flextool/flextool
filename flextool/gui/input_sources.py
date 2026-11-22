@@ -5,10 +5,14 @@ import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from flextool.gui.data_models import InputSourceInfo, ProjectSettings, ScenarioInfo
 from flextool.gui.settings_io import save_project_settings
 from flextool.sqlite_url import sqlite_url_string
+
+if TYPE_CHECKING:
+    from flextool.update_flextool.value_list_history import Finding
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +77,8 @@ class InputSourceManager:
         self._frozen_declined: set[Path] = set()
         # The sources whose W-0490 text was shown since the project was opened (TODO(v5.0.0): remove).
         self._value_list_checked: set[Path] = set()
-        # Their W-0490 texts, shown in their own box, not with the migration messages (take_check_messages).
-        self._check_messages: list[str] = []
+        # Their W-0490 findings, shown in their own box, not with the migration messages (take_check_findings).
+        self._check_findings: list[tuple[str, Finding]] = []
         # SHA-256 of frozen files by (path, size, mtime), for the migrated-copy check.
         self._sha_cache: dict[tuple[Path, int, int], str] = {}
 
@@ -572,10 +576,10 @@ class InputSourceManager:
                 )
         return result
 
-    def take_check_messages(self) -> list[str]:
-        """The W-0490 texts of the sources :meth:`plan_db_migrations` checked since the last call (then cleared).
-        TODO(v5.0.0): remove with W-0490."""
-        out, self._check_messages = self._check_messages, []
+    def take_check_findings(self) -> list[tuple[str, Finding]]:
+        """The W-0490 ``(file name, finding)`` of the sources :meth:`plan_db_migrations` checked since the last
+        call (then cleared).  TODO(v5.0.0): remove with W-0490."""
+        out, self._check_findings = self._check_findings, []
         return out
 
     def plan_db_migrations(
@@ -626,13 +630,14 @@ class InputSourceManager:
                 continue
             candidates.append((ext_name, abs_path, True))
 
-        from flextool.update_flextool.value_list_history import gui_messages
+        from flextool.update_flextool import value_list_history
 
         for name, path, external in candidates:
             if path.resolve() not in self._value_list_checked:
                 self._value_list_checked.add(path.resolve())
                 try:  # a check of the history never stops the migration planning
-                    self._check_messages.extend(gui_messages(path))
+                    self._check_findings.extend(
+                        (path.name, f) for f in value_list_history.possible_value_list_overwrite_ro(path))
                 except Exception as exc:  # noqa: BLE001
                     logger.debug("value list history of %s not checked: %s", path, exc)
             try:

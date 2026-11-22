@@ -151,16 +151,42 @@ def test_gui_shows_the_text_once_per_opened_project(make, tmp_path: Path) -> Non
     mgr = InputSourceManager(project, ProjectSettings())
     messages = mgr.plan_db_migrations()[3]
     assert not [m for m in messages if "W-0490" in m], "not with the migration messages (their own box)"
-    flagged = [m for m in mgr.take_check_messages() if "W-0490" in m]
-    assert len(flagged) == 1 and flagged[0].startswith("cyprus.sqlite: ")
-    assert "from data version 21 to 22 on 2024-09-19" in flagged[0] and "'not_allowed'" in flagged[0]
-    assert run_warnings.docs_url("W-0490") in flagged[0]
-    assert not mgr.take_check_messages(), "taken once"
+    flagged = mgr.take_check_findings()
+    assert [(name, f.step, f.date) for name, f in flagged] == [("cyprus.sqlite", 22, "2024-09-19")]
+    assert not mgr.take_check_findings(), "taken once"
     mgr.plan_db_migrations()
-    assert not mgr.take_check_messages(), "a refresh does not repeat it"
+    assert not mgr.take_check_findings(), "a refresh does not repeat it"
     again = InputSourceManager(project, ProjectSettings())
     again.plan_db_migrations()
-    assert len([m for m in again.take_check_messages() if "W-0490" in m]) == 1, "opening it again does"
+    assert len(again.take_check_findings()) == 1, "opening it again does"
+
+
+def test_gui_text_for_one_file() -> None:
+    text = vlh.gui_dialog_text([("cyprus.sqlite", Finding(22, ("invest_methods",), 21, 22, "2024-09-19"))])
+    assert text == (
+        "cyprus.sqlite may contain wrong investment settings.\n\n"
+        "When it was upgraded on 19.9.2024, a bug in a library FlexTool uses may have changed `not_allowed` into "
+        "`cumulative_limits`. Units, connections or nodes that should not invest could then invest without "
+        "limit.\n\n"
+        "The documentation has a short checklist for finding and fixing this.")
+
+
+def test_gui_text_lists_every_flagged_file_once() -> None:
+    inv = ("invest_methods",)
+    text = vlh.gui_dialog_text([
+        ("a.sqlite", Finding(22, inv, 21, 22, "2024-09-19")),
+        ("b.sqlite", Finding(22, inv, 21, 30, "2025-01-05")),
+        ("b.sqlite", Finding(22, inv, 21, 30, "2025-01-05")),
+        ("c.sqlite", Finding(27, ("minimum_time_methods",), 26, 30, "2025-03-01")),
+    ])
+    paragraphs = text.split("\n\n")
+    assert paragraphs[0] == ("These databases may contain wrong investment settings:\n"
+                             "  a.sqlite (upgraded on 19.9.2024)\n  b.sqlite (upgraded on 5.1.2025)")
+    assert paragraphs[1].startswith("When they were upgraded, a bug in a library FlexTool uses may have changed")
+    assert paragraphs[2] == "c.sqlite may contain wrong settings in the value list `minimum_time_methods`."
+    assert paragraphs[3].startswith("When it was upgraded on 1.3.2025, a bug")
+    assert paragraphs[-1] == "The documentation has a short checklist for finding and fixing this."
+    assert text.count("checklist") == 1
 
 
 def test_gui_planning_survives_an_unexpected_history_error(make, tmp_path: Path, monkeypatch) -> None:
@@ -174,10 +200,10 @@ def test_gui_planning_survives_an_unexpected_history_error(make, tmp_path: Path,
     def boom(path):
         raise OverflowError("cannot convert float infinity to integer")
 
-    monkeypatch.setattr(vlh, "gui_messages", boom)
+    monkeypatch.setattr(vlh, "possible_value_list_overwrite_ro", boom)
     mgr = InputSourceManager(project, ProjectSettings())
     assert len(mgr.plan_db_migrations()) == 4
-    assert mgr.take_check_messages() == []
+    assert mgr.take_check_findings() == []
 
 
 def test_guard_stops_an_import_that_rewrites_a_member(schema_db_url: str, tmp_path: Path, monkeypatch) -> None:

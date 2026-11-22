@@ -14,7 +14,8 @@ a database and never looks at the values (design: ``specs/two_stage_fix_D_invest
 Only SQLite files are checked: a database on a server (not a ``sqlite:///`` URL) is never checked.
 
 TODO(v5.0.0): remove this module, W-0490 (``run_warnings/_input_specs.py``), its call sites
-(``engine/solve/_orchestration.py``, ``gui/input_sources.py``) and its tests.  The warning is temporary.
+(``engine/solve/_orchestration.py``, ``gui/input_sources.py``, ``gui/main_window.py``,
+``gui/dialogs/database_check_dialog.py``) and its tests.  The warning is temporary.
 """
 from __future__ import annotations
 
@@ -129,22 +130,41 @@ def warn_at_run_start(db_url: str) -> None:
         run_warnings.warn_grouped(CODE, f.lists, details=details, per_run=True, run_log=True, date=f.date)
 
 
-def gui_messages(path: str | Path) -> list[str]:
-    """The W-0490 text the GUI shows when it opens *path* (one per flagged session)."""
-    from flextool.run_warnings import docs_url
+def _dmy(date: str) -> str:
+    """``2024-09-19`` → ``19.9.2024`` (the date format of the GUI)."""
+    year, month, day = date.split("-")
+    return f"{int(day)}.{int(month)}.{year}"
 
-    out = []
-    for f in possible_value_list_overwrite_ro(path):
-        lists = ", ".join(f"'{name}'" for name in f.lists)
-        text = (f"{Path(path).name}: this database may have been affected by a spinedb_api bug (value lists) "
-                f"[{CODE}]. It was migrated from data version {f.start} to {f.end} on {f.date}. Migrations in that "
-                "period may have run with spinedb_api 0.31-0.34, in which adding a member to a value list could "
-                "overwrite the list's first member; every default and value that used that member then changed "
-                f"with it. Check the value list {lists}: it should have all its members.")
-        if "invest_methods" in f.lists:
-            text += (" 'invest_methods' should contain 'not_allowed'. If it is missing, the default of "
-                     "invest_method (unit, connection, node) and every value that was not_allowed before that date "
-                     "now read 'cumulative_limits', which lets those entities invest and retire without limit.")
-        out.append(text + f" If you copied data from this database into another one, check that one too. "
-                          f"The checklist: {docs_url(CODE)}")
-    return out
+
+def gui_dialog_text(flagged: list[tuple[str, Finding]]) -> str:
+    """The text of the GUI's W-0490 box (one box for every flagged file): short and plain; the technical detail is
+    on the registry page (``docs_url(CODE)``), which the box's "Open checklist" button opens.
+
+    *flagged* is ``(file name, finding)``, as :meth:`InputSourceManager.take_check_findings` gives it."""
+    invest: dict[str, list[str]] = {}
+    other: dict[str, list[str]] = {}
+    for name, f in flagged:
+        target = invest if "invest_methods" in f.lists else other
+        dates = target.setdefault(name, [])
+        if _dmy(f.date) not in dates:
+            dates.append(_dmy(f.date))
+
+    def section(files: dict[str, list[str]], what: str, effect: str) -> list[str]:
+        if not files:
+            return []
+        if len(files) == 1:
+            (name, dates), = files.items()
+            return [f"{name} may contain wrong {what}.",
+                    f"When it was upgraded on {' and '.join(dates)}, a bug in a library FlexTool uses {effect}"]
+        lines = "\n".join(f"  {name} (upgraded on {' and '.join(dates)})" for name, dates in files.items())
+        return [f"These databases may contain wrong {what}:\n{lines}",
+                f"When they were upgraded, a bug in a library FlexTool uses {effect}"]
+
+    paragraphs = section(invest, "investment settings",
+                         "may have changed `not_allowed` into `cumulative_limits`. Units, connections or nodes that "
+                         "should not invest could then invest without limit.")
+    lists = sorted({name for _, f in flagged if "invest_methods" not in f.lists for name in f.lists})
+    paragraphs += section(other, "settings in the value list " + ", ".join(f"`{n}`" for n in lists),
+                          "may have replaced the first choice in that list with another one.")
+    paragraphs.append("The documentation has a short checklist for finding and fixing this.")
+    return "\n\n".join(paragraphs)
