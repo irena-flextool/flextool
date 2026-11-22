@@ -2494,6 +2494,25 @@ def one_variable_efficiency_ignored(source: "InputSource", classified: pl.DataFr
     return ignored
 
 
+def _one_variable_slope_in_provider(provider, ignored: set[str]) -> None:
+    """The provider's ``solve_data/pdtProcess_slope`` (the emit seed, raw efficiency) gets slope 1 on *ignored*
+    too, so a CSV reload of the run's provider snapshot (or of a light ``dump_csvs`` that takes the slope from it)
+    has the slope of the solved model."""
+    if provider is None:
+        return
+    from flextool.engine.preprocess._flex_data_provider import EvictedFrameError
+    key = "solve_data/pdtProcess_slope"
+    try:
+        seed = provider.get(key)
+    except EvictedFrameError:
+        return
+    if seed is None or seed.height == 0 or "process" not in seed.columns:
+        return
+    hit = pl.col("process").cast(pl.Utf8).is_in(sorted(ignored))
+    one = pl.lit(repr(1.0)) if seed.schema["value"] == pl.Utf8 else pl.lit(1.0)
+    provider.put(key, seed.with_columns(value=pl.when(hit).then(one).otherwise(pl.col("value"))))
+
+
 def apply_one_variable_efficiency(flex_data: object, source: "InputSource", provider=None) -> None:
     """The load-boundary step of K-1: ``p_slope`` is 1 on the one-variable connections whose efficiency is
     ignored (:func:`one_variable_efficiency_ignored`), so the LP and the results are those of efficiency 1 on
@@ -2505,6 +2524,7 @@ def apply_one_variable_efficiency(flex_data: object, source: "InputSource", prov
     ignored = one_variable_efficiency_ignored(source)
     if not ignored:
         return
+    _one_variable_slope_in_provider(provider, ignored)
     frame = slope.frame.collect() if isinstance(slope.frame, pl.LazyFrame) else slope.frame
     hit = pl.col("p").cast(pl.Utf8).is_in(sorted(ignored))
     changed = frame.filter(hit & (pl.col("value") != 1.0))

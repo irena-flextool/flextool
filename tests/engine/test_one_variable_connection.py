@@ -194,3 +194,4 @@ def test_results_match_the_objective(tmp_path_factory) -> None:
     key = "solve_data/pdtProcess__source__sink__dt_varCost"
     assert provider.has(key)
     assert "ll" not in provider.get(key).get_column("process").cast(pl.Utf8).to_list()
+
