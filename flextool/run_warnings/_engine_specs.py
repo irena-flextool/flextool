@@ -1050,17 +1050,17 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
     ),
     WarningSpec(
         code="W-0589",
-        message="one-variable connection has efficiency ≠ 1: a conversion, not a loss",
-        title="Efficiency of a one-variable connection",
+        message="one-variable connection: efficiency converts units, the same both ways",
+        title="Efficiency of a one-variable connection as a unit conversion",
         topic=_INPUTS,
         body=(
-            "A one-variable connection (`transfer_method` *no_losses_no_variable_cost*, and the lines of a "
-            "`dc_power_flow_with_angles` group, which use it internally) carries both directions in one signed "
-            "flow. With an `efficiency` other than 1, the flow f arriving at the second node takes f / "
-            "efficiency from the first node in both directions, so the reverse direction gets the reciprocal "
-            "of the efficiency: the connection converts between the units of its nodes (e.g. MWh to t) and "
-            "cannot model losses. The debug log gives the efficiency of each connection. The warning is printed "
-            "once per solve.\n\n"
+            "A one-variable connection (`transfer_method` *no_losses_no_variable_cost*) carries both directions "
+            "in one signed flow. Its two nodes have different `unit_of_measure` values, so its `efficiency` "
+            "(other than 1) is used as a unit conversion (e.g. MWh to t): the flow f arriving at the second node "
+            "takes f / efficiency from the first node, and in the reverse direction the first node gets f / "
+            "efficiency for the f taken from the second. The same conversion holds both ways, so it cannot model "
+            "losses. The debug log gives the efficiency of each connection. The warning is printed once per "
+            "solve.\n\n"
             "**How to fix:** nothing, if the efficiency is a unit conversion. For losses, use `transfer_method` "
             "*regular* or *exact*."
         ),
@@ -1078,6 +1078,23 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "solve.\n\n"
             "**How to fix:** use `transfer_method` *variable_cost_only*, *regular* or *exact* for a connection "
             "with a variable cost, or remove the cost."
+        ),
+    ),
+    WarningSpec(
+        code="W-0591",
+        message="cannot model losses with one flow variable; efficiency ignored",
+        title="Efficiency of a one-variable connection ignored",
+        topic=_INPUTS,
+        body=(
+            "A one-variable connection (`transfer_method` *no_losses_no_variable_cost*, and the lines of a "
+            "`dc_power_flow_with_angles` group, which use it internally) carries both directions in one signed "
+            "flow, so it cannot model losses: a loss in one direction would be a gain in the other. Its "
+            "`efficiency` is ignored (treated as 1) on a line of a `dc_power_flow_with_angles` group, and on a "
+            "*no_losses_no_variable_cost* connection unless both its nodes have a `unit_of_measure` and the two "
+            "differ (then the efficiency is a unit conversion: W-0589). The debug log gives the efficiency that "
+            "was ignored. The warning is printed once per solve.\n\n"
+            "**How to fix:** for losses, use `transfer_method` *regular* or *exact* (for a DC power-flow line, "
+            "accept a lossless line), or remove the efficiency."
         ),
     ),
 ) + BEHAVIOUR_SPECS

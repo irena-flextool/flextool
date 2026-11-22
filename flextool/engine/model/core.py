@@ -1090,8 +1090,10 @@ def _warn_one_variable_efficiency(b: _Build) -> None:
     """W-0589 (once per solve): the one-variable connections (twoway1var_arcs) with an efficiency ≠ 1 in the solve.
 
     Their one signed flow takes f · slope at the source and gives f at the sink in both directions
-    (nodeBalance_back_flow_terms), so the efficiency is a conversion (e.g. MWh to t), not a loss: the reverse
-    direction gets the reciprocal.  Named: the connection, with its efficiency range in the details.
+    (nodeBalance_back_flow_terms), so the efficiency is a conversion (e.g. MWh to t), not a loss.  Only the
+    connections between nodes in different units keep it: the load boundary sets the slope of the others to 1
+    (``_derived.apply_one_variable_efficiency``, W-0591).  Named: the connection, with its efficiency range over
+    the solve's (d, t) in the details.
     """
     d = b.d
     if not _has_rows(b.twoway1var_arcs) or d.p_slope is None or not _has_rows(d.process_source_sink_eff):
@@ -1103,6 +1105,8 @@ def _warn_one_variable_efficiency(b: _Build) -> None:
         return
     slope = d.p_slope.frame
     slope = slope.collect() if isinstance(slope, pl.LazyFrame) else slope
+    if _has_rows(getattr(d, "dt", None)):
+        slope = join_aligned(slope, d.dt.select("d", "t").unique(), on=["d", "t"], how="semi")
     names = sorted({str(p) for p in arcs.get_column("p").to_list()})
     hit = (slope.filter(pl.col("p").cast(pl.Utf8).is_in(names) & ((pl.col("value") - 1.0).abs() > 1e-9))
            .group_by(pl.col("p").cast(pl.Utf8))

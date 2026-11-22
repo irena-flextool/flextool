@@ -5592,8 +5592,11 @@ def load_flextool(source: "Path | str | FlexInputSource",
                 flex_data.p_years_represented_d = _years_represented_boundary(
                     getattr(flex_data, "dt", None), db_reader, provider, _wd_yr)
             # piecewise_linear units: the load-boundary step (one authority on every path).
+            from flextool.engine.preprocess.params import _derived as _drv_k1
             from flextool.engine.preprocess.params._piecewise import apply_piecewise_curves
             apply_piecewise_curves(flex_data, db_reader, provider)
+            # One-variable connections: an efficiency that is not a unit conversion is ignored (W-0591).
+            _drv_k1.apply_one_variable_efficiency(flex_data, db_reader, provider)
         elif _dump_hooks is not None:
             # Reader-less CSV reload: the reload's own seeds of the fields the overlay above writes.
             _dump_hooks.field_seeds(flex_data, sd, inp, provider)

@@ -7,15 +7,17 @@ connection or a line of a `dc_power_flow_with_angles` group that has an `efficie
 ### Fixes
 
 - **A one-variable connection (`no_losses_no_variable_cost`, and the lines of a `dc_power_flow_with_angles`
-  group) ignores its `other_operational_cost`, and its `efficiency` is the same conversion in both directions.**
-  One signed flow cannot have direction-dependent values. Before, the cost was charged on the forward flow only
-  (and the cost results showed a revenue for the reverse flow), and the efficiency applied to the forward flow
-  only: the reverse flow arrived at the first node without it, so with an efficiency above 1 sending the same
-  amount both ways created energy there. Now the cost is treated as zero (W-0590), and the flow f arriving at
-  one node takes f / `efficiency` from the other in both directions, as the flow results already showed: the
-  efficiency converts between the units of the nodes (e.g. MWh to t) and cannot model losses (W-0589, printed
-  when it is not 1). For losses, use `transfer_method` *regular* or *exact*; for a variable cost, also
-  *variable_cost_only*.
+  group) ignores its `other_operational_cost`, and its `efficiency` unless it converts between units.** One
+  signed flow cannot have direction-dependent values. Before, the cost was charged on the forward flow only (and
+  the cost results showed a revenue for the reverse flow), and the efficiency applied to the forward flow only:
+  the reverse flow arrived at the first node without it, so with an efficiency above 1 sending the same amount
+  both ways created energy there. Now the cost is treated as zero (W-0590). The efficiency is ignored (treated as
+  1, W-0591) on a DC power-flow line and when the two nodes have the same `unit_of_measure` or either has none,
+  so an efficiency of e.g. 0.98 no longer gives a loss one way and a gain the other. Only between nodes in
+  different units is it applied, as a conversion that is the same in both directions (e.g. MWh to t; W-0589),
+  as the flow results already showed. For losses, use `transfer_method` *regular* or *exact*; for a variable
+  cost, also *variable_cost_only*. The reserve and non-synchronous rows count the reverse flow with the same
+  conversion.
 - **A database whose migration history an old spinedb_api bug may have hit is named (W-0490).** spinedb_api
   0.31 to 0.34 (in use until 2025-07-07) could overwrite the first member of a value list when a migration added
   one; migration step 22 did that to `invest_methods` on databases migrated from data version 21, so `not_allowed`

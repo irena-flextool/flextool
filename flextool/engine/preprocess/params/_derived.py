@@ -1798,7 +1798,8 @@ def _group_transfer_method_overrides(source: "InputSource") -> "pl.LazyFrame | N
     both endpoints (``connection__node__node``) among the group's nodes; ``dc_power_flow_with_angles`` becomes
     ``no_losses_no_variable_cost`` (the DC lines carry one signed flow) and skips the ``is_DC = yes``
     connections.  A connection matched by several groups with different overrides raises (as the input
-    derivation does).  The process key is the Utf8 column ``_pk``.  None when no group overrides anything.
+    derivation does).  The process key is the Utf8 column ``_pk``; ``dc_line`` marks the lines of a
+    ``dc_power_flow_with_angles`` group.  None when no group overrides anything.
     """
     gtm = _try_param(source, "group", "transfer_method")
     gn = _try_entities(source, "group__node")
@@ -1836,11 +1837,13 @@ def _group_transfer_method_overrides(source: "InputSource") -> "pl.LazyFrame | N
     out = (matched.lazy()
            .with_columns(ct_override=pl.when(pl.col("method") == "dc_power_flow_with_angles")
                          .then(pl.lit("no_losses_no_variable_cost")).otherwise(pl.col("method")))
-           .group_by("p", maintain_order=True).agg(pl.col("ct_override").first())
+           .group_by("p", maintain_order=True).agg(
+               pl.col("ct_override").first(),
+               (pl.col("method") == "dc_power_flow_with_angles").any().alias("dc_line"))
            .collect())
     if out.height == 0:
         return None
-    return out.lazy().select(pl.col("p").alias("_pk"), "ct_override")
+    return out.lazy().select(pl.col("p").alias("_pk"), "ct_override", "dc_line")
 
 
 def _piecewise_flags(source: "InputSource") -> pl.DataFrame:
@@ -2013,7 +2016,7 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
                 .join(overrides, on="_pk", how="left")
                 .with_columns(ct=pl.when((pl.col("klass") == "connection") & pl.col("ct_override").is_not_null())
                                 .then(pl.col("ct_override")).otherwise(pl.col("ct")))
-                .drop("ct_override", "_pk"))
+                .drop("ct_override", "dc_line", "_pk"))
     if sm_lazy is not None:
         lf = lf.join(sm_lazy, on="p", how="left")
     else:
@@ -2459,6 +2462,63 @@ def p_flow_constraint_coef_from_source(source: "InputSource",
     if joined.height == 0:
         return None
     return Param(("p", "source", "sink", "cn"), joined)
+
+
+def one_variable_efficiency_ignored(source: "InputSource", classified: pl.DataFrame | None = None) -> set[str]:
+    """The one-variable connections (``method_2way_1var_off``) whose ``efficiency`` is ignored (W-0591).
+
+    One signed flow cannot model losses: a loss one way would be a gain the other way.  So the efficiency is
+    ignored on a line of a ``dc_power_flow_with_angles`` group, and on a ``no_losses_no_variable_cost``
+    connection unless both its nodes have an explicit ``unit_of_measure`` and the two differ (then it is a unit
+    conversion, the same both ways: W-0589).
+    """
+    if classified is None:
+        classified = _classify_process_method(source)
+    one_var = {str(p) for p in classified.filter((pl.col("method") == "method_2way_1var_off")
+                                                 & (pl.col("klass") == "connection")).get_column("p").to_list()}
+    cnn = _try_entities(source, "connection__node__node")
+    if not one_var or cnn is None:
+        return set()
+    from flextool import units_of_measure as uom
+    overrides = _group_transfer_method_overrides(source)
+    dc = set() if overrides is None else set(overrides.filter(pl.col("dc_line")).collect().get_column("_pk").to_list())
+    uom_rows = _try_param_explicit(source, "node", "unit_of_measure")
+    units = {} if uom_rows is None else {
+        str(n): uom.normalise(v) for n, v in uom_rows.select(pl.col("name").cast(pl.Utf8), "value").iter_rows()
+        if v is not None and str(v).strip()}
+    ignored = set()
+    for p, n1, n2 in cnn.select(*(pl.col(c).cast(pl.Utf8) for c in ("connection", "node_1", "node_2"))).iter_rows():
+        if p in one_var and (p in dc or units.get(n1) is None or units.get(n1) == units.get(n2)
+                             or units.get(n2) is None):
+            ignored.add(p)
+    return ignored
+
+
+def apply_one_variable_efficiency(flex_data: object, source: "InputSource", provider=None) -> None:
+    """The load-boundary step of K-1: ``p_slope`` is 1 on the one-variable connections whose efficiency is
+    ignored (:func:`one_variable_efficiency_ignored`), so the LP and the results are those of efficiency 1 on
+    every path (single, rolling, synthetic sub-solves); W-0591 once per solve names those with an efficiency ≠ 1.
+    """
+    slope = getattr(flex_data, "p_slope", None)
+    if slope is None:
+        return
+    ignored = one_variable_efficiency_ignored(source)
+    if not ignored:
+        return
+    frame = slope.frame.collect() if isinstance(slope.frame, pl.LazyFrame) else slope.frame
+    hit = pl.col("p").cast(pl.Utf8).is_in(sorted(ignored))
+    changed = frame.filter(hit & (pl.col("value") != 1.0))
+    if changed.height == 0:
+        return
+    flex_data.p_slope = Param(slope.dims, frame.with_columns(
+        value=pl.when(hit).then(pl.lit(1.0)).otherwise(pl.col("value"))), name=slope.name)
+    details = {str(p): f"efficiency {lo:g}" if lo == hi else f"efficiency {lo:g} to {hi:g}"
+               for p, lo, hi in changed.group_by(pl.col("p").cast(pl.Utf8))
+               .agg((1.0 / pl.col("value")).min().alias("lo"), (1.0 / pl.col("value")).max().alias("hi"))
+               .sort("p").iter_rows()}
+    from flextool import run_warnings
+    solve = _read_active_solve(Path("."), provider=provider) if provider is not None else None
+    run_warnings.warn_grouped("W-0591", list(details), solve=solve, details=details)
 
 
 # ---------------------------------------------------------------------------

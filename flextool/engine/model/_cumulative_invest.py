@@ -114,9 +114,9 @@ def _group_flow(b: _Build) -> Expr | None:
     member node, as a two-variable connection does through its reverse arc.  The forward flow's source side
     goes through ``_eff_fuel_input`` (× slope), and so does the back flow's: one signed flow f, f at the sink and
     f · slope at the source in both directions, as in nodeBalance_eq.  A one-variable connection cannot model
-    losses: its ``efficiency`` ≠ 1 is a conversion (the reverse direction gets the reciprocal; W-0589), and its
-    ``other_operational_cost`` is ignored (W-0590).  With both ends of the arc in g and slope 1 the terms
-    cancel.
+    losses: its ``efficiency`` ≠ 1 is a unit conversion between nodes in different units (W-0589), else ignored
+    (W-0591), and its ``other_operational_cost`` is ignored (W-0590).  With both ends of the arc in g and slope 1
+    the terms cancel.
     """
     d, v_flow = b.d, b.v_flow
     gpn = d.group_process_node
