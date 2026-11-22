@@ -1,5 +1,24 @@
 ## Unreleased
 
+Patch release (4.6.2): no new data version. Results can change for models with a `no_losses_no_variable_cost`
+connection or a line of a `dc_power_flow_with_angles` group that has an `efficiency` other than 1 or an
+`other_operational_cost`.
+
+### Fixes
+
+- **A one-variable connection (`no_losses_no_variable_cost`, and the lines of a `dc_power_flow_with_angles`
+  group) ignores its `other_operational_cost`, and its `efficiency` is the same conversion in both directions.**
+  One signed flow cannot have direction-dependent values. Before, the cost was charged on the forward flow only
+  (and the cost results showed a revenue for the reverse flow), and the efficiency applied to the forward flow
+  only: the reverse flow arrived at the first node without it, so with an efficiency above 1 sending the same
+  amount both ways created energy there. Now the cost is treated as zero (W-0590), and the flow f arriving at
+  one node takes f / `efficiency` from the other in both directions, as the flow results already showed: the
+  efficiency converts between the units of the nodes (e.g. MWh to t) and cannot model losses (W-0589, printed
+  when it is not 1). For losses, use `transfer_method` *regular* or *exact*; for a variable cost, also
+  *variable_cost_only*.
+
+## Unreleased
+
 Patch release: no new data version (input databases stay at 82). Requires `polar-high>=3.16.1`. Results can change
 for Benders solves followed by other solves, for flow groups and user constraints that include a
 `no_losses_no_variable_cost` or DC power-flow connection, for stochastic solves with a cumulative CO2 cap (the

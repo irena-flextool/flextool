@@ -310,13 +310,18 @@ def _dc_partition(b: _Build, dc_arcs: pl.DataFrame, over: pl.DataFrame) -> "pl.D
 def nodeBalance_back_flow_terms(arcs: pl.DataFrame | None, v_flow_back: Var | None, p_unitsize: Param,
                                 p_step_duration: Param | None, *, group_nodes: pl.DataFrame | None = None,
                                 group_nodes_on: tuple[str, ...] = ("n",),
-                                exclude_arcs: pl.DataFrame | None = None) -> dict:
+                                exclude_arcs: pl.DataFrame | None = None, p_slope: Param | None = None,
+                                slope_arcs: pl.DataFrame | None = None) -> dict:
     """The v_flow_back terms of nodeBalance_eq, open dims (n, d, t); {} without reverse flow.
 
     back_at_sink[n,d,t]   = − Σ_{(p,s,n) ∈ arcs} v_flow_back[p,s,n,d,t] · unitsize[p] · step_duration[d,t]
-    back_at_source[n,d,t] = + Σ_{(p,n,k) ∈ arcs} v_flow_back[p,n,k,d,t] · unitsize[p] · step_duration[d,t]
+    back_at_source[n,d,t] = + Σ_{(p,n,k) ∈ arcs} v_flow_back[p,n,k,d,t] · unitsize[p] · σ[p,d,t] · step_duration[d,t]
+      σ = slope[p,d,t] (1 / efficiency) for (p,n,k) ∈ slope_arcs (process_source_sink_eff), else 1
     The signed flow of an arc is v_flow − v_flow_back, so the reverse flow leaves the sink node and arrives
-    at the source node.  ``arcs`` = every arc with a reverse-flow variable (twoway1var_arcs).
+    at the source node.  ``arcs`` = every arc with a reverse-flow variable (twoway1var_arcs).  The forward flow
+    draws v_flow · slope from the source of an arc with an efficiency, so the reverse flow delivers
+    v_flow_back · slope there: one signed flow, f at the sink and f · slope at the source in both directions
+    (the efficiency of a one-variable connection is a conversion, not a loss: W-0589).
     ``p_step_duration`` None: power terms (no step_duration).  ``group_nodes`` (g, n): each term only at its
     (g, n) pairs, open dims (g, n, d, t); ``exclude_arcs`` (g, p, source, sink): those arcs left out for that g
     (the capacity margin, :func:`flextool.engine.model._balance_terms.balance_flow_terms`).
@@ -348,6 +353,17 @@ def nodeBalance_back_flow_terms(arcs: pl.DataFrame | None, v_flow_back: Var | No
         terms["back_at_sink"] = -Sum(energy(Where(v_flow_back * p_unitsize, sink_as_n)),
                                      over=("p", "source", "sink"))
     if src_as_n.height > 0:
-        terms["back_at_source"] = Sum(energy(Where(v_flow_back * p_unitsize, src_as_n)),
-                                      over=("p", "source", "sink"))
+        sloped = None
+        if p_slope is not None and slope_arcs is not None and slope_arcs.height > 0:
+            sloped = join_aligned(src_as_n, slope_arcs.select("p", "source", "sink").unique(),
+                                  on=["p", "source", "sink"], how="semi")
+        if sloped is None or sloped.height == 0:
+            terms["back_at_source"] = Sum(energy(Where(v_flow_back * p_unitsize, src_as_n)),
+                                          over=("p", "source", "sink"))
+        else:
+            plain = join_aligned(src_as_n, sloped, on=list(src_as_n.columns), how="anti")
+            term = Sum(energy(Where(v_flow_back * p_unitsize * p_slope, sloped)), over=("p", "source", "sink"))
+            if plain.height > 0:
+                term = term + Sum(energy(Where(v_flow_back * p_unitsize, plain)), over=("p", "source", "sink"))
+            terms["back_at_source"] = term
     return terms
