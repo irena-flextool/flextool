@@ -228,11 +228,23 @@ def _join_value(base: pl.DataFrame, param, name: str, default: float) -> pl.Data
     return base.join(vals, on=keys, how="left").with_columns(pl.col(name).fill_null(default))
 
 
+def solve_decides_investments(solve_cfg, solve: str) -> bool:
+    """Whether *solve* authors investment decisions: ``invest_periods`` or ``realized_invest_periods`` non-empty, or
+    ``stochastic_invest_method`` other than ``none`` (the test of the rolling-invest warning in
+    ``_recursive_solve``)."""
+    if (getattr(solve_cfg, "invest_periods", None) or {}).get(solve):
+        return True
+    if (getattr(solve_cfg, "realized_invest_periods", None) or {}).get(solve):
+        return True
+    method_for = getattr(solve_cfg, "stochastic_invest_method_for", None)
+    return method_for is not None and method_for(solve) != "none"
+
+
 def note_realization_inherits_nothing(d, solve: str, parent: str, parent_invests: bool) -> None:
     """Note when the realization solve *solve* keeps nothing its stochastic solve *parent* decided.
 
     A realization solve takes from its parent the units online of its binary units (``p_fix_online``) and the
-    investments (when *parent_invests*: the parent has ``invest_periods``).  With neither, the realized results do
+    investments (when *parent_invests*: :func:`solve_decides_investments` of the parent).  With neither, the realized results do
     not depend on the stochastic solve: W-0509 when the realization's units online are all linear (they are
     re-decided with the realized data; the linear processes are named), W-0588 when it has no units online at all.
     Nothing when binary units are online, even unpinned (a stochastic solve with nothing tied)."""
@@ -247,18 +259,19 @@ def note_realization_inherits_nothing(d, solve: str, parent: str, parent_invests
     integer = _names(getattr(d, "process_online_integer", None))
     parent = re.sub(r"_roll_\d+$", "", parent)
     if linear and not integer:
-        run_warnings.note("W-0509", linear, solve=solve, parent=parent, per_run=True)
+        run_warnings.note("W-0509", linear, solve=solve, parent=parent)
     elif not linear and not integer:
         run_warnings.note("W-0588", solve=solve, parent=parent)
 
 
 def check_pinned_realization_feasible(d, solve: str, *, rtol: float = 1e-6) -> None:
-    """Raise when a pinned realization solve cannot balance a node without balance slack.
+    """Raise when a realization solve cannot balance a node without balance slack.
 
-    A realization solve pins the units online of its binary units (``p_fix_online``) to values the stochastic
-    solve chose for its forecasts; the realized data was not among them.  Linear units online are not pinned: such a
-    process counts here with its existing capacity, a valid upper bound, and a realization that pins nothing (only
-    linear units, or none) is not checked.  On a node with
+    A realization solve fixes the investments of its stochastic solve (they reach it as existing capacity) and pins
+    the units online of its binary units (``p_fix_online``) to values the stochastic solve chose for its forecasts;
+    the realized data was not among them.  Linear units online are not pinned: such a process counts here with its
+    existing capacity, a valid upper bound, as does every process of a realization that pins no units online.  The
+    caller runs the check for every realization solve.  On a node with
     ``penalty_method = off`` (no balance slack) the realized net load may then exceed what the supply into the node
     can deliver, and the LP is infeasible.  This check finds that case before the solve and names the node and step.
 
@@ -274,7 +287,7 @@ def check_pinned_realization_feasible(d, solve: str, *, rtol: float = 1e-6) -> N
     fix_online = _frame(getattr(d, "p_fix_online", None))
     flow_to_n = _frame(getattr(d, "flow_to_n", None))
     inflow = _frame(getattr(d, "p_inflow", None))
-    if off is None or fix_online is None or flow_to_n is None or inflow is None:
+    if off is None or flow_to_n is None or inflow is None:
         return
     nodes = set(off["n"].to_list())
     for skip in ("nodeState", "nodeStateBlock", "nodeCoarse"):
@@ -345,8 +358,8 @@ def check_pinned_realization_feasible(d, solve: str, *, rtol: float = 1e-6) -> N
     n, period, step, sup, req = short.row(0)
     raise FlexToolConfigError(
         f"Realization solve '{solve}' cannot balance node '{n}' (penalty_method = off) at period '{period}', step "
-        f"'{step}': the realized net load needs {req:.6g} MWh but the units online pinned from the stochastic solve "
-        f"leave at most {sup:.6g} MWh of supply ({short.height} step(s) affected).  Give the node "
+        f"'{step}': the realized net load needs {req:.6g} MWh but the capacity and the units online fixed from the "
+        f"stochastic solve leave at most {sup:.6g} MWh of supply ({short.height} step(s) affected).  Give the node "
         "balance slack (penalty_method = regular), add forecasts that cover the realized conditions, or end the "
         "committed window before the reveal.")
 
@@ -425,5 +438,6 @@ def check_committed_window_realized(d, solve: str, plan: "RealizationPlan | None
         f"Solve '{solve}' commits {len(plan.committed_in_fan)} step(s) inside a forecasts-only stochastic fan "
         f"(period(s) {', '.join(periods)}) and a later solve continues from them, but {', '.join(families)} "
         "is decided per forecast there and no solve realizes it.  Designate a realized: yes branch in "
-        "stochastic_branches, configure a realization solve right after it, or end the committed window before "
+        "stochastic_branches, configure a realization solve right after it (not possible for a solve with "
+        "contains_solves), or end the committed window before "
         "the reveal.")

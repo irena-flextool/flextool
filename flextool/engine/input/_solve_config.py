@@ -1658,9 +1658,8 @@ class SolveConfig:
 
     def reduce_detail_overridden(self, realization_solve: str) -> list[str]:
         """The levels an author set on the realization solve *realization_solve* that its parent's levels override
-        (one line per parameter whose authored value differs from the parent's): a realization solve pins units
-        online to its parent's values and has the same detail as the solve it realizes, so it uses the parent's
-        levels.  Empty when it sets none, or the same."""
+        (one line per parameter whose authored value differs from the parent's): a realization solve uses the
+        parent's levels, so that its online variables and reserve rows match those of the solve it realizes.  Empty when it sets none, or the same."""
         parent = self.realized_dispatch_parent.get(realization_solve)
         if parent is None:
             return []
@@ -1674,8 +1673,8 @@ class SolveConfig:
             own, used = str(raw).strip().lower(), resolve(realization_solve)
             if own != used:
                 out.append(f"realization solve '{realization_solve}' sets {param} = '{raw}', but it uses "
-                           f"'{used}', the value of its parent solve '{parent}' (it takes the parent's units "
-                           "online and has the same detail as the solve it realizes).")
+                           f"'{used}', the value of its parent solve '{parent}' (so that its online variables "
+                           "and reserve rows match those of the solve it realizes).")
         return out
 
     def reduce_unit_detail_for(self, solve_name: str) -> str:

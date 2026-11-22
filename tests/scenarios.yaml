@@ -138,7 +138,17 @@
   smoke: true
   csvs:
     - unit__outputNode__dt.csv
-    - unit_online__dt.csv
+  # unit_online__dt.csv is not compared: the units online have several optimal
+  # values. Demand is below the 500 MW capacity in two runs of exactly 6 h
+  # (t0004-t0009, t0024-t0029); lowering the units online there saves
+  # 20 EUR/MWh x 416.67 MWh / 500 MW = 16.67 EUR per MW-h of no-load fuel, so
+  # 6 h save exactly the 100 EUR/MW startup_cost of coming back online: any dip
+  # (down to the flow) is optimal. The flows and the objective are unique.
+  # Hand-derivation (online 1 throughout, no start-up): over the 48 h of 2day,
+  # fuel 20 x (416.67 + 1.6667 x min(D, 500)) = 1,181,333.33 EUR, upward slack
+  # 900 x max(0, D - 500) = 5,096,700 EUR; x 365/2 / 1e6 = 1145.7410833 M CUR.
+  expected_objective: 1145.7410833
+  expected_objective_tolerance: 1.0e-5
   time_budget_seconds: 10.0
 
 - scenario: coal_min_load_MIP_wind

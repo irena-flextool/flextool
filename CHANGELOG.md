@@ -49,9 +49,9 @@ of the horizon).
   (`co2_price_total_d_g`): the sum of the forecast paths' prices, i.e. the value of one more tonne of the budget
   in every path. It equals the deterministic price when the paths are identical. Before, the table was missing.
 - **The realization solve no longer inherits each unit's reserve from the stochastic solve** (inherited since
-  4.2.0). It keeps the units online and meets the reserve requirements with its own data, from the units online
-  and the units without online variables. Reserve markets will be realized in a later market stage. Realized results
-  of stochastic solves with reserves change. Before, the inherited reserve could hold capacity back from the
+  4.2.0). It keeps the units online and meets the reserve requirements with its own data, from the committed units
+  online and every other reserve provider (units without online variables, connections, storage). Reserve markets
+  will be realized in a later market stage. Realized results of stochastic solves with reserves change. Before, the inherited reserve could hold capacity back from the
   energy balance (balance slack), and it could make the realization infeasible where a unit's realized profile
   was below its inherited reserve. A solve with `contains_solves` can no longer be realized by the solve right
   after it: that is now a configuration error, as it already was for a `realized: yes` branch (before, the solves

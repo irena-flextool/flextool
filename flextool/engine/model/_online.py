@@ -635,8 +635,10 @@ def add_constraints(b: "_Build") -> None:
     # In a realization solve, pins the units online of the processes with integer (binary) online variables to the
     # parent's commitment, also when the solve relaxes integers (reduce_unit_detail_method integers*); linear units
     # online are not pinned (p_fix_online has none: the realization re-decides them with the realized data), so
-    # online_fix_eq_linear has no rows.  The realization's first step is a free start like the parent's, whatever
-    # step the parent started from: a free start relaxes any predecessor, so the pinned commitment stays feasible.
+    # online_fix_eq_linear has no rows.  At a free start of the realization (its roll 0, a single-solve realization,
+    # a period that does not continue the previous one) its units online are free like the parent's; a free start
+    # relaxes any predecessor the parent had, so the pinned commitment stays feasible.  A later roll carries the
+    # previous realization's units online in both stages (the stochastic roll k and realization roll k).
     # Only declared v_online cells are pinned.  p_fix_online is Utf8-keyed: it is joined to
     # the native-typed index through Utf8 copies of (p, d, t).
     if d.p_fix_online is not None and d.p_fix_online.frame.height > 0:

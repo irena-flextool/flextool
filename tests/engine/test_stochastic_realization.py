@@ -373,8 +373,9 @@ def _hard_variant(cf: dict, binary: bool = False):
 @pytest.mark.solver
 def test_hard_node_realized_shortfall_raises_before_solve(tmp_path_factory) -> None:
     """``elec`` has no balance slack; a binary peaker (2 units of 50 MW, min_load 0.5).  Forecast CF high 0.7 / low
-    0.6: the peaker serves 30 / 40 MW, which one unit can (25..50 MW) and two cannot (their min load is 50 MW, and
-    there is no slack): the tied commitment is 1 unit = 50 MW.  Realized CF 0.0: the realized need is 100 MWh per
+    0.6: the peaker serves 30 / 40 MW, which one unit can (25..50 MW).  Two units would have to run at their 50 MW
+    min load and curtail 20 / 10 MW of wind, which costs the peaker's variable cost more; none leaves a shortfall on
+    a node without slack.  So the tied commitment is 1 unit = 50 MW (unique while the peaker's cost is above 0).  Realized CF 0.0: the realized need is 100 MWh per
     step against at most 50 (peaker) + 0 (wind) MWh, so the realization solve raises, naming the node and the first
     step, before it is solved."""
     from flextool.engine.input._solve_state import FlexToolConfigError

@@ -1484,10 +1484,20 @@ ramp rows when the realized data is lower; a requirement that varies with
 the data (stochastic `reservation`, dynamic, n-1) is set day-ahead in a real
 market, so the stage has to choose between the procured and the recomputed
 amount; and the per-unit day-ahead tie (`non_anticipativity_reserve`, kept)
-assumes non-transferable awards. Such a carrier adds one row to
-`SolveHandoff._FIELDS`, `PIN_FIELDS`, `_FIELD_TO_KEY` and
-`_HANDOFF_EMPTY_SCHEMAS`, and one entry to `flex_data.coarse_pin_varies`;
-`online_tie_cells` / `reference_forecasts` are the pattern for its producer.
+assumes non-transferable awards. Such a carrier (`fix_online` is the
+pattern) needs:
+
+- one row in `SolveHandoff._FIELDS`, `PIN_FIELDS`, `_FIELD_TO_KEY` and
+  `_HANDOFF_EMPTY_SCHEMAS`, and a `handoff/...` key constant in
+  `preprocess/_provider_keys.py` (`HANDOFF_FIX_ONLINE`);
+- a producer: `online_tie_cells` / `reference_forecasts` are the pattern;
+- a FlexData field (`p_fix_online`) and its loader from the handoff key;
+- one entry in `flex_data.coarse_pin_varies`;
+- its constraint, with an `EQ.` header and a `CONSTRAINT_FAMILIES` entry in
+  `autoscale/_layer2_types.py`;
+- the field in the `_reduce_detail` field list of the detail level that
+  leaves its variable out (`p_fix_online` sits with the online fields; a
+  reserve carrier goes in `RESERVE_FIELDS`).
 
 ## Solution extraction
 

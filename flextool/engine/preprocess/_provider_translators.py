@@ -76,7 +76,10 @@ def _empty_handoff_frame(key: str) -> pl.DataFrame:
 # the PIN from its parent (the roll-forward carriers tied to the realised end
 # are routed by solve._carry_routing).  A new carrier (e.g. a realization pin of
 # another variable family) adds one row to SolveHandoff._FIELDS, to one of these
-# sets, to _FIELD_TO_KEY and to _HANDOFF_EMPTY_SCHEMAS.
+# sets, to _FIELD_TO_KEY and to _HANDOFF_EMPTY_SCHEMAS, plus a _provider_keys
+# constant, a FlexData field with its loader, and for a pin its constraint (EQ.
+# header, CONSTRAINT_FAMILIES entry) and its _reduce_detail field list entry:
+# the full recipe is in docs/dev/architecture.md (realization solve carriers).
 ROLL_FORWARD_FIELDS: frozenset = frozenset((
     "roll_end_state", "upward_roll_end_state", "roll_end_online", "roll_end_flow",
     "roll_end_step", "online_history", "cumulative_co2", "cumulative_commodity",

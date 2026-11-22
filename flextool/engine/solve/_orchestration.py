@@ -2273,9 +2273,12 @@ def _spawn_realized_dispatch_siblings(
                 # realization solve would continue from the last of them, not from it.
                 raise FlexToolConfigError(
                     f"Solve '{configured}' right after solve '{p}' in model.solves would realize the committed "
-                    f"window of '{p}', but '{p}' contains other solves (contains_solves), so no solve can "
-                    f"realize it.  Move the solves it contains out of its contains_solves, or end its "
-                    f"committed window before the reveal."
+                    f"window of '{p}' (it is taken as a realization solve because it is deterministic, contains "
+                    f"no solves, has the same solve_mode and rolling_times as '{p}', and realizes every period "
+                    f"'{p}' commits inside its stochastic fan), but '{p}' contains other solves "
+                    f"(contains_solves), so no solve can realize it.  Move the solves it contains out of its "
+                    f"contains_solves, end its committed window before the reveal, or make '{configured}' differ "
+                    f"from that rule if it is not meant as a realization solve."
                 )
             solve_cfg.register_realization_solve(configured, p)
             if logger is not None:
@@ -2287,9 +2290,9 @@ def _spawn_realized_dispatch_siblings(
             if _line is not None:
                 # Printed only (solve-site console convention): the logger writes to the console too.
                 print(f"Warning: {_line}", flush=True)
-            # A realization solve takes its parent's detail levels (it pins
-            # the parent's units online and has the same detail as the
-            # solve it realizes): name an authored
+            # A realization solve takes its parent's detail levels (so that
+            # its online variables and reserve rows match those of the solve
+            # it realizes): name an authored
             # value that is overridden. Printed only (solve-site console
             # convention): the logger writes to the console too.
             for _line in solve_cfg.reduce_detail_overridden(configured):
@@ -3754,22 +3757,23 @@ def _drive_cascade(
             # falling back to a predecessor of 0.
             check_online_ramp_carry(data)
 
-            # A realization solve pins units online to the stochastic
-            # solve's NA-tied values: name the hard-balance node
-            # the realized data cannot balance before the LP is built.
+            # A realization solve fixes the stochastic solve's investments
+            # and pins its binary units online to the NA-tied values: name
+            # the hard-balance node the realized data cannot balance before
+            # the LP is built.
             if complete_solve_name in (
                 getattr(self.state.solve, "realized_dispatch_parent", {}) or {}
             ):
                 from flextool.engine.solve._realization import (
                     check_pinned_realization_feasible,
                     note_realization_inherits_nothing,
+                    solve_decides_investments,
                 )
                 check_pinned_realization_feasible(data, complete_solve_name)
                 _parent = self.state.solve.realized_dispatch_parent[complete_solve_name]
                 note_realization_inherits_nothing(
                     data, complete_solve_name, _parent,
-                    bool((getattr(self.state.solve, "invest_periods", None) or {}).get(
-                        re.sub(r"_roll_\d+$", "", _parent))))
+                    solve_decides_investments(self.state.solve, re.sub(r"_roll_\d+$", "", _parent)))
             _window_check = getattr(self.state, "current_committed_window_check", None)
             if _window_check is not None:
                 from flextool.engine.solve._realization import check_committed_window_realized
