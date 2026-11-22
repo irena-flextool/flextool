@@ -215,7 +215,7 @@ script); a given flag wins over the variable, and the variable over the solve's 
 | Flag | Description |
 |---|---|
 | `--scaling {off,solver_only,basic,full}` | FlexTool autoscaler strategy (see [scaling.md](dev/scaling.md)). `off` disables all scaling including HiGHS' internal equilibration; `solver_only` keeps only HiGHS' default matrix scaling; `basic` adds FlexTool's Layer-1 range detection and Layer-3 `user_*_scale` recommendation without LP mutation; `full` (default) adds Layer-2 semantic per-type column/row/cost scaling. Env fallback: `FLEXTOOL_SCALING` |
-| `--scaling-guard {error,warn,off}` | What to do when a solve's limits and bounds span more than the solver enforces accurately after FlexTool's scaling (more than 17 decades for HiGHS): `error` (default) stops before the solve with a message naming the largest and smallest values; `warn` prints it and solves; `off` does not check. Spreads above 13 decades and cost / coefficient problems only warn, and so does everything for a commercial solver. See [The scaling guard](dev/scaling.md#the-scaling-guard). Env fallback: `FLEXTOOL_SCALING_GUARD` |
+| `--scaling-guard {error,warn,off}` | What to do when a solve's limits and bounds span more than the solver enforces accurately after FlexTool's scaling (more than 17 decades for HiGHS): `error` (default) stops before the solve with a message naming the largest and smallest values; `warn` shows a coded warning (the full message in the run log `_run.log`) and solves; `off` does not check. Spreads above 13 decades and cost / coefficient problems only warn, and so does everything for a commercial solver. See [The scaling guard](dev/scaling.md#the-scaling-guard). Env fallback: `FLEXTOOL_SCALING_GUARD` |
 | `--user-bound-scale N` | Pin HiGHS' `user_bound_scale` exponent (multiplies all column bounds and RHS by `2**N`). Use the value HiGHS suggests in its scaling warning; clamped to `[-10, 0]`. Overrides the Layer-3 auto-pick. Env fallback: `FLEXTOOL_USER_BOUND_SCALE` |
 | `--presolve {on,off,choose}` | HiGHS `presolve` override. Default keeps the determinism-pinned `on`; `off` disables presolve (slower but useful for memory or numerical diagnostics). Env fallback: `FLEXTOOL_HIGHS_PRESOLVE` |
 | `--threads N` | Threads for one FlexTool run: FlexTool's data processing and the solver. FlexTool's own processing (polars) uses at most N and at most 8 (`POLARS_MAX_THREADS` sets another limit below N); the solver gets N threads (HiGHS `threads=N` with its parallel simplex off; Gurobi, CPLEX, Xpress and COPT their thread count, over the option file and `solver_arguments`, with one printed line when a different value is replaced); a Benders solve runs at most N region solves at once. Default: the available cores, with the solvers' own thread settings and Benders as before; a run that Spine Toolbox starts (the `cmd_run_flextool.py` file run as a script) defaults to 1 thread for all of it, since Toolbox runs its tools in parallel. When you run several FlexTool runs at once (for example an AI agent or a script starting them in parallel), give each about cores / runs, e.g. `flextool-run input.sqlite --scenario-name base --threads 4`. Env fallback: `FLEXTOOL_THREADS` |
@@ -229,6 +229,7 @@ script); a given flag wins over the variable, and the variable over the solve's 
 | `--warm-start` | Reuse a cached HiGHS basis for solves of the same model structure, in-process and with `--save-memory` (Benders solves excepted); any mismatch falls back to a cold solve. Env fallback: `FLEXTOOL_WARM_START=1` |
 | `--basis-cache-dir PATH` | Folder of the `--warm-start` basis cache (default `<work folder>/basis_cache`); share one folder to reuse bases between runs. Env fallback: `FLEXTOOL_BASIS_CACHE_DIR` |
 | `--benders-workers N` | Threads for the region solves of a Benders solve (default, or `0`: the number of regions, at most cores minus one). Env fallback: `FLEXTOOL_BENDERS_WORKERS` |
+| `--benders-final-solve {on,off}` | After a Benders solve, solve the whole model once with the Benders investments fixed (default `on`); that solve writes every result table of the Benders solve, its investment marginal values included, and hands the full results on to the next solve. `off` skips it, for a model whose undecomposed LP does not fit in memory: the Benders solve then writes only its investments, their costs and its objective (the dispatch comes from the solves after it), or no result tables when it is the last solve. Env fallback: `FLEXTOOL_BENDERS_FINAL_SOLVE` |
 
 **Decomposition (Benders):**
 
@@ -237,8 +238,9 @@ via a CLI flag: set `solve.decomposition = benders` (plus the optional
 `solve.benders_max_iter` / `benders_tolerance` knobs) and declare at
 least two `group.decomposition_method = benders_regional` region groups.
 A single chain can mix schemes. See
-[decomposition.md](dev/decomposition.md). The one remaining CLI flag is
-the filter-only inspector:
+[decomposition.md](dev/decomposition.md). Besides `--benders-workers` and
+`--benders-final-solve` above, the one remaining Benders flag is the
+filter-only inspector:
 
 | Flag | Description |
 |---|---|
@@ -580,7 +582,7 @@ The table has one row per run, slowest first, in seconds; `!` marks a run over t
 | `outputs` | Writing the results (parquet) |
 | `viewer` | The data the result viewer needs (also written with plots off) |
 | `plots` | The scenario plots (png); zero with plots off |
-| `untimed` | The rest. A Benders solve writes no per-solve problem-building, solving or result-writing times, so those land here |
+| `untimed` | The rest. The Benders loop of a Benders solve (its master and region solves) writes no problem-building, solving or result-writing times, so those land here; its final solve is counted as any other solve |
 
 | Argument | Description |
 |---|---|

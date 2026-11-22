@@ -533,27 +533,18 @@ class StochasticSolver:
                 ignored.setdefault((c, p, t), (f, []))[1].append((s, is_rolling, trig_period, trig_step))
         if not ignored:
             return
-        items = []
+        details = {}
         for (c, p, t), (f, reached_by) in ignored.items():
             who = " and ".join(
                 (f"roll {str(s)!r}" if is_rolling else f"solve {str(s)!r}")
                 + f", which fans out at period {str(tp)!r} (analysis_time {str(ts)!r})"
                 for s, is_rolling, tp, ts in reached_by
             )
-            items.append(
-                f"solve {str(c)!r}, period {str(p)!r} at analysis_time {str(t)!r} (forecast branches "
-                + ", ".join(repr(str(b)) for b in f)
-                + f"), in the horizon of {who}"
-            )
-        from flextool.engine import _behaviour_changes
-        _behaviour_changes.warn_once(
-            ("unfanned_forecast_cohorts",),
-            "Warning: stochastic_branches declares forecasts where no solve or roll fans out, and FlexTool "
-            "ignores them: " + "; ".join(items) + ". A solve or roll fans out once, at its first reveal, and "
-            "its branches read the forecasts made then through the rest of its horizon. To use these "
-            "forecasts, make a roll start there (rolling_solve_jump) or put the later fan in a separate "
-            "solve; otherwise remove these stochastic_branches rows.",
-        )
+            details[(str(c), str(p), str(t))] = (
+                "forecast branches " + ", ".join(repr(str(b)) for b in f) + f", in the horizon of {who}")
+        from flextool import run_warnings
+        # Each (complete solve, period, analysis_time) once per run.
+        run_warnings.warn_grouped("W-0508", list(details), per_run=True, details=details)
 
     def _check_realized_switch(
         self,

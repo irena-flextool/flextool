@@ -264,21 +264,96 @@ groups.
 owner-selected invested trade + in-region capacity into a whole-system
 `SolveHandoff` (the TIER-1 invest→dispatch chain) so a downstream rolling
 or monolithic dispatch solve consumes the realised capacity exactly as it
-would after any other invest solve. The orchestrator records which Benders
-solves produced an invest handoff and threads it forward; a downstream
+would after any other invest solve. With the final solve on (§2.9) the
+final solve's full handoff replaces this TIER-1 one. The orchestrator
+records which Benders solves produced an invest handoff
+(`_benders_invest_handoff_names`) and threads it forward; a downstream
 solve that would consume a Benders solve which produced none is rejected
 loudly rather than silently dropping the link.
+
+### 2.9 Outputs: the final solve
+
+The master and the regions are never assembled into whole-system results
+(their prices would not be the whole model's, and there would be no
+investment marginal values). Instead, after the loop
+(`_PolarHighCascadeSolver._run_one`, Benders branch) the solve **falls
+through to the monolithic path** under the same solve name and the same
+`FlexData`, with the `BendersResult` as `_bfinal`:
+
+- `final_solve_on(run_options)` reads `--benders-final-solve` /
+  `FLEXTOOL_BENDERS_FINAL_SOLVE` (`on` default; no DB setting). The final
+  solve runs when it is on, the Benders rc is 0 and there is a finite
+  incumbent; a model without investments runs it too (nothing is pinned).
+- Before the build: `gc.collect()` + `_try_malloc_trim()` (the master /
+  region `WarmProblem`s are gone) and two console lines,
+  `[benders <s>] final solve: the whole model with these investments fixed`
+  and the `--benders-final-solve off` hint.
+- Cold build only (`warm_active = False`); on HiGHS forced through the
+  MPS subprocess (`_save_memory = True`), so a killed or out-of-memory
+  child is a failed final solve, not a lost run; commercial solvers take
+  their normal cold path with the solve's own options.
+- `pin_invest_decisions(pb, bres.invest_solution_vars)`
+  (`engine/solve/_benders_final.py`) right after `build_flextool`, before
+  Layer 2: `v_invest` / `v_divest` / `v_divest_built` / `v_extend` (`_p`,
+  `_n`) get the bounds `value ± PIN_BAND · max(1, |value|)` (`PIN_BAND`
+  = 1e-6) in real units, the value first clamped into the column's bounds
+  (an integer family: fixed at the rounded value). The band absorbs a
+  Benders value a solver tolerance outside a row bound of the whole model
+  (a floor, a group or cumulative limit whose columns are all pinned),
+  which fixed exactly would make presolve call the final LP infeasible. The aggregates
+  `v_divested_built_*` / `v_extended_*` are defined by equalities and not
+  pinned. A column without a value, a value without a column, a duplicate
+  or a family the model lacks is an internal `RuntimeError`.
+- Acceptance: the run record gets `solve_benders_final(accepted,
+  model_status, objective)` (`benders.final_solve` in `_run_status.json`)
+  instead of `solve_classified`, so the solve's `acceptance` / `state`
+  stay the Benders verdict (a non-converged solve stays `not_converged`).
+  Accepted → `check_final_objective(obj, LB, UB)` (slack
+  `1e-6 · max(|obj|, |LB|, |UB|)`; a non-finite bound is not checked); outside →
+  W-0572, results still written. Not accepted, a solve outcome raised by
+  the solver path (`_subprocess_solve.SolveOutcomeError` /
+  `_solver_dispatch.FlexToolSolveOutcomeError`: a status without a
+  solution, the watchdog's stop, a HiGHS child that crashed or was killed)
+  or a `MemoryError` while the whole model is built or its MPS written →
+  W-0572, return 0 (the Benders step and its TIER-1 handoff stay). Any
+  other exception (an option the solver refuses, a missing binary or
+  licence, an internal error) propagates: the run fails as without
+  Benders.
+- Accepted: `write_outputs_for_solve` and `build_handoff_from_solution` as
+  for any monolithic solve. The final step overwrites the Benders
+  `OrchestrationStep` but keeps `is_benders = True`, the gap / tolerance /
+  iterations, `optimal = converged`, `near_optimal = False` (so the
+  non-convergence banner of `_scan_cascade_optimality` still fires), and
+  sets `benders_results = "full"`.
+- `_dump_solve_inputs` and the `output_horizon` dump run once, from the
+  final solve; `warn_benders_no_dump` only with the final solve off.
+
+`OrchestrationStep.benders_results` records what the Benders solve wrote:
+
+| Value | When | Written under the solve's name |
+|---|---|---|
+| `full` | Final solve accepted | Every table, the full handoff |
+| `invest_slice` | Final solve off (W-0571) or not accepted (W-0572), and a later solve follows (`_later_solve_follows`) | `write_benders_invest_slice` (`engine/output/_benders_slice.py`): `_solve_order` entry, `v_obj` = UB, the invest / divest / extend parquets, `cohort_capacity`, the per-solve realized param / set slices, through the read-only `_FrameHighs` view of `invest_solution_vars`. No dispatch, duals, investment marginals, reserve / capacity-margin reports or handoff CSVs. TIER-1 handoff. |
+| `none` | Last solve with the final solve off (W-0570) or not accepted (W-0572); or the slice write failed (logged at ERROR) | Nothing. As the last step, the CLI end-of-run skip (`is_benders and benders_results != "full"`) records `outputs_skipped` (`parquet_state = "skipped"`), exit 0 |
+
+The dispatch-free slice cannot be the last solve's output: the output
+post-processing (`read_variables`, the `calc_*` steps) indexes the
+dispatch columns, so an investment-only table set for a Benders last solve
+is not built (4.7 candidate). Known limit of the slice: periods the
+Benders solve realizes but no later solve does have no dispatch rows.
 
 The `--region <GROUP_NAME>` flag is a separate, filter-only entry
 point that emits a per-region input directory and exits without
 solving — useful for inspecting how the rewriter sees a given region.
 
-### 2.9 Reference implementation
+### 2.10 Reference implementation
 
 | Symbol | Module |
 |---|---|
 | `solve_benders(data, *, ...)` — top-level entry | `flextool/engine/solve/_benders.py` |
 | `BendersResult` — return type | same |
+| `pin_invest_decisions`, `check_final_objective`, `final_solve_on` (final solve, §2.9) | `flextool/engine/solve/_benders_final.py` |
+| `write_benders_invest_slice` (investment-only results, §2.9) | `flextool/engine/output/_benders_slice.py` |
 | `Coupling`, `_build_arcs`, the master + cut loop | same |
 | `master_network_data` (network-only reduced FlexData for the master) | `flextool/engine/solve/_region_filter.py` |
 | `RegionSplit`, `HalfFlow`, `split` | same |
@@ -566,7 +641,7 @@ features. Quick map (full text in
 |---|---|---|
 | Benders + flex-temporal | Yes | Region subproblems and the master filter the coarse-step frames by node; a region↔master boundary may join nodes of different resolutions (the half-flows are hourly on both sides). |
 | Benders + rolling | No | One Benders solve is the unit of work for the outer rolling loop. Not currently wired; would require per-roll cut warm-start. The TIER-1 invest→dispatch handoff threads a Benders *invest* solve into a downstream *rolling dispatch* solve, which is the supported pattern. |
-| Benders + nested | Partial | The outer (parent) solve can be Benders, but the parent's handoff to children propagates only the invest→dispatch capacity, not per-region operational state. Treat as untested beyond the invest→dispatch chain. |
+| Benders + nested | Partial | The outer (parent) solve can be Benders. With the final solve on (default, §2.9) the children get the full handoff of the parent's final solve, as from an undecomposed parent (storage quotas / prices, cumulative carriers); with `--benders-final-solve off` only the invest→dispatch capacity (TIER-1). Treat as untested beyond the invest→dispatch chain. |
 | Flex-temporal + rolling | Yes | Each roll cuts its own coarse steps; a coarse step ends at the roll's realized end, and the roll carry reaches the first coarse row. |
 | Flex-temporal + nested | Yes | Each parent / child solve builds its own coarse steps; `fix_price` reads a coarse parent node's coarse-row dual. |
 | Flex-temporal + stochastic | Yes | Every branch period gets its own coarse steps; a branch's first coarse row starts from the trunk's state. |

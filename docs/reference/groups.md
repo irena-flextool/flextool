@@ -74,7 +74,7 @@ The margin of a *relative_of_peak_demand* group is `capacity_margin_relative` ×
 
 With representative periods, the row holds at the sampled time steps only, and the storage that counts is the storage of the sampled days: force-include the peak days. Over a coarse time step (`new_stepduration`) the row may be averaged (see below).
 
-Under spatial Benders decomposition (`decomposition_method` *benders_regional*), a capacity margin group (and an inertia or non-synchronous group) with nodes in more than one region is an error: each region would have to hold the whole margin. Use one group per region.
+Under spatial Benders decomposition (`decomposition_method` *benders_regional*), a capacity margin group (and an inertia or non-synchronous group) with nodes in more than one region is an error: each region would have to hold the whole margin. Use one group per region. The same holds for a group investment, retirement or cumulative-capacity limit with a value set (a method alone makes no limit): a minimum over entities of more than one region is an error, and so is a maximum (each region could use all of it), except a maximum of 0, which splits exactly. A flow limit of a flowGroup, or a user constraint's `constraint_flow_coeff`, on a connection between two regions is an error too: the decomposition replaces that connection with import and export flows in each region, which neither sees.
 
 ## CO2 costs and limits
 
@@ -92,7 +92,7 @@ The emissions that the CO2 price and the limits apply to are the fuel drawn from
 ## Decomposition (spatial Benders)
 
 - `decomposition_method` (on `group`) - Decomposition strategy to apply to this group. Currently supported: `none` (no decomposition; default) and `benders_regional` (the group becomes a spatial region when a solve sets `decomposition = benders` — the `_region` suffix emphasises that this is the *geographic* flavour, distinct from any future temporal variant). See [dev/decomposition.md](../dev/decomposition.md) for the algorithm, gap tolerances, and the membership classes the decomposer expects.
-- `decomposition` (on `solve`) - Whether *this solve* decomposes. `none` (default) solves monolithically; `benders` routes the solve through the spatial Benders coordinator (master trade flows + trade invest + per-region recourse, optimality cuts) over the `benders_regional` groups. Chosen per solve, so one chain can mix schemes. The optional knobs `benders_max_iter` (default `50`) and `benders_tolerance` (default `1e-3`) cap the cut loop and set the relative optimality-gap threshold.
+- `decomposition` (on `solve`) - Whether *this solve* decomposes. `none` (default) solves monolithically; `benders` routes the solve through the spatial Benders coordinator (master trade flows + trade invest + per-region recourse, optimality cuts) over the `benders_regional` groups. Chosen per solve, so one chain can mix schemes. The optional knobs `benders_max_iter` (default `50`) and `benders_tolerance` (default `1e-3`) cap the cut loop and set the relative optimality-gap threshold. A Benders solve ends by solving the whole model once with its investments fixed, which writes its results; see [Results of a Benders solve](../results.md#results-of-a-benders-solve) (and `--benders-final-solve off` when the whole model does not fit in memory).
 
 ## Flex-temporal decomposition (per-group step duration)
 
@@ -122,7 +122,7 @@ The emissions that the CO2 price and the limits apply to are the fuel drawn from
 
     **Mixed rows.** A row that mixes units or connections on the coarse step with others on the solve's step is checked at every time step of the solve. It sees the coarse flows as constant through their step. A coarse DC line in a DC network with a line at the solve's step keeps the angle difference across it constant through the coarse step, while the angles stay per time step.
 
-    **Exceptions.** Units and connections with a delay keep the solve's time step. In a Benders decomposition, flows that cross regions and every flow in the master keep the solve's step. In a stochastic solve, a unit or connection at a stochastic node, with online variables or providing reserves, keeps the solve's step when the forecasts are tied over only part of one of its coarse steps. In a realization solve, the same applies to one whose committed units online or reserve change within a coarse step or are pinned on only part of it.
+    **Exceptions.** Units and connections with a delay keep the solve's time step. In a Benders decomposition, flows that cross regions and every flow in the master keep the solve's step. In a stochastic solve, a unit or connection at a stochastic node, with online variables or providing reserves, keeps the solve's step when the forecasts are tied over only part of one of its coarse steps. In a realization solve, the same applies to one whose committed units online change within a coarse step or are pinned on only part of it.
 
     **Messages.** An info line lists the units and connections that use a coarse step, and those that keep the solve's step with the reason. A database upgraded from an earlier FlexTool version prints a notice naming the coarse units and connections whose results can differ from flows at the solve's step, and why.
 

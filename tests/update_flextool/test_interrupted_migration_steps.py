@@ -13,9 +13,10 @@ import re
 from pathlib import Path
 
 import pytest
-from spinedb_api import DatabaseMapping, from_database, import_data
+from spinedb_api import from_database, import_data
 
 from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_handle import open_database_mapping
 
 N = 8
 
@@ -25,14 +26,14 @@ class _Stop(RuntimeError):
 
 
 def _import(url: str, **data) -> None:
-    with DatabaseMapping(url, create=True) as db:
+    with open_database_mapping(url, create=True) as db:
         _, errors = import_data(db, **data)
         assert not errors, errors[:3]
         db.commit_session("pre-step data")
 
 
 def _snapshot(url: str) -> dict:
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         return {
             "values": {(pv["entity_class_name"], tuple(pv["entity_byname"]), pv["parameter_definition_name"],
                         pv["alternative_name"]): from_database(pv["value"], pv["type"])
@@ -49,7 +50,7 @@ def _snapshot(url: str) -> dict:
 
 
 def _run(url: str, step) -> None:
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         step(db)
         m._commit_step(db, "the step")
 
@@ -235,7 +236,7 @@ def _build_v57_memberships(url: str) -> None:
     from tests.update_flextool.test_v58_flowgroup_carveout import _build_v57_base
 
     _build_v57_base(url)
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         db.add_entity(entity_class_name="node", name="n")
         for g in ("flow_only", "dual"):
             db.add_entity(entity_class_name="group", name=g)

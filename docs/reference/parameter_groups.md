@@ -123,7 +123,7 @@ rerun fixes them all. A warning is printed once per scenario read in the run log
 - A negative `existing` (unit, connection or node). It is allowed: a unit with a negative capacity is an
   "anti-energy" unit whose flows run the other way, a node gets a negative storage capacity and a connection a
   negative transfer capacity. It is more often a typing mistake, and combined with a profile, `min_load`, storage
-  limits or invest / retire limits it can make the problem infeasible.
+  limits or invest / retire limits it can make the problem infeasible (see [negative `existing`](units.md#main-data-items-for-units)).
 - A map of a period parameter that can also vary over time (`availability`, `other_operational_cost`, ...) without
   an index name whose keys are neither periods nor time steps but look like time steps, on a parameter the
   time-series check does not cover (the value is not used).

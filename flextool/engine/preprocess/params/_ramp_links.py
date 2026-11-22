@@ -79,6 +79,34 @@ def online_stretch_wrap(dt: "pl.DataFrame | None", link: "pl.DataFrame | None") 
             .select("d", "t", pl.col("d").alias("d_previous"), "t_previous"))
 
 
+def online_free_start_cells(dt: "pl.DataFrame | None", wrap: "pl.DataFrame | None",
+                            rp_block_first: "pl.DataFrame | None" = None) -> pl.DataFrame:
+    """``(d, t)`` Utf8: the stretch starts (rows of ``wrap`` = ``dt_online_wrap``) where the units online start
+    free instead of cycling within their stretch.
+
+    A stretch start is free when it is the first step of its period ``d`` in ``dt`` (solve order), the period has
+    exactly one stretch (one ``wrap`` row: a continuous period, no gap) and the step is not a representative-block
+    start (``rp_block_first``).  That is the first step of the solve, of every forecast branch that starts there,
+    and of a period that does not continue the previous one.  A sampled period (several stretches: timeblocks with
+    gaps) and a representative block are samples of recurring operation: all their stretch starts keep cycling, the
+    first one included.  A carried first step is in ``wrap`` too; the model leaves out the processes that carry
+    their units online there (``_online``).  Empty when nothing is free.
+    """
+    empty = pl.DataFrame(schema={"d": pl.Utf8, "t": pl.Utf8})
+    if dt is None or wrap is None or wrap.height == 0 or dt.height == 0:
+        return empty
+    w = wrap.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+    one = w.group_by("d").agg(pl.len().alias("__n")).filter(pl.col("__n") == 1).select("d")
+    firsts = (dt.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+              .with_row_index("__i")
+              .group_by("d").agg(pl.col("t").sort_by("__i").first()))
+    cells = w.join(one, on="d", how="semi").join(firsts, on=["d", "t"], how="semi")
+    if rp_block_first is not None and rp_block_first.height > 0:
+        first = rp_block_first.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)).unique()
+        cells = cells.join(first, on=["d", "t"], how="anti")
+    return cells
+
+
 def ramp_link_fields(dt: "pl.DataFrame | None", link: "pl.DataFrame | None") -> dict:
     """The FlexData fields derived from the ramp predecessor links: ``dt_ramp_link`` (*link*) and
     ``dt_online_wrap`` (:func:`online_stretch_wrap` of ``dt`` and *link*).  Every setter of ``dt_ramp_link`` sets

@@ -156,3 +156,39 @@ def test_infeasible_run_writes_both_files(infeasible_db, tmp_path):
     assert acceptance_message in log_lines
     if last["log_anchor"] is not None:
         assert last["log_anchor"] in log_lines
+
+
+@pytest.fixture
+def placeholder_db(tmp_path) -> str:
+    """``coal_co2_limit`` with ``co2_max_period`` 1e18 (a "no limit" placeholder): the limits span 18 decades, more
+    than HiGHS fits before FlexTool's scaling; after Layer 2 they span 13.5 decades, so the guard warns (W-0543) and
+    the run solves."""
+    from tests.engine.autoscale.test_scaling_guard_runs import _co2, _scenario_db
+
+    return _scenario_db(tmp_path, "placeholder_1e18", [_co2(1e18)])
+
+
+@pytest.mark.parametrize("launcher", ["flextool_run_supervisor", "flextool.cli.cmd_run_flextool"])
+def test_the_scaling_guard_report_goes_to_the_run_log_not_the_console(placeholder_db, tmp_path, launcher):
+    """Review M2 (owner): a scaling-guard warning gets one coded line on the console; the report is in
+    ``_run.log`` (written by the pipe owner, or by the engine itself), after that line, and no log-only marker
+    shows."""
+    from flextool.run_record import LOG_ONLY_PREFIX
+
+    result = subprocess.run(
+        [sys.executable, "-m", launcher, placeholder_db, "--scenario-name", "placeholder_1e18",
+         "--work-folder", str(tmp_path / "work"), "--output-location", str(tmp_path / "out"),
+         "--write-methods", "parquet"],
+        capture_output=True, text=True, encoding="utf-8", cwd=str(REPO), env=_engine_env(), timeout=600,
+    )
+    console = result.stdout + result.stderr
+    assert result.returncode == 0, console
+    coded = [line for line in console.splitlines() if "[W-0543]" in line]
+    assert len(coded) == 1, console
+    assert LOG_ONLY_PREFIX not in console
+    assert not [line for line in console.splitlines() if line.startswith("W-0543 ")]  # the report's lines
+    log = (tmp_path / "out" / "output_parquet" / "placeholder_1e18" / RUN_LOG_FILE).read_text(encoding="utf-8")
+    report = [line for line in log.splitlines() if line.startswith("W-0543 ")]
+    assert report and "decades" in report[0], log[-3000:]
+    assert "co2_max_period" in log
+    assert log.index(coded[0].strip()) < log.index(report[0])

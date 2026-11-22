@@ -137,7 +137,8 @@ def test_invest_sets_are_non_none(invest_solve_data) -> None:
 
 
 @pytest.mark.solver
-def test_invest_dispatch_chain_handoff_reaches_dispatch(tmp_path) -> None:
+@pytest.mark.parametrize("final", ["on", "off"])
+def test_invest_dispatch_chain_handoff_reaches_dispatch(final, tmp_path, monkeypatch) -> None:
     """``run_chain_from_db`` on the invest scenario:
 
     1. completes both solves without error;
@@ -146,7 +147,12 @@ def test_invest_dispatch_chain_handoff_reaches_dispatch(tmp_path) -> None:
     3. the downstream dispatch step completed (real Solution, optimal);
     4. the dispatch consumed the invested capacity — its FlexData carries
        non-null ``p_entity_invested`` for the invested wind units.
+
+    The invest solve is a Benders solve: with its final solve (item 287, on by
+    default) its step holds the final solve's real Solution and full handoff;
+    with ``--benders-final-solve off`` the SnapshotSolution invest carrier.
     """
+    monkeypatch.setenv("FLEXTOOL_BENDERS_FINAL_SOLVE", final)
     from flextool.engine import run_chain_from_db
     from flextool.engine.solve._orchestration import SnapshotSolution
 
@@ -167,10 +173,16 @@ def test_invest_dispatch_chain_handoff_reaches_dispatch(tmp_path) -> None:
 
     # --- (2) the Lagrangian invest step deposited a non-empty handoff ---
     invest_step = steps[invest_key]
-    assert isinstance(invest_step.solution, SnapshotSolution), (
-        "invest step should carry a SnapshotSolution invest carrier, got "
-        f"{type(invest_step.solution).__name__}"
-    )
+    assert invest_step.is_benders
+    if final == "on":
+        assert invest_step.benders_results == "full"
+        assert not isinstance(invest_step.solution, SnapshotSolution)
+    else:
+        assert invest_step.benders_results == "invest_slice"  # its investment-only results (item 287 P3)
+        assert isinstance(invest_step.solution, SnapshotSolution), (
+            "invest step should carry a SnapshotSolution invest carrier, got "
+            f"{type(invest_step.solution).__name__}"
+        )
     assert invest_step.handoff is not None, (
         "invest step has no handoff — orchestrator deposit did not fire"
     )

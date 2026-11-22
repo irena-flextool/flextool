@@ -316,18 +316,15 @@ def test_rolling_lookahead_not_covered_by_roll_forecast_is_an_error(tmp_path_fac
 
 
 # ── 4c: a later forecast cohort that no solve or roll fans out at (item 229) ──
-_IGNORED_HEAD = ("Warning: stochastic_branches declares forecasts where no solve or roll fans out, and FlexTool "
-                 "ignores them: solve 'sol', period 'p2' at analysis_time 't0005' (forecast branches ")
-_IGNORED_TAIL = (" A solve or roll fans out once, at its first reveal, and its branches read the forecasts made "
-                 "then through the rest of its horizon. To use these forecasts, make a roll start there "
-                 "(rolling_solve_jump) or put the later fan in a separate solve; otherwise remove these "
-                 "stochastic_branches rows.")
-_ROLL_0_P2_IGNORED = (_IGNORED_HEAD + "'high', 'low'), in the horizon of roll 'sol_roll_0', which fans out at "
-                      "period 'p1' (analysis_time 't0001')." + _IGNORED_TAIL)
+_IGNORED = ("Warning: stochastic_branches forecasts where no solve or roll fans out; ignored "
+            "('sol, p2, t0005') [W-0508]")
+_ROLL_0_P2_IGNORED = (_IGNORED, "W-0508 sol, p2, t0005: forecast branches 'high', 'low', in the horizon of roll "
+                      "'sol_roll_0', which fans out at period 'p1' (analysis_time 't0001')")
 
 
 def _warnings(out: str) -> list[str]:
-    return [line for line in out.splitlines() if line.startswith("Warning: stochastic_branches declares")]
+    """The W-0508 line and its debug detail lines."""
+    return [line for line in out.splitlines() if "[W-0508]" in line or line.startswith("W-0508 ")]
 
 
 def _results(steps) -> dict:
@@ -343,8 +340,8 @@ def _results(steps) -> dict:
 @pytest.mark.parametrize(("rolling", "fans", "extra", "expected"), [
     pytest.param(
         None, _two_forecasts("p1", "t0001"), [("p2", "x", "t0005", "no", 0.5), ("p2", "mid", "t0005", "no", 0.5)],
-        _IGNORED_HEAD + "'mid', 'x'), in the horizon of solve 'sol', which fans out at period 'p1' "
-        "(analysis_time 't0001')." + _IGNORED_TAIL,
+        (_IGNORED, "W-0508 sol, p2, t0005: forecast branches 'mid', 'x', in the horizon of solve 'sol', which "
+         "fans out at period 'p1' (analysis_time 't0001')"),
         id="single"),
     pytest.param(
         (8.0, 12.0), [*_two_forecasts("p1", "t0001"), *_two_forecasts("p3", "t0009")],
@@ -353,7 +350,7 @@ def _results(steps) -> dict:
         (6.0, 12.0), [*_two_forecasts("p1", "t0001"), *_two_forecasts("p3", "t0009")],
         _two_forecasts("p2", "t0005"), _ROLL_0_P2_IGNORED, id="rolling-fan-after-roll-start"),
 ])
-def test_later_forecast_cohort_no_solve_fans_at_is_ignored(tmp_path_factory, capfd, rolling, fans, extra,
+def test_later_forecast_cohort_no_solve_fans_at_is_ignored(tmp_path_factory, coded_log, rolling, fans, extra,
                                                            expected) -> None:
     """A solve or roll fans out once, at its first reveal; forecasts declared where no solve or roll fans out are
     ignored with ONE warning per run (owner decision 2026-11-13; item 229 made them an error).  Single solve,
@@ -364,9 +361,9 @@ def test_later_forecast_cohort_no_solve_fans_at_is_ignored(tmp_path_factory, cap
     without the extra rows.  The valid cases -- a later cohort that another roll fans out at -- are test 4 / 4b
     and the next test."""
     base = _results(_run(tmp_path_factory, n_periods=3, fans=fans, rolling=rolling))
-    assert _warnings(capfd.readouterr().out) == []
+    assert _warnings(coded_log()) == []
     got = _results(_run(tmp_path_factory, n_periods=3, fans=[*fans, *extra], rolling=rolling))
-    assert _warnings(capfd.readouterr().out) == [expected]
+    assert _warnings(coded_log()) == list(expected)
     assert list(got) == list(base)
     for name in base:
         assert got[name][0] == pytest.approx(base[name][0], rel=1e-12)

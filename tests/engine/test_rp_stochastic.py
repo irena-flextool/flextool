@@ -601,7 +601,7 @@ _PLAIN_BWS = [["node", n, "storage_binding_method", "bind_within_solve"] for n i
 
 
 @pytest.mark.parametrize("fan", _FANS, ids=_FAN_IDS)
-def test_plain_within_solve_on_representative_periods_warns(tmp_path_factory, capsys, fan):
+def test_plain_within_solve_on_representative_periods_warns(tmp_path_factory, coded_log, fan):
     """The rp_multi_base_solve topology (lp_snapshot) with identical forecasts a / b and the batteries on plain
     bind_within_solve: the run solves and prints one warning line naming the batteries (owner decision 2026-11-19;
     from Phase 4 a configuration error: the plain cycle moves the level between the representative days without
@@ -610,14 +610,15 @@ def test_plain_within_solve_on_representative_periods_warns(tmp_path_factory, ca
     if not _PLAIN_BWS_DET:
         _PLAIN_BWS_DET.append(float(_lh2_run(tmp_path_factory, _PLAIN_BWS,
                                              patch=L._patch_rp_multi_base_solve)[LH2_SOLVE].solution.obj))
-    capsys.readouterr()
+    coded_log()
     step = _lh2_run(tmp_path_factory, [["solve", LH2_SOLVE, "stochastic_branches", _branches(*fan)]] + _PLAIN_BWS,
                     patch=L._patch_rp_multi_base_solve)[LH2_SOLVE]
     # One line: how many nodes and the first (review L4; the full list goes to the debug log).
-    lines = [ln for ln in capsys.readouterr().out.splitlines() if "without their weights" in ln]
+    log = coded_log()
+    lines = [ln for ln in log.splitlines() if ln.endswith("[W-0539]")]
     assert len(lines) == 1, lines
-    assert "3 storage nodes (battery_A, ...) use a storage_binding_method (e.g. battery_A: bind_within_solve)" in (
-        lines[0])
+    assert "(3 cases, e.g. 'battery_A') [W-0539]" in lines[0]
+    assert "W-0539 battery_A: bind_within_solve on representative timeset(s)" in log
     assert float(step.solution.obj) == pytest.approx(_PLAIN_BWS_DET[0], rel=1e-7)
 
 

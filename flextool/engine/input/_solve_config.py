@@ -533,8 +533,8 @@ class SolveConfig:
         # (an author-declared deterministic solve right after its parent, see
         # ``solve._realization.configured_realization_solve``).  Consumers:
         # roll interleaving, the PIN translation, the CarryRouter siblings and
-        # the realized-branch projection in ``_run_model``, the fix_online / fix_reserve
-        # producers and the silent last-wins pair.  The realization solve is
+        # the realized-branch projection in ``_run_model``, the fix_online
+        # producer and the silent last-wins pair.  The realization solve is
         # deterministic (no ``stochastic_branches``), so
         # ``create_stochastic_periods`` leaves its
         # ``solve_branch__time_branch`` scaffolding empty; the projection post-pass
@@ -1551,7 +1551,7 @@ class SolveConfig:
         """Register the author-declared *realization_solve* as the realization solve of *parent*.
 
         The solve keeps its authored configuration; registering it gives it the same treatment as an
-        engine-spawned sibling: it takes its parent's pins (investment, NA-tied online and reserve), the
+        engine-spawned sibling: it takes its parent's pins (investment, NA-tied units online), the
         stochastic parameters projected onto the parent's realized branch, and the parent's realized
         window through a silent last-wins.
         """
@@ -1658,9 +1658,8 @@ class SolveConfig:
 
     def reduce_detail_overridden(self, realization_solve: str) -> list[str]:
         """The levels an author set on the realization solve *realization_solve* that its parent's levels override
-        (one line per parameter whose authored value differs from the parent's): a realization solve pins units
-        online and reserves to its parent's values, so it uses the parent's levels.  Empty when it sets none, or
-        the same."""
+        (one line per parameter whose authored value differs from the parent's): a realization solve uses the
+        parent's levels, so that its online variables and reserve rows match those of the solve it realizes.  Empty when it sets none, or the same."""
         parent = self.realized_dispatch_parent.get(realization_solve)
         if parent is None:
             return []
@@ -1674,8 +1673,8 @@ class SolveConfig:
             own, used = str(raw).strip().lower(), resolve(realization_solve)
             if own != used:
                 out.append(f"realization solve '{realization_solve}' sets {param} = '{raw}', but it uses "
-                           f"'{used}', the value of its parent solve '{parent}' (it takes the parent's units "
-                           "online and reserves).")
+                           f"'{used}', the value of its parent solve '{parent}' (so that its online variables "
+                           "and reserve rows match those of the solve it realizes).")
         return out
 
     def reduce_unit_detail_for(self, solve_name: str) -> str:

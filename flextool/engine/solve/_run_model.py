@@ -260,20 +260,11 @@ def _warn_plain_cyclic_in_rp_solve(*, complete_solve_name: str, active_timeset_n
            .filter(~pl.col("node").is_in([n for n, m in sse.items() if m == "fix_start_end"])))
     if hit.height == 0:
         return
-    from flextool.engine import _behaviour_changes
+    from flextool import run_warnings
     rp = sorted({ts for ts in active_timeset_names if ts in rp_weights})
-    first, method = hit.row(0)
-    variants = ", ".join(f"{m} -> {_RP_UNWEIGHTED_CYCLES[m]}" for m in sorted(set(hit[col].to_list())))
-    _behaviour_changes.storage_message(
-        "storage_plain_cyclic_rp", complete_solve_name, hit["node"].to_list(),
-        lambda named: (f"Warning: solve '{complete_solve_name}' is on representative periods (timeset(s) "
-                       f"{', '.join(rp)}) and {named} use a storage_binding_method (e.g. {first}: {method}) that "
-                       "moves the storage level from one representative period to the next without their weights. "
-                       "This is reasonable when the representative periods have equal weights or when the timing of "
-                       "the storage's inflows does not matter (e.g. pumped hydro, large heat storage). The "
-                       f"*_blended_weights methods ({variants}) weight the transfer."),
-        details=f"Plain cyclic storage on representative periods in solve '{complete_solve_name}': "
-                + ", ".join(f"{node} ({m})" for node, m in hit.iter_rows()) + ".")
+    details: dict = {node: f"{m} on representative timeset(s) {', '.join(rp)}; {_RP_UNWEIGHTED_CYCLES[m]} weights "
+                           "the transfer" for node, m in hit.iter_rows()}
+    run_warnings.warn_grouped("W-0539", hit["node"].to_list(), solve=complete_solve_name, details=details)
 
 
 def _reject_plain_forward_in_rp_solve(*, complete_solve_name: str, active_timeset_names: list, rp_weights: dict,
@@ -463,12 +454,11 @@ def _storages_named(names) -> str:
     return _behaviour_changes.storages_named(names)
 
 
-def _warn_storages(kind: str, complete_solve_name: str, names: list, text_of, details: str = "") -> None:
-    """A storage warning in the owner's format: one printed line per kind and solve, naming how many and the first
-    (:func:`flextool.engine._behaviour_changes.storage_message`); the per-node details go to the debug log."""
-    from flextool.engine import _behaviour_changes
-    _behaviour_changes.storage_message(kind, complete_solve_name, names, text_of,
-                                       details or f"Solve '{complete_solve_name}' ({kind}): {', '.join(names)}.")
+def _warn_storages(code: str, complete_solve_name: str, names: list, details: str) -> None:
+    """A coded storage warning: one line per code and complete solve, naming how many and the first
+    (:func:`flextool.run_warnings.warn_grouped`); *details* (the roll, the period) go to the debug log."""
+    from flextool import run_warnings
+    run_warnings.warn_grouped(code, names, solve=complete_solve_name, details=details)
 
 
 def _put_roll_end(provider, rows: list) -> None:
@@ -616,15 +606,11 @@ def _anchor_cyclic_in_rolling(*, state, solve: str, complete_solve_name: str, in
                 store.warned.add((instance, node))
                 no_start.append(node)
     if unknown_start:
-        _warn_storages("roll_start_unknown", complete_solve_name, unknown_start,
-                       lambda named: (f"Warning: solve '{complete_solve_name}': the start level of {named} in an "
-                                      f"instance is not known; the closing roll ({solve}) ends at the carried level "
-                                      "instead."))
+        _warn_storages("W-0580", complete_solve_name, unknown_start,
+                       f"closing roll {solve} ends at the carried level: {', '.join(unknown_start)}")
     if no_start:
-        _warn_storages("nested_roll_cycles", complete_solve_name, no_start,
-                       lambda named: (f"Warning: solve '{complete_solve_name}': {named} fixed by the upper-level "
-                                      f"solve have no start level from it nor a fix_start in the first roll ({solve}); "
-                                      "the roll cycles on itself."))
+        _warn_storages("W-0581", complete_solve_name, no_start,
+                       f"first roll {solve} cycles on itself: {', '.join(no_start)}")
     if forward:
         is_fwd = pl.col("node").cast(pl.Utf8).is_in(forward)
         provider.put(_SBM_KEY, sbm.with_columns(
@@ -715,10 +701,8 @@ def _scope_rows(*, complete_solve_name: str, solve: str, instance: tuple, scoped
         names.append(node)
     store.scope_pending[solve] = (instance, sorted(scoped))
     if missing:
-        _warn_storages("period_start_unknown", complete_solve_name, missing,
-                       lambda named: (f"Warning: solve '{complete_solve_name}': the level {named} started a period at "
-                                      f"is not known; roll {solve} continues the period from the carried level and "
-                                      "closes it there."))
+        _warn_storages("W-0582", complete_solve_name, missing,
+                       f"roll {solve} continues the period from the carried level: {', '.join(missing)}")
     if names:
         from flextool.engine import _behaviour_changes
         _behaviour_changes.notice("rolling_cyclic_storage_anchored", "nodes", names, solve=complete_solve_name)
@@ -1096,12 +1080,8 @@ def _check_borrowed_start(store: _RollingStorage, solve: str, complete_solve_nam
            and abs(float(own[n]) - float(upper[n])) > 1e-6 * max(1.0, abs(float(upper[n])))]
     if off:
         _warn_storages(
-            "borrowed_start_mismatch", complete_solve_name, [n for n, _a, _b in off],
-            lambda named: (f"Warning: solve '{complete_solve_name}' starts {named} from fix_start, at another level "
-                           "than the upper-level solve that fixes them; the difference is energy the lower solve "
-                           "gets or loses against the upper plan."),
-            details=f"Solve '{complete_solve_name}', start from fix_start vs upper plan: "
-                    + ", ".join(f"{n} {a:.6g} MWh (upper {b:.6g})" for n, a, b in off))
+            "W-0583", complete_solve_name, [n for n, _a, _b in off],
+            "start from fix_start vs upper plan: " + ", ".join(f"{n} {a:.6g} MWh (upper {b:.6g})" for n, a, b in off))
 
 
 def _rp_period_previous(jump_list: list, active_time_list: dict, rp_periods: list[str],
@@ -1841,9 +1821,8 @@ def native_run_model(state, solver) -> int:
             continue
         # Cut to the sibling's own periods: a single solve's realization solve
         # dispatches its realized periods only, a realization roll its jump
-        # (item 255).  The NA-tied online / reserve pins need no cut: the
-        # model pins only the sibling's declared cells (online_fix_eq,
-        # reserve_fix_eq).
+        # (item 255).  The NA-tied online pin needs no cut: the model pins
+        # only the sibling's declared cells (online_fix_eq).
         _sibling_periods = set(active_time_lists.get(sibling, {}))
         solve_branch__time_branch_lists[sibling] = [
             row for row in project_realized_branch_time_branch_rows(
@@ -2728,8 +2707,8 @@ def native_run_model(state, solver) -> int:
             )
         # The roll-forward carriers tied to the realised end are routed, not taken from the sequential / parent
         # handoff: the latest state realised before this sub-solve at its nesting level or deeper (_carry_routing;
-        # none → the sub-solve is the first of its level: storage starts from fix_start, online and ramps from the
-        # solve's own wrap).  Both storage keys hold the same frame; the override translate below still wins.  The
+        # none → the sub-solve is the first of its level: storage starts from fix_start, units online start free
+        # and ramps have no row at the first step).  Both storage keys hold the same frame; the override translate below still wins.  The
         # running totals (cumulative_*) stay with the sequential predecessor, which passes them on.
         carry_router.start(solve)
         _first_step = _carry_routing.first_step(active_time_lists[solve])

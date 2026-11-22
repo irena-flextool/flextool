@@ -969,7 +969,8 @@ OUTPUT_DESCRIPTION: dict[str, str] = {
     "co2_price_period_d_g": "Shadow price of the per-period CO2 cap of each group, in the currency of the period "
                             "(positive when the cap binds).",
     "co2_price_total_d_g": "Shadow price of the cumulative CO2 cap of each group, in discounted currency per "
-                           "tonne, the same in every period.",
+                           "tonne, the same in every period (a stochastic solve: the sum over its scenario "
+                           "paths).",
     "reserve_prices_dt_ppg": "Price of each reserve, direction and group in each time step: the cost of one more "
                              "MW of every requirement of the group held for the step.",
     # Reserves

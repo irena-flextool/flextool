@@ -102,7 +102,15 @@ def test_full_load_linear(tmp_path_factory) -> None:
 def test_part_load_linear(tmp_path_factory) -> None:
     """West demand alternates 800 / 200 MW and starts are expensive: the
     unit stays online at 800 MW and runs at part load, burning
-    ``slope · out + section · online`` (200 MW out → 500 MW coal)."""
+    ``slope · out + section · online`` (200 MW out → 500 MW coal).
+
+    Hand derivation: dropping to 200 MW online at a low hour and restarting
+    600 MW in the next hour costs 1e4 €/MW of start-up, far more than the
+    section fuel it saves, so the unit holds 800 MW online in the low hours
+    t0002..t0046.  The last hour t0048 (low) has no next hour and the solve
+    has no end condition (its first hour starts free and links to nothing),
+    so the unit sheds to 200 MW online there with a free shut-down: coal =
+    (slope + section) · 200."""
     low_hours = (f"t{i:04d}" for i in range(2, N_STEPS + 1, 2))
     west_inflow = time_map({t: -200.0 for t in low_hours}, -800.0)
     vals = _mle() + [
@@ -115,14 +123,15 @@ def test_part_load_linear(tmp_path_factory) -> None:
     step = list(run(tmp_path_factory, url, scen).values())[-1]
     out = _assert_fuel_identity(step, "linear")
     on = online(step, CHP)
-    part = [(o, n) for o, n in zip(out, on) if o < n - 1.0]
-    assert part, "expected part-load hours (output below online capacity)"
-    for o, n in part:
+    part = [(i, o, n) for i, (o, n) in enumerate(zip(out, on)) if o < n - 1.0]
+    assert [i + 1 for i, _o, _n in part] == list(range(2, N_STEPS, 2))
+    for _i, o, n in part:
         assert o == pytest.approx(200.0, rel=1e-6)
         assert n == pytest.approx(800.0, rel=1e-6)
+    assert on[-1] == pytest.approx(200.0, rel=1e-6)
     coal = flow(step, CHP, COAL, CHP)
-    assert min(coal) == pytest.approx(SLOPE * 200.0 + SECTION * 800.0,
-                                      rel=1e-6)
+    assert coal[1] == pytest.approx(SLOPE * 200.0 + SECTION * 800.0, rel=1e-6)
+    assert coal[-1] == pytest.approx((SLOPE + SECTION) * 200.0, rel=1e-6)
 
 
 def test_integer_online(tmp_path_factory) -> None:

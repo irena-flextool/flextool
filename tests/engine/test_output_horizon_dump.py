@@ -241,13 +241,16 @@ def _lh2_chain() -> list[str]:
     return chain
 
 
-def test_benders_solve_warns_and_is_not_dumped(tmp_path_factory, caplog, capfd) -> None:
-    """D6: a Benders solve writes no outputs, so under the flag it gives one warning naming the solve (also
-    printed to the console once per run: the runner's logger is pinned at ERROR) and writes no parts; the
-    monolithic dispatch solve after it is dumped."""
-    url, scen = make_db(tmp_path_factory, alt="hz_benders", values=[FLAG_ON], base_chain=_lh2_chain(),
+@pytest.mark.parametrize("final", ["on", "off"])
+def test_benders_solve_is_dumped_by_its_final_solve(final, tmp_path_factory, caplog, capfd, monkeypatch) -> None:
+    """D6 / item 287: a Benders solve's final solve (on by default) is a monolithic solve and is dumped like the
+    dispatch solve after it.  With ``--benders-final-solve off`` the Benders solve writes no outputs, so under the
+    flag it gives one warning naming the solve (also printed to the console once per run: the runner's logger is
+    pinned at ERROR) and writes no parts; the monolithic dispatch solve after it is dumped."""
+    monkeypatch.setenv("FLEXTOOL_BENDERS_FINAL_SOLVE", final)
+    url, scen = make_db(tmp_path_factory, alt=f"hz_benders_{final}", values=[FLAG_ON], base_chain=_lh2_chain(),
                         fixture_json=LH2_FIXTURE_JSON)
-    work = tmp_path_factory.mktemp("hz_benders_w") / "work"
+    work = tmp_path_factory.mktemp(f"hz_benders_{final}_w") / "work"
     with caplog.at_level(logging.WARNING):
         steps = _run(url, scen, work)
     benders = [n for n, s in steps.items() if getattr(s, "is_benders", False)]
@@ -255,8 +258,12 @@ def test_benders_solve_warns_and_is_not_dumped(tmp_path_factory, caplog, capfd) 
     others = [n for n in steps if n not in benders]
     assert others, list(steps)
     msgs = [r.getMessage() for r in caplog.records if "raw horizon dump is not available" in r.getMessage()]
-    assert len(msgs) == len(benders) and all(any(b in m for m in msgs) for b in benders)
-    assert capfd.readouterr().out.count("raw horizon dump is not available for Benders solves") == 1
     parts = list((work / "output_raw" / "horizon").glob("*/*.parquet"))
     rolls = {p.stem.split("__", 1)[1] for p in parts}
+    if final == "on":
+        assert not msgs and "raw horizon dump is not available" not in capfd.readouterr().out
+        assert rolls == set(steps)
+        return
+    assert len(msgs) == len(benders) and all(any(b in m for m in msgs) for b in benders)
+    assert capfd.readouterr().out.count("raw horizon dump is not available for Benders solves") == 1
     assert rolls == set(others)

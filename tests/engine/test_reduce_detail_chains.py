@@ -200,8 +200,8 @@ def test_full_storage_roll_after_an_online_dispatch_starts_cold(tmp_path_factory
     """Nested invest -> rolling storage (48 h / 24 h) -> rolling dispatch (12 h / 6 h) with coal unit commitment
     (linear, min_load 0.4) and a ramp limit; the dispatch solve has reduce_unit_detail_method = online.  Storage roll
     1 (online variables kept) continues the ramp flow the last dispatch roll realised, which carries no units
-    online: coal_plant's ramp and commitment start cold there (one info line per solve), where the online / ramp
-    carry check used to raise."""
+    online: coal_plant's ramp and commitment start there as at the start of a solve (no ramp row, units online
+    free at the first step; one info line per solve), where the online / ramp carry check used to raise."""
     import copy
 
     from polar_high import Param
@@ -223,9 +223,9 @@ def test_full_storage_roll_after_an_online_dispatch_starts_cold(tmp_path_factory
             ["solve", "dispatch_fullYear_roll", "reduce_unit_detail_method", _s("online")]]
     url, scen = make_db(tmp_path_factory, alt="rdc_nest", base_chain=NESTED, values=vals)
     steps = run(tmp_path_factory, url, scen)
-    cold = [ln for ln in capsys.readouterr().out.splitlines() if "start cold" in ln]
-    assert cold == ["Solve storage_fullYear_6h: ramp and commitment of coal_plant start cold (the solve it continues "
-                    "from left out online variables, reduce_unit_detail_method)."]
+    cold = [ln for ln in capsys.readouterr().out.splitlines() if "as at the start of a solve" in ln]
+    assert cold == ["Solve storage_fullYear_6h: ramp and commitment of coal_plant start as at the start of a solve "
+                    "(the solve it continues from left out online variables, reduce_unit_detail_method)."]
     names = list(steps)
     s1 = names.index("storage_fullYear_6h_roll_1")
     producer = steps[names[s1 - 1]]
@@ -342,8 +342,8 @@ def test_declared_realization_solve_warning_from_the_run(tmp_path_factory, capsy
                               keep_solutions=True)
     lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("Warning: realization solve")]
     assert lines == ["Warning: realization solve 'stoch_rd_realized_dispatch' sets reduce_system_detail_method = "
-                     "'reserves', but it uses 'none', the value of its parent solve 'stoch_rd' (it takes the "
-                     "parent's units online and reserves)."]
+                     "'reserves', but it uses 'none', the value of its parent solve 'stoch_rd' (so that its "
+                     "online variables and reserve rows match those of the solve it realizes)."]
     assert all(s.optimal for s in steps.values()), list(steps)
 
 

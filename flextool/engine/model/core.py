@@ -108,7 +108,7 @@ from flextool.engine.model import _extend
 from flextool.engine.model import _retire_built
 from flextool.engine.model import _self_discharge
 from flextool.engine.model import _unit_floors
-from flextool.engine.input._axis_enums import alias_to_axis, align_join_dtypes, rename_to_axis
+from flextool.engine.input._axis_enums import alias_to_axis, align_join_dtypes, join_aligned, rename_to_axis
 from flextool.engine.model._common import (
     _availability_factor,
     _connection_procs,
@@ -192,8 +192,9 @@ USER_CSTR: tuple[str, ...]   = ("p_constraint_constant",)
 PROFILES:  tuple[str, ...]   = ("p_profile_value", "p_process_existing_count")
 STORAGE:   tuple[str, ...]   = ("nodeState", "dtttdt",
                                 "p_state_upper", "p_state_unitsize")
-# Online reads its predecessors only from the ramp links (dt_ramp_link) and the stretch wrap (dt_online_wrap):
-# without them every step would start from zero units online (a start-up charged at every step).
+# Online reads its predecessors only from the ramp links (dt_ramp_link) and the stretch wrap (dt_online_wrap, with
+# the free starts of _ramp_links.online_free_start_cells): without them every step would start from zero units
+# online (a start-up charged at every step).
 ONLINE: tuple[str, ...] = (
     "process_online", "p_online_dt",
     "dt_ramp_link", "dt_online_wrap", "p_process_existing_count",
@@ -394,7 +395,7 @@ class _Build:
     # p_oint_idx with a coarse process only at its coarse steps' first fine steps (_coarse_flows.domain).
     p_olin_rows: pl.DataFrame | None = None
     p_oint_rows: pl.DataFrame | None = None
-    # (p, r, ud, n, d, t) of the registered v_reserve columns and of reserve_fix_eq / non_anticipativity_reserve:
+    # (p, r, ud, n, d, t) of the registered v_reserve columns and of non_anticipativity_reserve:
     # prundt with a coarse process only at its coarse steps' first fine steps (_coarse_flows.domain).
     prundt_rows: pl.DataFrame | None = None
     twoway1var_arcs: pl.DataFrame | None = None      # (p, source, sink) of v_flow_back
@@ -909,6 +910,7 @@ def _check_storage_accounting(b: _Build) -> None:
     go to the log at debug level.
     """
     from flextool.engine import _behaviour_changes
+    from flextool import run_warnings
     d = b.d
     carried = set()
     if _has_rows(_self_discharge.carried_nodes(d)):
@@ -955,16 +957,10 @@ def _check_storage_accounting(b: _Build) -> None:
         if sizes:
             # One line per solve (the first solve of each level: a carried start is not an endowment).
             total = sum(mwh[n] for n in sizes)
-            _behaviour_changes.storage_message(
-                "storage_endowment", b.solve_name, sorted(sizes),
-                lambda named: (f"Warning: {named} start {where} at storage_state_start on capacity the solve "
-                               "cannot change and end free (bind forward only, no fix_end, use_reference_value or "
-                               f"upper-level fix), so the run may use this start energy ({total:.6g} MWh in total, "
-                               "on the existing capacity before any retirement in this solve) "
-                               "without producing it. This is a valid model of an initial stock (an endowment); if "
-                               "the storage should return it, use fix_start_end, a cyclic storage_binding_method or "
-                               "use_reference_value."),
-                details=f"Endowment in {where}: {', '.join(sizes[n] for n in sorted(sizes))}.")
+            run_warnings.warn_grouped(
+                "W-0534", sorted(sizes), solve=b.solve_name,
+                details=f"Endowment in {where}: {', '.join(sizes[n] for n in sorted(sizes))} "
+                        f"({total:.6g} MWh in total, on the existing capacity before any retirement).")
     if not d.storage_solve_at_model_end:
         # A free start (fix_nothing, not use_reference_value) is matched by the later solve that reaches the end of
         # the model and continues the chain (_run_model._sequence_match_rows, _anchor_cyclic_in_rolling: the level
@@ -973,15 +969,7 @@ def _check_storage_accounting(b: _Build) -> None:
         rp_nodes = set(str(n) for n in d.nodeState_rp["n"].to_list()) if _has_rows(d.nodeState_rp) else set()
         decided = sorted(n for n in forward - nested - rp_nodes if investable(n) and (n in fix_start or n in reference))
         if decided:
-            _behaviour_changes.storage_message(
-                "storage_end_match_not_applied", b.solve_name, decided,
-                lambda named: (f"Warning: {named} start {where} at a level the solve decides by investing "
-                               "(storage_state_start, or the reference value, of capacity it can build or extend) "
-                               "and chain forward, but the "
-                               "solve does not reach the end of the model, so the end is not held at least at that "
-                               "start: built storage can deliver its start energy without producing it. Use "
-                               "bind_within_solve(_blended_weights), or fix_start_end with storage_state_end at least "
-                               "storage_state_start."))
+            run_warnings.warn_grouped("W-0535", decided, solve=b.solve_name)
 
 
 def _warn_reference_start_mismatch(b: _Build, share: dict) -> None:
@@ -993,15 +981,10 @@ def _warn_reference_start_mismatch(b: _Build, share: dict) -> None:
     off = sorted(n for n, v in ref.items() if n in share and abs(share[n] - v) > 1e-9)
     if not off:
         return
-    from flextool.engine import _behaviour_changes
-    solve = _behaviour_changes.complete_solve_of(b.solve_name)
-    _behaviour_changes.storage_message(
-        "storage_reference_start_mismatch", b.solve_name, off,
-        lambda named: (f"Warning: in solve '{solve}' {named} with use_reference_value have a storage_state_start "
-                       "(fix_start) that differs from the storage_state_reference_value at their first step; the "
-                       "start uses storage_state_start."),
-        details=f"Reference start mismatch in solve '{solve}': " + ", ".join(
-            f"{n} storage_state_start {share[n]:.6g}, reference {ref[n]:.6g}" for n in off))
+    from flextool import run_warnings
+    run_warnings.warn_grouped(
+        "W-0536", off, solve=b.solve_name,
+        details={n: f"storage_state_start {share[n]:.6g}, reference {ref[n]:.6g}" for n in off})
 
 
 def _warn_storage_slack_bypass(b: _Build) -> None:
@@ -1014,7 +997,7 @@ def _warn_storage_slack_bypass(b: _Build) -> None:
     inflow or demand, e.g. a battery): a carrier node's slack is the intended outlet of its unmet demand.  One
     printed line per solve (the rolls of a rolling solve count as one solve), the node pairs in the log.
     """
-    from flextool.engine import _behaviour_changes
+    from flextool import run_warnings
     d = b.d
     off = getattr(d, "nodeBalance_penalty_off", None)
     if not (_has_rows(off) and _has_rows(d.nodeState) and _has_rows(d.process_source_sink)):
@@ -1044,19 +1027,9 @@ def _warn_storage_slack_bypass(b: _Build) -> None:
                 linked.setdefault(n, set()).update(hard)
     if not linked:
         return
-    solve = _behaviour_changes.complete_solve_of(b.solve_name)
-    where = f"solve '{solve}'" if solve else "this solve"
-    first = sorted(linked)[0]
-    _behaviour_changes.storage_message(
-        "storage_slack_bypass", b.solve_name, sorted(linked),
-        lambda named: (f"Warning: in {where} {named} with balance slack (penalty_method not off) are linked by a "
-                       f"unit or a connection to node(s) with penalty_method off (e.g. {first} to "
-                       f"{_node_list(sorted(linked[first]))}). The storage slack can supply or absorb energy for those "
-                       "nodes and so bypass their hard balance at the storage node's penalty. If the balance should "
-                       "hold, set penalty_method off on the storage node too (or give it a high penalty), so that a "
-                       "shortfall shows where it arises."),
-        details=f"Storage slack bypass in {where}: "
-                + ", ".join(f"{n} ({_node_list(sorted(linked[n]))})" for n in sorted(linked)))
+    run_warnings.warn_grouped(
+        "W-0537", sorted(linked), solve=b.solve_name,
+        details={n: f"linked to penalty_method off node(s) {_node_list(sorted(linked[n]))}" for n in sorted(linked)})
 
 
 STORAGE_START_END_MESSAGE = (
@@ -4607,6 +4580,28 @@ def _eq_co2_max_total(b: _Build) -> None:
     )
 
 
+def _user_constraint_flow_terms(b: _Build, idx: pl.DataFrame, weight: Param | None = None) -> list:
+    """The flow terms of the user constraints on the arcs ``idx`` (p, source, sink, cn), open dims (cn, d, t).
+
+    coef[p,s,k,cn]·unitsize[p]·v_flow[p,s,k,d,t], plus on a one-variable two-way arc (``twoway1var_arcs``:
+    ``no_losses_no_variable_cost`` without fork, DC power-flow lines) the same coefficient on its reverse flow
+    v_flow_back[p,s,k,d,t]: a two-variable connection carries its reverse flow on its own reverse arc, which takes
+    the coefficient of (c, n) too (both arcs touch n), so a connection counts by coef·(forward + reverse) whatever
+    its transfer method.  ``weight`` (d, t) multiplies both (the period_total row).
+    """
+    terms = []
+    pairs = [(b.v_flow, idx)]
+    if b.v_flow_back is not None and _has_rows(b.twoway1var_arcs):
+        back = join_aligned(idx, b.twoway1var_arcs.select("p", "source", "sink"),
+                            on=["p", "source", "sink"], how="semi")
+        if back.height > 0:
+            pairs.append((b.v_flow_back, back))
+    for var, rows in pairs:
+        term = Where(var * b.d.p_unitsize, rows) * b.d.p_flow_constraint_coef
+        terms.append(term if weight is None else term * weight)
+    return terms
+
+
 def _eq_user_constraints(b: _Build) -> None:
     """User-defined constraints."""
     if not b.has_user_cstr:
@@ -4618,6 +4613,7 @@ def _eq_user_constraints(b: _Build) -> None:
     # ─── EQ. ─── process_constraint_{equal,less_than,greater_than}[_period] ──
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{(p,s,k) ∈ flow_constraint[cn]} v_flow[p,s,k,d,t]·unitsize[p]·flow_coef[p,s,k,cn]
+    #   + Σ_{(p,s,k) ∈ flow_constraint[cn] ∩ twoway1var_arcs} v_flow_back[p,s,k,d,t]·unitsize[p]·flow_coef[p,s,k,cn]
     #   + Σ_n v_state[n,d,t]·state_unitsize[n]·node_state_coef[n,cn]
     #   + Σ_e inv[e,d]·invested_coef[e,cn]
     #   + Σ_e con[e,d]·in_construction_coef[e,cn]
@@ -4652,6 +4648,11 @@ def _eq_user_constraints(b: _Build) -> None:
     # cumulative-capacity rows.  cap = pre + inv − retired, with or without a lead time.  carried_* are the
     # investments earlier solves of a chain decided with a lead time (constants; existing holds them from their
     # start of operation, so pre subtracts the part coming online in d).
+    # flow_coef[p,s,k,cn] is the sum of the constraint_flow_coeff of (p, s) and (p, k): a connection's coefficient
+    # at either end lands on both its arcs, so a two-variable connection counts by coef·(forward + reverse).  A
+    # one-variable two-way arc (no_losses_no_variable_cost, DC power flow; signed flow = v_flow − v_flow_back) gives
+    # its reverse flow v_flow_back the same coefficient: the same row for every transfer method
+    # (_user_constraint_flow_terms).
     # The online term counts the units online (of unitsize) in each step; integer with binary startup, continuous
     # with linear.  v_online is the variable of the process's UC class (v_online_linear / v_online_integer).
     # Terms without data are absent.  The existing-capacity terms are constants and enter as Param terms.
@@ -4671,10 +4672,8 @@ def _eq_user_constraints(b: _Build) -> None:
     # online at their constant value.
     flow_terms: list = []
     if _has_rows(d.flow_constraint_idx):
-        flow_terms.append(Sum(
-            Where(b.v_flow * d.p_unitsize, d.flow_constraint_idx) * d.p_flow_constraint_coef,
-            over=("p", "source", "sink"),
-        ))
+        flow_terms.extend(Sum(term, over=("p", "source", "sink"))
+                          for term in _user_constraint_flow_terms(b, d.flow_constraint_idx))
     invest_terms: list = []
     lead_time = _lead_time.active(d)
     for axis, has_invest, var, coef in (
@@ -4976,6 +4975,8 @@ def _eq_user_constraints_period_total(b: _Build, pt_cns: list[str], capacity_ter
     # ─── EQ. ─── process_constraint_{equal,less_than,greater_than}_period_total ──
     # ─────────────────────────────────────────────────────────────────────────────
     # Σ_t w[d,t]·( Σ_{(p,s,k) ∈ flow_constraint[cn]} v_flow[p,s,k,d,t]·unitsize[p]·flow_coef[p,s,k,cn]
+    #              + Σ_{(p,s,k) ∈ flow_constraint[cn] ∩ twoway1var_arcs} v_flow_back[p,s,k,d,t]·unitsize[p]
+    #                                                                   ·flow_coef[p,s,k,cn]
     #              + Σ_{p ∈ process_online} v_online[p,d,t]·online_coef[p,cn] )
     #   + H[d]·( Σ_e inv[e,d]·invested_coef[e,cn] + Σ_e con[e,d]·in_construction_coef[e,cn]
     #            + Σ_e v_divest[e,d]·us[e]·retired_coef[e,cn] + Σ_e pre[e,d]·prebuilt_coef[e,cn]
@@ -4983,7 +4984,8 @@ def _eq_user_constraints_period_total(b: _Build, pt_cns: list[str], capacity_ter
     #   = / ≤ / ≥  constant[cn] (or constant[cn,d] for a period map)
     #   ∀ (cn,d) ∈ cdt_{eq,le,ge}, cn ∈ constraint_period_total, window_fraction[d] = 1
     # w[d,t] = step_duration[d,t]·timestep_weight[d,t] / period_share[d];   H[d] = Σ_t w[d,t]
-    # inv, con, pre, cap, us and the existing / carried constants as in process_constraint_* (_eq_user_constraints).
+    # inv, con, pre, cap, us, the v_flow_back term and the existing / carried constants as in process_constraint_*
+    # (_eq_user_constraints).
     # One row per period over the period's time-integrated, annualised terms (per year: flows in MWh, units online
     # in unit-hours, the constant in the constraint's unit per year), the weighting of co2_max_period.  H is the
     # number of hours the period's modelled steps stand for in a year (8760 for a full year, also with
@@ -5032,10 +5034,8 @@ def _eq_user_constraints_period_total(b: _Build, pt_cns: list[str], capacity_ter
     if _has_rows(d.flow_constraint_idx):
         idx = d.flow_constraint_idx.filter(pl.col("cn").cast(pl.Utf8).is_in(pt_cns))
         if idx.height > 0:
-            terms.append(Sum(
-                Where(b.v_flow * d.p_unitsize, idx) * d.p_flow_constraint_coef * w,
-                over=("p", "source", "sink", "t"),
-            ))
+            terms.extend(Sum(term, over=("p", "source", "sink", "t"))
+                         for term in _user_constraint_flow_terms(b, idx, w))
     if capacity_terms:
         terms.append(_sum_terms(capacity_terms) * hours)
     for v_online, coef_k in online_by_class:
@@ -6179,14 +6179,8 @@ def _warn_reference_below_start(b: _Build, nodes: set) -> None:
     investment.  One printed line per solve."""
     if not nodes:
         return
-    from flextool.engine import _behaviour_changes
-    solve = _behaviour_changes.complete_solve_of(b.solve_name)
-    _behaviour_changes.storage_message(
-        "storage_reference_below_start", b.solve_name, sorted(nodes),
-        lambda named: (f"Warning: in solve '{solve}' {named} with use_reference_value end below their start and the "
-                       "solve can invest in their storage: storage built must still return its start energy (the "
-                       "matching end), which caps that investment. Give storage_state_reference_value at least the "
-                       "start if the storage should be built freely."))
+    from flextool import run_warnings
+    run_warnings.warn_grouped("W-0538", sorted(nodes), solve=b.solve_name)
 
 
 def _eq_profiles(b: _Build) -> None:

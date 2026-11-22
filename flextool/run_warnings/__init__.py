@@ -10,7 +10,8 @@ The message comes from the registry (:mod:`flextool.run_warnings.registry`), whi
 the web page :data:`WARNINGS_DOCS_URL`.  Lines go through the ``logging`` logger ``flextool.warnings`` (WARNING
 level for a warning, INFO for a note), so the console, the run log and the run record (``_run_status.json``, which
 stores the code and the number of cases with the line) all get them.  The full list of names, and the
-per-name *details*, go to the same logger at DEBUG level.  When nothing configured ``logging`` (the engine used
+per-name *details*, go to the same logger at DEBUG level (a ``run_log=True`` call also writes its details to the
+run's ``_run.log`` when the debug log is off).  When nothing configured ``logging`` (the engine used
 as a library, e.g. from a notebook), Python's last-resort handler prints the warnings to stderr; the notes are
 printed there too (to see the debug lines, configure ``logging``).
 
@@ -141,13 +142,14 @@ def _call_site(depth: int) -> _Where | None:
 
 
 class _Pending:
-    __slots__ = ("code", "fmt", "solve", "names", "details", "per_run", "where")
+    __slots__ = ("code", "fmt", "solve", "names", "details", "per_run", "where", "run_log")
 
     def __init__(self, code: str, fmt: dict[str, Any], solve: str | None, per_run: bool,
                  where: _Where | None) -> None:
         self.code, self.fmt, self.solve, self.per_run, self.where = code, fmt, solve, per_run, where
         self.names: dict[str, None] = {}
         self.details: list[tuple[str | None, str]] = []
+        self.run_log = False
 
 
 _ROLL_SUFFIX = re.compile(r"_roll_\d+$")
@@ -205,8 +207,18 @@ def _details_text(details: str | Mapping[Any, Any] | None) -> list[tuple[str | N
     return [(None, str(details))]
 
 
+def _to_run_log(code: str, details: list[tuple[str | None, str]]) -> None:
+    """*details* of a ``run_log=True`` call into the run's ``_run.log`` as well (not the console), unless the
+    debug log already gets them (``--debug``)."""
+    if not details or _logger.isEnabledFor(logging.DEBUG):
+        return
+    from flextool import run_record
+
+    run_record.write_log_only("\n".join(f"{code} {text}" for _name, text in details))
+
+
 def _emit(code: str, names: list[str], fmt: dict[str, Any], solve: str | None, details: list[tuple[str | None, str]],
-          stacklevel: int, where: _Where | None = None) -> None:
+          stacklevel: int, where: _Where | None = None, run_log: bool = False) -> None:
     """Print one line and log the full list (caller holds the lock).  *where*: the call site of a line printed
     when its scope ends (else the caller *stacklevel* frames up is)."""
     spec = _spec(code)
@@ -228,6 +240,8 @@ def _emit(code: str, names: list[str], fmt: dict[str, Any], solve: str | None, d
         _logger.debug("%s all cases%s: %s", code, f" in solve '{solve}'" if solve else "", "; ".join(names))
     for _name, text in details:
         _logger.debug("%s %s", code, text)
+    if run_log:
+        _to_run_log(code, details)
 
 
 def _fmt_key(fmt: Mapping[str, Any]) -> tuple:
@@ -245,21 +259,33 @@ def _fresh(code: str, names: list[str], per_run: bool) -> list[str]:
 
 def _deliver(code: str, names: list[str], fmt: dict[str, Any], solve: str | None,
              details: list[tuple[str | None, str]],
-             per_run: bool, stacklevel: int, where: _Where | None = None) -> bool:
+             per_run: bool, stacklevel: int, where: _Where | None = None, run_log: bool = False) -> bool:
     """Print now, or only log what a line of this solve did not cover yet (caller holds the lock)."""
     names = _fresh(code, names, per_run)
     if per_run and not names:
         return False
+    if per_run:
+        # The details of the names named earlier in the run were logged then.
+        fresh = set(names)
+        details = [(name, text) for name, text in details if name is None or name in fresh]
     if solve is None:
-        _emit(code, names, fmt, None, details, stacklevel + 1, where)
+        _emit(code, names, fmt, None, details, stacklevel + 1, where, run_log)
         return True
     key = (code, _fmt_key(fmt), solve)
     covered = _printed.get(key)
     if covered is None:
         _printed[key] = set(names)
-        _emit(code, names, fmt, solve, details, stacklevel + 1, where)
+        _emit(code, names, fmt, solve, details, stacklevel + 1, where, run_log)
         return True
     extra = [n for n in names if n not in covered]
+    if not extra:
+        # A repeat with no new name (a code that names no entity, e.g. each failing roll of a solve): its
+        # name-less details still go to the debug log.
+        for name, text in details:
+            if name is None:
+                _logger.debug("%s %s", code, text)
+        if run_log:
+            _to_run_log(code, [(n, t) for n, t in details if n is None])
     if extra:
         covered.update(extra)
         _cases[code] = _cases.get(code, 0) + len(extra)
@@ -270,21 +296,25 @@ def _deliver(code: str, names: list[str], fmt: dict[str, Any], solve: str | None
                 _logger.debug("a case listener failed", exc_info=True)
         _logger.debug("%s also in solve '%s': %s", code, solve, "; ".join(extra))
         new = set(extra)
-        for name, text in details:          # the details of the new names (a name-less text: as given)
-            if name is None or name in new:
-                _logger.debug("%s %s", code, text)
+        kept = [(name, text) for name, text in details if name is None or name in new]
+        for _name, text in kept:            # the details of the new names (a name-less text: as given)
+            _logger.debug("%s %s", code, text)
+        if run_log:
+            _to_run_log(code, kept)
     return False
 
 
 def warn_grouped(code: str, names: Iterable[Any] | None = None, *, solve: str | None = None,
-                 details: str | Mapping[Any, Any] | None = None, per_run: bool = False,
+                 details: str | Mapping[Any, Any] | None = None, per_run: bool = False, run_log: bool = False,
                  _stacklevel: int = 2, **fmt: Any) -> bool:
     """One aggregated line of *code* for *names* (entity names, or tuples of them).
 
     *names* given but empty: nothing at all (the check found no case).  *names* ``None``: a line without names,
     for a code that names no entity.  *fmt* fills the registry message (and is part of the grouping: calls with other *fmt* values give other
-    lines).  *details* (text, or ``{name: text}``) go to the debug log.  Returns True when a line was printed now
-    (False inside a :func:`collecting` scope, which prints at its end).
+    lines).  *details* (text, or ``{name: text}``) go to the debug log; with *run_log* also to the run's
+    ``_run.log`` (not the console) when the debug log is off (:func:`flextool.run_record.write_log_only`), for a
+    report the user needs without a rerun.  Returns True when a line was printed now (False inside a
+    :func:`collecting` scope, which prints at its end).
     """
     _spec(code)
     texts = [] if names is None else list(dict.fromkeys(_name_text(n) for n in names))
@@ -300,8 +330,9 @@ def warn_grouped(code: str, names: Iterable[Any] | None = None, *, solve: str | 
                 pending = _pending[key] = _Pending(code, dict(fmt), solve_key, per_run, _call_site(_stacklevel))
             pending.names.update(dict.fromkeys(texts))
             pending.details.extend(detail_lines)
+            pending.run_log = pending.run_log or run_log
             return False
-        return _deliver(code, texts, dict(fmt), solve_key, detail_lines, per_run, _stacklevel + 1)
+        return _deliver(code, texts, dict(fmt), solve_key, detail_lines, per_run, _stacklevel + 1, run_log=run_log)
 
 
 def warn(code: str, name: Any = None, *, solve: str | None = None, details: str | Mapping[Any, Any] | None = None,
@@ -328,7 +359,8 @@ def flush() -> None:
             return
         pending, _pending = _pending, {}
         for item in pending.values():
-            _deliver(item.code, list(item.names), item.fmt, item.solve, item.details, item.per_run, 3, item.where)
+            _deliver(item.code, list(item.names), item.fmt, item.solve, item.details, item.per_run, 3, item.where,
+                     run_log=item.run_log)
 
 
 @contextmanager

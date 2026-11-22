@@ -20,7 +20,10 @@ from spinedb_api.temp_id import resolve
 
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool.db_migration import migrate_database
+from flextool.update_flextool.db_handle import open_database_mapping
 from flextool.update_flextool.frozen import read_db_version_ro
+
+from tests.update_flextool._rerun import already_applied_records
 
 #: Units in the large database.  Each one deletes one input value and, on even units, one output leftover: 1650
 #: scattered values of one table, the input ones alone above the 1000 runs one SQLite DELETE accepts.
@@ -57,7 +60,7 @@ def _build_v69_large(url: str) -> None:
             ["unit__outputNode", (u, "elec"), "capacity_max_coeff", _output_max(i), "Base"],
             ["unit__outputNode", (u, "elec"), "capacity_min_coeff", _output_max(i) if i % 2 == 0 else 1.0, "Base"],
         ]
-    with DatabaseMapping(url, create=True) as db:
+    with open_database_mapping(url, create=True) as db:
         _, errors = import_data(
             db,
             entity_classes=[
@@ -90,16 +93,17 @@ def large(tmp_path_factory: pytest.TempPathFactory) -> dict:
     path = (tmp_path_factory.mktemp("v70_large") / "v69.sqlite").resolve()
     url = f"sqlite:///{path}"
     _build_v69_large(url)
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         removed_ids = [resolve(pv["id"]) for pv in db.get_parameter_value_items()
                        if pv["parameter_definition_name"] == "capacity_min_coeff"
                        and (pv["entity_class_name"] == "unit__inputNode"
                             or from_database(pv["value"], pv["type"]) != 1.0)]
         scattered_runs = _run_count(removed_ids)
-    migrate_database(url)
-    with DatabaseMapping(url) as db:
+    with already_applied_records() as records:
+        migrate_database(url)
+    with open_database_mapping(url) as db:
         after = _values(db)
-    return {"path": path, "runs": scattered_runs, "after": after}
+    return {"path": path, "runs": scattered_runs, "after": after, "records": records}
 
 
 def test_the_removed_values_are_scattered(large) -> None:
@@ -110,6 +114,11 @@ def test_the_removed_values_are_scattered(large) -> None:
 def test_large_database_reaches_the_current_version(large) -> None:
     assert read_db_version_ro(large["path"]) == FLEXTOOL_DB_VERSION
     assert not Path(f"{large['path']}.premigration.bak").exists()
+
+
+def test_large_database_finds_nothing_already_applied(large) -> None:
+    """A clean migration trips no rerun guard of a step (``_already_applied``)."""
+    assert large["records"] == []
 
 
 def test_large_database_values_are_those_of_the_v70_rules(large) -> None:

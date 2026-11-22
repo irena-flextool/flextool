@@ -115,7 +115,7 @@ Timesets pick one or more sections from the `timeline` to form a `timeset`. Each
 
 - `timeset`: timesets are sets of time with a start (from timeline) and a duration (number of time steps)
 
-  - *timeset_duration* a map with index *timestep_name* that starts the timeset and value that defines the duration of the timeset (how many timesteps). A block must start at a time step of the timeset's timeline; otherwise the run stops with an error that names the timeset and the block. A block length that is not a whole number gets a warning (the whole part is used). A block longer than the rest of the timeline is cut at the end of the timeline, with a warning that says how many time steps are not used (for a timeset with `representative_period_weights` this is an error: a representative period cannot be cut). Only the timesets that the solves of the model use are checked. The stochastic forecast branches of a period use the period's timeset, its representative periods included (every branch has the same selection and weights).
+  - *timeset_duration* a map with index *timestep_name* that starts the timeset and value that defines the duration of the timeset (how many timesteps). A block must start at a time step of the timeset's timeline; otherwise the run stops with an error that names the timeset and the block. A block length that is not a whole number gets a warning (the whole part is used). A block longer than the rest of the timeline is cut at the end of the timeline, with a warning that says how many time steps are not used (for a timeset with `representative_period_weights` this is an error: a representative period cannot be cut). Only the timesets that the solves of the model use are checked. Blocks that touch (one starts right after the previous one ends) are treated as one block by the *bind_intraperiod_blocks* storage method; leave a gap of at least one time step between blocks that should stay apart. The stochastic forecast branches of a period use the period's timeset, its representative periods included (every branch has the same selection and weights).
   - *timeline* The name of the timeline that the timeset uses. (String)
   - *timeset_weights*: Optional per-timestep weight map (index: timestep name, `index_name` *time* or left empty; value: float) applied to cost and slack terms in the objective. Use for non-RP models where timesteps represent unequal fractions of the year — e.g. a coarse OSeMOSYS-style timeslice structure where wet-season steps cover more year-hours than dry-season ones. Weights are normalized per period to sum to 1 and then scaled by the number of active timesteps, so uniform input reproduces weight = 1 per step (the default). Must not be combined with `representative_period_weights` on the same timeset — the runner errors out if both are set. The stochastic forecast branches of a period use the weights of the period's timeset. Any other shape (a scalar, a map indexed by *period*) is an error.
 
@@ -212,7 +212,7 @@ The parts in detail:
     *piecewise_linear* unit whose efficiency rises from the first point of its curve to the second, a
     `constraint_online_coeff` term in a user constraint of the solve, a reserve that the unit or connection holds,
     inertia (an `inertia_constant` at a node of a group with `has_inertia`), ramp limits (their start-up and
-    shut-down allowance) and, in a realization solve, the units online it takes from its parent solve. A reserve or
+    shut-down allowance) and, in a realization solve, the units online of binary units that it takes from its parent solve. A reserve or
     an inertia limit that `reduce_system_detail_method` leaves out is no use. The ties that make the forecast branches
     of a stochastic solve have the same units online are no use either. For example, under `integers_min_limits` a
     unit with only a `min_load` loses its online variables, a unit with a start-up cost or a reserve keeps them; under
@@ -282,8 +282,8 @@ its parent's. A Benders decomposition can split connections whose reserves, onli
 the solve leaves out.
 
 **Realization and continuing solves.** A realization solve (the dispatch of a stochastic solve's realized branch)
-uses its parent solve's levels, whatever is set on it, since it takes the parent's units online and reserves. A
-warning names a different value set on a declared realization solve. A solve that continues the ramp of a solve
+uses its parent solve's levels, whatever is set on it, so that its online variables and reserve rows match those
+of the solve it realizes. A warning names a different value set on a declared realization solve. A solve that continues the ramp of a solve
 without online variables starts its commitment and ramps cold, with an info line.
 
 **Run log and run status.** A solve with a level other than `none` writes one info line to the run log at its

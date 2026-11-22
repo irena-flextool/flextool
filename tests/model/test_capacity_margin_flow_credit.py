@@ -433,3 +433,26 @@ def test_relative_of_peak_demand_per_period_on_a_shared_timeline(tmp_path_factor
     peak = {d: v for g, d, v in utf8(step.flex_data.pdGroup_peak_demand.frame).iter_rows() if g == "cm"}
     first = max(DEMAND[f"t{i:04d}"] for i in range(1, 25))
     assert peak == {"p2020": pytest.approx(first), "p2025": pytest.approx(1000.0)}
+
+
+def test_relative_margin_without_demand_is_one_coded_line(coded_log) -> None:
+    """A relative_of_peak_demand group with a positive share but no peak demand in a period: its margin there is
+    0, and W-0585 names the group once per run (the periods in the debug log); a share of -inf is no case."""
+    from types import SimpleNamespace
+
+    from flextool import run_warnings
+    from flextool.engine.model._group_slack import resolve_capacity_margin
+
+    run_warnings.start_run()
+    share = pl.DataFrame({"g": ["cm", "cm", "free"], "d": ["p1", "p2", "p1"], "value": [0.1, 0.1, float("-inf")]})
+    peak = pl.DataFrame({"g": ["cm"], "d": ["p1"], "value": [100.0]})
+    for _ in range(2):
+        d = SimpleNamespace(pdGroup_capacity_margin_relative=SimpleNamespace(frame=share),
+                            pdGroup_peak_demand=SimpleNamespace(frame=peak), pdGroup_capacity_margin=None)
+        resolve_capacity_margin(d)
+    log = coded_log()
+    assert log.count("[W-0585]") == 1
+    assert ("Warning: capacity margin relative_of_peak_demand without demand; margin 0 ('cm') [W-0585]" in log)
+    assert "W-0585 cm: no demand in p2" in log
+    assert utf8(d.pdGroup_capacity_margin.frame).sort("g", "d").rows() == [("cm", "p1", 10.0),
+                                                                           ("free", "p1", float("-inf"))]

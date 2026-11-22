@@ -1,5 +1,6 @@
 import contextlib
 import json
+import math
 import os
 import argparse
 from dataclasses import dataclass
@@ -27,9 +28,10 @@ def _commit_step(db, message):
     the requested rows already exist with identical fields (a step that
     has been hand-applied or carried in by an earlier partial migration
     that never bumped ``model.version``).  Treating that signal as
-    fatal aborts the rest of the migration mid-chain and the version
-    bump never persists, leaving the DB stuck at the pre-step version.
-    Log and continue so subsequent steps still run.
+    fatal would abort the rest of the migration mid-chain.  Log and
+    continue so subsequent steps still run.  The version stamp is not
+    committed here on its own: :func:`_stage_version` puts it in the
+    session and the next commit carries it.
     """
     try:
         db.commit_session(message)
@@ -314,7 +316,9 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 raise MigrationCancelled(last_completed_version=last_completed_version)
             if progress_callback is not None:
                 progress_callback(last_completed_version, new_version, next_version)
-            if next_version == 0:
+            if 1 <= next_version <= 11 and _template_step_superseded(db, next_version):
+                pass
+            elif next_version == 0:
                 add_version(db)
             elif next_version == 1:
                 add_new_parameters(db, _pre_v26_template('flextool_template_v2.json'))
@@ -349,14 +353,17 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 #value list needs to be added first
                 add_value_list_manual(db,new_value_list)
                 add_parameters_manual(db,new_parameters)
-                remove_parameters_manual(db,[["node","storate_state_end"]])
+                if not _reused_later(db, 13, "node", "storate_state_end"):
+                    remove_parameters_manual(db,[["node","storate_state_end"]])
             elif next_version == 14:
                 new_parameters = [["model","exclude_entity_outputs", "yes", "optional_output", "Excludes results on node, unit and connection level, but preserves group level results"]]
                 remove_parameters_manual(db, [["model","results"]])
                 add_parameters_manual(db, new_parameters)
             elif next_version == 15:
-                remove_parameters_manual(db,[["unit", "invest_forced"], ["unit", "retire_forced"], ["connection", "invest_forced"], ["connection", "retire_forced"],
-                                             ["node", "invest_forced"], ["node", "retire_forced"]])
+                remove_parameters_manual(db, [[cls, name] for cls, name in (
+                    ("unit", "invest_forced"), ("unit", "retire_forced"), ("connection", "invest_forced"),
+                    ("connection", "retire_forced"), ("node", "invest_forced"), ("node", "retire_forced"))
+                    if not _reused_later(db, 15, cls, name)])
                 add_parameters_manual(db, [["group", "co2_max_period", "no_method", "co2_methods", "[tCO2] Annualized maximum limit for emitted CO2 in each period."]])
             elif next_version == 16:
                 add_parameters_manual(db, [["group", "co2_max_period", None, None, "[tCO2] Annualized maximum limit for emitted CO2 in each period."]])
@@ -451,9 +458,9 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 # connection, node; and model-level discount_rate -> inflation_rate
                 # plus the two discount_offset_* -> inflation_offset_* renames.
                 #
-                # These renames must be collision-safe.  ``migrate_database``
-                # writes ``model.version`` only once, at the very end of the
-                # whole loop, so a migration interrupted/cancelled after a later
+                # These renames must be collision-safe.  Up to FlexTool 4.6.0
+                # ``migrate_database`` wrote ``model.version`` only once, at the
+                # very end of the whole loop, so a migration interrupted after a later
                 # step already created the *target* definition (the v28 rename
                 # itself, or the v48 ``add_update_item`` default-setter) but
                 # before the final version write leaves the DB with the target
@@ -479,13 +486,15 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                     "[e.g. 0.02 for 2%] Model-wide inflation rate applied to all future costs. When "
                     "inputs are in real (constant-price) terms, set to 0. When inputs are in nominal "
                     "terms, set to expected inflation. Default: 0 (real inputs).")
-                # Rename model-level offset parameters
-                _rename_or_drop_parameter_definition(db, "model", "discount_offset_investment",
-                    "inflation_offset_investment",
-                    "[years] Offset for when investment costs occur within a year. Default 0 (beginning of year).")
-                _rename_or_drop_parameter_definition(db, "model", "discount_offset_operations",
-                    "inflation_offset_operations",
-                    "[years] Offset for when operational costs occur within a year. Default 0.5 (middle of year).")
+                # Rename model-level offset parameters (not the v82 ones of the same names)
+                for kind, desc in (
+                        ("investment", "[years] Offset for when investment costs occur within a year. Default 0 "
+                                       "(beginning of year)."),
+                        ("operations", "[years] Offset for when operational costs occur within a year. Default 0.5 "
+                                       "(middle of year).")):
+                    if not _reused_later(db, 28, "model", f"discount_offset_{kind}"):
+                        _rename_or_drop_parameter_definition(db, "model", f"discount_offset_{kind}",
+                                                             f"inflation_offset_{kind}", desc)
                 _commit_step(db,"Renamed economic parameters: interest_rate->discount_rate, discount_rate->inflation_rate")
             elif next_version == 29:
                 add_value_list_manual(db, [
@@ -526,12 +535,11 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 )
                 parameter_definitions = db.mapped_table("parameter_definition")
                 for cls in ("unit", "connection", "node"):
-                    # Already renamed: a migration that failed at a later step (v35, FlexTool 4.0 to 4.5) left v32
-                    # applied under the old stamp.  Any other shape (neither name) still stops at db.item.
-                    if (not db.get_item("parameter_definition", entity_class_name=cls,
-                                        name="constraint_capacity_coefficient")
-                            and db.get_item("parameter_definition", entity_class_name=cls,
-                                            name="constraint_invested_capacity_coefficient")):
+                    # Already renamed (the v32 name or its v56 one): a migration that failed at a later step (v35,
+                    # FlexTool 4.0 to 4.5) left v32 applied under the old stamp.  Neither name still stops at db.item.
+                    later = _later_definition(db, 31, cls, "constraint_capacity_coefficient")
+                    if later is not None:
+                        _already_applied(32, f"{cls}.constraint_capacity_coefficient is {later[1]}")
                         continue
                     param = db.item(parameter_definitions,
                                     entity_class_name=cls,
@@ -553,10 +561,8 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                     "limits. Not multiplied by unitsize."
                 )
                 for cls in ("unit", "connection", "node"):
-                    db.add_update_item("parameter_definition",
-                        entity_class_name=cls,
-                        name="constraint_cumulative_pre_built_capacity_coefficient",
-                        description=prebuilt_desc)
+                    _upsert_definition(db, 32, cls, "constraint_cumulative_pre_built_capacity_coefficient",
+                                       description=prebuilt_desc)
                 _commit_step(db,
                     "Renamed constraint_capacity_coefficient -> "
                     "constraint_invested_capacity_coefficient; added "
@@ -621,31 +627,23 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                     "edge (e.g. heat output of an extraction CHP that may "
                     "drop to zero in pure-condensing mode)."
                 )
-                parameter_definitions = db.mapped_table("parameter_definition")
                 default_one_val, default_one_type = to_database(1.0)
                 for cls in ("unit__inputNode", "unit__outputNode"):
-                    param = db.item(parameter_definitions,
-                                    entity_class_name=cls, name="coefficient")
-                    if param:
+                    param = db.get_item("parameter_definition", entity_class_name=cls, name="coefficient")
+                    later = _later_definition(db, 34, cls, "coefficient")
+                    if later is not None:
+                        _already_applied(35, f"{cls}.coefficient is renamed to {later[1]}")
+                    elif param:
                         _v35_drop_v23_flow_coefficient(db, cls)
                         db.update_parameter_definition(
                             id=param["id"],
                             name="flow_coefficient",
                             description=flow_desc)
-                    db.add_update_item("parameter_definition",
-                        entity_class_name=cls,
-                        name="max_capacity_coefficient",
-                        default_value=default_one_val,
-                        default_type=default_one_type,
-                        parameter_type_list=("float",),
-                        description=maxcap_desc)
-                    db.add_update_item("parameter_definition",
-                        entity_class_name=cls,
-                        name="min_capacity_coefficient",
-                        default_value=default_one_val,
-                        default_type=default_one_type,
-                        parameter_type_list=("float",),
-                        description=mincap_desc)
+                    for name, desc in (("max_capacity_coefficient", maxcap_desc),
+                                       ("min_capacity_coefficient", mincap_desc)):
+                        _upsert_definition(db, 35, cls, name, default_value=default_one_val,
+                                           default_type=default_one_type, parameter_type_list=("float",),
+                                           description=desc)
                 _commit_step(db,
                     "Renamed coefficient -> flow_coefficient; added "
                     "max_capacity_coefficient and min_capacity_coefficient "
@@ -666,7 +664,8 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 # are affected; those relying on the default 1.0 already
                 # get max/min = 1.0 from the defaults introduced in v35.
                 db.mapped_table("parameter_value")
-                for cls in ("unit__outputNode", "unit__inputNode"):
+                for cls in ("unit__outputNode", "unit__inputNode") if not _v38_ran(db, 36) else ():
+                    caps = _float_values(db, cls, ("max_capacity_coefficient", "min_capacity_coefficient"))
                     existing = list(db.find_parameter_values(
                         entity_class_name=cls,
                         parameter_definition_name="flow_coefficient"))
@@ -677,6 +676,9 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                             continue
                         # Skip default-valued rows — backfill is a no-op.
                         if coef == 1.0:
+                            continue
+                        if cls == "unit__outputNode" and coef != 0.0 and _v37_flipped(caps, pv, 1.0 / coef):
+                            _already_applied(36, f"{cls} {tuple(pv['entity_byname'])} flow_coefficient is flipped")
                             continue
                         if cls == "unit__outputNode":
                             max_cap = coef
@@ -712,9 +714,10 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 # with 1/x. Defaults (1.0) are left alone; 0 (hydro-
                 # pass-through marker) is left alone.
                 db.mapped_table("parameter_value")
+                caps = _float_values(db, "unit__outputNode", ("max_capacity_coefficient", "min_capacity_coefficient"))
                 for pv in list(db.find_parameter_values(
                         entity_class_name="unit__outputNode",
-                        parameter_definition_name="flow_coefficient")):
+                        parameter_definition_name="flow_coefficient")) if not _v38_ran(db, 37) else ():
                     try:
                         val = float(pv["parsed_value"])
                     except (TypeError, ValueError):
@@ -722,6 +725,9 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                     if val == 0.0 or val == 1.0:
                         continue
                     inv = 1.0 / val
+                    if _v37_flipped(caps, pv, inv):
+                        _already_applied(37, f"unit__outputNode {tuple(pv['entity_byname'])} flow_coefficient is flipped")
+                        continue
                     new_val, new_type = to_database(inv)
                     db.update_item(
                         "parameter_value",
@@ -874,17 +880,23 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 # v38 step — those need the stray node_type values cleaned
                 # up by hand.)
                 floor_alt = "default_node_type_from_migration"
-                db.add_update_item(
-                    "alternative",
-                    name=floor_alt,
-                    description=(
-                        "Auto-created by the v38 migration: carries the "
-                        "'commodity' fallback node_type (pre-v38 'no "
-                        "balance' default).  Pinned to the lowest rank of "
-                        "every scenario so any explicit 'balance'/'storage'/"
-                        "'balance_within_period' overrides it."
-                    ),
-                )
+                # The floor goes with the flags' removal (one commit): without both flags it is there, and the
+                # nodes and scenarios made since then must not get it.
+                write_floor = (any(db.get_item("parameter_definition", entity_class_name="node", name=name)
+                                   for name in ("has_balance", "has_storage"))
+                               or not _already_applied(38, "node.has_balance and has_storage are removed"))
+                if write_floor:
+                    db.add_update_item(
+                        "alternative",
+                        name=floor_alt,
+                        description=(
+                            "Auto-created by the v38 migration: carries the "
+                            "'commodity' fallback node_type (pre-v38 'no "
+                            "balance' default).  Pinned to the lowest rank of "
+                            "every scenario so any explicit 'balance'/'storage'/"
+                            "'balance_within_period' overrides it."
+                        ),
+                    )
 
                 # Add the floor alternative to every scenario at a rank
                 # strictly below the scenario's current minimum.
@@ -897,7 +909,7 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                     r = sa["rank"]
                     if sid not in min_rank_by_scenario or r < min_rank_by_scenario[sid]:
                         min_rank_by_scenario[sid] = r
-                for sid, min_rank in min_rank_by_scenario.items():
+                for sid, min_rank in min_rank_by_scenario.items() if write_floor else ():
                     db.add_update_item(
                         "scenario_alternative",
                         scenario_name=scen_name_by_id[sid],
@@ -910,7 +922,7 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 # 'balance_within_period') keep those in higher-ranked
                 # alternatives and are unaffected here.
                 commodity_val, commodity_type = to_database("commodity")
-                for ent in db.find_entities(entity_class_name="node"):
+                for ent in db.find_entities(entity_class_name="node") if write_floor else ():
                     db.add_update_item(
                         "parameter_value",
                         entity_class_name="node",
@@ -927,11 +939,11 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                     ["node", "has_storage"],
                 ])
                 for vl_name in ("has_balance", "has_storage"):
-                    vl = db.item(
-                        db.mapped_table("parameter_value_list"), name=vl_name,
-                    )
+                    vl = db.get_item("parameter_value_list", name=vl_name)
                     if vl:
                         db.remove_items("parameter_value_list", vl["id"])
+                    else:
+                        _already_applied(38, f"value list {vl_name} is removed")
 
                 try:
                     _commit_step(db,
@@ -1163,11 +1175,11 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 ])
 
                 # 1. Add the four new parameter definitions.  Descriptions
-                #    are minimal here; Agent 3 will enrich them.
-                db.add_update_item(
-                    "parameter_definition",
-                    entity_class_name="group",
-                    name="output_nodeGroup_dispatch",
+                #    are minimal here; Agent 3 will enrich them.  Not one that v58
+                #    renamed already.
+                _upsert_definition(
+                    db, 42, "group",
+                    "output_nodeGroup_dispatch",
                     parameter_value_list_name="yes_no",
                     parameter_type_list=("str",),
                     description=(
@@ -1176,10 +1188,9 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                         "output_node_flows."
                     ),
                 )
-                db.add_update_item(
-                    "parameter_definition",
-                    entity_class_name="group",
-                    name="flow_aggregator",
+                _upsert_definition(
+                    db, 42, "group",
+                    "flow_aggregator",
                     parameter_value_list_name="yes_no",
                     parameter_type_list=("str",),
                     description=(
@@ -1189,10 +1200,9 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                         "output_aggregate_flows."
                     ),
                 )
-                db.add_update_item(
-                    "parameter_definition",
-                    entity_class_name="group",
-                    name="output_nodeGroup_indicators",
+                _upsert_definition(
+                    db, 42, "group",
+                    "output_nodeGroup_indicators",
                     parameter_value_list_name="yes_no",
                     parameter_type_list=("str",),
                     description=(
@@ -1200,10 +1210,9 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                         "groups whose members are nodes (group__node)."
                     ),
                 )
-                db.add_update_item(
-                    "parameter_definition",
-                    entity_class_name="group",
-                    name="output_flowGroup_indicators",
+                _upsert_definition(
+                    db, 42, "group",
+                    "output_flowGroup_indicators",
                     parameter_value_list_name="yes_no",
                     parameter_type_list=("str",),
                     description=(
@@ -1349,24 +1358,23 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 # foothold: future parameter additions should categorise
                 # themselves using the same mechanism (see
                 # docs/reference/parameter_groups.md, "Parameter groups (metadata)").
-                db.add_update_item(
-                    "parameter_group",
-                    name="Outputs",
-                    color="a6cee3",  # light blue, 6-hex-digit, no '#'
-                    priority=10,
-                )
-                for param_name in (
-                    "output_nodeGroup_dispatch",
-                    "output_nodeGroup_indicators",
-                    "output_flowGroup_indicators",
-                    "flow_aggregator",
-                ):
+                # v44 renames the group "output": with that one and without "Outputs", v43 is applied.
+                if not db.get_item("parameter_group", name="Outputs") and db.get_item("parameter_group", name="output"):
+                    _already_applied(43, 'parameter group "Outputs" is "output"')
+                else:
                     db.add_update_item(
-                        "parameter_definition",
-                        entity_class_name="group",
-                        name=param_name,
-                        parameter_group_name="Outputs",
+                        "parameter_group",
+                        name="Outputs",
+                        color="a6cee3",  # light blue, 6-hex-digit, no '#'
+                        priority=10,
                     )
+                    for param_name in (
+                        "output_nodeGroup_dispatch",
+                        "output_nodeGroup_indicators",
+                        "output_flowGroup_indicators",
+                        "flow_aggregator",
+                    ):
+                        _upsert_definition(db, 43, "group", param_name, parameter_group_name="Outputs")
                 try:
                     _commit_step(db,
                         "v43: added 'Outputs' parameter_group and tagged "
@@ -1847,7 +1855,8 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 # separately in D.2 because it gets a different new
                 # default (``upper_limit``); see
                 # ``_migrate_v56_set_unit_node_profile_default_upper_limit``.
-                _migrate_v56_add_profile_and_ramp_method_none(db)
+                none_before = _v56_none_members(db)
+                _migrate_v56_add_profile_and_ramp_method_none(db, none_before)
                 # Batch D.2 — flip
                 # ``unit__node__profile.profile_method`` default from
                 # ``null`` to ``upper_limit`` (the dominant authoring
@@ -1855,7 +1864,7 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 # legacy entities lacking an explicit method to
                 # ``none`` so the new default does not silently
                 # activate the constraint on pre-D.2 data.
-                _migrate_v56_set_unit_node_profile_default_upper_limit(db)
+                _migrate_v56_set_unit_node_profile_default_upper_limit(db, none_before)
                 # Batch D.3 — retype six boolean-as-enum parameters
                 # (connection.is_DC, group.has_capacity_margin,
                 # group.has_inertia, group.has_non_synchronous,
@@ -1943,7 +1952,7 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                     name="timeset_weights",
                     description="Per-timestep weight map (index: timestep name, value: float) defining *representativeness*: each timestep's share of the year. Drives the annualisation of demand, energy, and cost alike (the inflow scaling, the annual energy outputs, and the operating-cost objective all use this same weight), so the energy the model is scaled to serve, reports, and costs all coincide. Use for non-RP models where timesteps represent unequal fractions of the year (e.g. seasonal yearsplit on a coarse timeslice structure). Weights are normalized per period to sum to 1 and then scaled by the number of active timesteps so that uniform input reproduces the default (weight = 1 per step). Must not be combined with representative_period_weights on the same timeset.",
                 )
-                db.commit_session("Clarify inflow_method/timeset_duration/timeset_weights descriptions for timeslice weighting")
+                _commit_step(db, "Clarify inflow_method/timeset_duration/timeset_weights descriptions for timeslice weighting")
             elif next_version == 58:
                 _migrate_v58_carve_flowgroup_out_of_group(db)
             elif next_version == 59:
@@ -1958,7 +1967,7 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                     "building the optimisation problem. Reduces the numerical "
                     "range (conditioning) of the LP. Default 0.0001.",
                 )
-                db.commit_session("Added model.small_number_threshold parameter")
+                _commit_step(db, "Added model.small_number_threshold parameter")
             elif next_version == 60:
                 _migrate_v60_solve_decomposition(db)
             elif next_version == 61:
@@ -1981,9 +1990,7 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                         "on the same timeset."
                     ),
                 )
-                db.commit_session(
-                    "Added timeset.representative_period_weights parameter"
-                )
+                _commit_step(db, "Added timeset.representative_period_weights parameter")
             elif next_version == 62:
                 _migrate_v62_benders_rename(db)
             elif next_version == 63:
@@ -2028,6 +2035,7 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 _migrate_v82_schema_batch(db)
             else:
                 print("Version invalid")
+            _stage_version(db, next_version)
             last_completed_version = next_version
             next_version += 1
 
@@ -2046,6 +2054,82 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 _commit_step(db, "Refreshed existing / virtual_unitsize descriptions, added the current "
                                  "version's new definitions and replaced its superseded defaults")
             print(database_path+ " already up-to-date at version "+ str(version))
+
+def _float_values(db, entity_class_name: str, names) -> dict:
+    """``{(parameter, entity_byname, alternative): float}`` of the scalar *names* values of *entity_class_name*."""
+    out = {}
+    for name in names:
+        for pv in db.find_parameter_values(entity_class_name=entity_class_name, parameter_definition_name=name):
+            try:
+                out[(name, tuple(pv["entity_byname"]), pv["alternative_name"])] = float(pv["parsed_value"])
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
+def _v37_flipped(caps: dict, pv, inv: float) -> bool:
+    """v36 wrote ``max_capacity_coefficient = min_capacity_coefficient = flow_coefficient`` on the unit__outputNode
+    row *pv* (*caps*: :func:`_float_values`), v37 then flipped it: max = min = 1/flow (*inv*) means flipped.  (On
+    unflipped content max = min = flow, so that holds only for flow = 1, which both steps skip.)
+
+    Known limit (review m10): on genuine v35 / v36 content a user value max = min = 1/flow in the row's alternative
+    reads as flipped, and v36 / v37 then keep it unflipped.  No release shipped DB version 35 or 36 (v3.23.0 is 31,
+    v3.24.0 is 37), so only dev databases can meet it."""
+    key = (tuple(pv["entity_byname"]), pv["alternative_name"])
+    return all(math.isclose(caps.get((name, *key), math.nan), inv, rel_tol=1e-12)
+               for name in ("max_capacity_coefficient", "min_capacity_coefficient"))
+
+
+def _v38_ran(db, version: int) -> bool:
+    """v38 removed ``node.has_balance`` and its value list, which its clean run reads: both absent means v38 ran, and
+    v36 / v37 (step *version*) must not rescale or flip ``flow_coefficient`` again.  It (and v38's floor) keys on the
+    definitions, not on content: a pre-38 database whose user deleted both definitions skips the rescaling and the
+    floor (review m11; very unlikely)."""
+    if (db.get_item("parameter_value_list", name="has_balance")
+            or db.get_item("parameter_definition", entity_class_name="node", name="has_balance")):
+        return False
+    return _already_applied(version, "v38 removed node.has_balance")
+
+
+def _template_step_superseded(db, version: int) -> bool:
+    """Steps 1-11 import whole old templates.  On content from v12 on (``group.output_aggregate_flows`` from v12 to
+    v41, ``group.share_loss_of_load`` from v13 on; in no older template) they would bring back what later steps
+    removed or renamed: skip them (owner Q1).  A stamp 0-10 there comes from a hand edit or a lost ``model.version``."""
+    for name in ("share_loss_of_load", "output_aggregate_flows"):
+        if db.get_item("parameter_definition", entity_class_name="group", name=name):
+            return _already_applied(version, f"group.{name} (v12 / v13) is there")
+    return False
+
+
+def _stage_version(db, version: int) -> None:
+    """Write ``model.version = version`` into the session after step *version*, without a commit of its own.
+
+    The next commit carries it: the next step's first commit, or the final version commit.  A migration killed
+    outright (no restore of the copy) thus leaves the stamp at most one step behind what was committed, and the rerun
+    repeats only that step, which therefore must converge when its effect is already there (:func:`_already_applied`).
+    """
+    pdef = db.get_item("parameter_definition", entity_class_name="model", name="version")
+    if pdef:
+        val, typ = to_database(version)
+        db.update_item("parameter_definition", id=pdef["id"], default_value=val, default_type=typ)
+    else:
+        import_data(db, object_parameters=[["model", "version", version, None,
+                                            "[version number] Contains database version information."]])
+
+
+#: The fixed start of the INFO record :func:`_already_applied` writes.
+ALREADY_APPLIED_PREFIX = "Migration step already applied:"
+
+
+def _already_applied(version: int, what: str) -> bool:
+    """Log that step *version* finds its effect *what* already in the database and return ``True``.
+
+    That happens on a rerun of the step after a migration was killed during or right after it (the stamp lags by one
+    step, :func:`_stage_version`); a clean migration never logs it.
+    """
+    logging.info("%s v%d %s", ALREADY_APPLIED_PREFIX, version, what)
+    return True
+
 
 def _rename_or_drop_parameter_definition(db, entity_class_name, old_name, new_name, description=None):
     """Collision-safe parameter_definition rename within an entity class.
@@ -2239,8 +2323,8 @@ def change_optional_output_type(db, filepath):
 def _v25_already_applied(db) -> bool:
     """Whether the database already has the v25 time structure although its stamp is older.
 
-    Each step commits on its own and ``model.version`` is written only at the end, so a migration that failed at a
-    later step (v35, in FlexTool 4.0 to 4.5) left v25 applied under the old stamp.  Applied means: no ``timeblockSet``
+    Up to FlexTool 4.6.0 each step committed on its own and ``model.version`` was written only at the end, so a
+    migration that failed at a later step (v35, in FlexTool 4.0 to 4.5) left v25 applied under the old stamp.  Applied means: no ``timeblockSet``
     class, a ``timeset`` class with ``timeline`` and ``timeset_duration`` and ``solve.period_timeset``.  A database
     without ``timeblockSet`` that is not in that state stops with a message.
     """
@@ -2335,34 +2419,144 @@ def _v35_drop_v23_flow_coefficient(db, cls: str) -> None:
     db.remove_parameter_definition(id=stray["id"])
 
 
-#: v23 does not create one of these v22 definitions when it is absent and its successor (the name v25 or v32 gives
-#: it, or for the removed ``timeline_duration_in_years`` the v25 ``timeset.timeline``) exists: then a migration that
-#: failed at a later step left v23..v34 applied under the old stamp, and recreating it would bring the old name back
-#: beside the new one.  Without the successor, an absent definition is created as v23 always did.
-_V23_SUCCESSORS = {
-    ("solve", "period_timeblockSet"): ("solve", "period_timeset"),
-    ("timeblockSet", "block_duration"): ("timeset", "timeset_duration"),
-    ("timeblockSet", "new_stepduration"): ("timeset", "new_stepduration"),
-    ("timeline", "timeline_duration_in_years"): ("timeset", "timeline"),
-} | {(cls, "constraint_capacity_coefficient"): (cls, "constraint_invested_capacity_coefficient")
-     for cls in ("unit", "connection", "node")}
+def _per_class(version, classes, old, new):
+    return tuple((version, cls, old, cls, new) for cls in classes)
+
+
+_IO = ("unit__inputNode", "unit__outputNode")
+_CAPACITY_CLASSES = ("unit", "connection", "node")
+
+#: Every rename of a parameter definition: (version of the rename step, class, old name, class, new name), in
+#: version order.  ``timeline.timeline_duration_in_years``, removed at v25, has ``timeset.timeline`` (added by the same
+#: step) for its successor.  A step that creates or updates a definition by the name it had then does not bring that
+#: name back beside a later one (:func:`_later_definition`): a database whose migration failed or was killed under
+#: FlexTool 4.6.0 or older can hold a later step's result under an older stamp.  Names that come back later are in
+#: :data:`_REUSED_DEFINITIONS`.
+_DEFINITION_RENAMES: tuple[tuple[int, str, str, str, str], ...] = (
+    (25, "solve", "period_timeblockSet", "solve", "period_timeset"),
+    (25, "timeblockSet", "block_duration", "timeset", "timeset_duration"),
+    (25, "timeblockSet", "new_stepduration", "timeset", "new_stepduration"),
+    (25, "timeline", "timeline_duration_in_years", "timeset", "timeline"),
+    *_per_class(28, _CAPACITY_CLASSES, "interest_rate", "discount_rate"),
+    (28, "model", "discount_rate", "model", "inflation_rate"),
+    (28, "model", "discount_offset_investment", "model", "inflation_offset_investment"),
+    (28, "model", "discount_offset_operations", "model", "inflation_offset_operations"),
+    *_per_class(32, _CAPACITY_CLASSES, "constraint_capacity_coefficient", "constraint_invested_capacity_coefficient"),
+    *_per_class(35, _IO, "coefficient", "flow_coefficient"),
+    (42, "group", "output_node_flows", "group", "output_nodeGroup_dispatch"),
+    (42, "group", "output_aggregate_flows", "group", "flow_aggregator"),
+    (50, "timeset", "new_stepduration", "solve", "new_stepduration"),
+    *_per_class(56, _CAPACITY_CLASSES, "constraint_invested_capacity_coefficient", "constraint_invested_capacity_coeff"),
+    *_per_class(56, _CAPACITY_CLASSES, "constraint_cumulative_pre_built_capacity_coefficient",
+                "constraint_cumulative_pre_built_capacity_coeff"),
+    *_per_class(56, ("connection__node", *_IO), "constraint_flow_coefficient", "constraint_flow_coeff"),
+    (56, "node", "constraint_state_coefficient", "node", "constraint_state_coeff"),
+    *_per_class(56, _IO, "flow_coefficient", "conversion_flow_coeff"),
+    *_per_class(56, _IO, "max_capacity_coefficient", "capacity_max_coeff"),
+    *_per_class(56, _IO, "min_capacity_coefficient", "capacity_min_coeff"),
+    (58, "group", "output_nodeGroup_dispatch", "group", "print_dispatch"),
+    (58, "group", "output_nodeGroup_indicators", "group", "print_indicators"),
+    *((58, "group", name, "flowGroup", name) for name in (
+        "flow_aggregator", "max_instant_flow", "min_instant_flow", "max_cumulative_flow", "min_cumulative_flow")),
+    (65, "group", "has_capacity_margin", "group", "capacity_margin_method"),
+    (66, "node", "energy_margin", "node", "energy_margin_multiplier"),
+    (70, "unit__inputNode", "capacity_max_coeff", "unit__inputNode", "input_share_max"),
+    (70, "unit__inputNode", "capacity_min_coeff", "unit__inputNode", "input_share_min"),
+    (75, "solve", "non_anticipativity_periods", "solve", "shared_operation_periods"),
+    (75, "solve", "non_anticipativity_invest_periods", "solve", "shared_invest_periods"),
+    (80, "group", "capacity_margin", "group", "capacity_margin_absolute"),
+    (80, "group", "capacity_margin_share", "group", "capacity_margin_relative"),
+    *_per_class(81, _CAPACITY_CLASSES, "lifetime", "lifetime_technical"),
+    *_per_class(81, _CAPACITY_CLASSES, "salvage_value", "net_salvage_value"),
+    (82, "model", "inflation_rate", "model", "social_discount_rate"),
+    (82, "model", "inflation_offset_investment", "model", "discount_offset_investment"),
+    (82, "model", "inflation_offset_operations", "model", "discount_offset_operations"),
+)
+
+#: The definition names a later step brings back after an earlier step removed or renamed them: (class, name) ->
+#: (version that brings it back, the definitions that show the later one is there).  v23 types ``node.invest_forced``
+#: and ``node.storate_state_end`` again after v15 / v13 removed them (no definition had value types before v23; v15
+#: also removed ``unit.invest_forced``, v13 added ``group.share_loss_of_load``); v82 gives ``model.discount_offset_*``
+#: back their pre-v28 names (and renames ``inflation_rate``, the v28 name of ``model.discount_rate``, to
+#: ``social_discount_rate``).  An earlier step's rerun leaves the later definition alone (:func:`_reused_later`).
+_REUSED_DEFINITIONS: dict[tuple[str, str], tuple[int, tuple[tuple[str, str, bool], ...]]] = {
+    ("node", "invest_forced"): (23, (("unit", "invest_forced", False),)),
+    ("node", "storate_state_end"): (23, (("group", "share_loss_of_load", True),)),
+    ("model", "discount_offset_investment"): (82, (("model", "social_discount_rate", True),
+                                                   ("model", "inflation_offset_investment", False))),
+    ("model", "discount_offset_operations"): (82, (("model", "social_discount_rate", True),
+                                                   ("model", "inflation_offset_operations", False))),
+}
+
+
+def _later_definition(db, version: int, cls: str, name: str) -> tuple[str, str] | None:
+    """The later name of definition *cls*.*name* (as step *version* knows it) in *db* when the definition itself is
+    absent: the database then has the renames of :data:`_DEFINITION_RENAMES` made after *version*.  ``None`` when the
+    definition is there or none of its later names is."""
+    if db.get_item("parameter_definition", entity_class_name=cls, name=name):
+        return None
+    key = (cls, name)
+    for rename_version, old_cls, old, new_cls, new in _DEFINITION_RENAMES:
+        if rename_version > version and (old_cls, old) == key:
+            key = (new_cls, new)
+            if key != (cls, name) and db.get_item("parameter_definition", entity_class_name=new_cls, name=new):
+                return key
+    return None
+
+
+def _upsert_definition(db, version: int, cls: str, name: str, **fields) -> None:
+    """``add_update_item`` of definition *cls*.*name* with *fields*, unless it is absent and a later name of it
+    exists (:func:`_later_definition`): then step *version* is already applied to it."""
+    later = _later_definition(db, version, cls, name)
+    if later is not None:
+        _already_applied(version, f"{cls}.{name} is {later[0]}.{later[1]}")
+        return
+    db.add_update_item("parameter_definition", entity_class_name=cls, name=name, **fields)
+
+
+def _reused_later(db, version: int, cls: str, name: str) -> bool:
+    """Whether definition *cls*.*name* in *db* is the one a step after *version* brought back
+    (:data:`_REUSED_DEFINITIONS`), which step *version* must not remove or rename."""
+    entry = _REUSED_DEFINITIONS.get((cls, name))
+    if entry is None or entry[0] <= version:
+        return False
+    pdef = db.get_item("parameter_definition", entity_class_name=cls, name=name)
+    if not pdef or (entry[0] == 23 and not pdef["parameter_type_list"]):
+        return False
+    if all(bool(db.get_item("parameter_definition", entity_class_name=c, name=n)) == present
+           for c, n, present in entry[1]):
+        return _already_applied(version, f"{cls}.{name} is the definition v{entry[0]} brought back")
+    return False
+
+
+def _unless_renamed(db, version: int, list_name: str, member: str, later: str) -> list[list[str]]:
+    """The members ``none`` and *member* of value list *list_name* for ``add_value_list_manual``, without *member*
+    when the list has *later* (its v62 name) instead: step *version* is then already applied."""
+    members = {lv["parsed_value"] for lv in db.find_list_values(parameter_value_list_name=list_name)}
+    if later in members and member not in members:
+        _already_applied(version, f"{list_name} member {member} is {later}")
+        return [[list_name, "none"]]
+    return [[list_name, "none"], [list_name, member]]
 
 
 def update_parameter_types_v23(db):
     """Set the value types of the parameter definitions (v23).
 
-    An entry is created when the database lacks it (as v23 always did), except one whose successor exists
-    (:data:`_V23_SUCCESSORS`).  The ``unit__inputNode`` / ``unit__outputNode`` flow coefficient is ``coefficient`` here: v35 renames it to
+    An entry is created when the database lacks it (as v23 always did), except one with a later name
+    (:func:`_upsert_definition`).  The ``unit__inputNode`` / ``unit__outputNode`` flow coefficient is ``coefficient`` here: v35 renames it to
     ``flow_coefficient`` and adds ``max_capacity_coefficient`` / ``min_capacity_coefficient`` (typed there).  Typing
     those v35 names here created ``flow_coefficient`` beside ``coefficient``, and the v35 rename collided with it.
+    Once v25 ran (``timeblockSet`` renamed ``timeset``, which v25's clean run needs), an absent entry is one a later
+    step removed (e.g. v38 ``node.has_balance``, which the v38 floor keys on) or one the v25 template never had: it
+    is not created.
     """
+    v25_ran = not db.get_item("entity_class", name="timeblockSet") and db.get_item("entity_class", name="timeset")
     for cls, name, types in get_parameter_type_list_v23():
-        successor = _V23_SUCCESSORS.get((cls, name))
-        if (successor is not None
-                and not db.get_item("parameter_definition", entity_class_name=cls, name=name)
-                and db.get_item("parameter_definition", entity_class_name=successor[0], name=successor[1])):
-            continue
-        db.add_update_item("parameter_definition", entity_class_name=cls, name=name, parameter_type_list=types)
+        if v25_ran and not db.get_item("parameter_definition", entity_class_name=cls, name=name):
+            if _later_definition(db, 23, cls, name) is None:
+                _already_applied(23, f"{cls}.{name} is not there after v25")
+                continue
+        _upsert_definition(db, 23, cls, name, parameter_type_list=types)
 
 def get_parameter_type_list_v23():
     types = [["commodity", "co2_content", ("float",)],
@@ -2873,12 +3067,7 @@ def _migrate_v44_parameter_groups(db) -> None:
     # Step 3: assign every parameter_definition to its group.
     group_map = _v44_build_parameter_group_map()
     for (entity_class_name, param_name), group_name in group_map.items():
-        db.add_update_item(
-            "parameter_definition",
-            entity_class_name=entity_class_name,
-            name=param_name,
-            parameter_group_name=group_name,
-        )
+        _upsert_definition(db, 44, entity_class_name, param_name, parameter_group_name=group_name)
 
     # Step 4: declare solve.timeline_hole_multiplier (float, default 1.0)
     # and tag it to solve_advanced.  add_update_item is idempotent on
@@ -3222,10 +3411,7 @@ def _migrate_v51_group_block_resolution(db) -> None:
     """
 
     # --- Value list for decomposition_method ----------------------------
-    add_value_list_manual(db, [
-        ["decomposition_methods", "none"],
-        ["decomposition_methods", "lagrangian_region"],
-    ])
+    add_value_list_manual(db, _unless_renamed(db, 51, "decomposition_methods", "lagrangian_region", "benders_regional"))
 
     # --- group.new_stepduration -----------------------------------------
     default_val, default_type = to_database(None)
@@ -3335,10 +3521,7 @@ def _migrate_v60_solve_decomposition(db) -> None:
     """
 
     # --- Value list for solve.decomposition -----------------------------
-    add_value_list_manual(db, [
-        ["decomposition_schemes", "none"],
-        ["decomposition_schemes", "lagrangian"],
-    ])
+    add_value_list_manual(db, _unless_renamed(db, 60, "decomposition_schemes", "lagrangian", "benders"))
 
     # --- solve.decomposition --------------------------------------------
     default_val, default_type = to_database("none")
@@ -3884,12 +4067,11 @@ def _migrate_v65_energy_and_capacity_margin_methods(db) -> None:
         )
 
     # --- 4. drop the old has_capacity_margin definition --------------
-    has_cm_def = db.item(
-        db.mapped_table("parameter_definition"),
-        entity_class_name="group", name="has_capacity_margin",
-    )
-    if has_cm_def is not None:
+    has_cm_def = db.get_item("parameter_definition", entity_class_name="group", name="has_capacity_margin")
+    if has_cm_def:
         db.remove_parameter_definition(id=has_cm_def["id"])
+    else:
+        _already_applied(65, "group.has_capacity_margin is removed")
 
     _commit_step(db,
         "v65: added node.energy_margin (+ energy_margin_method) and "
@@ -7301,9 +7483,10 @@ def _migrate_v52_solver_selection(db) -> None:
     # and dependent parameter_value rows keep their list_value_ref
     # entries through the migration.  Spine cascades the drop to
     # dependent rows, which made the drop-and-readd path unreliable.
-    pvl_table = db.mapped_table("parameter_value_list")
-    legacy_solver_list = db.item(pvl_table, name="solver")
-    if legacy_solver_list is not None:
+    legacy_solver_list = db.get_item("parameter_value_list", name="solver")
+    if not legacy_solver_list and db.get_item("parameter_value_list", name="solvers"):
+        _already_applied(52, "value list solver is renamed to solvers")
+    elif legacy_solver_list:
         legacy_id = legacy_solver_list["id"]
         # Add missing members: gurobi, xpress, copt.
         for member in ("gurobi", "xpress", "copt"):
@@ -9440,7 +9623,23 @@ def _migrate_v56_remove_solver_log_level(db) -> None:
             pass
 
 
-def _migrate_v56_add_profile_and_ramp_method_none(db) -> None:
+def _v56_none_members(db) -> frozenset[str]:
+    """Which of ``profile_methods`` / ``ramp_methods`` have the ``none`` member v56 D.1 adds (read before D.1)."""
+    return frozenset(name for name in ("profile_methods", "ramp_methods")
+                     if "none" in {lv["parsed_value"] for lv in db.find_list_values(parameter_value_list_name=name)})
+
+
+def _v56_backfilled(db, entity_class_name: str, name: str, target: str, none_before: frozenset[str]) -> bool:
+    """The default of *entity_class_name.name* is *target* and its list had ``none`` before D.1: the default and the
+    ``none`` backfill (one commit) are done, and a rerun must not backfill the entities made since."""
+    pdef = db.get_item("parameter_definition", entity_class_name=entity_class_name, name=name)
+    if (not pdef or pdef["parameter_value_list_name"] not in none_before
+            or from_database(pdef["default_value"], pdef["default_type"]) != target):
+        return False
+    return _already_applied(56, f"{entity_class_name}.{name} default is {target}")
+
+
+def _migrate_v56_add_profile_and_ramp_method_none(db, none_before: frozenset[str] = frozenset()) -> None:
     """Batch D.1 — introduce a ``none`` off-member for the
     ``profile_methods`` and ``ramp_methods`` value-lists, set the four
     user-facing defaults to ``none``, and backfill an explicit
@@ -9482,6 +9681,9 @@ def _migrate_v56_add_profile_and_ramp_method_none(db) -> None:
     ``"none"``; re-read each backfilled entity and confirm a
     ``parameter_value`` row exists.  Mismatch raises
     :class:`SpineDBAPIError`.
+
+    *none_before*: :func:`_v56_none_members` before this step; a target found done (:func:`_v56_backfilled`, a rerun
+    after a kill) is not backfilled again.
     """
     # ---- Step (a): extend profile_methods / ramp_methods ------------
     add_value_list_manual(
@@ -9498,6 +9700,8 @@ def _migrate_v56_add_profile_and_ramp_method_none(db) -> None:
         ("unit__outputNode",    "ramp_method"),
     )
 
+    done = {target for target in targets if _v56_backfilled(db, *target, "none", none_before)}
+
     # ---- Step (b): retype defaults to 'none' ------------------------
     for entity_class_name, name in targets:
         db.add_update_item(
@@ -9511,6 +9715,8 @@ def _migrate_v56_add_profile_and_ramp_method_none(db) -> None:
     # ---- Step (c): backfill legacy entities -------------------------
     backfilled_count = 0
     for entity_class_name, name in targets:
+        if (entity_class_name, name) in done:
+            continue
         entities_with_value = {
             pv["entity_byname"]
             for pv in db.find_parameter_values(
@@ -9565,7 +9771,7 @@ def _migrate_v56_add_profile_and_ramp_method_none(db) -> None:
     )
 
 
-def _migrate_v56_set_unit_node_profile_default_upper_limit(db) -> None:
+def _migrate_v56_set_unit_node_profile_default_upper_limit(db, none_before: frozenset[str] = frozenset()) -> None:
     """Batch D.2 — flip ``unit__node__profile.profile_method`` default
     from ``null`` to ``upper_limit`` and backfill legacy entities to
     ``none``.
@@ -9594,12 +9800,17 @@ def _migrate_v56_set_unit_node_profile_default_upper_limit(db) -> None:
 
     Verification: re-read the default and confirm it is
     ``"upper_limit"``.  Mismatch raises :class:`SpineDBAPIError`.
+
+    *none_before* as in :func:`_migrate_v56_add_profile_and_ramp_method_none` (a user-set ``upper_limit`` default
+    before v56 has no ``none`` member, so it still gets the backfill).
     """
     entity_class_name = "unit__node__profile"
     name = "profile_method"
 
     upper_limit_value, upper_limit_type = to_database("upper_limit")
     none_value, none_type = to_database("none")
+
+    done = _v56_backfilled(db, entity_class_name, name, "upper_limit", none_before)
 
     # ---- Step (a): flip default to upper_limit ----------------------
     db.add_update_item(
@@ -9619,7 +9830,7 @@ def _migrate_v56_set_unit_node_profile_default_upper_limit(db) -> None:
         )
     }
     backfilled_count = 0
-    for ent in db.find_entities(entity_class_name=entity_class_name):
+    for ent in db.find_entities(entity_class_name=entity_class_name) if not done else ():
         byname = ent["entity_byname"]
         if byname in entities_with_value:
             continue
@@ -9723,6 +9934,12 @@ def _migrate_v56_retype_yes_only_to_yes_no(db) -> None:
         ("unit__inputNode",  "is_non_synchronous"),
         ("unit__outputNode", "is_non_synchronous"),
     )
+    # A target with a later name (v65 has_capacity_margin -> capacity_margin_method) is retyped already.
+    renamed = [(cls, name, _later_definition(db, 56, cls, name)) for cls, name in targets]
+    for cls, name, later in renamed:
+        if later is not None:
+            _already_applied(56, f"{cls}.{name} is {later[0]}.{later[1]}, retyped already")
+    targets = tuple((cls, name) for cls, name, later in renamed if later is None)
     legacy_lists: tuple[str, ...] = (
         "is_DC",
         "has_capacity_margin",

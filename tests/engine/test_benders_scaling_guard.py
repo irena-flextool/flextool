@@ -66,17 +66,17 @@ def test_region_error_escapes_a_failing_layer3_apply(monkeypatch):
         _benders._apply_region_autoscale(_wide_region(), _BASIC, "region_X", guard=guard)
 
 
-def test_region_warning_under_warn_once_per_region(capsys):
+def test_region_warning_under_warn_once_per_region(coded_log):
     guard = {"solve_name": "invest_2030",
              "run_options": RunOptions.from_env({"FLEXTOOL_SCALING_GUARD": "warn"})}
     for region in ("region_X", "region_X", "region_Y"):
         _benders._apply_region_autoscale(_wide_region(), _BASIC, region, guard=guard)
-    printed = capsys.readouterr().out
+    printed = coded_log()
     assert printed.count("Benders region region_X cannot be scaled") == 1
     assert printed.count("Benders region region_Y cannot be scaled") == 1
 
 
-def test_a_region_whose_readout_fails_says_the_guard_could_not_run(monkeypatch, capsys):
+def test_a_region_whose_readout_fails_says_the_guard_could_not_run(monkeypatch, coded_log):
     """As the monolith: one warning per run (two regions here), and both regions go on unscaled."""
     monkeypatch.delenv("FLEXTOOL_AUTOSCALE_STRICT", raising=False)
 
@@ -87,9 +87,9 @@ def test_a_region_whose_readout_fails_says_the_guard_could_not_run(monkeypatch, 
     guard = {"solve_name": "invest_2030", "run_options": RunOptions.from_env({})}
     for region in ("region_X", "region_Y"):
         assert _benders._apply_region_autoscale(_wide_region(), _BASIC, region, guard=guard) is None
-    printed = capsys.readouterr().out
-    assert printed.count("Warning: the scaling guard could not run (the range readout failed); the solves "
-                         "go on unchecked (details in the log).") == 1
+    printed = coded_log()
+    assert printed.count("Warning: scaling guard could not run (the range readout failed); solves "
+                         "go on unchecked [W-0547]") == 1
     assert "cannot be scaled" not in printed
 
 

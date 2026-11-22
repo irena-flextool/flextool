@@ -27,6 +27,7 @@ from polar_high import Param, Sum, Where
 
 from flextool.engine.input._axis_enums import rename_to_axis
 from flextool.engine.input._param_shapes import promote_param_to_dt
+from flextool.engine.preprocess.params._ramp_links import online_free_start_cells
 from flextool.engine.model import _coarse_flows, _extend, _retire_built
 from flextool.engine.model._common import (
     _availability_factor, _capped_arcs, _coef_factor, _drop_uncapped, _entity_rows, _has_rows, _indirect_input_cap,
@@ -48,18 +49,22 @@ def add_variables(b: "_Build") -> None:
     # v_online_linear[p,d,t], v_startup_linear[p,d,t], v_shutdown_linear[p,d,t] ≥ 0
     #   ∀ (p,d,t) ∈ p_online_dt, p ∈ process_online_linear
     # Units online, and units started / shut down: the change of units online, online_change
-    # (count of unitsize), continuous.
+    # (count of unitsize), continuous.  v_startup = v_shutdown = 0 at a free start (free_start_rows: the first step
+    # of a solve without a carry, of a forecast branch starting there and of a period that does not continue the
+    # previous one), where the units online are chosen freely.
     # ─── VAR. ─── v_online{sfx} / v_startup{sfx} / v_shutdown{sfx} (coarse processes) ───
     # on[p,d,b], su[p,d,b], sd[p,d,b]   ∀ p ∈ processCoarse ∩ process_online, (d,b) the coarse steps of p
     #   (b = its first fine step b_first)
     # Units online once per coarse step, held over its fine steps (a level: b.v_online_* is indexed on every fine
     # step, _coarse_flows.alias); the units started / shut down at the step's start (events: registered at b only,
     # not aliased, so a sum over t counts each once and a fine row of an interior step has no event term).
+    # A free start (free_start_rows): v_startup = v_shutdown = 0 there (upper bound 0), units online free.
     if b.has_online_lin:
         b.v_online_linear = _coarse_flows.alias(
             b, m.add_var("v_online_linear", ("p", "d", "t"), b.p_olin_rows), b.p_olin_idx)
-        b.v_startup_linear = m.add_var("v_startup_linear", ("p", "d", "t"), b.p_olin_rows)
-        b.v_shutdown_linear = m.add_var("v_shutdown_linear", ("p", "d", "t"), b.p_olin_rows)
+        zero = _free_start_bound(b, "linear")
+        b.v_startup_linear = m.add_var("v_startup_linear", ("p", "d", "t"), b.p_olin_rows, upper=zero)
+        b.v_shutdown_linear = m.add_var("v_shutdown_linear", ("p", "d", "t"), b.p_olin_rows, upper=zero)
 
     # ─── VAR. ─── v_online_integer / v_startup_integer / v_shutdown_integer ──
     # ─────────────────────────────────────────────────────────────────────────
@@ -72,8 +77,9 @@ def add_variables(b: "_Build") -> None:
         b.v_online_integer = _coarse_flows.alias(
             b, m.add_var("v_online_integer", ("p", "d", "t"), b.p_oint_rows,
                          integer=not b.d.relax_integrality), b.p_oint_idx)
-        b.v_startup_integer = m.add_var("v_startup_integer", ("p", "d", "t"), b.p_oint_rows)
-        b.v_shutdown_integer = m.add_var("v_shutdown_integer", ("p", "d", "t"), b.p_oint_rows)
+        zero = _free_start_bound(b, "integer")
+        b.v_startup_integer = m.add_var("v_startup_integer", ("p", "d", "t"), b.p_oint_rows, upper=zero)
+        b.v_shutdown_integer = m.add_var("v_shutdown_integer", ("p", "d", "t"), b.p_oint_rows, upper=zero)
 
 
 def uc_classes(b: "_Build") -> list:
@@ -94,6 +100,61 @@ def online_rows(b: "_Build", kind: str) -> pl.DataFrame:
     """``(p, d, t)`` of the online rows of UC class ``kind``: every step of a fine process, the first fine step of
     each coarse step of a coarse process (the registered online / startup / shutdown columns)."""
     return b.p_olin_rows if kind == "linear" else b.p_oint_rows
+
+
+def _online_set(b: "_Build", kind: str) -> pl.DataFrame:
+    return b.d.process_online_linear if kind == "linear" else b.d.process_online_integer
+
+
+def carry_rows(b: "_Build", kind: str) -> "pl.DataFrame | None":
+    """``(p, d, t, value)`` of UC class ``kind``: the online rows at the carried steps (``dt_online_carry``) of the
+    processes with a carried units online (``p_roll_continue_online``), the value carried; ``None`` when none."""
+    d = b.d
+    rco = d.p_roll_continue_online
+    if d.dt_online_carry is None or d.dt_online_carry.height == 0 or rco is None:
+        return None
+    rows, online_set = online_rows(b, kind), _online_set(b, kind)
+    carry_dt = d.dt_online_carry.select(pl.col("d").cast(rows.schema["d"], strict=False),
+                                        pl.col("t").cast(rows.schema["t"], strict=False)).unique()
+    # The carried p is String: cast to the online_set p Enum before the join.  A process has one
+    # startup method, so the classes never share a p.
+    carry_al = rco.frame.with_columns(pl.col("p").cast(online_set.schema["p"], strict=False))
+    out = (online_set.select("p").unique()
+           .join(carry_al, on="p", how="inner")
+           .join(carry_dt, how="cross")
+           .join(rows.select("p", "d", "t"), on=["p", "d", "t"], how="inner")
+           .select("p", "d", "t", "value"))
+    return out if out.height > 0 else None
+
+
+def free_start_rows(b: "_Build", kind: str) -> "pl.DataFrame | None":
+    """``(p, d, t)`` of UC class ``kind`` where the units online start free: the online rows at the cells of
+    :func:`~flextool.engine.preprocess.params._ramp_links.online_free_start_cells` (the first step of the solve,
+    of a forecast branch starting there and of a period that does not continue the previous one; never a gap or a
+    representative-block start) of the processes that carry no units online there (:func:`carry_rows`).  Such a
+    row has no online predecessor: no ``online_change`` row, and ``v_startup = v_shutdown = 0``.  ``None`` when
+    none."""
+    d = b.d
+    cells = online_free_start_cells(d.dt, d.dt_online_wrap, getattr(d, "rp_block_first", None))
+    if cells.height == 0:
+        return None
+    keys = ["p", "d", "t"]
+    free = (_utf8_keys(online_rows(b, kind).lazy().select(keys), ["d", "t"])
+            .join(cells.lazy().rename({"d": "_d", "t": "_t"}), on=["_d", "_t"], how="semi")
+            .select(keys).collect())
+    carried = carry_rows(b, kind)
+    if carried is not None and free.height > 0:
+        free = free.join(carried.select(keys), on=keys, how="anti")
+    return free if free.height > 0 else None
+
+
+def _free_start_bound(b: "_Build", kind: str) -> "float | Param":
+    """The upper bound of ``v_startup`` / ``v_shutdown`` of UC class ``kind``: 0 at :func:`free_start_rows`,
+    +inf elsewhere (a sparse bound Param tightens only its rows)."""
+    free = free_start_rows(b, kind)
+    if free is None:
+        return float("inf")
+    return Param(("p", "d", "t"), free.with_columns(value=pl.lit(0.0)))
 
 
 def add_constraints(b: "_Build") -> None:
@@ -163,49 +224,43 @@ def add_constraints(b: "_Build") -> None:
                    lhs_terms=_lhs_with_invdiv(v_online, "online"),
                    rhs_terms={"max_units": b.cap.existing_count_p})
 
-        # The online predecessor v_online_prev of every (p,d,t) ∈ p_idx, one of three disjoint pieces:
+        # The online predecessor v_online_prev of every (p,d,t) ∈ p_idx \ free_start, one of three disjoint pieces:
         # v_online_prev[p,d,t] =
         #   v_online[p,d′,t′]         (d,t,d′,t′) ∈ dt_ramp_link                adjacent predecessor (also a continuing
         #                                                                         period, a mid-horizon branch's first step)
         #   p_roll_continue_online[p] (d,t) ∈ dt_online_carry                  the previous solve's realized commitment
         #                                                                         (dt_online_carry = dt_ramp_carry's steps)
-        #   v_online[p,d,t″]          (d,t,d,t″) ∈ dt_online_wrap, (d,t) ∉ dt_online_carry
-        #                                                                         stretch start: the last step of its stretch
+        #   v_online[p,d,t″]          (d,t,d,t″) ∈ dt_online_wrap, (d,t) ∉ dt_online_carry, (p,d,t) ∉ free_start
+        #                                                                         a sample's stretch start: the last step of
+        #                                                                         its stretch
+        # free_start = {(p,d,t) ∈ p_idx : (d,t) ∈ dt_online_wrap is the first step of period d, d has one stretch, (d,t)
+        #   ∉ rp_block_first, p carries no units online at (d,t)} (free_start_rows): the first step of a solve without
+        #   a carry, of every forecast branch starting there and of a period that does not continue the previous one.
         # A stretch is a run of steps of one period d along dt_ramp_link; it starts at the first step of a solve or of
         # a period that does not continue the previous one, after a gap in the timeline and at a representative-block
-        # start.  No link across a gap, a representative-block start or a new year (as ramps and min up/down).  The
-        # successor side does not wrap: a stretch end has no successor (_successor_steps).
+        # start.  A free start has no predecessor: the units online there are chosen freely, with no start-up or
+        # shut-down (v_startup = v_shutdown = 0, their upper bound) and no online_change row; this holds whatever the
+        # step's place in a rolling window, so a stochastic solve and its realization link the same steps.  The other
+        # stretch starts (after a gap, a representative-block start: samples of recurring operation, also when the
+        # first of the solve) cycle within their stretch, with start-up and shut-down free there.  No link across a
+        # gap, a representative-block start or a new year (as ramps and min up/down).  No end condition: the successor
+        # side does not wrap, a stretch end has no successor (_successor_steps).
         # A coarse process (processCoarse) has these rows, and maxOnline / maxStartup / maxShutdown, only at the first
         # fine step b of each of its coarse steps (online_rows); v_online_prev reads the alias of v_online, i.e. the
         # coarse step b⁻ that holds the fine predecessor of b (or the stretch's last coarse step on a wrap; a carried
         # first step is always a coarse step's first step, as coarse steps break at every roll and stretch start).
         # Units online, started and shut down are then decided once per coarse step, the start / stop at its start;
         # the rows of the interior steps would read 0 = 0 or be implied.
-        rco = d.p_roll_continue_online
-        d_dtype, t_dtype = p_idx.schema["d"], p_idx.schema["t"]
-
-        carry_rows = None
-        if d.dt_online_carry is not None and d.dt_online_carry.height > 0 and rco is not None:
-            carry_dt = d.dt_online_carry.select(pl.col("d").cast(d_dtype, strict=False),
-                                                pl.col("t").cast(t_dtype, strict=False)).unique()
-            # The carried p is String: cast to the online_set p Enum before the join.  A process has one
-            # startup method, so the classes never share a p.
-            carry_al = rco.frame.with_columns(pl.col("p").cast(online_set.schema["p"], strict=False))
-            p_carry_rows = (online_set.select("p").unique()
-                            .join(carry_al, on="p", how="inner")
-                            .join(carry_dt, how="cross")
-                            .join(rows.select("p", "d", "t"), on=["p", "d", "t"], how="inner")
-                            .select("p", "d", "t", "value"))
-            if p_carry_rows.height > 0:
-                carry_rows = p_carry_rows
+        p_carry_rows = carry_rows(b, kind)
+        free_rows = free_start_rows(b, kind)
 
         prev_links = []
         if d.dt_ramp_link is not None and d.dt_ramp_link.height > 0:
             prev_links.append(d.dt_ramp_link)
         if d.dt_online_wrap is not None and d.dt_online_wrap.height > 0:
             wrap = d.dt_online_wrap
-            if carry_rows is not None:
-                wrap = wrap.join(carry_rows.select("d", "t").unique(), on=["d", "t"], how="anti")
+            if p_carry_rows is not None:
+                wrap = wrap.join(p_carry_rows.select("d", "t").unique(), on=["d", "t"], how="anti")
             prev_links.append(wrap)
         link_native = None
         if prev_links:
@@ -214,6 +269,8 @@ def add_constraints(b: "_Build") -> None:
                                {"d": "d", "t": "t", "d_previous": "d_previous", "t_previous": "t_previous"}))
             link_rows = (online_set.select("p").unique().join(link_cast, how="cross")
                         .join(rows.select("p", "d", "t"), on=["p", "d", "t"], how="inner"))
+            if free_rows is not None:
+                link_rows = link_rows.join(free_rows, on=["p", "d", "t"], how="anti")
             if link_rows.height > 0:
                 link_native = link_rows
 
@@ -223,20 +280,24 @@ def add_constraints(b: "_Build") -> None:
                                            {"d": "d_previous", "t": "t_previous"}, to_axis=True)
             online_prev_terms["online_prev_link"] = Sum(Where(v_online_prev_link, link_native),
                                                         over=("d_previous", "t_previous"))
-        if carry_rows is not None:
+        if p_carry_rows is not None:
             # Sparse Param at the carried boundary row(s) only; Param + Param outer-joins with 0-fill.
-            online_prev_terms["roll_continue_online"] = Param(("p", "d", "t"), carry_rows)
+            online_prev_terms["roll_continue_online"] = Param(("p", "d", "t"), p_carry_rows)
 
         # ─── EQ. ─── online_change_{linear,integer} ──────────────────────────
         # ─────────────────────────────────────────────────────────────────────
         # v_online[p,d,t] − v_online_prev[p,d,t] − v_startup[p,d,t] + v_shutdown[p,d,t]  =  0
-        #   ∀ (p,d,t) ∈ p_idx;   v_online_prev as derived above (three pieces)
+        #   ∀ (p,d,t) ∈ p_idx \ free_start;   v_online_prev as derived above (three pieces)
         # The change in units online is the units started minus the units shut down (Backbone's
-        # q_startshut).  With maxStartup / maxShutdown below, a startup without a unit coming online, or a
+        # q_startshut).  None at a free start (above): its units online are free, and its start-ups and
+        # shut-downs are 0 (no start-up cost or start-up fuel there; the units online still burn no-load fuel).
+        # Forecast branches that start at the solve's first step each choose their own units online there unless
+        # the step is tied (non_anticipativity_online).  With maxStartup / maxShutdown below, a startup without a unit coming online, or a
         # shutdown without one going offline, is impossible; a fleet (unitsize < built) can still start and
         # stop units in the same step (both cost nothing extra on the ramp rows of a single-output arc, part
         # C) — a single integer unit cannot (maxStartup / maxShutdown forbid it there).
-        m.add_cstr(f"online_change{sfx}", over=rows, sense="==",
+        change_over = rows if free_rows is None else rows.join(free_rows, on=["p", "d", "t"], how="anti")
+        m.add_cstr(f"online_change{sfx}", over=change_over, sense="==",
                    lhs_terms={"online": v_online, "shutdown": v_shutdown},
                    rhs_terms={"startup": v_startup, **online_prev_terms})
 
@@ -251,7 +312,8 @@ def add_constraints(b: "_Build") -> None:
         # ─────────────────────────────────────────────────────────────────────
         # v_shutdown[p,d,t] + v_online[p,d,t] − Σ v_invest_p[p,d″] + Σ v_divest_p[p,d″]  ≤  existing_count[p,d]
         #   ∀ (p,d,t) ∈ p_idx whose online predecessor is v_online of the SAME period d (a dt_ramp_link with
-        #   d_previous = d, or a dt_online_wrap; the same-period predecessor keeps the shutdown bound)
+        #   d_previous = d, or a dt_online_wrap; the same-period predecessor keeps the shutdown bound), and at a
+        #   free start (redundant there: v_shutdown = 0)
         # Units shut down in a step are offline in it.  Not built where the predecessor is in another period
         # or carried from an earlier roll (capacity may differ there — a unit online at the end of the
         # previous period / roll must still be able to "shut down" even if this step's capacity is lower);
@@ -264,8 +326,8 @@ def add_constraints(b: "_Build") -> None:
             cross_period_link = link_native.filter(pl.col("d") != pl.col("d_previous")).select("p", "d", "t")
             if cross_period_link.height > 0:
                 exclude_shutdown = cross_period_link
-        if carry_rows is not None:
-            carry_pdt = carry_rows.select("p", "d", "t")
+        if p_carry_rows is not None:
+            carry_pdt = p_carry_rows.select("p", "d", "t")
             exclude_shutdown = (carry_pdt if exclude_shutdown is None
                                 else pl.concat([exclude_shutdown, carry_pdt]).unique())
         max_shutdown_over = (rows if exclude_shutdown is None
@@ -570,7 +632,13 @@ def add_constraints(b: "_Build") -> None:
     # v_online[p,d,t] = p_fix_online[p,d,t]   ∀ (p,d,t) ∈ online_rows with a p_fix_online value
     #   (a coarse process: at the first fine step of each coarse step; its pin is the same on every fine step of
     #   the step, or the process keeps the solve's step, flex_data.coarse_pin_varies)
-    # In a separate-dispatch solve, pins units online to the commitment of the parent solve.
+    # In a realization solve, pins the units online of the processes with integer (binary) online variables to the
+    # parent's commitment, also when the solve relaxes integers (reduce_unit_detail_method integers*); linear units
+    # online are not pinned (p_fix_online has none: the realization re-decides them with the realized data), so
+    # online_fix_eq_linear has no rows.  At a free start of the realization (its roll 0, a single-solve realization,
+    # a period that does not continue the previous one) its units online are free like the parent's; a free start
+    # relaxes any predecessor the parent had, so the pinned commitment stays feasible.  A later roll carries the
+    # previous realization's units online in both stages (the stochastic roll k and realization roll k).
     # Only declared v_online cells are pinned.  p_fix_online is Utf8-keyed: it is joined to
     # the native-typed index through Utf8 copies of (p, d, t).
     if d.p_fix_online is not None and d.p_fix_online.frame.height > 0:

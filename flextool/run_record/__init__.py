@@ -8,6 +8,7 @@
 from flextool.run_record._owner import (
     ABANDONED_STATE,
     LOG_HEAD_BYTES,
+    LOG_ONLY_PREFIX,
     LOG_TAIL_BYTES_MAX,
     LOG_VIEW_MAX_BYTES,
     MALFORMED_STATE,
@@ -56,7 +57,7 @@ from flextool.run_record._status import (
     effective_state,
     set_active,
 )
-from flextool.run_record._tee import TeeStream, install_tee
+from flextool.run_record._tee import TeeStream, install_tee, set_log_only_sink, write_log_only
 
 __all__ = [
     "ABANDONED_STATE",
@@ -65,6 +66,7 @@ __all__ = [
     "LOG_TAIL_BYTES_MAX",
     "LOG_VIEW_MAX_BYTES",
     "MALFORMED_STATE",
+    "LOG_ONLY_PREFIX",
     "MARKER",
     "NULL_RECORDER",
     "RUN_LOG_FILE",
@@ -102,10 +104,12 @@ __all__ = [
     "record_run_without_marker",
     "results_usable",
     "set_active",
+    "set_log_only_sink",
     "unusable_code",
     "unusable_reason",
     "well_formed",
     "worst_verdict",
+    "write_log_only",
     "write_status_atomic",
     "write_stop_request",
 ]

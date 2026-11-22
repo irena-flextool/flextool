@@ -259,8 +259,8 @@ def test_benders_prices_the_cost_lines_of_the_monolith(tmp_path_factory) -> None
     (reinvest_choice, retirement allowed) builds 100 MW and retires 40 MW of them in y2030 (the fixture of
     ``test_retire_built_cohorts``).  The Benders solve's cost lines (per MW of each investment and retirement) are
     those of the same solve without decomposition, they add up to its coefficients, and the decisions they price
-    are the same; so the costs the lines give are the monolith's.  (A Benders solve writes no result files of its
-    own, so its costs are not in the result tables: see the handoff of this work.)"""
+    are the same; so the costs the lines give are the monolith's.  (Its result tables come from its final solve,
+    item 287: ``test_benders_final_solve.py`` compares them with the monolith's.)"""
     import polars as pl
 
     from tests.engine._unit_db import RunCache, utf8

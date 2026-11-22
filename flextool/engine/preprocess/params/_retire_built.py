@@ -283,16 +283,13 @@ def warn_build_to_retire(pairs: pl.DataFrame) -> None:
     total]`` (Utf8), ``total`` the objective coefficient of a MW built (its price and fixed cost) plus the smallest
     coefficient of retiring it, CUR/MW; a negative total lets the model build to retire, up to the investment
     limit (an LP without one is unbounded)."""
-    from flextool.engine import _behaviour_changes
-    names = sorted({str(e) for e, total in pairs.select("e", "total").iter_rows() if total < -_TOL})
-    if not names:
-        return
-    _behaviour_changes.warn_once_each(
-        "build_to_retire", names,
-        lambda fresh: "Warning: building and retiring " + ", ".join(fresh) + " earns money: the net_salvage_value "
-        "received at retirement is worth more than what the capacity costs until then (invest_cost, fixed_cost, "
-        "discount_rate). The model builds as much as the investment limits allow just to retire it; without a "
-        "limit the problem is unbounded. Check net_salvage_value against invest_cost.")
+    from flextool import run_warnings
+    totals: dict[str, float] = {}
+    for e, total in pairs.select("e", "total").iter_rows():
+        if total < -_TOL:
+            totals[str(e)] = min(total, totals.get(str(e), total))
+    run_warnings.warn_grouped("W-0529", sorted(totals), per_run=True,
+                              details={e: f"build and retire: {v:.6g} CUR/MW" for e, v in sorted(totals.items())})
 
 
 def built_retirable_notice(cohorts: pl.DataFrame | None) -> None:

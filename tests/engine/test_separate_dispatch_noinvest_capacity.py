@@ -25,11 +25,13 @@ H = 8760/3 = 2920 h/step):
     2 x 50 = 100 MW and ``p_process_existing_count`` = 100 / 50 = 2 units
     (NOT 0 — the fix).
   * Realized ``rlz`` wind CF 0.5 -> 50 MW; demand 100 -> peaker 50 MW.  The
-    parent hedge pins v_online = 2.0 (low needs the full 2 units); min_load
-    floor 0.5*2.0*50 = 50 MW == the realized need, so output is exactly 50 MW
-    with ZERO unserved load (no VOLL).
+    peaker is linear, so the sibling decides its units online again (the
+    parent's hedge 2.0 is not pinned): 50 MW needs one unit, the min_load floor
+    0.5*v*50 <= 50 allows two, and the first step is a free start, so any v in
+    [1, 2] is optimal (a tie) — v = 2 needs the 2 units the fix resolves.
+    Output is exactly 50 MW with ZERO unserved load (no VOLL).
   * Objective = 50 MW * 10 CUR/MWh * 2920 h/step * 3 steps = 4 380 000
-    (commitment constant -> cyclic startup 0).
+    (no start-up: a free first step, no later start-up needed).
 """
 from __future__ import annotations
 
@@ -50,7 +52,6 @@ SIBLING = "stoch_rd__realized_dispatch"
 PEAKER_EXISTING_UNITS = 2.0       # the operational existing count the fix must resolve
 PEAKER_CAPACITY_MW = 100.0        # = PEAKER_EXISTING_UNITS x virtual_unitsize 50
 SIBLING_OBJECTIVE = 4_380_000.0   # realized rlz dispatch cost (hand-calc)
-PINNED_V_ONLINE = 2.0             # parent hedge commitment pinned into sibling
 
 
 def _build_db(fixture_json: Path, tmp_path: Path) -> str:
@@ -133,14 +134,16 @@ def test_sibling_dispatches_with_zero_unserved(chain):
 
 
 @pytest.mark.solver
-def test_sibling_commitment_pinned_and_objective(chain):
-    """The sibling commits the parent's hedge (v_online = 2.0, pinned) and
-    dispatches the realized rlz scenario at the hand-calc cost."""
+def test_sibling_commitment_and_objective(chain):
+    """The sibling decides the linear peaker's units online again (not pinned:
+    no p_fix_online), within [1, 2] units, and dispatches the realized rlz
+    scenario at the hand-calc cost."""
     steps, wf = chain
+    assert steps[SIBLING].flex_data.p_fix_online is None
     sol = steps[SIBLING].solution
     vo = sol.value("v_online_linear").filter(pl.col("p") == "peaker")
-    assert vo["value"].min() == pytest.approx(PINNED_V_ONLINE, abs=1e-9)
-    assert vo["value"].max() == pytest.approx(PINNED_V_ONLINE, abs=1e-9)
+    assert vo["value"].min() >= 1.0 - 1e-9
+    assert vo["value"].max() <= PEAKER_EXISTING_UNITS + 1e-9
     obj = float(
         pl.read_parquet(wf / "output_raw" / f"v_obj__{SIBLING}.parquet")
         ["objective"][0]

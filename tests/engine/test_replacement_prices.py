@@ -152,7 +152,7 @@ def test_replacement_inside_a_fan_pays_the_invest_cost_of_its_branch(tmp_path_fa
     assert got["p2040_low"] == pytest.approx(3000.0, rel=1e-12)
 
 
-def test_warning_names_an_entity_whose_plant_earns_money(capsys) -> None:
+def test_warning_names_an_entity_whose_plant_earns_money(coded_log) -> None:
     """A generation priced below 0 a year (its salvage credit above its capital price: a replacement whose period
     has no invest_cost but a net_salvage_value) is named once per run; a priced one is not."""
     from flextool.engine import _behaviour_changes
@@ -168,8 +168,8 @@ def test_warning_names_an_entity_whose_plant_earns_money(capsys) -> None:
                            row("priced", "gen:invest:p2020:2", 51_801.83, 15_900.91)])
     warn_salvage_above_cost(table)
     warn_salvage_above_cost(table)
-    out = capsys.readouterr().out
-    assert out.count("Warning: free:") == 1 and "priced" not in out
+    out = coded_log()
+    assert out.count("[W-0527]") == 1 and "('free') [W-0527]" in out and "priced" not in out
 
 
 @pytest.mark.solver

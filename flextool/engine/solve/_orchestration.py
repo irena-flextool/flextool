@@ -51,12 +51,11 @@ import os
 import re
 import shutil
 import tempfile
-import textwrap
 import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Collection, Mapping, Sequence
 
 from flextool import run_record, run_warnings
 from flextool.engine.solve._acceptance import (
@@ -109,14 +108,6 @@ from flextool.engine.autoscale import (
     write_report as _autoscale_write_report,
 )
 from flextool.sqlite_url import sqlite_url_string
-
-
-def _wrap_log_prose(text: str, width: int = 100, indent: str = "  ") -> str:
-    """Wrap a prose log message at ``width`` chars, continuation indented."""
-    return textwrap.fill(
-        text, width=width, subsequent_indent=indent,
-        break_long_words=False, break_on_hyphens=False,
-    )
 
 
 def _format_solver_args_line(
@@ -1903,9 +1894,10 @@ class OrchestrationStep:
     flex_data: "FlexData | None" = None
     flex_data_provider: "object | None" = None
     is_benders: bool = False
-    """True when this step was produced by the Benders region driver and
-    carries only a :class:`SnapshotSolution` invest carrier, not a full
-    :class:`Solution` (so it cannot yet drive processed outputs)."""
+    """True when this step was produced by the Benders region driver.  It
+    carries a full :class:`Solution` when its final solve was accepted
+    (``benders_results == "full"``), else only a :class:`SnapshotSolution`
+    invest carrier."""
     benders_gap: float | None = None
     """Benders steps only — the relative optimality gap reached at the
     incumbent ``(best_UB − LB)/max(1, |best_UB|)``.  Paired with
@@ -1916,6 +1908,13 @@ class OrchestrationStep:
     """Benders steps only — the relative-gap tolerance that was in force."""
     benders_iterations: int | None = None
     """Benders steps only — the number of master/subproblem iterations run."""
+    benders_results: str | None = None
+    """Benders steps only — what the solve gives the result tables (item 287): ``"full"`` (its final solve, the
+    whole model with the Benders investments fixed, was accepted: ``solution`` is that solve's and every table is
+    written as for a monolithic solve), ``"invest_slice"`` (its investments and their costs only: final solve off
+    or not accepted, followed by other solves) or ``"none"``.  ``optimal`` of a Benders step stays the Benders
+    convergence (``near_optimal`` ``False``), whatever the final solve gave, so the CLI exit-code scan still
+    reports a non-converged Benders solve."""
     captured_vars: "dict[str, pl.DataFrame]" = field(default_factory=dict)
     """Per-sub-solve snapshot of the decision-variable frames that
     end-of-cascade writers (``_entity_all_capacity`` and friends) need
@@ -2269,6 +2268,18 @@ def _spawn_realized_dispatch_siblings(
             continue
         configured = _realization.configured_realization_solve(solve_cfg, p)
         if configured is not None:
+            if contains_solves.get(p):
+                # The solves it contains would take its pins (the PIN translation of a nested sub-solve), and the
+                # realization solve would continue from the last of them, not from it.
+                raise FlexToolConfigError(
+                    f"Solve '{configured}' right after solve '{p}' in model.solves would realize the committed "
+                    f"window of '{p}' (it is taken as a realization solve because it is deterministic, contains "
+                    f"no solves, has the same solve_mode and rolling_times as '{p}', and realizes every period "
+                    f"'{p}' commits inside its stochastic fan), but '{p}' contains other solves "
+                    f"(contains_solves), so no solve can realize it.  Move the solves it contains out of its "
+                    f"contains_solves, end its committed window before the reveal, or make '{configured}' differ "
+                    f"from that rule if it is not meant as a realization solve."
+                )
             solve_cfg.register_realization_solve(configured, p)
             if logger is not None:
                 logger.info(
@@ -2279,8 +2290,9 @@ def _spawn_realized_dispatch_siblings(
             if _line is not None:
                 # Printed only (solve-site console convention): the logger writes to the console too.
                 print(f"Warning: {_line}", flush=True)
-            # A realization solve takes its parent's detail levels (it pins
-            # the parent's units online and reserves): name an authored
+            # A realization solve takes its parent's detail levels (so that
+            # its online variables and reserve rows match those of the solve
+            # it realizes): name an authored
             # value that is overridden. Printed only (solve-site console
             # convention): the logger writes to the console too.
             for _line in solve_cfg.reduce_detail_overridden(configured):
@@ -2295,11 +2307,9 @@ def _spawn_realized_dispatch_siblings(
             raise FlexToolConfigError(
                 f"Solve '{p}' has a realized: yes designation in "
                 f"stochastic_branches whose fan reaches its committed window, "
-                f"but it contains other solves (contains_solves), so the "
-                f"engine cannot add a realization solve for it.  Configure a "
-                f"realization solve right after it in model.solves (a "
-                f"deterministic solve with the same solve_mode and roll "
-                f"structure realizing the same periods), or remove the "
+                f"but it contains other solves (contains_solves), so no "
+                f"realization solve can realize it.  Move the solves it "
+                f"contains out of its contains_solves, or remove the "
                 f"designation."
             )
         eligible.append((p, "a realized: yes designation in stochastic_branches"))
@@ -3008,6 +3018,8 @@ def _drive_cascade(
             # consume these; the consume-side guard fires only for Benders
             # predecessors NOT in this set.
             self._benders_invest_handoff_names: set[str] = set()
+            # The BendersResult of the Benders solve just run (``_run_benders_solve``), read by its final solve.
+            self._benders_result = None
 
         def _release_warm_problem(self) -> None:
             """Drop the previous in-process WarmProblem and everything tied
@@ -3047,6 +3059,7 @@ def _drive_cascade(
             data,
             *,
             scaling_config: "ScalingConfig",
+            final_solve: bool = False,
         ) -> int:
             """Run *complete_solve_name* via the Benders region driver.
 
@@ -3071,6 +3084,9 @@ def _drive_cascade(
             ``self._benders_invest_handoff_names`` so the (now narrowed)
             consume-side guard in :meth:`run` fires only for a downstream
             consumer of a Benders solve that produced no investment.
+
+            *final_solve*: the final solve (item 287) follows in :meth:`_run_one`, which then dumps the inputs
+            (``--csv-dump``) once.  The :class:`BendersResult` is kept on ``self._benders_result`` for it.
             """
             from flextool.engine.solve._benders import solve_benders
             from flextool.decomposition.region_filter import (
@@ -3294,8 +3310,11 @@ def _drive_cascade(
             # ``v_extend_{p,n}`` (per cohort) / ``v_extended_{p,n}`` to long-form frames
             # whose columns match ``polar_high.Solution.value(name)`` exactly;
             # it is ``{}`` when the model has no investment.
-            # ``--csv-dump``: dump the solve's undecomposed FlexData (the master and the regions are derived from it).
-            self._dump_solve_inputs(data, complete_solve_name)
+            # ``--csv-dump``: dump the solve's undecomposed FlexData (the master and the regions are derived from it);
+            # the final solve, when it follows, dumps the same data.
+            if not final_solve:
+                self._dump_solve_inputs(data, complete_solve_name)
+            self._benders_result = result
 
             from flextool.engine.preprocess.flex_data import (
                 build_handoff_from_solution,
@@ -3368,6 +3387,8 @@ def _drive_cascade(
                 benders_gap=result.gap,
                 benders_tol=result.tol,
                 benders_iterations=result.iterations,
+                # "invest_slice" once the investment-only results are written (final solve off or failed).
+                benders_results="none",
                 flex_data=data,
                 flex_data_provider=getattr(
                     self.state, "current_provider", None,
@@ -3375,6 +3396,68 @@ def _drive_cascade(
             )
             self._prev_step_key = complete_solve_name
             return 0
+
+        def _benders_final_not_accepted(self, complete_solve_name: str, *, problem: str, details: str | None,
+                                        recorded: bool, bres, data) -> int:
+            """The final solve of Benders solve *complete_solve_name* gave no accepted solution: W-0572, and the
+            Benders step, its handoff and its run-record verdict stay (``benders.final_solve`` says it failed).
+            The run goes on (owner answer 287-Q6): the Benders result itself is valid.  With a later solve the
+            Benders solve writes its investment-only results (:meth:`_write_benders_invest_slice`); as the last
+            solve it writes none (the result tables need a dispatch, which no solve of the run then has)."""
+            if not recorded:
+                run_record.active().solve_benders_final(accepted=False, model_status=None, objective=None)
+            run_warnings.warn("W-0572", solve=complete_solve_name, problem=problem, details=details)
+            # The Benders step stays the solve's step (the final solve's step would have replaced it): the next
+            # solve's cold-path slim releases its input data.
+            self._prev_step_key = complete_solve_name
+            if self._later_solve_follows():
+                self._write_benders_invest_slice(complete_solve_name, bres, data)
+            return 0
+
+        def _benders_final_out_of_memory(self, complete_solve_name: str, exc: BaseException, *, bres,
+                                         data) -> int:
+            """Building or writing the whole model of the final solve of Benders solve *complete_solve_name* ran
+            out of memory: W-0572 (it names ``--benders-final-solve off``), the Benders result stands
+            (:meth:`_benders_final_not_accepted`)."""
+            import gc
+
+            gc.collect()
+            _try_malloc_trim()
+            return self._benders_final_not_accepted(
+                complete_solve_name, problem="failed (out of memory; see --benders-final-solve off)",
+                details=f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__,
+                recorded=False, bres=bres, data=data,
+            )
+
+        def _later_solve_follows(self) -> bool:
+            """Whether a solve of the run comes after the one running (``_run_model`` sets the flag per solve;
+            unknown → False)."""
+            _window = getattr(self.state, "current_committed_window_check", None)
+            return bool(_window[2]) if _window is not None else False
+
+        def _write_benders_invest_slice(self, complete_solve_name: str, bres, data) -> None:
+            """The investment-only results of Benders solve *complete_solve_name* (no final solve result):
+            its investment decisions, their costs and its objective (the upper bound) go to ``output_raw/``
+            (:func:`~flextool.engine.output._benders_slice.write_benders_invest_slice`); its step gets
+            ``benders_results = "invest_slice"``.  A failed write is logged and leaves the step at ``"none"``."""
+            from flextool.engine.output._benders_slice import write_benders_invest_slice
+
+            _user = (state.solve.scale_the_objective.get(complete_solve_name)
+                     or state.solve.scale_the_objective.get(re.sub(r"_roll_\d+$", "", complete_solve_name)))
+            try:
+                write_benders_invest_slice(
+                    bres.invest_solution_vars, bres.total_objective,
+                    work_folder=self.state.paths.work_folder, solve_name=complete_solve_name,
+                    flex_data=data, provider=getattr(self.state, "current_provider", None),
+                    scale_the_objective=_resolve_effective_obj_scale(_user),
+                )
+            except Exception as exc:  # noqa: BLE001 - as the monolithic writer: the run goes on, loudly
+                self.state.logger.error(
+                    f"writing the investment results of Benders solve {complete_solve_name} failed: {exc!r}")
+                return
+            step = self._all_steps.get(complete_solve_name)
+            if step is not None:
+                step.benders_results = "invest_slice"
 
         def check_run_inputs(self, steps_of_run) -> None:
             """Before the first solve: a group limit's time map covers every time step of the run's solves
@@ -3399,8 +3482,37 @@ def _drive_cascade(
             """One sub-solve (a roll, or a whole solve), with its coded warnings gathered: each code prints one
             line for the sub-solve, before the solver runs (:func:`_print_solver_args`) or when it ends; the
             solve-scoped codes (``solve=``) print once per complete solve."""
+            # The rolls of an earlier complete solve have ended: their gathered solver-outcome note (W-0540: in
+            # how many rolls, the largest factor) prints now.  This solve and the solves it is nested in (their
+            # rolls go on after it) keep theirs.
+            self.flush_solver_outcome_notes(keep=self._open_solves(run_warnings.complete_solve(complete_solve_name)))
             with run_warnings.collecting():
                 return self._run_one(complete_solve_name)
+
+        def _open_solves(self, complete: str | None) -> set[str]:
+            """*complete* and every solve whose ``contains_solves`` holds it, directly or through others."""
+            contains = getattr(getattr(self.state, "solve", None), "contains_solves", None) or {}
+            open_solves = {complete} if complete else set()
+            grew = True
+            while grew:
+                parents = {parent for parent, children in contains.items()
+                           if open_solves.intersection(children or ())}
+                grew = not parents <= open_solves
+                open_solves |= parents
+            return open_solves
+
+        def flush_solver_outcome_notes(self, keep: Collection[str] = frozenset()) -> None:
+            """Print the W-0540 notes gathered over the rolls of each complete solve but *keep*
+            (:func:`~flextool.engine.solve._solver_outcome.flush_solver_outcome_notes`)."""
+            pending = self.state.__dict__.get("_solver_outcome_pending")
+            if not pending:
+                return
+            from flextool.engine.solve._solver_outcome import flush_solver_outcome_notes
+            try:
+                flush_solver_outcome_notes(pending, self.state.__dict__.setdefault("_solver_outcome_noted", set()),
+                                           keep=keep)
+            except Exception:  # noqa: BLE001 - diagnostic only
+                logging.getLogger(__name__).debug("the solver-outcome notes could not be printed", exc_info=True)
 
         def _run_one(self, complete_solve_name: str) -> int:
             _phase_prof("run_enter")
@@ -3632,8 +3744,8 @@ def _drive_cascade(
                 data, _cold = cold_start_online_flow_carry(data, _carry_left_out)
                 if _cold:
                     _cold_msg = (
-                        f"Solve {complete_solve_name}: ramp and commitment of {', '.join(_cold)} start cold "
-                        "(the solve it continues from left out online variables, "
+                        f"Solve {complete_solve_name}: ramp and commitment of {', '.join(_cold)} start as at "
+                        "the start of a solve (the solve it continues from left out online variables, "
                         "reduce_unit_detail_method).")
                     _cold_seen = self.__dict__.setdefault("_reduce_cold_printed", set())
                     if _reduce_base not in _cold_seen:
@@ -3645,16 +3757,23 @@ def _drive_cascade(
             # falling back to a predecessor of 0.
             check_online_ramp_carry(data)
 
-            # A realization solve pins units online and reserves to the
-            # stochastic solve's NA-tied values: name the hard-balance node
-            # the realized data cannot balance before the LP is built.
+            # A realization solve fixes the stochastic solve's investments
+            # and pins its binary units online to the NA-tied values: name
+            # the hard-balance node the realized data cannot balance before
+            # the LP is built.
             if complete_solve_name in (
                 getattr(self.state.solve, "realized_dispatch_parent", {}) or {}
             ):
                 from flextool.engine.solve._realization import (
                     check_pinned_realization_feasible,
+                    note_realization_inherits_nothing,
+                    solve_decides_investments,
                 )
                 check_pinned_realization_feasible(data, complete_solve_name)
+                _parent = self.state.solve.realized_dispatch_parent[complete_solve_name]
+                note_realization_inherits_nothing(
+                    data, complete_solve_name, _parent,
+                    solve_decides_investments(self.state.solve, re.sub(r"_roll_\d+$", "", _parent)))
             _window_check = getattr(self.state, "current_committed_window_check", None)
             if _window_check is not None:
                 from flextool.engine.solve._realization import check_committed_window_realized
@@ -3705,20 +3824,49 @@ def _drive_cascade(
                 None, run_options=run_options,
                 db_scaling=state.solve.scaling_for(base_solve_name),
             )
+            # The Benders incumbent of this solve when its final solve (item 287) runs below: the whole model,
+            # built as a monolithic solve, with every investment decision fixed to it.  ``None`` otherwise.
+            _bfinal = None
             if state.solve.decomposition_for(base_solve_name) == "benders":
-                # A Benders solve writes no outputs (it returns before
-                # ``write_outputs_for_solve``), so it has no raw dump either.
-                if _horizon_on:
+                from flextool.engine.solve._benders_final import final_solve_on
+                _final_on = final_solve_on(run_options)
+                # Without the final solve a Benders solve writes no outputs, so it has no raw dump either.
+                if _horizon_on and not _final_on:
                     warn_benders_no_dump(state.logger, complete_solve_name,
                                          console=not self._benders_dump_notice_printed)
                     self._benders_dump_notice_printed = True
                 # The Benders master / regions are their own WarmProblems:
                 # release the previous monolithic LP for the whole loop.
                 self._release_warm_problem()
-                return self._run_benders_solve(
+                _prev_key_before = self._prev_step_key
+                self._benders_result = None
+                _rc = self._run_benders_solve(
                     complete_solve_name, base_solve_name, data,
-                    scaling_config=_scaling_cfg,
+                    scaling_config=_scaling_cfg, final_solve=_final_on,
                 )
+                _bres, self._benders_result = self._benders_result, None
+                _has_incumbent = (
+                    _bres is not None and _bres.total_objective is not None
+                    and math.isfinite(_bres.total_objective)
+                )
+                if _rc != 0 or not _final_on or not _has_incumbent:
+                    # Final solve off and a later solve gives the dispatch: the Benders solve writes its
+                    # investment-only results (W-0571: no investment marginal values).  Last: nothing (W-0570).
+                    if _rc == 0 and not _final_on and _has_incumbent and self._later_solve_follows():
+                        run_warnings.warn("W-0571", solve=complete_solve_name)
+                        self._write_benders_invest_slice(complete_solve_name, _bres, data)
+                    return _rc
+                _bfinal = _bres
+                # The final solve's step replaces the Benders one: the cold-path slim keeps the step before it.
+                self._prev_step_key = _prev_key_before
+                # The master and region LPs are gone with ``solve_benders``: return their memory before the
+                # whole model is built.
+                import gc
+                gc.collect()
+                _try_malloc_trim()
+                _btag = f"[benders {base_solve_name}]"
+                print(f"{_btag} final solve: the whole model with these investments fixed", flush=True)
+                print(f"{_btag}   (if it does not fit in memory: --benders-final-solve off)", flush=True)
 
             user_obj_scale = state.solve.scale_the_objective.get(complete_solve_name)
             effective_obj_scale = _resolve_effective_obj_scale(user_obj_scale)
@@ -3776,28 +3924,14 @@ def _drive_cascade(
             if _warm_disabled_by_save_memory and not getattr(
                 self, "_warm_disabled_by_save_memory_warned", False
             ):
-                state.logger.warning(
-                    _wrap_log_prose(
-                        "FLEXTOOL_SAVE_MEMORY=1: warm-LP reuse disabled; "
-                        "every sub-solve will cold-rebuild, write MPS, and "
-                        "dispatch to a subprocess HiGHS. Expect ~+30-60 s "
-                        "I/O per sub-solve in exchange for HiGHS' "
-                        "active-solve memory living outside this Python "
-                        "process."
-                    ),
-                )
+                # Coded note (``state.logger`` is at ERROR in a cascade, so a
+                # logger warning here never showed); once per run.
+                run_warnings.note("W-0551")
                 self._warm_disabled_by_save_memory_warned = True
             if _warm_disabled_by_solver and not getattr(
                 self, "_warm_disabled_warned", False
             ):
-                state.logger.warning(
-                    _wrap_log_prose(
-                        f"warm-start is unavailable for solver "
-                        f"{_active_solver_cfg.name!r}; falling back to cold "
-                        f"rebuilds per sub-solve, expect slower per-iter "
-                        f"wall-clock."
-                    ),
-                )
+                run_warnings.note("W-0552", solver=_active_solver_cfg.name)
                 self._warm_disabled_warned = True
             # HiGHS soft-promote: warm=False on HiGHS without
             # FLEXTOOL_SAVE_MEMORY=1 used to fall through to an in-
@@ -3817,22 +3951,21 @@ def _drive_cascade(
                 if not getattr(
                     self, "_warm_disabled_softpromote_warned", False,
                 ):
-                    state.logger.warning(
-                        _wrap_log_prose(
-                            "Warm reuse disabled (warm=False); HiGHS solve "
-                            "will route through the cmd_solve_mps "
-                            "subprocess to bound memory footprint.  Set "
-                            "FLEXTOOL_SAVE_MEMORY=1 explicitly to silence "
-                            "this warning."
-                        ),
-                    )
+                    run_warnings.note("W-0553")
                     self._warm_disabled_softpromote_warned = True
+                _save_memory = True
+            if _bfinal is not None and _active_solver_cfg.name == "highs":
+                # The final solve of a Benders solve runs in the HiGHS child process (``cmd_solve_mps``): a model
+                # too big for the memory left after the Benders loop then fails that solve, which the run
+                # survives, instead of killing the run.
                 _save_memory = True
             warm_used = False
             warm_active = (
                 warm
                 and not _warm_disabled_by_solver
                 and not _warm_disabled_by_save_memory
+                # The final solve is built cold (its pinned bounds are no reuse of a WarmProblem).
+                and _bfinal is None
             )
             if warm_active:
                 fp = _fingerprint(data)
@@ -4159,9 +4292,17 @@ def _drive_cascade(
                                         "%s", fresh_fp,
                                     )
                         except Exception as _basis_exc:  # noqa: BLE001
-                            self.state.logger.warning(
+                            self.state.logger.debug(
                                 "in-process warm-basis inject skipped "
                                 "(%s); solving cold", _basis_exc,
+                            )
+                            # Coded: ``state.logger`` is at ERROR in a
+                            # cascade.  One line per complete solve.
+                            run_warnings.warn_grouped(
+                                "W-0550", solve=complete_solve_name,
+                                step="loaded", effect="solved from scratch",
+                                details=f"in '{complete_solve_name}': "
+                                        f"{_basis_exc}",
                             )
                 # ``WarmProblem.solve`` always keeps the HiGHS instance
                 # alive on ``Solution.highs`` — that's the whole point
@@ -4319,9 +4460,15 @@ def _drive_cascade(
                             fresh_fp,
                         )
                     except Exception as _basis_exc:  # noqa: BLE001
-                        self.state.logger.warning(
+                        self.state.logger.debug(
                             "in-process warm-basis capture skipped (%s)",
                             _basis_exc,
+                        )
+                        run_warnings.warn_grouped(
+                            "W-0550", solve=complete_solve_name,
+                            step="saved", effect="a later solve starts cold",
+                            details=f"in '{complete_solve_name}': "
+                                    f"{_basis_exc}",
                         )
                 self._prior_data = data
                 self._prior_fp = fp
@@ -4333,8 +4480,20 @@ def _drive_cascade(
                 self._release_warm_problem()
                 pb = Problem()
                 _phase_prof("build_start")
-                build_flextool(pb, data, scale_the_objective=effective_obj_scale,
-                               solve_name=complete_solve_name)
+                try:
+                    build_flextool(pb, data, scale_the_objective=effective_obj_scale,
+                                   solve_name=complete_solve_name)
+                    if _bfinal is not None:
+                        # In the model's own units, before Layer 2 scales the columns.
+                        from flextool.engine.solve._benders_final import pin_invest_decisions
+                        pin_invest_decisions(pb, _bfinal.invest_solution_vars)
+                except MemoryError as _mem_exc:
+                    if _bfinal is None:
+                        raise
+                    # The whole model of the final solve does not fit in the memory left.
+                    pb = None
+                    return self._benders_final_out_of_memory(complete_solve_name, _mem_exc,
+                                                             bres=_bfinal, data=data)
                 _phase_prof("build_done")
                 if _memrec_local is not None and _emit_phase:
                     _memrec_local.checkpoint(
@@ -4686,7 +4845,7 @@ def _drive_cascade(
                         solver_option_files=state.paths.solver_option_files,
                         pre_run_check=_autoscale_hook,
                     )
-                except BaseException:
+                except BaseException as _solve_exc:
                     # The roll recheck (in ``Problem.solve`` or the
                     # --save-memory ``write_mps``) or the solve after it
                     # stopped: the YAML gets this roll's own verdict.
@@ -4697,7 +4856,26 @@ def _drive_cascade(
                         ranges=_ranges_for_l1, layer2_plan=_autoscale_layer2_plan,
                         scaling_config=_scaling_cfg,
                     )
-                    raise
+                    if _bfinal is None:
+                        raise
+                    from flextool.engine.solve._solver_dispatch import FlexToolSolveOutcomeError
+                    from flextool.engine.solve._subprocess_solve import SolveOutcomeError
+                    if isinstance(_solve_exc, MemoryError):
+                        # Writing the MPS of the whole model ran out of memory.
+                        pb = None
+                        return self._benders_final_out_of_memory(complete_solve_name, _solve_exc,
+                                                                 bres=_bfinal, data=data)
+                    if not isinstance(_solve_exc, (SolveOutcomeError, FlexToolSolveOutcomeError)):
+                        # A configuration, licence or internal error (an option the solver refuses, a missing
+                        # binary or licence, a solution file that does not line up): the run fails, as it
+                        # would without Benders.  Only a genuine solve outcome is a failed final solve.
+                        raise
+                    # The solver ended without a solution (infeasible, unbounded, a limit, its process stopped
+                    # or killed): the Benders result stands.
+                    return self._benders_final_not_accepted(
+                        complete_solve_name, problem="failed (the solver gave no solution)",
+                        details=str(_solve_exc), recorded=False, bres=_bfinal, data=data,
+                    )
                 if _autoscale_hook is not None and _autoscale_hook.called:
                     # The roll's own recheck: report what it used.
                     _autoscale_layer3_plan = _autoscale_hook.plan
@@ -4843,20 +5021,44 @@ def _drive_cascade(
                 ranges_post=locals().get("_autoscale_ranges_post"),
                 solve_name=complete_solve_name,
             )
-            run_record.active().solve_classified(
-                model_status=_acc.model_status,
-                acceptance=(
-                    "rejected" if not _acc.accepted
-                    else "near_optimal" if _acc.near_optimal
-                    else "optimal"
-                ),
-                message=_acc.message,
-                objective=(
-                    sol.obj / effective_obj_scale
-                    if sol.obj is not None else None
-                ),
-                warm_used=warm_used,
-            )
+            if _bfinal is not None:
+                # The final solve of a Benders solve: recorded beside the Benders verdict, which stays the
+                # solve's acceptance (a non-converged Benders solve is not made optimal by its final solve).
+                run_record.active().solve_benders_final(
+                    accepted=_acc.accepted, model_status=_acc.model_status,
+                    objective=(sol.obj / effective_obj_scale if sol.obj is not None else None),
+                )
+                if not _acc.accepted:
+                    return self._benders_final_not_accepted(
+                        complete_solve_name, problem=f"failed ({_acc.model_status or 'no solution'})",
+                        details=_acc.message, recorded=True, bres=_bfinal, data=data,
+                    )
+                if sol.obj is not None:
+                    from flextool.engine.solve._benders_final import check_final_objective
+                    _fobj = sol.obj / effective_obj_scale
+                    if not check_final_objective(_fobj, _bfinal.lower_bound, _bfinal.upper_bound):
+                        run_warnings.warn(
+                            "W-0572", solve=complete_solve_name,
+                            problem=(f"objective {_fobj:.4g} outside "
+                                     f"[{_bfinal.lower_bound:.4g}, {_bfinal.upper_bound:.4g}]"),
+                            details=(f"objective {_fobj!r}, benders lower bound {_bfinal.lower_bound!r}, "
+                                     f"upper bound {_bfinal.upper_bound!r}"),
+                        )
+            else:
+                run_record.active().solve_classified(
+                    model_status=_acc.model_status,
+                    acceptance=(
+                        "rejected" if not _acc.accepted
+                        else "near_optimal" if _acc.near_optimal
+                        else "optimal"
+                    ),
+                    message=_acc.message,
+                    objective=(
+                        sol.obj / effective_obj_scale
+                        if sol.obj is not None else None
+                    ),
+                    warm_used=warm_used,
+                )
             if not _acc.accepted:
                 self.state.logger.error(_acc.message)
                 if _acc.scaling_hint:
@@ -4878,9 +5080,15 @@ def _drive_cascade(
             # results (W-0540..W-0542), once per complete solve.  Diagnostic
             # only: a failure in it must not fail a run that has solved.
             try:
+                # The roll's own name (``<solve>_roll_<k>``) for a roll: its W-0540 is gathered over the rolls.
+                _outcome_name = getattr(self.state, "current_scale_solve_name", None) or complete_solve_name
+                if run_warnings.complete_solve(_outcome_name) != complete_solve_name:
+                    _outcome_name = complete_solve_name
                 note_solver_outcome(
-                    sol, _acc, solve_name=complete_solve_name, solver=_active_solver_cfg.name,
+                    sol, _acc, solve_name=_outcome_name, solver=_active_solver_cfg.name,
                     noted=self.state.__dict__.setdefault("_solver_outcome_noted", set()),
+                    pending=self.state.__dict__.setdefault("_solver_outcome_pending", {}),
+                    sub_solve=getattr(self.state, "current_scale_solve_name", None),
                 )
             except Exception:  # noqa: BLE001
                 logging.getLogger(__name__).debug(
@@ -5021,6 +5229,10 @@ def _drive_cascade(
             # Deposit so the next iteration's translator picks it up
             # AND we have it for the result dict.
             self.state.handoffs[complete_solve_name] = handoff
+            if _bfinal is not None:
+                # The final solve's full handoff replaces the Benders one: a later solve may consume it (also
+                # when the model has no investment).
+                self._benders_invest_handoff_names.add(complete_solve_name)
             # Un-scale the objective value back to user-facing units.
             # ``build_flextool`` multiplied the objective coefficients by
             # ``effective_obj_scale``, so HiGHS reports a scaled value.
@@ -5099,19 +5311,32 @@ def _drive_cascade(
                             # it (see ``_entity_all_capacity._try_value``).
                             pass
             _phase_prof("captured_vars_done")
+            # The final solve of a Benders solve overwrites the Benders step of the same name; it keeps the
+            # Benders verdict (``optimal`` = converged, no near-optimal) for the CLI exit-code scan.
+            _benders_fields = {} if _bfinal is None else {
+                "is_benders": True,
+                "benders_gap": _bfinal.gap,
+                "benders_tol": _bfinal.tol,
+                "benders_iterations": _bfinal.iterations,
+                "benders_results": "full",
+            }
             self._all_steps[step_key] = OrchestrationStep(
                 solve_name=step_key,
                 solution=sol,
                 handoff=handoff,
                 obj=unscaled_obj,
-                optimal=bool(getattr(sol, "optimal", False)) if sol is not None else None,
+                optimal=(
+                    bool(_bfinal.converged) if _bfinal is not None
+                    else bool(getattr(sol, "optimal", False)) if sol is not None else None
+                ),
                 # ``_acc`` (from ``classify_acceptance`` above) is authoritative:
                 # reaching here means the solve was accepted (a reject returned 1
                 # and raised before this point).  Record the near-optimal verdict
                 # so the CLI exit-code scan does not re-reject a usable, accepted
                 # crossover-off solve off the strict ``optimal`` mirror alone.
-                near_optimal=bool(getattr(_acc, "near_optimal", False)),
+                near_optimal=_bfinal is None and bool(getattr(_acc, "near_optimal", False)),
                 warm_used=warm_used,
+                **_benders_fields,
                 flex_data=data,
                 flex_data_provider=getattr(
                     self.state, "current_provider", None,
@@ -5333,7 +5558,12 @@ def _drive_cascade(
 
     # Drive the cascade via the native ``native_run_model``.  Native
     # emitters thread ``sub_solve_provider`` through every emit_* call.
-    native_run_model(runner.state, _PolarHighCascadeSolver(runner.state))
+    _cascade_solver = _PolarHighCascadeSolver(runner.state)
+    try:
+        native_run_model(runner.state, _cascade_solver)
+    finally:
+        # The last rolling solve's gathered solver-outcome note (W-0540).
+        _cascade_solver.flush_solver_outcome_notes()
     # Mirror the in-memory handoff dict back onto our state in case
     # callers want to inspect it.
     state.handoffs = runner.state.handoffs

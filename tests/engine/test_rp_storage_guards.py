@@ -80,7 +80,7 @@ BLENDED = {"bind_within_solve": "bind_within_solve_blended_weights",
 
 
 @pytest.mark.parametrize("method", list(BLENDED))
-def test_plain_cycle_on_representative_periods_warns_and_moves_energy_unweighted(tmp_path, method):
+def test_plain_cycle_on_representative_periods_warns_and_moves_energy_unweighted(tmp_path, coded_log, method):
     """The documented warning case (battery investigation, variant C): the plain cycle runs v_state from A's last
     step into B's first step unweighted, so the 20 MWh charged once in A (weight 1) serve the load of B in all three
     base periods it stands for: weighted, the solve delivers three times what it charged (the timestep weights are
@@ -93,13 +93,12 @@ def test_plain_cycle_on_representative_periods_warns_and_moves_energy_unweighted
     charged, delivered = _weighted_mwh(plain, "gen"), _weighted_mwh(plain, "dis")
     assert charged == pytest.approx(0.5 * 20.0, abs=1e-6)
     assert delivered == pytest.approx(1.5 * 20.0, abs=1e-6)
-    lines = [ln for ln in out[0].splitlines() if "without their weights" in ln]
-    assert len(lines) == 1, out[0][-2000:]
-    assert lines[0].startswith("Warning: solve 'rp_solve' is on representative periods (timeset(s) rp)")
-    assert f"1 storage node (tank) use a storage_binding_method (e.g. tank: {method})" in lines[0]
-    assert "equal weights" in lines[0] and f"{method} -> {BLENDED[method]}" in lines[0]
+    log = coded_log()
+    assert [ln for ln in log.splitlines() if ln.endswith("[W-0539]")] == [
+        "Warning: storage in 'rp_solve' cycles over representative periods unweighted ('tank') [W-0539]"], log
+    assert f"W-0539 tank: {method} on representative timeset(s) rp; {BLENDED[method]} weights the transfer" in log
     blended = _run_rp(tmp_path / "blended", BLENDED[method], out=out)["rp_solve"]
-    assert "without their weights" not in out[1]
+    assert "W-0539" not in coded_log()
     assert _weighted_mwh(blended, "dis") <= _weighted_mwh(blended, "gen") + 1e-6
     assert blended.solution.obj > plain.solution.obj
 
@@ -122,7 +121,7 @@ def test_rolling_solve_on_representative_periods_is_an_error(tmp_path):
 
 
 @pytest.mark.parametrize("penalty_method", ["off", "regular"])
-def test_storage_slack_beside_a_hard_balance_is_warned_once(tmp_path, capsys, penalty_method):
+def test_storage_slack_beside_a_hard_balance_is_warned_once(tmp_path, coded_log, penalty_method):
     """The tank (balance slack on) feeds ``load`` through ``dis``: with penalty_method off on ``load`` the tank's
     slack can serve the load at the tank's penalty, one warning line for the rolling solve (its four rolls) names
     how many storage nodes and the first pair."""
@@ -140,12 +139,10 @@ def test_storage_slack_beside_a_hard_balance_is_warned_once(tmp_path, capsys, pe
         assert not errors, errors
         db.commit_session("penalty method")
     run_chain_from_db(url, T.SCENARIO, work_folder=tmp_path / "work", keep_solutions=True)
-    out = capsys.readouterr().out
-    hits = [line for line in out.splitlines() if "linked by a unit or a connection to node(s) with penalty_method off"
-            in line]
+    log = coded_log()
+    hits = [line for line in log.splitlines() if line.endswith("[W-0537]")]
     if penalty_method == "regular":
         assert hits == []
         return
-    assert len(hits) == 1, hits
-    assert hits[0].startswith("Warning: in solve 'st' 1 storage node (tank)")
-    assert "(e.g. tank to load)" in hits[0]
+    assert hits == ["Warning: storage slack in solve 'st' can bypass a linked hard balance ('tank') [W-0537]"], log
+    assert "W-0537 tank: linked to penalty_method off node(s) load" in log

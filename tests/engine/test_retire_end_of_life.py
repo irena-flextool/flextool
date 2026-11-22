@@ -233,7 +233,7 @@ def test_retired_capacity_stays_within_the_existing_capacity(tmp_path_factory) -
 
 
 @pytest.mark.solver
-def test_entity_without_existing_capacity_has_no_retirement(tmp_path_factory, capsys) -> None:
+def test_entity_without_existing_capacity_has_no_retirement(tmp_path_factory, coded_log) -> None:
     """coal_plant with existing 0 that may invest and retire (invest_retire_no_limit, reinvest_automatic): it has no
     retirement of existing capacity, but the capacity it builds can be retired, so no warning names it.  With
     retire_no_limit (no investment) it has nothing to retire: no retirement variable at all, and a warning."""
@@ -247,7 +247,7 @@ def test_entity_without_existing_capacity_has_no_retirement(tmp_path_factory, ca
     assert fd.pd_divest_set is None or utf8(fd.pd_divest_set).filter(pl.col("p") == PLANT).height == 0
     assert utf8(in_service(fd).retired_p).filter(pl.col("p") == PLANT).height == 0
     assert utf8(fd.cd_divest_built).filter(pl.col("e") == PLANT).height > 0
-    assert f"{PLANT} has a retirement option" not in capsys.readouterr().out
+    assert f"('{PLANT}') [W-0584]" not in coded_log()
     retire_only = [v for v in values if v[2] != "invest_method"] + [
         ["unit", PLANT, "invest_method", b64("retire_no_limit", "str")]]
     step = _single(tmp_path_factory, "ret_none_retire_only", retire_only)
@@ -255,8 +255,8 @@ def test_entity_without_existing_capacity_has_no_retirement(tmp_path_factory, ca
     fd = step.flex_data
     assert fd.pd_divest_set is None or utf8(fd.pd_divest_set).filter(pl.col("p") == PLANT).height == 0
     assert fd.cd_divest_built is None or utf8(fd.cd_divest_built).filter(pl.col("e") == PLANT).height == 0
-    out = capsys.readouterr().out
-    assert f"{PLANT} has a retirement option" in out and "no investment option" in out
+    assert ("Warning: retirement option without existing capacity or an investment option "
+            f"('{PLANT}') [W-0584]") in coded_log()
 
 
 def _config_error(tmp_path_factory, alt: str, values: list) -> str:
@@ -632,30 +632,30 @@ def test_retiring_and_rebuilding_identical_capacity_in_the_last_period(tmp_path_
 
 
 @pytest.mark.solver
-def test_no_warning_for_retirement_periods_past_the_end_of_life(tmp_path_factory, capsys) -> None:
+def test_no_warning_for_retirement_periods_past_the_end_of_life(tmp_path_factory, coded_log) -> None:
     """reinvest_choice, lifetime 15, retirement options in every period, solved as the chain y2020 … y2035: the
     solve y2035 has no existing capacity left (past its end of life), a valid model, so no solve warns about a
     retirement option without existing capacity (before: y2035 warned)."""
     values = _lifetime("reinvest_choice", 15.0) + _retire(pinned=False)
     url, scen = make_db(tmp_path_factory, alt="ret_warn_eol", values=values, base_chain=_no_battery_invest(CHAIN))
-    capsys.readouterr()
+    coded_log()
     steps = run(tmp_path_factory, url, scen)
     assert len(steps) == 4 and all(step.optimal for step in steps.values())
-    assert "has a retirement option" not in capsys.readouterr().out
+    assert "[W-0584]" not in coded_log()
 
 
 @pytest.mark.solver
-def test_retirement_option_without_existing_capacity_warns_once_per_run(tmp_path_factory, capsys) -> None:
+def test_retirement_option_without_existing_capacity_warns_once_per_run(tmp_path_factory, coded_log) -> None:
     """coal_plant with existing 0 and retire_no_limit (nothing to retire), solved as the chain y2020 … y2035: the
     warning names it once in the run, not once per solve."""
     values = [["unit", PLANT, "existing", b64(0.0, "float")],
               ["unit", PLANT, "invest_method", b64("retire_no_limit", "str")],
               ["unit", PLANT, "net_salvage_value", b64(SALVAGE, "float")]]
     url, scen = make_db(tmp_path_factory, alt="ret_warn_once", values=values, base_chain=_no_battery_invest(CHAIN))
-    capsys.readouterr()
+    coded_log()
     steps = run(tmp_path_factory, url, scen)
     assert len(steps) == 4
-    assert capsys.readouterr().out.count(f"{PLANT} has a retirement option") == 1
+    assert coded_log().count(f"('{PLANT}') [W-0584]") == 1
 
 
 # ---------------------------------------------------------------------------

@@ -91,8 +91,8 @@ def check_and_upgrade_database(
     2. **FlexTool data version upgrade** -- delegates to
        :func:`~flextool.update_flextool.db_migration.migrate_database`.
 
-    Both steps mutate the file in place (migration commits per step, while
-    the version stamp is written only at the very end), so before the first
+    Both steps mutate the file in place (migration commits per step, the
+    version stamp lagging one step behind), so before the first
     mutating operation a byte-for-byte backup copy is taken.  On success the
     backup is deleted; if the migration is cancelled or fails, the backup is
     restored so the database is always left either fully upgraded or exactly

@@ -195,16 +195,16 @@ def test_cyclic_blended_fix_start_pins_the_cycle_level(tmp_path_factory):
     assert not row_terms(build(step.flex_data), "rp_inter_period_end_match")
 
 
-def test_fix_start_on_existing_capacity_is_an_endowment(tmp_path_factory, capsys):
+def test_fix_start_on_existing_capacity_is_an_endowment(tmp_path_factory, coded_log):
     """fix_start 0.5 on 2 MWh the solve cannot change, forward chain, free end: the chain starts at 1 MWh (pinned on
     the chain, not inside the first block) and may end empty, the user's explicit endowment (a printed warning with
     its size that calls it a valid initial stock, owner decision; not closed): production 3."""
     step = _run(tmp_path_factory, s={"existing": 2.0, "storage_binding_method": FO_B,
                                      "storage_start_end_method": "fix_start", "storage_state_start": 0.5})
-    out = capsys.readouterr().out
-    lines = [ln for ln in out.splitlines() if "storage_state_start on capacity the solve cannot change" in ln]
-    assert len(lines) == 1 and "1 storage node (s)" in lines[0] and "(1 MWh in total, on the existing capacity" in lines[0]
-    assert "endowment" in lines[0]
+    log = coded_log()
+    lines = [ln for ln in log.splitlines() if ln.endswith("[W-0534]")]
+    assert len(lines) == 1 and lines[0].startswith("Warning: storage ends free in ") and "('s')" in lines[0], log
+    assert "(1 MWh in total, on the existing capacity" in log
     start, end = _chain(step)
     assert (start, end) == pytest.approx((1.0, 0.0), abs=TOL)
     assert _production(step) == pytest.approx(3.0, abs=TOL)
@@ -297,7 +297,7 @@ def _production_at(step, t: str) -> float:
 @pytest.mark.parametrize("fix_start, method", [(None, "fix_nothing"), (0.8, "fix_start"), (0.5, "fix_start"),
                                                (0.5, "fix_nothing")],
                          ids=["reference", "same", "differs", "start_value_unused"])
-def test_reference_start_and_fix_start(tmp_path_factory, capsys, fix_start, method):
+def test_reference_start_and_fix_start(tmp_path_factory, coded_log, fix_start, method):
     """A use_reference_value node without fix_start starts at the reference (0.8); with fix_start the share of
     fix_start wins, and a printed warning names the node where the two differ (one line).  A storage_state_start value
     that fix_start does not use (method fix_nothing) neither moves the start nor warns (owner 2026-11-19: warn only
@@ -308,20 +308,19 @@ def test_reference_start_and_fix_start(tmp_path_factory, capsys, fix_start, meth
     if fix_start is not None:
         s["storage_state_start"] = fix_start
     step = _run(tmp_path_factory, rp=False, s=s)
-    out = capsys.readouterr().out
-    lines = [ln for ln in out.splitlines() if "differs from the storage_state_reference_value" in ln]
+    lines = [ln for ln in coded_log().splitlines() if ln.endswith("[W-0536]")]
     share = 0.8 if method == "fix_nothing" else fix_start
     # start share·2 MWh, end 0.8·2 MWh: the store gives (share − 0.8)·2 net
     assert _production(step) == pytest.approx(4.0 - (share - 0.8) * 2.0, abs=TOL)
     if fix_start == 0.5 and method == "fix_start":
-        assert len(lines) == 1 and "1 storage node (s)" in lines[0]
+        assert len(lines) == 1 and "('s')" in lines[0]
     else:
         assert not lines
 
 
 @pytest.mark.parametrize("rp", [True, False])
 @pytest.mark.parametrize("fix_start", [0.5, None], ids=["fix_start", "reference_start"])
-def test_reference_below_the_start_on_investable_storage_warns(tmp_path_factory, capsys, rp, fix_start):
+def test_reference_below_the_start_on_investable_storage_warns(tmp_path_factory, coded_log, rp, fix_start):
     """use_reference_value end below the start (fix_start 0.5, or a reference series 0.5 → 0.3) on storage the solve
     can invest in (owner decision, Phase 5; before a configuration error): the run solves with the matching end,
     which caps the investment (here at 0: nothing exists), and prints one warning line."""
@@ -334,16 +333,16 @@ def test_reference_below_the_start_on_investable_storage_warns(tmp_path_factory,
         s.update({"storage_start_end_method": "fix_start", "storage_state_start": fix_start,
                   "storage_state_reference_value": 0.3})
     step = _run(tmp_path_factory, invest=True, rp=rp, s=s)
-    out = capsys.readouterr().out
-    lines = [ln for ln in out.splitlines() if "use_reference_value end below their start" in ln]
-    assert len(lines) == 1 and "1 storage node (s)" in lines[0], out[-2000:]
+    log = coded_log()
+    lines = [ln for ln in log.splitlines() if ln.endswith("[W-0538]")]
+    assert len(lines) == 1 and "('s')" in lines[0], log[-2000:]
     assert _invested(step) == pytest.approx(0.0, abs=TOL)
     assert _production(step) == pytest.approx(4.0, abs=TOL)
     _no_slack(step)
 
 
 @pytest.mark.parametrize("start", ["fix_nothing", "fix_start"])
-def test_investment_solve_short_of_the_model_end_warns(tmp_path_factory, capsys, start):
+def test_investment_solve_short_of_the_model_end_warns(tmp_path_factory, coded_log, start):
     """A sequence of investment solves (y2020_5week … y2035_5week of tests.json) with an investable battery that
     chains forward: the first solve does not reach the end of the model, so it cannot hold the end at its start.
 
@@ -364,15 +363,14 @@ def test_investment_solve_short_of_the_model_end_warns(tmp_path_factory, capsys,
                                     "invest_solveSequence_5weeks"],
                         values=values)
     steps = run(tmp_path_factory, url, scen)
-    out = capsys.readouterr().out
-    warned = out.count("the solve does not reach the end of the model, so the end is not held")
+    out = coded_log()
+    warned = [ln for ln in out.splitlines() if ln.endswith("[W-0535]")]
     if start == "fix_nothing":
-        assert warned == 0, out[-3000:]
+        assert not warned, out[-3000:]
         last = list(steps.values())[-1]
         assert row_terms(build(last.flex_data), "storage_state_roll_match", "battery,")
     else:
-        assert warned == 1, out[-3000:]
-        assert "1 storage node (battery) start" in out
+        assert len(warned) == 1 and "('battery')" in warned[0], out[-3000:]
     for step in steps.values():
         assert not row_terms(build(step.flex_data), "storage_state_end_match")
 
@@ -413,27 +411,28 @@ def test_timeblock_fix_start_end_in_a_solve_mixing_representative_and_plain_peri
 
 
 @pytest.mark.parametrize("method", ["bind_within_solve", "bind_within_period"])
-def test_cyclic_fix_start_end_on_representative_periods_chains_on_the_blended_chain(tmp_path_factory, capsys,
+def test_cyclic_fix_start_end_on_representative_periods_chains_on_the_blended_chain(tmp_path_factory, coded_log,
                                                                                    method):
     """Review M6: with fix_start_end the binding method is ignored, so a plain cyclic method gets no warning about
     plain cycles on representative periods (the run ignores the method); the node chains forward on the base-period
     chain, which weights the transfer, and the start and end pins act there."""
     step = _run(tmp_path_factory, s={"storage_binding_method": method, "storage_start_end_method": "fix_start_end",
                                      "storage_state_start": 0.5, "storage_state_end": 0.5, "existing": 2.0})
-    assert "without their weights" not in capsys.readouterr().out
+    assert "W-0539" not in coded_log()
     _no_slack(step)
     start, end = _chain(step)
     assert start == pytest.approx(1.0, abs=TOL) and end == pytest.approx(1.0, abs=TOL)
 
 
-def test_plain_cyclic_warning_on_representative_periods_names_the_count_and_the_first(tmp_path_factory, capsys):
+def test_plain_cyclic_warning_on_representative_periods_names_the_count_and_the_first(tmp_path_factory, coded_log):
     """Review L4, owner decision 2026-11-19: a plain cycle on representative periods is a warning (before a
     configuration error) in the one-line format (how many nodes and the first, with its method); the run solves."""
     step = _run(tmp_path_factory, s={"storage_binding_method": "bind_within_solve"})
     assert step.solution is not None and step.solution.optimal
-    lines = [ln for ln in capsys.readouterr().out.splitlines() if "without their weights" in ln]
-    assert len(lines) == 1, lines
-    assert "1 storage node (s) use a storage_binding_method (e.g. s: bind_within_solve)" in lines[0], lines[0]
+    log = coded_log()
+    lines = [ln for ln in log.splitlines() if ln.endswith("[W-0539]")]
+    assert len(lines) == 1 and "('s')" in lines[0], lines
+    assert "W-0539 s: bind_within_solve on representative timeset(s)" in log
 
 
 def test_later_representative_period_solve_returns_the_free_start(tmp_path_factory):

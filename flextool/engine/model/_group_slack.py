@@ -681,12 +681,13 @@ def resolve_capacity_margin(d) -> None:
     no_peak = sorted(set(joined.filter((pl.col("share") != 0.0) & ~unlimited & (pl.col("peak") <= 0.0))["g"]
                          .to_list()))
     if no_peak:
-        from flextool.engine import _behaviour_changes
+        from flextool import run_warnings
 
-        _behaviour_changes.warn_once(
-            ("capacity_margin_relative_no_peak", tuple(no_peak)),
-            f"Warning: capacity margin group(s) {', '.join(no_peak)} have capacity_margin_method relative_of_peak_demand but "
-            "no demand in some investment period: the margin there is 0.")
+        periods = (joined.filter((pl.col("share") != 0.0) & ~unlimited & (pl.col("peak") <= 0.0))
+                   .group_by("g").agg(pl.col("d").unique().sort()))
+        run_warnings.warn_grouped(
+            "W-0585", no_peak, per_run=True,
+            details={g: "no demand in " + ", ".join(ds) for g, ds in sorted(periods.iter_rows())})
     # A share of -inf (no requirement in that period) stays -inf, also without demand (-inf · 0 would be NaN).
     margin = (joined.with_columns(value=pl.when(unlimited).then(pl.lit(float("-inf")))
                                   .otherwise(pl.col("share") * pl.col("peak")))

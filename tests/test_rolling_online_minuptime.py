@@ -28,7 +28,9 @@ unit with ``min_uptime = min_downtime = 5`` and ``minimum_time_method="both"``
 on the fullYear rolling timeline (``rolling_solve_horizon=8``,
 ``rolling_solve_jump=4`` → 72 rolls, ``W=5 > jump=4``).  Pre-fix the realized
 roll-0 ``v_online`` collapsed to ``[0.418, 0.274, 0.152, 0.044]`` below its own
-startup obligation (``startup[0]≈0.152``); with the wire online[3] sits on the obligation ``Σ startup``.
+startup obligation (``startup[0]≈0.152``, from the first step's cyclic wrap); with the wire the units online sit
+on the obligation ``Σ startup`` where they shut down.  Since the first step of a solve starts free (no start-up
+there), roll 0 owes nothing and the witness is a later shut-down onto the start-ups carried from the roll before.
 """
 from __future__ import annotations
 
@@ -189,23 +191,31 @@ def test_within_roll_min_downtime_enforced(rolling_uc):
     )
 
 
-def test_roll0_online_holds_not_collapses(rolling_uc):
-    """Driven witness: roll 0 starts the unit up in its first step and then shuts down as far as min_uptime
-    allows, so ``v_online`` over steps 0-3 comes down to exactly the startup obligation
-    ``Σ v_startup[0..3]`` (the floor binds) instead of the HEAD collapse below it
-    (``online[3]≈0.044 < startup[0]≈0.152``).
+def test_roll_online_holds_not_collapses(rolling_uc):
+    """Driven witness: along the realized trajectory (the rolls' realized steps in order) the units online stay at
+    or above the start-ups of the last ``min_uptime`` hours, and some step shuts down as far as min_uptime allows,
+    so ``v_online`` comes down to exactly that obligation (the floor binds) instead of the HEAD collapse below it.
 
-    The startup level itself is a tie of the linear online relaxation (0.152 before the unrounded
-    min-load slope/section of #140, 0.088 after, roll-0 objectives equal to 3e-8), so the witness asserts
-    the relation, not the level."""
+    The obligation restarts at a free start (the first roll of each year: no carry, no start-up there, no history);
+    elsewhere it reaches into the previous roll (the min-time carry).  Roll 0 itself starts free and comes down with
+    no obligation ([0.418, 0.274, 0.152, 0.044], the pre-fix 'collapse', which is now right: nothing was started).
+    The start-up levels are a tie of the linear online relaxation, so the witness asserts the relation, not the
+    levels."""
     on = _per_roll_frame(rolling_uc["workdir"], "v_online_linear")
     su = _per_roll_frame(rolling_uc["workdir"], "v_startup_linear")
-    online0 = on[0][UNIT].to_list()[:4]
-    startup0 = su[0][UNIT].to_list()[:4]
-    obligation = sum(startup0)
-    assert startup0[0] > 1e-3, f"roll 0 starts nothing up ({startup0}): the obligation is not exercised"
-    assert online0[0] > online0[3], f"roll 0 does not shut down ({online0}): the floor is not exercised"
-    assert online0[3] == pytest.approx(obligation, abs=1e-6), (
-        f"roll-0 online {online0}, startups {startup0}: online[3] must sit on the min_uptime obligation "
-        f"{obligation} (below it = collapse)"
-    )
+    steps = {_roll_index(n): s for n, s in rolling_uc["steps"].items()}
+    assert su[0][UNIT].to_list()[0] == 0.0, "the solve's first step is a free start: no start-up there"
+    binding, online, startup = [], [], []
+    for r in sorted(on):
+        if steps[r].flex_data.dt_online_carry is None:       # a free start: the obligation restarts
+            online, startup = [], []
+        for o, s_ in zip(on[r][UNIT].to_list(), su[r][UNIT].to_list()):
+            online.append(o)
+            startup.append(s_)
+            j = len(online) - 1
+            obligation = sum(startup[max(0, j - MIN_TIME + 1):])
+            assert o >= obligation - 1e-6, (
+                f"roll {r}: online {o} below the min_uptime obligation {obligation} (a collapse)")
+            if j > 0 and obligation > 1e-3 and o < online[j - 1] - 1e-6 and abs(o - obligation) < 1e-6:
+                binding.append((r, j))
+    assert binding, "no step shuts down onto its min_uptime obligation: the floor is not exercised"

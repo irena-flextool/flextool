@@ -400,7 +400,9 @@ Same `build_flextool` body, three wrappers from `polar_high`:
   objective is a **valid lower bound** and the loop converges on the
   optimality gap. This replaces the earlier dual-subgradient scheme, which
   collapsed greenfield cross-region trade to autarky with an *invalid*
-  bound. See [decomposition.md](decomposition.md).
+  bound. The solve's results come from a final monolithic solve with the
+  Benders investments fixed (`--benders-final-solve`, decomposition.md
+  §2.9). See [decomposition.md](decomposition.md).
 
 #### Feature flags in `build_flextool`
 
@@ -653,7 +655,7 @@ does for ladders) with the usual rules, and unions the groups into one `[entitie
 (`_axis_frame_resolved`). It raises only where those rules cannot place a group: keys on both axes, or an
 ambiguous group without a `period_filter`. With every level named, the reader places rows by label and no
 split happens. When an unnamed map's shape was read from its depth or keys, `resolve_param_shape` prints one
-note per (class, parameter) and run (`_behaviour_changes.warn_once`, `print(flush=True)`); ladders are left
+note per (class, parameter) and run (coded, `run_warnings`); ladders are left
 out (their levels are placed by depth by definition).
 
 `_param_shapes` is the **I/O contract only** — it validates user-authored
@@ -1183,6 +1185,9 @@ Every engine run (`cmd_run_flextool.main`, once its scenario and output folder a
   the owner (`RunLogOwner`, `_owner.py`) writes the log from there, hiding the marker. Without an owner (Spine
   Toolbox, `python -m flextool.cli.cmd_run_flextool`, a Python console) the engine copies its own Python streams
   (`_tee.py`, `log_capture: "python"`). The log keeps its first 64 KiB and last `FLEXTOOL_RUN_LOG_MAX_BYTES`.
+  A line for the log only (the scaling guard's report under its coded line: `run_warnings.warn_grouped(...,
+  run_log=True)`) goes through `run_record.write_log_only`: printed with `LOG_ONLY_PREFIX` for an owner, which
+  writes it without the prefix and does not show it; written to the `RunLogWriter` directly without one.
 - When the engine dies without finishing its status (a crash, a kill, a signal), the owner finishes it from the
   exit code (`classify_exit`: `killed`, `interrupted`, `crashed`). Without an owner a reader derives `abandoned` from
   a stale `running` (`effective_state`).
@@ -1421,7 +1426,7 @@ names as before for debug inspection:
 | `realized_commission` | *(in-memory only)* | Realised investments with a construction lead time: coming online / in construction in a later solve. |
 | `divest_cumulative` | `p_entity_divested.csv` | Cumulative divest per entity carried forward. |
 | `roll_end_state` / `upward_roll_end_state` | `p_roll_continue_state.csv` | `v_state` at the end of the realized window; the start state of the sub-solves that continue from it, routed by `solve/_carry_routing.py` (the latest realised state at the sub-solve's nesting level or deeper; engine.md "Storage carry routing"). |
-| `roll_end_online` | *(in-memory only)* | Committed jump-end `v_online` per online process (OC1 Carrier 1); the next roll's `online_change` first step (`dt_online_carry`) sees the prior commitment instead of the within-roll cyclic wrap, so a unit that stays committed is not re-charged a startup across the boundary. |
+| `roll_end_online` | *(in-memory only)* | Committed jump-end `v_online` per online process (OC1 Carrier 1); the next roll's `online_change` first step (`dt_online_carry`) sees the prior commitment instead of a free start, so a unit that stays committed pays no start-up across the boundary and one that was offline does. |
 | `online_history` | *(in-memory only)* | The realized `v_startup`/`v_shutdown` that a minimum up / down time still covers after the solve: the last realized step and its predecessors along `dt_ramp_link`, each with `hours_to_end` (hours from its start to the end of the last realized step); inside a forecasts-only fan under the tied forecast's steps. Rebuilt into `uptime_carry`/`downtime_carry` at the next solve's steps that follow its `dt_ramp_carry` and injected on the `minimum_uptime` RHS / `minimum_downtime` LHS. |
 | `fix_storage_quantity / price / usage` | `fix_storage_*.csv` | Parent-imposed storage quota at the boundary (any subset of the three metrics — each carries its own `(node, period, step)` index, so a separate timesteps carrier is not needed). |
 | `cumulative_co2` | `co2_cum_realized_tonnes.csv` | Running CO2 totals across rolls. |
@@ -1464,6 +1469,35 @@ the docstring of `solve/_handoff.py` for the history.
 by period: the existing capacity entered once, at the first solve's first
 period, so a period-varying `existing` was lost in later solves) were replaced
 by `realized_cohort` / `realized_retire`.
+
+A realization solve (the deterministic solve after a stochastic one) takes
+the PIN carriers of its parent: the investments and `fix_online` (the
+NA-tied units online of the binary units, `online_fix_eq_integer`; linear
+units online are re-decided, so `online_fix_eq_linear` has no rows). It does not take reserve: it meets
+the reserve requirements with its own data. A `fix_reserve` carrier with an
+exact per-unit pin (`reserve_fix_eq`) shipped in 4.2.0–4.6.0 and was
+removed (it is in git history). A later reserve-market stage that realizes
+reserve separately should not repeat its mistakes: reserve provision has no
+cost, so the stochastic solve's per-unit allocation is degenerate (solver
+noise); an `==` pin is infeasible against the profile, storage-reserve and
+ramp rows when the realized data is lower; a requirement that varies with
+the data (stochastic `reservation`, dynamic, n-1) is set day-ahead in a real
+market, so the stage has to choose between the procured and the recomputed
+amount; and the per-unit day-ahead tie (`non_anticipativity_reserve`, kept)
+assumes non-transferable awards. Such a carrier (`fix_online` is the
+pattern) needs:
+
+- one row in `SolveHandoff._FIELDS`, `PIN_FIELDS`, `_FIELD_TO_KEY` and
+  `_HANDOFF_EMPTY_SCHEMAS`, and a `handoff/...` key constant in
+  `preprocess/_provider_keys.py` (`HANDOFF_FIX_ONLINE`);
+- a producer: `online_tie_cells` / `reference_forecasts` are the pattern;
+- a FlexData field (`p_fix_online`) and its loader from the handoff key;
+- one entry in `flex_data.coarse_pin_varies`;
+- its constraint, with an `EQ.` header and a `CONSTRAINT_FAMILIES` entry in
+  `autoscale/_layer2_types.py`;
+- the field in the `_reduce_detail` field list of the detail level that
+  leaves its variable out (`p_fix_online` sits with the online fields; a
+  reserve carrier goes in `RESERVE_FIELDS`).
 
 ## Solution extraction
 
@@ -1610,12 +1644,13 @@ LP the solver gets can be solved accurately after Layers 2 and 3
   `error`, no database tier; the GUI's Solver options → Scaling guard sends
   the flag): an error raises `ScalingRangeError` (a
   `FlexToolConfigError`, so `cmd_run_flextool` prints it without a
-  traceback); `warn` prints it and solves; `off` checks nothing (Layer 3's
-  window clip still applies).  Warnings print once per run, keyed by base
-  solve, Benders region, group, level and the roll's own exponent (if a
-  recheck set one), so a later roll's error or new exponent still prints
-  (`_behaviour_changes.warn_once`; the once-per-run log of an adjusted
-  exponent uses `mark_once`, also reset by `start_run`).
+  traceback); `warn` shows it as a coded warning (W-0544) and solves; `off`
+  checks nothing (Layer 3's window clip still applies).  Warnings (W-0543..
+  W-0546: one line naming the solve, the full message in the debug log)
+  show once per run, keyed by base solve, Benders region, group, level and
+  the roll's own exponent (if a recheck set one), so a later roll's error
+  or new exponent still shows (`_behaviour_changes.mark_once`, also used by
+  the once-per-run log of an adjusted exponent; reset by `start_run`).
 * The message names the solve (and roll / region), the spread and window
   at the solve's `primal_feasibility_tolerance`, the family and up to five
   entries at each end (polar-high `locate_extremes`, warning / error only),
@@ -1628,7 +1663,7 @@ LP the solver gets can be solved accurately after Layers 2 and 3
 * `FLEXTOOL_AUTOSCALE_STRICT=1` raises also under `warn` / `off`, but only
   for an error Layer 2 caused (the pre-Layer-2 pool fitted).  A failure of
   the check itself (or of the range readout, monolith or Benders region)
-  prints "the scaling guard could not run" once per run and the solve goes
+  shows "scaling guard could not run" (W-0547) once per run and the solve goes
   on (re-raised under strict).
 * Where it runs: after Layer 3 on the first solve of each LP shape (cold
   and warm paths; the verdict is cached in `_AutoscaleShapeCacheEntry` and

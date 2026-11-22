@@ -308,6 +308,8 @@ CONSUMERS: dict[str, set[str]] = {
     "_non_anticipativity:add_dispatch_constraints": {"non_anticipativity"},
     "_online:add_variables": {"online_model"},
     "_online:uc_classes": {"online_model"},
+    "_online:_online_set": {"online_model"},
+    "_online:carry_rows": {"online_model"},
     # Its rows are classified one by one in ONLINE_ROWS.
     "_online:add_constraints": {"online_model", "min_up_down", "reserves", "ramp_limits", "parent_commitment"},
     "_reserve:_drawn_terms": {"min_load_efficiency"},

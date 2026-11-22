@@ -6,10 +6,11 @@ requirement rows reserveBalance_timeseries_eq, reserveBalance_dynamic_eq and res
 the bound reserve_total_upper, the per-process limits
 reserve_process_{upward,downward}, the connection rows connection_reserve_{up,down}[_online_*|_exact] (a
 connection's reserve limited by its net position at the node), the storage energy rows reserve_storage_up_floor /
-reserve_storage_down_headroom, the realization-solve pin reserve_fix_eq, and the shortfall penalty in the
-objective.  The coupling of units' v_reserve to
-process capacity (maxFlow, maxOutputSum, maxFlow_online, maxOutputSum_online, maxInputFlow_online, profile limits,
-unit floors) lives with those families.
+reserve_storage_down_headroom, and the shortfall penalty in the objective.  A realization solve does not pin
+v_reserve: it meets the reserve requirements with its own data, from its units online (the binary ones
+inherited, the linear ones decided again) and every other reserve provider.  The coupling
+of units' v_reserve to process capacity (maxFlow, maxOutputSum, maxFlow_online, maxOutputSum_online,
+maxInputFlow_online, profile limits, unit floors) lives with those families.
 """
 
 from pathlib import Path
@@ -131,7 +132,7 @@ def drop_groups_without_nodes(d) -> None:
     requirement sets and the (r, ud, g) parameters keep the other groups; with none left the reserve fields are
     None (the feature is off), as for a model without reserves.  Changes ``d`` in place.
     """
-    from flextool.engine import _behaviour_changes
+    from flextool import run_warnings
 
     rug = getattr(d, "reserve_upDown_group", None)
     if not _has_rows(rug):
@@ -144,12 +145,7 @@ def drop_groups_without_nodes(d) -> None:
     # A group with reserve_method no_reserve (the default) has no requirement to lose: left out silently.
     required = {str(g) for name in _RUG_SETS[1:] if _has_rows(getattr(d, name, None))
                 for g in getattr(d, name).get_column("g").cast(pl.Utf8).unique().to_list()}
-    lost = [g for g in empty if g in required]
-    if lost:
-        _behaviour_changes.warn_once_each(
-            "reserve_group_without_nodes", lost,
-            lambda names: (f"Warning: reserve group(s) {', '.join(names)} have no nodes in the solve (no "
-                           "group__node row): their reserve requirements are left out."))
+    run_warnings.warn_grouped("W-0586", [g for g in empty if g in required], per_run=True)
     keep = pl.col("g").cast(pl.Utf8).is_in(sorted(with_nodes))
     kept = rug.filter(keep)
     for name in _RUG_SETS:
@@ -948,39 +944,6 @@ def add_constraints(b: "_Build") -> None:
 
     _add_connection_reserve_constraints(b)
     _add_storage_energy_constraints(b)
-    _add_reserve_fix(b)
-
-
-def _add_reserve_fix(b: "_Build") -> None:
-    """reserve_fix_eq: the reserve pin of a realization solve (see the EQ. header)."""
-    d = b.d
-    # ─── EQ. ─── reserve_fix_eq ──────────────────────────────────────────────
-    # ─────────────────────────────────────────────────────────────────────────
-    # v_reserve[p,r,ud,n,d,t] = p_fix_reserve[p,r,ud,n,d,t]   ∀ (p,r,ud,n,d,t) ∈ prundt with a p_fix_reserve value
-    #   (a coarse process: at the first fine step of each coarse step; its pin is the same on every fine step of
-    #   the step, or the process keeps the solve's step, flex_data.coarse_pin_varies)
-    # In a realization solve, pins the reserve each process holds to the non-anticipativity-tied reserve of the
-    # stochastic solve it realizes (that solve's reference forecast on its tied steps).  Only declared v_reserve
-    # cells are pinned.  p_fix_reserve is Utf8-keyed: it is joined to the native-typed index through Utf8 copies.
-    fix = getattr(d, "p_fix_reserve", None)
-    if fix is None or fix.frame.height == 0 or b.v_reserve is None or not _has_rows(d.prundt):
-        return
-    keys = ("p", "r", "ud", "n", "d", "t")
-    fix_u = fix.frame.select(*(pl.col(k).cast(pl.Utf8).alias(f"_{k}") for k in keys), "value")
-    pin = (b.prundt_rows.select(*keys).unique()
-           .with_columns(*(pl.col(k).cast(pl.Utf8).alias(f"_{k}") for k in keys))
-           .join(fix_u, on=[f"_{k}" for k in keys], how="inner")
-           .select(*keys, "value"))
-    if pin.height == 0:
-        return
-    over = pin.select(*keys).unique()
-    b.m.add_cstr(
-        "reserve_fix_eq",
-        over=over,
-        sense="==",
-        lhs_terms={"reserve": Where(b.v_reserve, over)},
-        rhs_terms={"target": Param(keys, pin)},
-    )
 
 
 # ---------------------------------------------------------------------------

@@ -309,6 +309,7 @@ def _dc_partition(b: _Build, dc_arcs: pl.DataFrame, over: pl.DataFrame) -> "pl.D
 
 def nodeBalance_back_flow_terms(arcs: pl.DataFrame | None, v_flow_back: Var | None, p_unitsize: Param,
                                 p_step_duration: Param | None, *, group_nodes: pl.DataFrame | None = None,
+                                group_nodes_on: tuple[str, ...] = ("n",),
                                 exclude_arcs: pl.DataFrame | None = None) -> dict:
     """The v_flow_back terms of nodeBalance_eq, open dims (n, d, t); {} without reverse flow.
 
@@ -319,14 +320,21 @@ def nodeBalance_back_flow_terms(arcs: pl.DataFrame | None, v_flow_back: Var | No
     ``p_step_duration`` None: power terms (no step_duration).  ``group_nodes`` (g, n): each term only at its
     (g, n) pairs, open dims (g, n, d, t); ``exclude_arcs`` (g, p, source, sink): those arcs left out for that g
     (the capacity margin, :func:`flextool.engine.model._balance_terms.balance_flow_terms`).
+    ``group_nodes_on`` = the join keys of ``group_nodes``: ``("n",)`` (default, the capacity margin: every arc
+    at a node of g) or ``("p", "n")`` (the flow groups, ``group_nodes`` = group_process_node (g, p, n): an arc
+    only where its own process is a member at that node, :func:`flextool.engine.model._cumulative_invest._group_flow`).
     """
     if v_flow_back is None or arcs is None or arcs.height == 0:
         return {}
     sink_as_n = arcs.with_columns(n=pl.col("sink")).select("p", "source", "sink", "n")
     src_as_n = arcs.with_columns(n=pl.col("source")).select("p", "source", "sink", "n")
     if group_nodes is not None:
-        sink_as_n = join_aligned(sink_as_n, group_nodes.select("g", "n"), on="n", how="inner")
-        src_as_n = join_aligned(src_as_n, group_nodes.select("g", "n"), on="n", how="inner")
+        if group_nodes_on not in (("n",), ("p", "n")):
+            raise ValueError(f"group_nodes_on must be ('n',) or ('p', 'n'), not {group_nodes_on!r}")
+        on = list(group_nodes_on)
+        members = group_nodes.select("g", *on)
+        sink_as_n = join_aligned(sink_as_n, members, on=on, how="inner")
+        src_as_n = join_aligned(src_as_n, members, on=on, how="inner")
         if exclude_arcs is not None and exclude_arcs.height > 0:
             keys = ["g", "p", "source", "sink"]
             sink_as_n = join_aligned(sink_as_n, exclude_arcs.select(keys).unique(), on=keys, how="anti")

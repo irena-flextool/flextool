@@ -354,7 +354,10 @@ def co2_duals(par, s, v, r, debug):
     (it spans all periods in the sum, each weighted by the years it
     represents), so it is reported in NPV currency per horizon tonne (same
     convention as investment duals).  Its scalar per group is broadcast
-    across periods for uniform (period × group) shape.
+    across periods for uniform (period × group) shape.  For a stochastic
+    solve ``v.dual_co2_max_total`` already holds the sum of its per-path
+    ``co2_max_total_path`` duals (read_variables._fold_co2_total_path,
+    item 183): the value of one more tonne of the budget in every path.
     """
     import pandas as pd
 

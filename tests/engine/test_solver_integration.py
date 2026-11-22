@@ -525,14 +525,16 @@ def test_warm_false_highs_soft_promotes_to_subprocess(
     tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
     """``warm=False`` on a HiGHS solve must route through the subprocess
-    cmd_solve_mps path (in-process cold HiGHS retired) and log a
-    one-shot warning naming the FLEXTOOL_SAVE_MEMORY override.
+    cmd_solve_mps path (in-process cold HiGHS retired) and print the
+    one-per-run coded note W-0553 (warm=False routes HiGHS through the
+    subprocess; 4.6.1 WP-B replaced the uncoded warning, which a
+    swallowed logger hid).
 
     Verifies behaviour at the orchestrator surface: we drive a real
     single-solve cascade with ``warm=False``, so the soft-promote to
     the subprocess path is the active route.  Spy on the subprocess
     call so we don't actually shell out, but assert (a) the subprocess
-    path was chosen and (b) the warning was emitted exactly once.
+    path was chosen and (b) the note was emitted exactly once.
     """
     from flextool.engine.solve import _orchestration as _orch
     from flextool.engine.solve import _subprocess_solve as _subp
@@ -553,10 +555,9 @@ def test_warm_false_highs_soft_promotes_to_subprocess(
         # FlexToolUserError, which we catch below.
         raise RuntimeError("spy short-circuit")
 
-    caplog.set_level(logging.WARNING, logger="flextool")
-    # Also capture the root logger output: the cascade passes a fresh
-    # ``logger`` per call, not always "flextool.*".
-    caplog.set_level(logging.WARNING)
+    from flextool import run_warnings
+
+    caplog.set_level(logging.INFO, logger=run_warnings.LOGGER_NAME)
 
     with patch.object(_subp, "solve_via_subprocess", side_effect=_spy_subprocess):
         # The spy raises RuntimeError; the HiGHS path lets that
@@ -575,17 +576,16 @@ def test_warm_false_highs_soft_promotes_to_subprocess(
         f"expected HiGHS soft-promote, got {spy_calls[0]['solver_name']!r}"
     )
 
-    # (b) Soft-promote warning fired at least once and mentions the
-    # FLEXTOOL_SAVE_MEMORY override.
+    # (b) The soft-promote note W-0553 was printed exactly once.
     soft_promote_lines = [
-        r.message for r in caplog.records
-        if "FLEXTOOL_SAVE_MEMORY" in r.message
-        and "subprocess" in r.message.lower()
+        r.getMessage() for r in caplog.records
+        if getattr(r, run_warnings.CODE_ATTR, None) == "W-0553"
     ]
-    assert soft_promote_lines, (
-        "no soft-promote warning logged; caplog records: "
-        + "\n".join(r.message for r in caplog.records)
+    assert len(soft_promote_lines) == 1, (
+        "expected one W-0553 note; caplog records: "
+        + "\n".join(r.getMessage() for r in caplog.records)
     )
+    assert "warm=False" in soft_promote_lines[0]
     # Silence the unused-import lint on _orch (kept for symmetry / future
     # cascade-path coverage that exercises ``_drive_cascade`` directly).
     del _orch

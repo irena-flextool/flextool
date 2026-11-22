@@ -84,6 +84,32 @@ regions are tightly coupled (i.e. cross-region flows dominate the
 dispatch) the cut loop may need many iterations and a monolithic solve is
 usually better.
 
+**What a Benders solve writes.** After the Benders loop, the solve ends
+with a **final solve**: the whole model, solved once with every investment,
+retirement and life-extension decision fixed to the Benders result. That
+solve writes all result tables of the Benders solve (dispatch, prices,
+costs, capacities, investment marginal values) and hands the next solve
+the same results as an undecomposed solve would. Its costs equal those of
+the undecomposed model up to the Benders gap. See
+[Results of a Benders solve](../results.md#results-of-a-benders-solve).
+
+**Memory.** The final solve builds the whole model in FlexTool's process
+and, with HiGHS, solves it in a separate solver process (as
+`--save-memory` does), without a warm start. The peak memory of the run is
+the larger of the Benders loop and the whole model. A final solve that
+runs out of memory (in FlexTool's process or in the solver's), stops or
+finds no solution is reported (warning W-0572) and the run goes on with
+the Benders result; a solver configuration or licence error stops the run
+as without Benders. If the whole model does not fit in memory —
+often the reason to use Benders — run with `--benders-final-solve off`
+(`FLEXTOOL_BENDERS_FINAL_SOLVE=off`): a Benders investment solve then writes
+only its investments, retirements, their costs and its `summary_solve`
+row (no investment marginal values, note W-0571), and a later dispatch
+solve (for example a rolling one, which needs less memory) writes the
+dispatch. A Benders solve that is the last solve writes no result tables
+with the final solve off (warning W-0570), so add a dispatch solve after
+it.
+
 Connections between regions (or between a region and the master) are
 replaced by trade flows in the decomposition, so they cannot have a
 `startup_method`, the *exact* transfer method or reserve: the run stops with

@@ -132,9 +132,10 @@ class SolveHandoff:
     # realized committed-jump-end ``v_online`` (unit-count space, NOT
     # ×unitsize) per online process so the next roll's ``online_change``
     # first-step row (``dt_online_carry``) sees the
-    # prior roll's commitment as its predecessor instead of the
-    # meaningless within-roll cyclic wrap.  Without it the startup cost is
-    # re-charged at every roll boundary even when the unit stays committed.
+    # prior roll's commitment as its predecessor instead of the free start
+    # of a step without a carry.  Without it the roll's first step could
+    # choose its units online freely, with no start-up even when the unit
+    # was offline at the end of the previous roll.
     # Producer: prior roll's v_online_{linear,integer} at its last
     # realized (d, t).
     # Consumer: next roll's ``p_roll_continue_online`` overlay (applied at
@@ -180,19 +181,13 @@ class SolveHandoff:
     # ROLL), this carries the FULL per-(process, period, step) committed
     # schedule for the sibling of the SAME solve.  Read from a FORECAST
     # branch (the NA-tied, well-defined value), NOT the degenerate weight-0
-    # realized branch.  Unit-count space (NOT ×unitsize).
-    # Producer: parent's committed v_online_{linear,integer} over the jump.
+    # realized branch.  Unit-count space (NOT ×unitsize).  Binary units only
+    # (startup_method = binary, also with relaxed integers): linear units
+    # online are not pinned, the realization re-decides them.
+    # Producer: parent's committed v_online_integer over the jump.
     # Consumer: sibling's ``p_fix_online`` overlay (``online_fix_eq``).
     # Schema: ``[process, period, step, value]``.  No file equivalent.
     fix_online: pl.DataFrame | None = None
-
-    # The reserve counterpart of ``fix_online``: the parent's v_reserve on
-    # its tied steps (reference forecast, re-keyed to the anchor period),
-    # pinned into the realization solve.  Unit-count space (NOT ×unitsize).
-    # Producer: parent's v_reserve.  Consumer: realization solve's
-    # ``p_fix_reserve`` (``reserve_fix_eq``).
-    # Schema: ``[process, reserve, upDown, node, period, step, value]``.
-    fix_reserve: pl.DataFrame | None = None
 
     # Storage quota imposed by parent solve on child solve — narrow
     # per-metric carriers in canonical column schema.  The trio is
@@ -261,7 +256,7 @@ class SolveHandoff:
     _FIELDS = (
         "realized_commission", "divest_cumulative", "realized_cohort", "realized_retire",
         "roll_end_state", "upward_roll_end_state", "roll_end_online", "roll_end_flow",
-        "roll_end_step", "online_history", "fix_online", "fix_reserve",
+        "roll_end_step", "online_history", "fix_online",
         "fix_storage_quantity", "fix_storage_price", "fix_storage_usage",
         "cumulative_co2", "cumulative_commodity", "cum_sim_hours",
     )

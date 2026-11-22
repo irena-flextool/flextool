@@ -158,4 +158,30 @@ def install_tee(writer: RunLogWriter) -> Callable[[], None]:
     return restore
 
 
-__all__ = ["TeeStream", "install_tee"]
+_log_only_sink: Callable[[str], None] | None = None
+
+
+def set_log_only_sink(sink: Callable[[str], None] | None) -> None:
+    """Where :func:`write_log_only` sends its lines this run: the log writer (the engine writes ``_run.log``), a
+    function printing them with :data:`~flextool.run_record._owner.LOG_ONLY_PREFIX` (a pipe owner writes it), or
+    ``None`` (no run log: a library run)."""
+    global _log_only_sink
+    _log_only_sink = sink
+
+
+def write_log_only(text: str) -> bool:
+    """Write *text* (one or more lines) to the run's ``_run.log`` only, not to the console; ``False`` when the run
+    has no log (nothing written).  A failing write is logged at debug level and never raised."""
+    sink = _log_only_sink
+    if sink is None:
+        return False
+    try:
+        for line in str(text).splitlines() or [""]:
+            sink(line)
+    except (OSError, ValueError) as exc:
+        _logger.debug("run log line not written: %s", exc)
+        return False
+    return True
+
+
+__all__ = ["TeeStream", "install_tee", "set_log_only_sink", "write_log_only"]

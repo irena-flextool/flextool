@@ -14,8 +14,8 @@ leaves one empty).
 
 A run calls :func:`start_run` with the markers of its input database (:func:`read_markers`).  :func:`notice`
 prints one coded ``Note:`` line (:mod:`flextool.run_warnings`; the full notice goes to the debug log) and announces
-each entity of a change once per run, so rolls and repeated solves of the same run do not repeat it.  :func:`warn_once` gives other run-time warnings the same once-per-run
-scope.
+each entity of a change once per run, so rolls and repeated solves of the same run do not repeat it.  :func:`mark_once` / :func:`already_warned` give other run-time checks the same
+once-per-run scope.
 
 ``gui_solver_defaults`` is not a database change: its marker is the ``solver_settings_revision`` of a GUI
 project's settings.yaml, and the GUI shows the notice once when it updates an older file
@@ -150,27 +150,6 @@ def start_run(markers: Mapping[str, str] | None) -> None:
     run_warnings.start_run()
 
 
-def warn_once(key, text: str) -> bool:
-    """Print *text* unless a message with *key* was printed earlier in this run (rolls and repeated solves of a
-    run print it once).  Returns True when it printed."""
-    if key in _warned:
-        return False
-    _warned.add(key)
-    print(text, flush=True)
-    return True
-
-
-def warn_once_each(kind: str, names: list[str], text_of) -> bool:
-    """Print ``text_of(fresh)`` for the ``names`` not named in a ``kind`` message earlier in this run (each name
-    once per run, however the solves group them).  Returns True when it printed."""
-    fresh = [n for n in names if (kind, n) not in _warned]
-    if not fresh:
-        return False
-    _warned.update((kind, n) for n in fresh)
-    print(text_of(fresh), flush=True)
-    return True
-
-
 def complete_solve_of(solve: str | None) -> str:
     """The complete solve a sub-solve name belongs to: a roll ``<solve>_roll_<k>`` counts as ``<solve>``."""
     from flextool.run_warnings import complete_solve
@@ -186,25 +165,6 @@ def storages_named(names: Iterable[str], noun: str = "storage node") -> str:
     return f"{count} {noun}{'' if count == 1 else 's'} ({first}{', ...' if count > 1 else ''})"
 
 
-def storage_message(kind: str, solve: str | None, names: Iterable[str], text_of, details: str = "") -> bool:
-    """Print a storage warning or notice: one line per message ``kind`` and complete solve (the rolls of a rolling
-    solve count as one), ``text_of(named)`` where ``named`` is :func:`storages_named` of ``names`` (how many and
-    the first).  ``details`` (the values per node) go to the log at debug level, not to the console.  Returns True
-    when it printed."""
-    import logging
-    names = list(dict.fromkeys(str(n) for n in names))
-    if not names:
-        return False
-    key = ("storage_message", kind, complete_solve_of(solve))
-    if key in _warned:
-        return False
-    _warned.add(key)
-    print(text_of(storages_named(names)), flush=True)
-    if details:
-        logging.getLogger("flextool.engine.storage").debug(details)
-    return True
-
-
 def mark_once(key) -> bool:
     """Record *key* for this run without printing (a message that goes to the log, once per run).  Returns True
     the first time in a run, False after that; :func:`start_run` forgets it."""
@@ -215,7 +175,7 @@ def mark_once(key) -> bool:
 
 
 def already_warned(key) -> bool:
-    """Whether :func:`warn_once` printed a message with *key* earlier in this run."""
+    """Whether :func:`mark_once` recorded *key* earlier in this run."""
     return key in _warned
 
 

@@ -329,3 +329,32 @@ def test_finalize_gives_up_on_a_status_locked_for_2_s(tmp_path, monkeypatch, cap
     assert 1002.0 <= fake.now <= 1003.0
     assert read_status_file(folder) == original
     assert any("Cannot read the run record" in r.getMessage() for r in caplog.records)
+
+
+def test_a_log_only_line_goes_to_the_log_only(tmp_path):
+    """A ``LOG_ONLY_PREFIX`` line is not shown (``feed`` False) and is written to ``_run.log`` without its prefix,
+    also one that comes before the marker (buffered with the other early lines)."""
+    from flextool.run_record import LOG_ONLY_PREFIX
+
+    folder = _run_folder(tmp_path, "run", "r1")
+    owner = RunLogOwner(launcher="test")
+    assert owner.feed(LOG_ONLY_PREFIX + "early report") is False
+    assert owner.feed(format_marker(folder, "r1")) is False
+    assert owner.feed("Warning: a coded line [W-0544]") is True
+    assert owner.feed(LOG_ONLY_PREFIX + "W-0544 s1: the report") is False
+    owner.close(0)
+    assert (folder / RUN_LOG_FILE).read_text(encoding="utf-8").splitlines() == [
+        HEADER, "early report", "Warning: a coded line [W-0544]", "W-0544 s1: the report"]
+
+
+def test_write_log_only_uses_the_sink_of_the_run():
+    from flextool import run_record
+
+    lines: list[str] = []
+    assert run_record.write_log_only("x") is False  # no run log
+    run_record.set_log_only_sink(lines.append)
+    try:
+        assert run_record.write_log_only("a\n  b") is True
+    finally:
+        run_record.set_log_only_sink(None)
+    assert lines == ["a", "  b"]

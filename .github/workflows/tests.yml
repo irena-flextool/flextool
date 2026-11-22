@@ -85,14 +85,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -e .
-          pip install pytest pytest-xdist pytest-timeout pyyaml matplotlib setuptools
-
-      - name: Set glpsol executable permission
-        if: runner.os != 'Windows'
-        run: |
-          if [ -f bin/glpsol ]; then chmod +x bin/glpsol; fi
-          if [ -f bin/glpsol_macos15_arm64 ]; then chmod +x bin/glpsol_macos15_arm64; fi
+          pip install -e ".[dev]"
 
       - name: Run tests
         env:
@@ -130,13 +123,9 @@ jobs:
           python-version: ${{ matrix.python }}
 
       - name: Install dependencies
+        id: install
         run: |
-          pip install -e .
-          pip install pytest pytest-xdist pytest-timeout pyyaml matplotlib setuptools
-
-      - name: Set glpsol executable permission
-        run: |
-          if [ -f bin/glpsol ]; then chmod +x bin/glpsol; fi
+          pip install -e ".[dev]"
 
       - name: Run nightly-heavy tests
         env:
@@ -145,3 +134,9 @@ jobs:
           python .github/scripts/peak_mem.py
           pytest tests/ -v --tb=short -n logical
           -m "nightly_heavy and not csv_reload and not axis_enums"
+
+      - name: Run CSV reload contract tests
+        # tests/csv_reload is opt-in (its conftest skips it unless -m names csv_reload), so neither the PR
+        # `test` job nor the step above runs it; ~1.5 min on 8 local workers.
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: pytest -m csv_reload tests/csv_reload -v --tb=short -n logical

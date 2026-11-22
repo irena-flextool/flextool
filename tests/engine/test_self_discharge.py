@@ -164,6 +164,27 @@ def test_coarse24(tmp_path_factory, loss):
     assert s[("p2020", "t0048")] / s[("p2020", "t0024")] == pytest.approx(math.exp(-24 * _lam(loss)), rel=1e-7)
 
 
+def test_coarse24_small_loss_coefficients(tmp_path_factory):
+    """A 24-h coarse step with loss 1e-4/h: h_b = 24·ln(1.0001) = 0.00239988, β_b = 1 − h_b/(e^{h_b} − 1) =
+    0.00119946 (≈ h_b/2 − h_b²/12) on the coarse step's first fine step only, and α_b = h_b − β_b spread over the
+    24 fine steps by Δt/Δ_b (#152)."""
+    vals, ents = _coarse_values(1e-4)
+    step = _solve(tmp_path_factory, "sd_c24_small", vals, entities=ents)
+    assert step.solution.optimal and step.flex_data.nodeCoarse is not None
+    state_dt = utf8(step.solution.value("v_state")).select("n", "d", "t")
+    coef = _self_discharge.loss_coefficients(step.flex_data, state_dt)
+    frame = (coef.frame.with_columns(pl.col("n", "d", "t").cast(pl.Utf8))
+             .filter((pl.col("n") == "battery") & (pl.col("d") == "p2020")))
+    day1 = frame.filter(pl.col("t") <= "t0024").sort("t")
+    assert day1.height == 24
+    h_b = 24 * math.log1p(1e-4)
+    assert h_b == pytest.approx(0.00239988, abs=5e-9)
+    assert day1["beta"][0] == pytest.approx(0.00119946, abs=5e-9)
+    assert day1["beta"][0] == pytest.approx(1 - h_b / math.expm1(h_b), rel=1e-12)
+    assert day1["beta"][1:].abs().max() == 0.0
+    assert day1["alpha"].sum() == pytest.approx(h_b - day1["beta"][0], rel=1e-12)
+
+
 def _block_values(loss: float) -> tuple[list, list]:
     """bind_intraperiod_blocks over two 24-h timeset blocks t0001 and t0026 (a one-step gap keeps them apart)."""
     entities = [["timeset", "two_days", None]]

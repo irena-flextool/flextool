@@ -295,6 +295,32 @@ def _stream_concat_parts(parts: list[Path], *, zero_fill: bool = True) -> pd.Dat
     return df.fillna(0.0) if zero_fill else df
 
 
+def _fold_co2_total_path(
+    total: pd.DataFrame, path: pd.DataFrame, solve_order: dict[str, int],
+) -> pd.DataFrame:
+    """The total-CO2-cap dual of every solve, one row per solve (item 183).
+
+    A deterministic solve has one ``co2_max_total[g]`` row; a stochastic solve with several scenario paths
+    has one ``co2_max_total_path[g, leaf]`` row per path, each with the same remaining budget, and its dual
+    carries the path's branch weight.  One more tonne of the group's budget raises every path's row by one
+    tonne, so the dual of the budget is the sum of the path duals: the path frame (solve × (group, leaf)) is
+    summed over ``leaf`` into the (solve × group) shape of ``total``.  A solve's path rows replace its row in
+    ``total`` (an empty-row placeholder there); the rows stay in solve creation order.  ``path`` is read without
+    zero-filling, so the solves of a chain that have no path row (NaN after the concat) keep their ``total`` row.
+    """
+    path = path.dropna(how="all")
+    if path.empty:
+        return total
+    summed = path.T.groupby(level="group", sort=False).sum(min_count=1).T.fillna(0.0)
+    summed.columns.name = "group"
+    if total.empty:
+        return summed
+    total = total[~total.index.isin(summed.index)]
+    merged = pd.concat([total, summed]).fillna(0.0)
+    order = sorted(range(len(merged)), key=lambda i: solve_order.get(merged.index[i], -1))
+    return merged.iloc[order]
+
+
 def _read_from_parquet(parquet_dir: Path) -> SimpleNamespace:
     """Concat per-solve parquets for each variable.
 
@@ -416,7 +442,12 @@ def _read_from_parquet(parquet_dir: Path) -> SimpleNamespace:
     v.dual_minInvestGroup_total = _read("v_dual_minInvestGroup_total", ("group",), has_time=False)
     v.dual_minInvestGroup_cumulative = _read("v_dual_minInvestGroup_cumulative", ("group",), has_time=False)
     v.dual_co2_max_period = _read("v_dual_co2_max_period", ("group",), has_time=False)
-    v.dual_co2_max_total = _read("v_dual_co2_max_total", ("group",), has_period=False, has_time=False)
+    v.dual_co2_max_total = _fold_co2_total_path(
+        _read("v_dual_co2_max_total", ("group",), has_period=False, has_time=False),
+        _read("v_dual_co2_max_total_path", ("group", "leaf"), has_period=False, has_time=False,
+              zero_fill=False),
+        solve_order,
+    )
     # The capacity margin of each solve with investment periods (engine.output._capacity_margin): long polars
     # frames, one solve after the other with no dedup (an invest solve keeps its rows under its own name); None
     # without a capacity margin.

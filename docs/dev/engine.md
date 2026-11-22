@@ -947,8 +947,14 @@ lower bound.
 The FlexTool wrapper handles the FlexTool-side concerns: regional
 unitsize, regional profiles, regional handoff state, and the RP-weight
 consistency that follows from building the master with the same emit as
-the monolith. See [decomposition.md](decomposition.md) for the
-user-facing story and the parameters that gate this path.
+the monolith. After the loop the solve's results come from the **final
+solve**: the orchestrator falls through to the monolithic path with the
+investment decisions pinned to the Benders incumbent
+(`_benders_final.pin_invest_decisions`); with `--benders-final-solve off`
+a chained Benders solve writes only its investment slice
+(`output/_benders_slice.py`). See [decomposition.md](decomposition.md)
+(§2.9 for the outputs) for the user-facing story and the parameters that
+gate this path.
 
 ## Solve-to-solve handoff
 
@@ -1184,10 +1190,10 @@ it.  Order per sub-solve: non-RP downgrade → `_reject_rolling_rp` /
 `_reject_plain_forward_in_rp_solve` → fix_start_end → rolling timeblock.
 `_restore_methods` captures the frame after these rewrites.
 
-Storage warnings and notices print one line per message type and complete
-solve, naming how many nodes and the first
-(`_behaviour_changes.storage_message`, `notice(..., solve=...)`); the
-values per node go to the `flextool.engine.storage` logger at debug level.
+Storage warnings and notices print one line per code and complete solve,
+naming how many nodes and the first (`run_warnings.warn_grouped(code, names,
+solve=...)`: W-0534..W-0539, W-0580..W-0583; `notice(..., solve=...)`); the
+values per node go to the `flextool.warnings` logger at debug level.
 
 ## Output-writer shape adaptation
 

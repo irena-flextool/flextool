@@ -5489,7 +5489,7 @@ def _retirement_without_existing_warning(source: "InputSource", offered: pl.Data
     effect — no retirement variable, and their retired-capacity terms (user constraints, group retirement limits)
     are 0.  Each entity once per run.  An entity with existing capacity whose retirement periods are past its end of
     life is a valid model and is not warned about (the end of life is in the retirement notice)."""
-    from flextool.engine import _behaviour_changes
+    from flextool import run_warnings
     from flextool.engine.preprocess.params._cohorts import LIFETIME_METHODS
     from flextool.engine.preprocess.params._lifetime_inputs import (
         _entity_invest_set_lf,
@@ -5510,14 +5510,7 @@ def _retirement_without_existing_warning(source: "InputSource", offered: pl.Data
     built = bounded.join(investing, on="e", how="semi").collect()
     lost, built = align_join_dtypes(lost, built, ["e"])
     names = sorted(str(e) for e in lost.join(built, on="e", how="anti")["e"].to_list())
-    if not names:
-        return
-    _behaviour_changes.warn_once_each(
-        "retirement_without_existing", names,
-        lambda fresh: "Warning: " + ", ".join(fresh) + (" have" if len(fresh) > 1 else " has")
-        + " a retirement option (invest_method) but no existing capacity and no investment option. Only existing "
-        "capacity and capacity the model builds can be retired, so there is no retirement variable; retired-capacity "
-        "terms of user constraints and group retirement limits are 0.")
+    run_warnings.warn_grouped("W-0584", names, per_run=True)
 
 
 def _check_retirement_minimums(flex_data: object,

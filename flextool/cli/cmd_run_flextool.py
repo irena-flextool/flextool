@@ -149,12 +149,18 @@ def _start_run_record(*, args, run_options, scenario_name, output_location, outp
     run_warnings.add_cases_listener(rec.add_warning_cases)
     writer = None
     restore_tee = None
+    from flextool._safe_text import printable
+
     if log_capture == "parent":
         print(run_record.format_marker(parquet_dir, rec.run_id), flush=True)
+        # A line for _run.log only: the pipe owner writes it there and does not show it.
+        run_record.set_log_only_sink(
+            lambda line: print(run_record.LOG_ONLY_PREFIX + printable(line), flush=True))
     else:
         try:
             writer = run_record.RunLogWriter(parquet_dir / run_record.RUN_LOG_FILE)
             restore_tee = run_record.install_tee(writer)
+            run_record.set_log_only_sink(lambda line, w=writer: w.write_line(printable(line)))
         except OSError as exc:
             logging.warning("Cannot write the run log in %s (%s); the run continues without it.", parquet_dir, exc)
             if writer is not None:
@@ -162,6 +168,7 @@ def _start_run_record(*, args, run_options, scenario_name, output_location, outp
                 writer = None
 
     def cleanup():
+        run_record.set_log_only_sink(None)
         if restore_tee is not None:
             restore_tee()
         if writer is not None:
@@ -749,6 +756,16 @@ def build_parser() -> argparse.ArgumentParser:
                              'is set per solve in the database.  Environment '
                              'variable: FLEXTOOL_BENDERS_WORKERS; the flag '
                              'wins.')
+    parser.add_argument('--benders-final-solve', choices=['on', 'off'], default=None,
+                        help='After a Benders solve, solve the whole model '
+                             'once with the Benders investments fixed, for '
+                             'the full results of the solve (default on). '
+                             'off skips it, for a model whose undecomposed '
+                             'LP does not fit in memory: the Benders solve '
+                             'then writes only its investments and their '
+                             'costs, or nothing when it is the last solve. '
+                             'Environment variable: '
+                             'FLEXTOOL_BENDERS_FINAL_SOLVE; the flag wins.')
     parser.add_argument(
         '--scaling',
         choices=['off', 'solver_only', 'basic', 'full'],
@@ -1257,30 +1274,22 @@ def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_
         wo_solve_name = (
             last_step.solve_name if last_step else None
         ) or scenario_name
-        # A standalone Benders-only final solve carries only a
-        # SnapshotSolution invest carrier (not a full Solution), so it
-        # cannot yet drive processed outputs (TIER 2, planned follow-up).
-        # Emit a clear, targeted notice and SKIP write_outputs entirely
-        # rather than letting it fail and degrade to a generic warning.
-        # The invest→dispatch chain ends on a real dispatch Solution
-        # (is_benders=False) and is unaffected.
-        if last_step is not None and getattr(
-            last_step, "is_benders", False
+        # A Benders last solve whose final solve (item 287) did not give the whole-model results (final solve
+        # off, or not accepted: W-0572 said so) carries only an invest carrier: no result tables.  With the final
+        # solve accepted (``benders_results == "full"``) the step is an ordinary monolithic one for the writers.
+        if (
+            last_step is not None
+            and getattr(last_step, "is_benders", False)
+            and getattr(last_step, "benders_results", None) != "full"
         ):
-            logging.info(
-                "Final solve '%s' ran under decomposition=benders and "
-                "does not yet produce processed outputs on its own. The "
-                "decomposition objective/region summary was logged above. "
-                "To get output files, add a downstream dispatch solve to "
-                "the chain (model.solves = [%s, <dispatch solve>]); the "
-                "dispatch solve produces the outputs. (Standalone "
-                "Benders output processing is a planned follow-up.)",
-                wo_solve_name,
-                wo_solve_name,
-            )
-            rec.outputs_skipped(
-                "the final solve ran under Benders decomposition, which does not produce outputs on its own"
-            )
+            from flextool import run_warnings
+            from flextool.engine.solve._benders_final import final_solve_on
+            if final_solve_on(run_options):
+                _reason = "the final solve of the last solve (a Benders solve) was not accepted"
+            else:
+                run_warnings.warn("W-0570", solve=wo_solve_name)
+                _reason = "the last solve is a Benders solve whose final solve is off"
+            rec.outputs_skipped(_reason)
         else:
             try:
                 # Multi-solve (rolling) note: the last step alone would

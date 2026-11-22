@@ -35,12 +35,14 @@ Hand-calc (H = 8760/3 = 2920 h/step):
     label p2035 has no dispatch.  Objective = Σ_branch w * 10 * 2920 * Σ_t output
       = 0.5*10*2920*(50*3)  [high]  = 2 190 000
       + 0.5*10*2920*(100*3) [low]   = 4 380 000  ->  6 570 000.
-    (Commitment constant over the horizon -> cyclic startup 0.)
+    (t0001 is a free start in both forecasts and the commitment is constant -> no start-up.)
   * SIBLING ``stoch_rd__realized_dispatch``: dispatches the realized rlz wind
-    0.5 -> wind 50, peaker 50; the pin fixes v_online = 2.0 (the parent's
-    commitment) — binding (free dispatch would pick 1.0) but feasible (min_load
-    floor 0.5*2.0*50 = 50 = the realized need, no VOLL).  Objective =
-    50 MW * 10 * 2920 * 3 = 4 380 000.
+    0.5 -> wind 50, peaker 50.  The peaker is linear, so its units online are
+    not pinned: the sibling decides them again, anywhere in [1, 2] (50 MW needs
+    one unit of 50 MW, the min_load floor 0.5*v*50 <= 50 allows two, and the
+    first step is a free start: a tie).  Objective =
+    50 MW * 10 * 2920 * 3 = 4 380 000.  With a binary peaker
+    (``integer_chain``) the sibling keeps the parent's tied commitment.
 """
 from __future__ import annotations
 
@@ -131,8 +133,8 @@ def _drop_separate_dispatch(d: dict) -> None:
 def _to_integer_online(d: dict) -> None:
     """Integer online: ``startup_method=binary`` (-> METHOD_MIP ->
     v_online_integer) and ``high`` wind CF -> 1.0 so high's own optimum is 0
-    units — the jump tie forces it UP to low's 1 unit (a genuine integer
-    hedge)."""
+    units — the jump tie forces it UP to low's 2 units (a genuine integer
+    hedge: ``low`` has no wind, so 100 MW of demand / 50 MW per unit = 2)."""
     def _encs(x):
         return [base64.b64encode(json.dumps(x).encode()).decode(), "str"]
     for r in d["parameter_values"]:
@@ -220,8 +222,22 @@ def test_parent_realized_branch_excluded(sep_chain):
 
 
 @pytest.mark.solver
+def test_first_step_is_a_free_start_in_every_forecast(sep_chain):
+    """The fan starts at the solve's first step: t0001 is a free start in each forecast (no online_change row,
+    start-up and shut-down 0) and its units online are tied there (2.0, the hedge).  The realization's first step
+    is a free start too."""
+    for solve, periods in ((PARENT, (HIGH, LOW)), (SIBLING, (REALIZED,))):
+        for var in ("v_startup_linear", "v_shutdown_linear"):
+            fr = _online(sep_chain, solve, var)
+            for d in periods:
+                assert _at(fr, d, "t0001") == 0.0, (solve, var, d)
+    fr = _online(sep_chain, PARENT, "v_online_linear")
+    assert _at(fr, HIGH, "t0001") == pytest.approx(_at(fr, LOW, "t0001"), abs=1e-9)
+
+
+@pytest.mark.solver
 def test_parent_objective(sep_chain):
-    """Hand-calc parent objective (operational only; cyclic startup 0)."""
+    """Hand-calc parent objective (operational only; no start-up: a free first step, constant commitment)."""
     _, wf = sep_chain
     assert _obj(wf, PARENT) == pytest.approx(PARENT_OBJECTIVE, rel=1e-6)
 
@@ -231,16 +247,28 @@ def test_parent_objective(sep_chain):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.solver
-def test_sibling_v_online_pinned_to_parent_commitment(sep_chain):
-    """The sibling's v_online is PINNED to the parent's committed schedule
-    over the jump (the realized period ``p2035``): 2.0 every step — NOT the
-    1.0 it would re-decide freely for the realized 50 MW residual."""
-    parent = _online(sep_chain, PARENT, "v_online_linear")
+def test_sibling_linear_v_online_decided_again(sep_chain):
+    """A linear peaker's units online are not pinned in the sibling (no
+    ``p_fix_online``): it decides them again for the realized 50 MW, between
+    1 and 2 units (a tie, see the module docstring), and the peaker serves the
+    realized 50 MW at every step."""
+    steps, _ = sep_chain
+    assert steps[SIBLING].flex_data.p_fix_online is None
     sib = _online(sep_chain, SIBLING, "v_online_linear")
+    flow = _online(sep_chain, SIBLING, "v_flow").filter(pl.col("p").cast(pl.Utf8) == "peaker")
     for t in STEPS:
-        committed = _at(parent, HIGH, t)        # the tied parent commitment
-        assert _at(sib, REALIZED, t) == pytest.approx(committed, abs=1e-9)
-        assert _at(sib, REALIZED, t) == pytest.approx(TIED_COMMIT, abs=1e-9)
+        assert 1.0 - 1e-9 <= _at(sib, REALIZED, t) <= 2.0 + 1e-9
+        assert _at(flow, REALIZED, t) * 50.0 == pytest.approx(50.0, abs=1e-6)
+
+
+@pytest.mark.solver
+def test_sibling_integer_v_online_pinned_to_parent_commitment(integer_chain):
+    """A binary peaker's units online ARE pinned in the sibling to the parent's
+    tied commitment over the jump (the realized period ``p2035``), every step."""
+    parent = _online(integer_chain, PARENT, "v_online_integer")
+    sib = _online(integer_chain, SIBLING, "v_online_integer")
+    for t in STEPS:
+        assert _at(sib, REALIZED, t) == pytest.approx(_at(parent, HIGH, t), abs=1e-9)
 
 
 @pytest.mark.solver
@@ -281,8 +309,13 @@ def test_integer_v_online_tied_over_jump(integer_chain):
     """The jump tie fires for the INTEGER online family too
     (non_anticipativity_online_integer over dtna_online): ``high`` (wind now
     fully covers demand, so its own optimum is 0 units) is forced UP to low's
-    committed unit over the whole jump."""
+    committed units over the whole jump.  ``low`` has no wind, so the peaker
+    covers the full 100 MW demand with 100 / 50 = 2 units (``TIED_COMMIT``; one
+    unit would leave 50 MW unserved).  The value 1.0 recorded earlier came from
+    polar-high 3.16.0, whose MPS path read the integer ``v_online`` as binary
+    (see ``specs/two_stage_fix_rolling_dispatch_diagnosis.md``)."""
     fr = _online(integer_chain, PARENT, "v_online_integer")
     for t in STEPS:
+        assert _at(fr, LOW, t) == pytest.approx(TIED_COMMIT, abs=1e-9)
         assert _at(fr, HIGH, t) == pytest.approx(_at(fr, LOW, t), abs=1e-9)
-        assert _at(fr, HIGH, t) == pytest.approx(1.0, abs=1e-9)
+        assert _at(fr, HIGH, t) == pytest.approx(TIED_COMMIT, abs=1e-9)
