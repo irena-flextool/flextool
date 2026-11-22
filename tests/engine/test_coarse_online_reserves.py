@@ -1024,57 +1024,6 @@ def test_stochastic_reserve_tie_stays_within_the_committed_steps(tmp_path_factor
         assert not coarse_in[0] and not all(coarse_in)
 
 
-def test_realization_solve_pins_coarse_reserve_once_per_day(tmp_path_factory) -> None:
-    """2-day stochastic dispatch with a realized designation (every hour tied) and top_turbine holding reserve: the
-    committed reserve is handed to the realization solve on every hour (the value of its day), so the pin is the
-    same on every hour of each day, top_turbine is coarse in the realization solve and pinned by one reserve_fix_eq
-    row per day; its realized reserve equals the committed one."""
-    ents, vals = _top_reserve()
-    url, scen = make_db(tmp_path_factory, alt="co_pin_res",
-                        values=_top_values(24.0) + vals + [["solve", "2day_dispatch", "stochastic_branches",
-                                                            _realized_branches()]],
-                        base_chain=_chain(STOCH, "2_day_stochastic_dispatch"), entities=_TOP_ENTITIES + ents,
-                        fixture_json=STOCH)
-    steps = run(tmp_path_factory, url, scen)
-    real = [s for k, s in steps.items() if "__realized_dispatch" in k]
-    assert len(real) == 1
-    fd = real[0].flex_data
-    assert "top_turbine" in _coarse_procs(fd)
-    pin = utf8(fd.p_fix_reserve.frame).filter(pl.col("p") == "top_turbine").sort("t")
-    assert pin["t"].to_list() == [f"t{h:04d}" for h in range(1, 49)]
-    days = [pin["value"][:24].unique().to_list(), pin["value"][24:].unique().to_list()]
-    assert all(len(v) == 1 for v in days)
-    rows = row_terms(build(fd), "reserve_fix_eq", "top_turbine,")
-    assert sorted(_keys(r)[-1] for r in rows) == ["t0001", "t0025"]
-    res = utf8(real[0].solution.value("v_reserve")).filter(pl.col("p") == "top_turbine").sort("t")
-    assert res["value"].to_list() == pytest.approx([days[0][0], days[1][0]], abs=1e-9)
-
-
-def test_pin_rule_covers_reserve_pins() -> None:
-    """flex_data.coarse_pin_varies: a coarse process whose reserve pin (p_fix_reserve) covers only part of one of its
-    coarse steps, or changes within one, keeps the solve's step, per (p, r, ud, n); one pinned to the same value on
-    every hour of each coarse step does not."""
-    from types import SimpleNamespace
-
-    from polar_high import Param
-
-    from flextool.engine.preprocess.flex_data import coarse_pin_varies
-
-    hours = [f"t{h}" for h in range(1, 7)]
-    steps = pl.DataFrame({"p": [p for p in ("const", "part", "vary") for _ in hours], "d": ["d1"] * 18,
-                          "b_first": (["t1"] * 3 + ["t4"] * 3) * 3, "t": hours * 3})
-    rows = ([("const", "n1", t, 1.0 if i < 3 else 2.0) for i, t in enumerate(hours)]
-            + [("const", "n2", t, 3.0) for t in hours]
-            + [("part", "n1", t, 1.0) for t in hours[:4]]
-            + [("vary", "n1", t, 1.0) for t in hours] + [("vary", "n2", t, float(i)) for i, t in enumerate(hours)])
-    pins = pl.DataFrame({"p": [r[0] for r in rows], "r": ["r_up"] * len(rows), "ud": ["up"] * len(rows),
-                         "n": [r[1] for r in rows], "d": ["d1"] * len(rows), "t": [r[2] for r in rows],
-                         "value": [r[3] for r in rows]})
-    fd = SimpleNamespace(p_fix_online=None, p_fix_reserve=Param(("p", "r", "ud", "n", "d", "t"), pins))
-    assert coarse_pin_varies(fd, steps) == {"part", "vary"}
-
-
-
 def test_reserve_outputs_equal_tied_fine_model(tmp_path_factory, monkeypatch) -> None:
     """The hand-built reserve model (unique optimum): every written primal output (output_raw v_* / vq_*: flows,
     reserves, shortfalls) of the coarse model equals that of the hourly model tied over each day — the reserve on

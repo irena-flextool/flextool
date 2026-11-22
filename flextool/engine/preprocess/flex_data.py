@@ -711,18 +711,19 @@ def coarse_tie_straddles(flex_data: "FlexData", steps: pl.DataFrame) -> set[str]
 
 
 def coarse_pin_varies(flex_data: "FlexData", steps: pl.DataFrame) -> set[str]:
-    """The coarse processes of ``steps`` ``(p, d, b_first, t)`` with a coarse step whose units online or reserve
-    are pinned (``p_fix_online`` / ``p_fix_reserve``: the realization solve takes the committed values of its
-    parent) on only part of the step, or to values that change within the step.  The fine model pins each step to
-    its own value; one value per coarse step could only take a mean (fractional for integer units) or pin the free
-    steps too.  Such a process keeps the solve's step."""
+    """The coarse processes of ``steps`` ``(p, d, b_first, t)`` with a coarse step whose units online are pinned
+    (``p_fix_online``: the realization solve takes the committed units online of its parent) on only part of the
+    step, or to values that change within the step.  The fine model pins each step to its own value; one value per
+    coarse step could only take a mean (fractional for integer units) or pin the free steps too.  Such a process
+    keeps the solve's step."""
     from flextool.engine.preprocess.params._coarse import varies_within_coarse_steps
 
     if steps is None or steps.height == 0:
         return set()
     st = steps.select(*(pl.col(c).cast(pl.Utf8) for c in ("p", "d", "b_first", "t")))
     out: set[str] = set()
-    for name, keys in (("p_fix_online", ("p",)), ("p_fix_reserve", ("p", "r", "ud", "n"))):
+    # One entry per pinned variable family, keyed by its non-(d, t) axes; a pin of another family is added here.
+    for name, keys in (("p_fix_online", ("p",)),):
         pin = _param_frame(getattr(flex_data, name, None))
         if pin is None or pin.height == 0:
             continue
@@ -953,7 +954,7 @@ def _apply_coarse_process_frames(flex_data: "FlexData") -> None:
         why = ("the forecasts are tied (non-anticipativity) over only part of one of its coarse steps, and one "
                "value per coarse step would tie the whole step")
         kept.update({p: why for p in sorted(coarse_tie_straddles(flex_data, frames.process_coarse_step))})
-        why = ("its units online or its reserve are pinned to a commitment that covers only part of one of its "
+        why = ("its units online are pinned to a commitment that covers only part of one of its "
                "coarse steps or changes within it")
         for p in sorted(coarse_pin_varies(flex_data, frames.process_coarse_step)):
             kept.setdefault(p, why)
@@ -1666,10 +1667,6 @@ class FlexData:
     reserve_upDown_group_method_n_1: pl.DataFrame | None = None         # (r, ud, g, method)
     prundt: pl.DataFrame | None = None                                  # (p, r, ud, n, d, t) — v_reserve domain
     process_reserve_upDown_node_active: pl.DataFrame | None = None      # (p, r, ud, n)
-    # Realization-solve reserve PIN: the stochastic parent's NA-tied
-    # ``v_reserve`` (read from the ``fix_reserve`` handoff), pinned by
-    # ``reserve_fix_eq``.  ``None`` on every solve without a carried pin.
-    p_fix_reserve: Param | None = None                                  # (p, r, ud, n, d, t)
     process_reserve_upDown_node_increase_reserve_ratio: pl.DataFrame | None = None  # (p, r, ud, n)
     process_reserve_upDown_node_large_failure_ratio: pl.DataFrame | None = None     # (p, r, ud, n)
     p_process_reserve_upDown_node_reliability: Param | None = None      # (p, r, ud, n)
@@ -3324,22 +3321,6 @@ def _read_process_exact(inp: Path, *, provider: "object | None" = None) -> "pl.D
           .select(pl.col("process").cast(pl.Utf8)).unique(maintain_order=True)
           .pipe(rename_to_axis, {"process": "p"}))
     return ex if ex.height > 0 else None
-
-
-def _load_fix_reserve(provider: "object | None") -> "Param | None":
-    """The realization-solve reserve pin ``p_fix_reserve`` (p, r, ud, n, d, t) from the ``fix_reserve`` handoff,
-    seeded by the stochastic parent's handoff producer.  ``None`` when no pin is carried."""
-    from flextool.engine.preprocess import _provider_keys as K
-    from flextool.engine.preprocess._provider_translators import read_handoff_frame
-    df = read_handoff_frame(provider, K.HANDOFF_FIX_RESERVE)
-    if df is None or df.height == 0:
-        return None
-    df = (df.pipe(rename_to_axis, {"process": "p", "reserve": "r", "upDown": "ud", "node": "n",
-                                   "period": "d", "step": "t"})
-          .with_columns(*(pl.col(c).cast(pl.Utf8, strict=False) for c in ("p", "r", "ud", "n", "d", "t")),
-                        value=pl.col("value").cast(pl.Float64, strict=False).fill_null(0.0))
-          .select("p", "r", "ud", "n", "d", "t", "value"))
-    return Param(("p", "r", "ud", "n", "d", "t"), df) if df.height > 0 else None
 
 
 def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
@@ -5450,7 +5431,6 @@ def load_flextool(source: "Path | str | FlexInputSource",
             p_process_existing_count = exist_cnt,
             p_process_availability = avail,
 
-            p_fix_reserve = _load_fix_reserve(provider),
             **startup,
             **online,
             **ramp,
@@ -7291,8 +7271,8 @@ def build_handoff_from_solution(
     # For the parent of a realization solve (its name is a registered
     # realization parent) carry the committed ``v_online`` so the
     # realization solve PINS it instead of re-deciding commitment (owner
-    # decision: the realization solve inherits the NA-tied values).  The
-    # value is the reference forecast's (the first sorted forecast branch of
+    # decision: the realization solve inherits the NA-tied units online,
+    # never reserve).  The value is the reference forecast's (the first sorted forecast branch of
     # each anchor, the ``d_ref`` of non_anticipativity_online), on the
     # online tie cells only (``online_tie_cells``: the tied steps; nothing
     # when nothing is tied), re-keyed from the forecast branch
@@ -7330,38 +7310,6 @@ def build_handoff_from_solution(
         if _parts:
             fix_online_df = (pl.concat(_parts)
                              .sort(["process", "period", "step"]))
-
-    # ---- fix_reserve: NA-tied v_reserve for the realization solve ----
-    # The reserve counterpart of fix_online: the reference forecast's
-    # ``v_reserve`` on the tied steps (``reserve_tie_cells``; reserve is tied
-    # only there), re-keyed to the anchor period.  Unit-count space.
-    fix_reserve_df = None
-    if (realized_dispatch_parents is not None
-            and solve_name in realized_dispatch_parents
-            and flex_data is not None
-            and getattr(flex_data, "period_branch_full", None) is not None
-            and flex_data.period_branch_full.height > 0
-            and "v_reserve" in sol._vars):
-        from flextool.engine.model._non_anticipativity import reserve_tie_cells
-        _rcells = reserve_tie_cells(flex_data)
-        if _rcells is not None:
-            from flextool.engine.output._coarse_flows import var_values
-
-            # Every fine step (a coarse process's reserve holds through its coarse step).
-            _all = var_values(sol, flex_data, "v_reserve")
-            _fr = _all.with_columns(*(pl.col(c).cast(pl.Utf8) for c in _all.columns if c != "value"))
-            _re = (_fr.join(_rcells, left_on=["d", "t"],
-                            right_on=["d_ref", "t"], how="inner")
-                   .select(pl.col("p").alias("process"),
-                           pl.col("r").alias("reserve"),
-                           pl.col("ud").alias("upDown"),
-                           pl.col("n").alias("node"),
-                           pl.col("anchor").alias("period"),
-                           pl.col("t").alias("step"),
-                           "value")
-                   .sort(["process", "reserve", "upDown", "node", "period", "step"]))
-            if _re.height > 0:
-                fix_reserve_df = _re
 
     # ---- online_history: the realized start-ups / shut-downs a minimum up / down time still covers ----
     # The next solve's first steps that continue from this solve's last realized step (its ``dt_ramp_carry``) owe
@@ -7836,7 +7784,6 @@ def build_handoff_from_solution(
         roll_end_step=roll_end_step_df,
         online_history=online_history_df,
         fix_online=fix_online_df,
-        fix_reserve=fix_reserve_df,
         fix_storage_quantity=fix_storage_quantity_df,
         fix_storage_price=fix_storage_price_df,
         fix_storage_usage=fix_storage_usage_df,

@@ -2,8 +2,8 @@
 
 Patch release: no new data version (input databases stay at 82). Requires `polar-high>=3.16.0`. Results can change
 for Benders solves followed by other solves, for flow groups and user constraints that include a
-`no_losses_no_variable_cost` or DC power-flow connection, and for stochastic solves with a cumulative CO2 cap (the
-total CO2 price was missing before).
+`no_losses_no_variable_cost` or DC power-flow connection, for stochastic solves with a cumulative CO2 cap (the
+total CO2 price was missing before), and for the realization solves of stochastic solves with reserves.
 
 ### Fixes
 
@@ -46,6 +46,14 @@ total CO2 price was missing before).
 - **A stochastic solve with a cumulative CO2 cap (`co2_max_total`) reports its total CO2 price**
   (`co2_price_total_d_g`): the sum of the forecast paths' prices, i.e. the value of one more tonne of the budget
   in every path. It equals the deterministic price when the paths are identical. Before, the table was missing.
+- **The realization solve no longer inherits each unit's reserve from the stochastic solve** (inherited since
+  4.2.0). It keeps the units online and meets the reserve requirements with its own data, from the units online
+  and the units without online variables. Reserve markets will be realized in a later market stage. Realized results
+  of stochastic solves with reserves change. Before, the inherited reserve could hold capacity back from the
+  energy balance (balance slack), and it could make the realization infeasible where a unit's realized profile
+  was below its inherited reserve. A solve with `contains_solves` can no longer be realized by the solve right
+  after it: that is now a configuration error, as it already was for a `realized: yes` branch (before, the solves
+  it contains took the units online meant for the realization solve).
 - **A database migration that was interrupted (killed process, power loss) and whose backup copy is gone can be
   migrated again.** Each step's commit now also records the previous step's version, so a rerun replays at most
   the step that was interrupted. The steps recognise their own completed work and the definitions, parameter

@@ -3,7 +3,8 @@
 A stochastic solve optimises over forecasts only; its operational decisions inside a fan have no realized answer of
 their own.  Realized operations come from a *realization solve*: a deterministic solve that runs right after the
 stochastic solve over the same committed window, with the investments of the stochastic solve fixed and its
-non-anticipativity-tied unit commitment and reserves inherited.  The realization solve is either
+non-anticipativity-tied units online inherited.  Reserve is not inherited: the realization solve meets the reserve
+requirements with its own data.  The realization solve is either
 
 * engine-spawned (``<solve>__realized_dispatch``): for ``dispatch_realization_method = separate_dispatch``, or for a
   ``realized: yes`` designation in ``stochastic_branches`` whose fan reaches the solve's committed window; or
@@ -229,25 +230,24 @@ def _join_value(base: pl.DataFrame, param, name: str, default: float) -> pl.Data
 def check_pinned_realization_feasible(d, solve: str, *, rtol: float = 1e-6) -> None:
     """Raise when a pinned realization solve cannot balance a node without balance slack.
 
-    A realization solve pins units online (``p_fix_online``) and reserves (``p_fix_reserve``) to values the
-    stochastic solve chose for its forecasts; the realized data was not among them.  On a node with
+    A realization solve pins units online (``p_fix_online``) to values the stochastic solve chose for its
+    forecasts; the realized data was not among them.  On a node with
     ``penalty_method = off`` (no balance slack) the realized net load may then exceed what the supply into the node
     can deliver, and the LP is infeasible.  This check finds that case before the solve and names the node and step.
 
     Per hard-balance node and step: the realized need ``−inflow`` (MWh) is compared with an upper bound of the
-    supply into the node, Σ over the arcs into the node of ``unitsize · Δt · (cap · availability · profile −
-    reserve_up)``, where ``cap`` is the pinned online count × the sink's capacity_max_coeff for a pinned process and
-    the existing capacity (units of unitsize) × the arc's capacity factor otherwise, ``profile`` the realized upper
-    or fixed flow profile (1 without one) and ``reserve_up`` the pinned upward reserve the process holds at the node.
+    supply into the node, Σ over the arcs into the node of ``unitsize · Δt · cap · availability · profile``, where
+    ``cap`` is the pinned online count × the sink's capacity_max_coeff for a pinned process and the existing capacity
+    (units of unitsize) × the arc's capacity factor otherwise, and ``profile`` the realized upper or fixed flow
+    profile (1 without one).  Reserve is not pinned and its shortfall is soft, so it does not reduce the bound.
     A node is not checked when the bound is not certain: it has a storage state, a block or coarse balance, a
     connection, an arc without capacity (conversion_flow_coeff = 0) or an arc without an existing-capacity value.
     """
     off = _frame(getattr(d, "nodeBalance_penalty_off", None))
     fix_online = _frame(getattr(d, "p_fix_online", None))
-    fix_reserve = _frame(getattr(d, "p_fix_reserve", None))
     flow_to_n = _frame(getattr(d, "flow_to_n", None))
     inflow = _frame(getattr(d, "p_inflow", None))
-    if off is None or (fix_online is None and fix_reserve is None) or flow_to_n is None or inflow is None:
+    if off is None or fix_online is None or flow_to_n is None or inflow is None:
         return
     nodes = set(off["n"].to_list())
     for skip in ("nodeState", "nodeStateBlock", "nodeCoarse"):
@@ -298,12 +298,6 @@ def check_pinned_realization_feasible(d, solve: str, *, rtol: float = 1e-6) -> N
         cells = cells.join(prof, on=["p", "source", "sink", "d", "t"], how="left")
     else:
         cells = cells.with_columns(pl.lit(None, dtype=pl.Float64).alias("profile"))
-    if fix_reserve is not None:
-        res_up = (fix_reserve.filter(pl.col("ud") == "up")
-                  .group_by("p", "n", "d", "t").agg(pl.col("value").sum().alias("reserve_up")))
-        cells = cells.join(res_up, on=["p", "n", "d", "t"], how="left")
-    else:
-        cells = cells.with_columns(pl.lit(None, dtype=pl.Float64).alias("reserve_up"))
     unknown = cells.filter(pl.col("online").is_null() & pl.col("existing").is_null())
     nodes_unknown = set(unknown["n"].to_list())
     cells = cells.filter(~pl.col("n").is_in(list(nodes_unknown)))
@@ -313,8 +307,7 @@ def check_pinned_realization_feasible(d, solve: str, *, rtol: float = 1e-6) -> N
            .otherwise(pl.col("existing") * pl.col("k_arc")))
     supply = (cells
               .with_columns(mwh=pl.col("unitsize") * pl.col("dur")
-                            * (cap * pl.col("avail") * pl.col("profile").fill_null(1.0)
-                               - pl.col("reserve_up").fill_null(0.0)))
+                            * cap * pl.col("avail") * pl.col("profile").fill_null(1.0))
               .group_by("n", "d", "t").agg(pl.col("mwh").sum().alias("supply")))
     need = inflow.select("n", "d", "t", (-pl.col("value").cast(pl.Float64)).alias("need"))
     short = (supply.join(need, on=["n", "d", "t"], how="inner")
@@ -325,8 +318,8 @@ def check_pinned_realization_feasible(d, solve: str, *, rtol: float = 1e-6) -> N
     n, period, step, sup, req = short.row(0)
     raise FlexToolConfigError(
         f"Realization solve '{solve}' cannot balance node '{n}' (penalty_method = off) at period '{period}', step "
-        f"'{step}': the realized net load needs {req:.6g} MWh but the units online and the reserves pinned from the "
-        f"stochastic solve leave at most {sup:.6g} MWh of supply ({short.height} step(s) affected).  Give the node "
+        f"'{step}': the realized net load needs {req:.6g} MWh but the units online pinned from the stochastic solve "
+        f"leave at most {sup:.6g} MWh of supply ({short.height} step(s) affected).  Give the node "
         "balance slack (penalty_method = regular), add forecasts that cover the realized conditions, or end the "
         "committed window before the reveal.")
 

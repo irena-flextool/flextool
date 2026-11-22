@@ -1,15 +1,17 @@
 """The realization solve of a stochastic fan (owner decision "Stochastic realization model (2026-11-01)").
 
 A stochastic solve optimises over forecasts only.  Its realized operations come from a realization solve that runs
-right after it over the same committed window, with its investments fixed and its non-anticipativity-tied unit
-commitment and reserves inherited (the value of the first sorted forecast, on the tied cells).  A ``realized: yes``
-designation whose fan reaches the committed window makes the engine add that solve when none is configured.
+right after it over the same committed window, with its investments fixed and its non-anticipativity-tied units
+online inherited (the value of the first sorted forecast, on the tied cells).  Reserve is not inherited: the
+realization solve meets the reserve requirements with its own data.  A ``realized: yes`` designation whose fan
+reaches the committed window makes the engine add that solve when none is configured.
 
 Fixtures (built from JSON, CLAUDE.md invariant 3): ``stoch_t0_commit.json`` — a single solve over ``p2035`` (3 hourly
 steps), branches ``rlz`` (realized: yes, weight 0), ``high`` / ``low`` (0.5 each) revealed at t0001; a committable
 ``peaker`` (2 units of 50 MW, min_load 0.5) backs ``wind`` (100 MW, CF rlz 0.5 / high 0.8 / low 0.0) against 100 MW
 demand; it authors ``dispatch_realization_method = separate_dispatch``, which the variants here drop.
-``w4b_reserve_dispatch.json`` — the same structure with an up-reserve of 10 MW on the peaker.
+``w4b_reserve_dispatch.json`` — the same structure with an up-reserve on the peaker; the reserve tests below
+rebuild its units (:func:`_reserve_variant`).
 """
 from __future__ import annotations
 
@@ -178,18 +180,139 @@ def test_realization_online_is_first_sorted_forecast(designated) -> None:
             _at(parent, p="peaker", d=FIRST_FORECAST, t=t), abs=1e-9)
 
 
+# ---------------------------------------------------------------------------
+# reserve: not inherited, met again with the realized data
+# ---------------------------------------------------------------------------
+# Both variants: one node elec (3 hourly steps, penalty_up = penalty_down 10,000 €/MWh), up-reserve r1 of res_g
+# (timeseries_only, reservation 30 MW, penalty_reserve 5,000 €/MW·h), forecasts high / low (0.5 each) and the
+# designated realized branch rlz, revealed at t0001; wind 100 MW (no cost) with a CF per branch.  The engine adds
+# the realization solve (no dispatch_realization_method).  Every value an oracle reads is the unique optimum of its
+# LP.  Flows and reserves are in units of unitsize (100 MW for every unit below).
+
+RESERVE_MW = 30.0
+UNIT_MW = 100.0
+
+
+def _packed(value) -> list:
+    """Spine import-format value: a float, a string, or a map (a dict)."""
+    kind = "float" if isinstance(value, float) else "map" if isinstance(value, dict) else "str"
+    return [base64.b64encode(json.dumps(value).encode()).decode(), kind]
+
+
+def _unit(data: dict, name: str, cost: float, extra: dict, reserve: bool) -> None:
+    """Unit *name* (one unit of 100 MW, output to elec at *cost* €/MWh), with up-reserve r1 (max_share 1,
+    reliability 1) when *reserve*."""
+    data["entities"] += [["unit", name, None], ["unit__outputNode", [name, "elec"], None]]
+    data["entity_alternatives"].append(["unit", [name], "init", True])
+    pv = data["parameter_values"]
+    pv += [["unit", name, k, _packed(v), "base"] for k, v in
+           {"efficiency": 1.0, "existing": 1.0, "virtual_unitsize": UNIT_MW, **extra}.items()]
+    pv.append(["unit__outputNode", [name, "elec"], "other_operational_cost", _packed(cost), "base"])
+    if reserve:
+        rel = ["r1", "up", name, "elec"]
+        data["entities"].append(["reserve__upDown__unit__node", rel, None])
+        pv += [["reserve__upDown__unit__node", rel, "max_share", _packed(1.0), "base"],
+               ["reserve__upDown__unit__node", rel, "reliability", _packed(1.0), "base"]]
+
+
+def _reserve_variant(demand: float, cf: dict, units) -> "callable":
+    """``w4b_reserve_dispatch.json`` with its peaker (an investment) replaced by *units*
+    ``(name, cost, extra, reserve)``,
+    demand *demand* MW, reservation 30 MW and a stochastic wind CF per branch (*cf*)."""
+    def mutate(data: dict) -> None:
+        _drop_separate_dispatch(data)
+        t0 = json.loads(T0_FIXTURE.read_text(encoding="utf-8"))
+        wprof = next(r for r in t0["parameter_values"] if r[1] == "wprof" and r[2] == "profile")
+        data["entities"] = [e for e in data["entities"] if "peaker" not in json.dumps(e[1])]
+        data["entity_alternatives"] = [e for e in data["entity_alternatives"] if e[1] != ["peaker"]]
+        inflow = {"index_type": "str", "data": [[t, -demand] for t in STEPS]}
+        reservation = {"index_type": "str", "data": [[t, RESERVE_MW] for t in STEPS]}
+        kept = []
+        for r in data["parameter_values"]:
+            if "peaker" in json.dumps(r[1]):
+                continue
+            if r[1] == "wprof" and r[2] == "profile":
+                r = wprof
+            elif r[1] == "elec" and r[2] == "inflow":
+                r = [r[0], r[1], r[2], [_packed(inflow)[0], r[3][1]], r[4]]
+            elif r[2] == "reservation":
+                r = [r[0], r[1], r[2], [_packed(reservation)[0], r[3][1]], r[4]]
+            kept.append(r)
+        data["parameter_values"] = kept
+        for name, cost, extra, reserve in units:
+            _unit(data, name, cost, extra, reserve)
+        _set_profile(data, cf)
+    return mutate
+
+
+def _run_reserve(tmp_path_factory, name: str, mutate):
+    tmp = tmp_path_factory.mktemp(name)
+    return _run(_variant(RESERVE_FIXTURE, tmp, name, mutate), tmp, scenario="w8_realized_dispatch",
+                capture_mps=True)
+
+
 @pytest.mark.solver
-def test_realization_reserve_is_first_sorted_forecast(tmp_path_factory) -> None:
-    """The realization solve's reserve is pinned (reserve_fix_eq) to the stochastic solve's first sorted forecast on
-    the tied cells: v_reserve of the realization solve == v_reserve of ``p2035_high`` at every step."""
-    tmp = tmp_path_factory.mktemp("realization_reserve")
-    steps, mps = _run(RESERVE_FIXTURE, tmp, scenario="w8_realized_dispatch", capture_mps=True)
-    assert b"reserve_fix_eq" in mps[SIBLING]
+def test_realization_reserve_reallocated_not_pinned(tmp_path_factory) -> None:
+    """Units without online variables: base (10 €/MWh, no reserve) and peaker (50 €/MWh, the only provider);
+    demand 200 MW; wind CF high 0.8 / low 0.6 / realized 0.0.
+
+    Stochastic solve: base 100 + wind 80 (high) or 60 (low), so the peaker runs 20 or 40 MW and its reserve may lie
+    anywhere in [30, 60] MW at no cost (degenerate); with spare headroom no reserve is short, so it is >= 30.
+    Realization (wind 0): base 100, and the peaker must split its 100 MW between energy and reserve.  Each MW moved
+    from reserve to energy saves 10,000 € of balance slack and costs 5,000 € of reserve shortfall plus 50 € of fuel,
+    so the unique optimum runs the peaker at 100 MW with no reserve: slack 0, reserve shortfall 30 MW (the whole
+    requirement).  Pinning the stochastic solve's reserve (>= 30 MW) would leave >= 30 MWh of slack per step."""
+    steps, mps = _run_reserve(tmp_path_factory, "realization_reserve_free", _reserve_variant(
+        200.0, {"rlz": 0.0, "high": 0.8, "low": 0.6},
+        [("base", 10.0, {}, False), ("peaker", 50.0, {}, True)]))
+    assert b"reserve_fix_eq" not in mps[SIBLING]
     parent = _value(steps, PARENT, "v_reserve")
-    sib = _value(steps, SIBLING, "v_reserve")
     for t in STEPS:
-        assert _at(sib, p="peaker", d=ANCHOR, t=t) == pytest.approx(
-            _at(parent, p="peaker", d=FIRST_FORECAST, t=t), abs=1e-9)
+        assert _at(parent, p="peaker", d=FIRST_FORECAST, t=t) * UNIT_MW >= RESERVE_MW - 1e-6
+    flow = _value(steps, SIBLING, "v_flow")
+    res = _value(steps, SIBLING, "v_reserve")
+    short = _value(steps, SIBLING, "vq_reserve")
+    slack = _value(steps, SIBLING, "vq_state_up")
+    for t in STEPS:
+        assert _at(flow, p="peaker", d=ANCHOR, t=t) * UNIT_MW == pytest.approx(100.0, abs=1e-6)
+        assert _at(flow, p="base", d=ANCHOR, t=t) * UNIT_MW == pytest.approx(100.0, abs=1e-6)
+        assert _at(res, p="peaker", d=ANCHOR, t=t) * UNIT_MW == pytest.approx(0.0, abs=1e-6)
+        # vq_reserve is the shortfall as a share of the requirement: 1 = all 30 MW short.
+        assert _at(short, d=ANCHOR, t=t) == pytest.approx(1.0, abs=1e-6)
+        assert _at(slack, n="elec", d=ANCHOR, t=t) == pytest.approx(0.0, abs=1e-6)
+
+
+@pytest.mark.solver
+def test_realization_reserve_needs_commitment(tmp_path_factory) -> None:
+    """Binary units: a (10 €/MWh) and b (50 €/MWh, min_load 0.5); demand 100 MW, wind CF 0.5 in both forecasts and
+    0.1 realized, so the net load is 50 MW forecast and 90 MW realized.
+
+    Stochastic solve: a online alone serves 50 MW and holds the 30 MW reserve in its 50 MW headroom.  b online costs
+    at least (50 − 10) · 50 = 2,000 € per step (its min_load displaces a) and buys nothing, so a = 1, b = 0 is the
+    unique commitment (a single solve wraps its first step to its last, so staying online costs no start-up).
+    Realization (a = 1, b = 0 pinned): a serves the 90 MW and holds the remaining 10 MW as reserve.  Each MW moved
+    from energy to reserve would save 5,000 € of reserve shortfall and cost 10,000 € of balance slack, so the unique
+    optimum is a flow 90, a reserve 10, b nothing, reserve shortfall 20 MW, slack 0.  Pinning a's stochastic
+    reserve (30..50 MW) would cap a at 70 MW and leave >= 20 MWh of slack per step."""
+    binary = {"startup_method": "binary"}
+    steps, mps = _run_reserve(tmp_path_factory, "realization_reserve_commit", _reserve_variant(
+        100.0, {"rlz": 0.1, "high": 0.5, "low": 0.5},
+        [("a", 10.0, binary, True), ("b", 50.0, {**binary, "min_load": 0.5}, True)]))
+    assert b"reserve_fix_eq" not in mps[SIBLING]
+    online = _value(steps, SIBLING, "v_online_integer")
+    flow = _value(steps, SIBLING, "v_flow")
+    res = _value(steps, SIBLING, "v_reserve")
+    short = _value(steps, SIBLING, "vq_reserve")
+    slack = _value(steps, SIBLING, "vq_state_up")
+    for t in STEPS:
+        assert _at(online, p="a", d=ANCHOR, t=t) == pytest.approx(1.0, abs=1e-6)
+        assert _at(online, p="b", d=ANCHOR, t=t) == pytest.approx(0.0, abs=1e-6)
+        assert _at(flow, p="a", d=ANCHOR, t=t) * UNIT_MW == pytest.approx(90.0, abs=1e-6)
+        assert _at(flow, p="b", d=ANCHOR, t=t) * UNIT_MW == pytest.approx(0.0, abs=1e-6)
+        assert _at(res, p="a", d=ANCHOR, t=t) * UNIT_MW == pytest.approx(10.0, abs=1e-6)
+        assert _at(res, p="b", d=ANCHOR, t=t) * UNIT_MW == pytest.approx(0.0, abs=1e-6)
+        assert _at(short, d=ANCHOR, t=t) * RESERVE_MW == pytest.approx(20.0, abs=1e-6)
+        assert _at(slack, n="elec", d=ANCHOR, t=t) == pytest.approx(0.0, abs=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +450,19 @@ def test_nested_designation_raises(nesting: str) -> None:
         cfg = _config(model_solve={"m": ["top"]}, contains_solves={"top": ["p"]})
     with pytest.raises(FlexToolConfigError, match="realized: yes designation"):
         _spawn_realized_dispatch_siblings(cfg, _Reader(), logger=None)
+
+
+def test_configured_realization_of_a_solve_with_contained_solves_raises() -> None:
+    """A stochastic solve that contains solves cannot be realized by the deterministic solve right after it: its
+    contained solves would take its pins, and that solve would continue from the last of them."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+    from flextool.engine.solve._orchestration import _spawn_realized_dispatch_siblings
+    cfg = _config(model_solve={"m": ["p", "q"]}, solve_modes={"p": "single_solve", "q": "single_solve"},
+                  contains_solves={"p": ["c"]})
+    cfg.realized_periods["q"] = [("d1", "d1")]
+    with pytest.raises(FlexToolConfigError, match="'p' contains other solves"):
+        _spawn_realized_dispatch_siblings(cfg, _Reader(), logger=None)
+    assert cfg.realized_dispatch_parent == {}
 
 
 def test_designation_outside_the_committed_window_adds_nothing() -> None:

@@ -1821,9 +1821,8 @@ def native_run_model(state, solver) -> int:
             continue
         # Cut to the sibling's own periods: a single solve's realization solve
         # dispatches its realized periods only, a realization roll its jump
-        # (item 255).  The NA-tied online / reserve pins need no cut: the
-        # model pins only the sibling's declared cells (online_fix_eq,
-        # reserve_fix_eq).
+        # (item 255).  The NA-tied online pin needs no cut: the model pins
+        # only the sibling's declared cells (online_fix_eq).
         _sibling_periods = set(active_time_lists.get(sibling, {}))
         solve_branch__time_branch_lists[sibling] = [
             row for row in project_realized_branch_time_branch_rows(

@@ -778,8 +778,8 @@ def _patch_stoch_rank3_profile_anchor(data: dict) -> dict:
 def _patch_stoch_na_reserve_designated(data: dict) -> dict:
     """:func:`_patch_stoch_na_reserve` with branch ``realized`` flagged ``realized: yes``
     (:func:`_realized_branch_override`) and ``coal_plant`` online (linear startups): the realization
-    solve the engine adds after the stochastic solve pins its reserves (``reserve_fix_eq``) and units
-    online (``online_fix_eq``) to the stochastic solve's reference forecast on the tied steps."""
+    solve the engine adds after the stochastic solve pins its units online (``online_fix_eq``) to the
+    stochastic solve's reference forecast on the tied steps; it pins no reserve (no ``v_reserve`` pin row)."""
     data = _patch_stoch_na_reserve(data)
     return _overlay(
         data, name="stoch_na_reserve_designated", base="stoch_na_reserve",

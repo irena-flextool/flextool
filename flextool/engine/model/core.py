@@ -394,7 +394,7 @@ class _Build:
     # p_oint_idx with a coarse process only at its coarse steps' first fine steps (_coarse_flows.domain).
     p_olin_rows: pl.DataFrame | None = None
     p_oint_rows: pl.DataFrame | None = None
-    # (p, r, ud, n, d, t) of the registered v_reserve columns and of reserve_fix_eq / non_anticipativity_reserve:
+    # (p, r, ud, n, d, t) of the registered v_reserve columns and of non_anticipativity_reserve:
     # prundt with a coarse process only at its coarse steps' first fine steps (_coarse_flows.domain).
     prundt_rows: pl.DataFrame | None = None
     twoway1var_arcs: pl.DataFrame | None = None      # (p, source, sink) of v_flow_back

@@ -2268,6 +2268,15 @@ def _spawn_realized_dispatch_siblings(
             continue
         configured = _realization.configured_realization_solve(solve_cfg, p)
         if configured is not None:
+            if contains_solves.get(p):
+                # The solves it contains would take its pins (the PIN translation of a nested sub-solve), and the
+                # realization solve would continue from the last of them, not from it.
+                raise FlexToolConfigError(
+                    f"Solve '{configured}' right after solve '{p}' in model.solves would realize the committed "
+                    f"window of '{p}', but '{p}' contains other solves (contains_solves), so no solve can "
+                    f"realize it.  Move the solves it contains out of its contains_solves, or end its "
+                    f"committed window before the reveal."
+                )
             solve_cfg.register_realization_solve(configured, p)
             if logger is not None:
                 logger.info(
@@ -2279,7 +2288,8 @@ def _spawn_realized_dispatch_siblings(
                 # Printed only (solve-site console convention): the logger writes to the console too.
                 print(f"Warning: {_line}", flush=True)
             # A realization solve takes its parent's detail levels (it pins
-            # the parent's units online and reserves): name an authored
+            # the parent's units online and has the same detail as the
+            # solve it realizes): name an authored
             # value that is overridden. Printed only (solve-site console
             # convention): the logger writes to the console too.
             for _line in solve_cfg.reduce_detail_overridden(configured):
@@ -2294,11 +2304,9 @@ def _spawn_realized_dispatch_siblings(
             raise FlexToolConfigError(
                 f"Solve '{p}' has a realized: yes designation in "
                 f"stochastic_branches whose fan reaches its committed window, "
-                f"but it contains other solves (contains_solves), so the "
-                f"engine cannot add a realization solve for it.  Configure a "
-                f"realization solve right after it in model.solves (a "
-                f"deterministic solve with the same solve_mode and roll "
-                f"structure realizing the same periods), or remove the "
+                f"but it contains other solves (contains_solves), so no "
+                f"realization solve can realize it.  Move the solves it "
+                f"contains out of its contains_solves, or remove the "
                 f"designation."
             )
         eligible.append((p, "a realized: yes designation in stochastic_branches"))
@@ -3746,8 +3754,8 @@ def _drive_cascade(
             # falling back to a predecessor of 0.
             check_online_ramp_carry(data)
 
-            # A realization solve pins units online and reserves to the
-            # stochastic solve's NA-tied values: name the hard-balance node
+            # A realization solve pins units online to the stochastic
+            # solve's NA-tied values: name the hard-balance node
             # the realized data cannot balance before the LP is built.
             if complete_solve_name in (
                 getattr(self.state.solve, "realized_dispatch_parent", {}) or {}

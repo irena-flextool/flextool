@@ -282,7 +282,8 @@ its parent's. A Benders decomposition can split connections whose reserves, onli
 the solve leaves out.
 
 **Realization and continuing solves.** A realization solve (the dispatch of a stochastic solve's realized branch)
-uses its parent solve's levels, whatever is set on it, since it takes the parent's units online and reserves. A
+uses its parent solve's levels, whatever is set on it, since it takes the parent's units online and has the same
+detail as the solve it realizes. A
 warning names a different value set on a declared realization solve. A solve that continues the ramp of a solve
 without online variables starts its commitment and ramps cold, with an info line.
 

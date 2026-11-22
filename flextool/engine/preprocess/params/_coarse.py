@@ -19,7 +19,7 @@ coarse step; a row with a fine member stays per solve step and reads the coarse 
 stochastic solve, a process at a node whose net flow is tied between the forecasts, every online process and every
 reserve provider also keeps the solve's step when a coarse step holds both tied (committed) and untied steps
 (``flex_data.coarse_tie_straddles``): its one value would tie the untied steps too.  A realization solve keeps a
-process at the solve's step when its units online or its reserve are pinned on part of a coarse step or to values
+process at the solve's step when its units online are pinned on part of a coarse step or to values
 that change within one (``flex_data.coarse_pin_varies``).
 
 :func:`coarse_node_frames` cuts the solve's steps into coarse steps.  It is the only source of the coarse

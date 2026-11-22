@@ -343,7 +343,7 @@ def test_declared_realization_solve_warning_from_the_run(tmp_path_factory, capsy
     lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("Warning: realization solve")]
     assert lines == ["Warning: realization solve 'stoch_rd_realized_dispatch' sets reduce_system_detail_method = "
                      "'reserves', but it uses 'none', the value of its parent solve 'stoch_rd' (it takes the "
-                     "parent's units online and reserves)."]
+                     "parent's units online and has the same detail as the solve it realizes)."]
     assert all(s.optimal for s in steps.values()), list(steps)
 
 

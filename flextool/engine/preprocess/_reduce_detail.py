@@ -73,8 +73,7 @@ System detail (``reduce_system_detail_method``; the value is its parts joined in
 :data:`SYSTEM_TOKENS`, :func:`system_parts`):
 
 * ``reserves`` — every reserve field (:data:`RESERVE_FIELDS`): the reserve groups (the gate of every reserve row),
-  the per-process reserve sets and parameters, the realization pin ``p_fix_reserve`` and with them the reserve
-  non-anticipativity ties.  The units' coupling to reserves (maxFlow, the floors, the ramp reserve rows) is gated
+  the per-process reserve sets and parameters, and with them the reserve non-anticipativity ties.  The units' coupling to reserves (maxFlow, the floors, the ramp reserve rows) is gated
   on the reserve variables and drops out.
 * ``inertia`` — the inertia groups, arcs, constants, limits and penalties (:data:`INERTIA_FIELDS`).
 * ``non_synchronous`` — the non-synchronous groups, arcs, limits and penalties (:data:`NON_SYNC_FIELDS`).
@@ -172,7 +171,7 @@ PRUNE_FIELDS: tuple[str, ...] = tuple(f for f in ONLINE_FIELDS + MIN_TIME_FIELDS
 #: FlexData fields cleared (set to None) by each system part.
 RESERVE_FIELDS: tuple[str, ...] = (
     "reserve_upDown_group", "reserve_upDown_group_method_timeseries", "reserve_upDown_group_method_dynamic",
-    "reserve_upDown_group_method_n_1", "prundt", "process_reserve_upDown_node_active", "p_fix_reserve",
+    "reserve_upDown_group_method_n_1", "prundt", "process_reserve_upDown_node_active",
     "process_reserve_upDown_node_increase_reserve_ratio", "process_reserve_upDown_node_large_failure_ratio",
     "p_process_reserve_upDown_node_reliability", "pdtReserve_upDown_group_reservation",
     "p_reserve_upDown_group_penalty_reserve", "p_reserve_upDown_group_reserve_duration",

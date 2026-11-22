@@ -1470,6 +1470,24 @@ by period: the existing capacity entered once, at the first solve's first
 period, so a period-varying `existing` was lost in later solves) were replaced
 by `realized_cohort` / `realized_retire`.
 
+A realization solve (the deterministic solve after a stochastic one) takes
+the PIN carriers of its parent: the investments and `fix_online` (the
+NA-tied units online, `online_fix_eq`). It does not take reserve: it meets
+the reserve requirements with its own data. A `fix_reserve` carrier with an
+exact per-unit pin (`reserve_fix_eq`) shipped in 4.2.0–4.6.0 and was
+removed (it is in git history). A later reserve-market stage that realizes
+reserve separately should not repeat its mistakes: reserve provision has no
+cost, so the stochastic solve's per-unit allocation is degenerate (solver
+noise); an `==` pin is infeasible against the profile, storage-reserve and
+ramp rows when the realized data is lower; a requirement that varies with
+the data (stochastic `reservation`, dynamic, n-1) is set day-ahead in a real
+market, so the stage has to choose between the procured and the recomputed
+amount; and the per-unit day-ahead tie (`non_anticipativity_reserve`, kept)
+assumes non-transferable awards. Such a carrier adds one row to
+`SolveHandoff._FIELDS`, `PIN_FIELDS`, `_FIELD_TO_KEY` and
+`_HANDOFF_EMPTY_SCHEMAS`, and one entry to `flex_data.coarse_pin_varies`;
+`online_tie_cells` / `reference_forecasts` are the pattern for its producer.
+
 ## Solution extraction
 
 `process_outputs.read_highs_solution.VARIABLE_SPECS` declares every
