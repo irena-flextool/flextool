@@ -24,6 +24,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 from dataclasses import dataclass
+from collections.abc import Collection
 from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
@@ -129,6 +130,8 @@ class SolverNote:
     fmt: dict[str, Any]
     #: The full facts, for the debug log.
     detail: str
+    #: HiGHS's factor X of a :data:`RELATIVE_TOLERANCES` note (the worst roll's goes on the line).
+    value: float | None = None
 
 
 def _num(facts: dict[str, Any], name: str) -> int:
@@ -191,7 +194,8 @@ def interpret_optimal(facts: dict[str, Any] | None, *, is_mip: bool) -> list[Sol
         over = [f"{name.removeprefix('max_').replace('_', ' ')} {facts.get(name, float('nan')):.3g} = "
                 f"{ratio:.3g}x its tolerance" for name, ratio in terms if ratio > 1]
         kind = "basis: absolute infeasibilities and P-D error" if basis else "no basis: relative measures"
-        notes.append(SolverNote(RELATIVE_TOLERANCES, {"factor": f"{x:.3g}"}, f"{'; '.join(over)} ({kind})"))
+        notes.append(SolverNote(RELATIVE_TOLERANCES, {"factor": f"{x:.3g}", "rolls": ""},
+                                f"{'; '.join(over)} ({kind})", value=float(x)))
     return notes
 
 
@@ -199,14 +203,19 @@ def interpret_optimal(facts: dict[str, Any] | None, *, is_mip: bool) -> list[Sol
 _ONCE_PER_RUN = frozenset({IPM_RELATIVE_ONLY})
 
 
-def note_solver_outcome(sol: Any, acceptance: Any, *, solve_name: str, solver: str, noted: set) -> None:
+def note_solver_outcome(sol: Any, acceptance: Any, *, solve_name: str, solver: str, noted: set,
+                        pending: dict | None = None) -> None:
     """Print the notes on *sol*'s accepted solve (see the module docstring), once per code and complete solve
     (:data:`IPM_RELATIVE_ONLY`, the generic one: once per run, printed before W-0540 as it explains the IPX
     warnings above both).
 
     *noted* holds the ``(code, solve)`` pairs already printed in this run (``solve`` ``None`` for a once-per-run
-    code); a later roll of the same solve with the same outcome only goes to the debug log.  Prints at once
+    code); a later case of the same solve with the same outcome only goes to the debug log.  Prints at once
     (flushes an open ``collecting()`` scope), so the note stands next to the solver's output it explains.
+
+    A roll's :data:`RELATIVE_TOLERANCES` with *pending* (a dict the caller keeps for the run) is gathered instead:
+    :func:`flush_solver_outcome_notes` prints one line per complete solve, with the number of its rolls that had
+    the outcome and the largest factor among them.
     """
     from flextool import run_warnings
 
@@ -226,12 +235,42 @@ def note_solver_outcome(sol: Any, acceptance: Any, *, solve_name: str, solver: s
         if key in noted:
             _LOGGER.debug("%s also in '%s': %s", one.code, solve_name, one.detail)
             continue
+        if (one.code == RELATIVE_TOLERANCES and pending is not None and solve_name != complete
+                and one.value is not None):
+            pending.setdefault(complete, {})[solve_name] = (one.value, one.detail)
+            continue
         noted.add(key)
         run_warnings.note(one.code, solve=complete, details=f"in '{solve_name}': {one.detail}", **one.fmt)
         run_warnings.flush()
 
 
+def flush_solver_outcome_notes(pending: dict, noted: set, *, keep: Collection[str] = ()) -> None:
+    """Print the gathered :data:`RELATIVE_TOLERANCES` notes of the rolls in *pending* (``{complete solve: {roll:
+    (X, detail)}}``, :func:`note_solver_outcome`): one line per complete solve, ``... at up to <largest X>x ... in
+    <n> rolls``, the worst roll first in the debug log.  *keep*: the complete solves whose rolls are still running
+    (left in *pending*): the one running now and those it is nested in.  A solve already noted in this run (a later instance of a nested solve) only goes to the
+    debug log."""
+    from flextool import run_warnings
+
+    for complete in [c for c in pending if c not in keep]:
+        rolls = pending.pop(complete)
+        if not rolls:
+            continue
+        ordered = sorted(rolls.items(), key=lambda item: -item[1][0])
+        details = "; ".join(f"in '{roll}': {detail}" for roll, (_x, detail) in ordered)
+        key = (RELATIVE_TOLERANCES, complete)
+        if key in noted:
+            _LOGGER.debug("%s also in '%s': %s", RELATIVE_TOLERANCES, complete, details)
+            continue
+        noted.add(key)
+        worst = ordered[0][1][0]
+        count = len(ordered)
+        run_warnings.note(RELATIVE_TOLERANCES, solve=complete, details=details, factor=f"{worst:.3g}",
+                          rolls=f" in {count} roll{'s' if count != 1 else ''}")
+        run_warnings.flush()
+
+
 __all__ = [
-    "IPM_RELATIVE_ONLY", "NEAR_OPTIMAL", "RELATIVE_TOLERANCES", "SolverNote", "interpret_optimal",
-    "note_solver_outcome", "outcome_facts", "snapshot_highs_outcome",
+    "IPM_RELATIVE_ONLY", "NEAR_OPTIMAL", "RELATIVE_TOLERANCES", "SolverNote", "flush_solver_outcome_notes",
+    "interpret_optimal", "note_solver_outcome", "outcome_facts", "snapshot_highs_outcome",
 ]

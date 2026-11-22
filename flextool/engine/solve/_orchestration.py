@@ -55,7 +55,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Collection, Mapping, Sequence
 
 from flextool import run_record, run_warnings
 from flextool.engine.solve._acceptance import (
@@ -3471,8 +3471,37 @@ def _drive_cascade(
             """One sub-solve (a roll, or a whole solve), with its coded warnings gathered: each code prints one
             line for the sub-solve, before the solver runs (:func:`_print_solver_args`) or when it ends; the
             solve-scoped codes (``solve=``) print once per complete solve."""
+            # The rolls of an earlier complete solve have ended: their gathered solver-outcome note (W-0540: in
+            # how many rolls, the largest factor) prints now.  This solve and the solves it is nested in (their
+            # rolls go on after it) keep theirs.
+            self.flush_solver_outcome_notes(keep=self._open_solves(run_warnings.complete_solve(complete_solve_name)))
             with run_warnings.collecting():
                 return self._run_one(complete_solve_name)
+
+        def _open_solves(self, complete: str | None) -> set[str]:
+            """*complete* and every solve whose ``contains_solves`` holds it, directly or through others."""
+            contains = getattr(getattr(self.state, "solve", None), "contains_solves", None) or {}
+            open_solves = {complete} if complete else set()
+            grew = True
+            while grew:
+                parents = {parent for parent, children in contains.items()
+                           if open_solves.intersection(children or ())}
+                grew = not parents <= open_solves
+                open_solves |= parents
+            return open_solves
+
+        def flush_solver_outcome_notes(self, keep: Collection[str] = frozenset()) -> None:
+            """Print the W-0540 notes gathered over the rolls of each complete solve but *keep*
+            (:func:`~flextool.engine.solve._solver_outcome.flush_solver_outcome_notes`)."""
+            pending = self.state.__dict__.get("_solver_outcome_pending")
+            if not pending:
+                return
+            from flextool.engine.solve._solver_outcome import flush_solver_outcome_notes
+            try:
+                flush_solver_outcome_notes(pending, self.state.__dict__.setdefault("_solver_outcome_noted", set()),
+                                           keep=keep)
+            except Exception:  # noqa: BLE001 - diagnostic only
+                logging.getLogger(__name__).debug("the solver-outcome notes could not be printed", exc_info=True)
 
         def _run_one(self, complete_solve_name: str) -> int:
             _phase_prof("run_enter")
@@ -5033,9 +5062,14 @@ def _drive_cascade(
             # results (W-0540..W-0542), once per complete solve.  Diagnostic
             # only: a failure in it must not fail a run that has solved.
             try:
+                # The roll's own name (``<solve>_roll_<k>``) for a roll: its W-0540 is gathered over the rolls.
+                _outcome_name = getattr(self.state, "current_scale_solve_name", None) or complete_solve_name
+                if run_warnings.complete_solve(_outcome_name) != complete_solve_name:
+                    _outcome_name = complete_solve_name
                 note_solver_outcome(
-                    sol, _acc, solve_name=complete_solve_name, solver=_active_solver_cfg.name,
+                    sol, _acc, solve_name=_outcome_name, solver=_active_solver_cfg.name,
                     noted=self.state.__dict__.setdefault("_solver_outcome_noted", set()),
+                    pending=self.state.__dict__.setdefault("_solver_outcome_pending", {}),
                 )
             except Exception:  # noqa: BLE001
                 logging.getLogger(__name__).debug(
@@ -5505,7 +5539,12 @@ def _drive_cascade(
 
     # Drive the cascade via the native ``native_run_model``.  Native
     # emitters thread ``sub_solve_provider`` through every emit_* call.
-    native_run_model(runner.state, _PolarHighCascadeSolver(runner.state))
+    _cascade_solver = _PolarHighCascadeSolver(runner.state)
+    try:
+        native_run_model(runner.state, _cascade_solver)
+    finally:
+        # The last rolling solve's gathered solver-outcome note (W-0540).
+        _cascade_solver.flush_solver_outcome_notes()
     # Mirror the in-memory handoff dict back onto our state in case
     # callers want to inspect it.
     state.handoffs = runner.state.handoffs

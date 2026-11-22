@@ -52,7 +52,7 @@ def _basis(**over):
 
 
 def _codes(notes):
-    return [(n.code, n.fmt) for n in notes]
+    return [(n.code, {k: v for k, v in n.fmt.items() if k != "rolls"}) for n in notes]
 
 
 def test_a_clean_outcome_gets_only_the_ipx_note():
@@ -96,7 +96,7 @@ def test_kkt_tolerance_replaces_all_five():
     assert (tol.primal_feasibility, tol.dual_feasibility, tol.primal_residual, tol.dual_residual,
             tol.optimality) == (1e-9,) * 5
     notes = interpret_optimal(_facts(kkt_tolerance=1e-9, max_relative_dual_residual_error=4e-9), is_mip=False)
-    assert notes[-1].fmt == {"factor": "4"}
+    assert notes[-1].fmt == {"factor": "4", "rolls": ""}
 
 
 def test_user_scaled_solve_takes_x_from_the_kkt_report():
@@ -149,6 +149,43 @@ def test_once_per_complete_solve_and_next_to_the_solver_output(coded_log):
     rejected = SimpleNamespace(accepted=False, near_optimal=False, model_status="kInfeasible", message="")
     note_solver_outcome(_sol(worse), rejected, solve_name="other", solver="highs", noted=noted)
     note_solver_outcome(_sol(_facts()), _ACC, solve_name="other", solver="highs", noted=noted)
+    assert "Note:" not in coded_log()
+
+
+def test_rolls_give_one_line_with_their_number_and_the_largest_factor(coded_log):
+    """W2 follow-up: the rolls of a rolling solve gather their W-0540 (``pending``); the line, printed when the
+    rolls end, says in how many rolls it happened and gives the largest factor, the worst roll first in the debug
+    log.  A solve that is not rolling prints at once, as before."""
+    from flextool.engine.solve._solver_outcome import flush_solver_outcome_notes
+
+    run_warnings.start_run()
+    noted: set = set()
+    pending: dict = {}
+
+    def facts(x):
+        return _facts(num_relative_dual_infeasibilities=1, max_relative_dual_infeasibility=x * 1e-7)
+
+    for k, x in ((1, 1.19), (2, None), (3, 3.51), (4, 2.01)):
+        f = facts(x) if x is not None else _facts()
+        note_solver_outcome(_sol(f), _ACC, solve_name=f"st_roll_roll_{k}", solver="highs", noted=noted,
+                            pending=pending)
+    note_solver_outcome(_sol(facts(1.5)), _ACC, solve_name="invest", solver="highs", noted=noted, pending=pending)
+    printed = coded_log()
+    assert [line for line in printed.splitlines() if "[W-0540]" in line] == [
+        "Note: solve 'invest' optimal by HiGHS at up to 1.5x its relative tolerances [W-0540]"]
+    flush_solver_outcome_notes(pending, noted, keep={"st_roll"})  # its rolls go on
+    assert "[W-0540]" not in coded_log()
+    flush_solver_outcome_notes(pending, noted)
+    printed = coded_log()
+    assert [line for line in printed.splitlines() if "[W-0540]" in line] == [
+        "Note: solve 'st_roll' optimal by HiGHS at up to 3.51x its relative tolerances in 3 rolls [W-0540]"]
+    details = next(line for line in printed.splitlines() if line.startswith("W-0540 in 'st_roll_roll_3'"))
+    assert details.index("st_roll_roll_3") < details.index("st_roll_roll_4") < details.index("st_roll_roll_1")
+    assert pending == {}
+    # A later instance of the same solve (nested): the debug log only.
+    note_solver_outcome(_sol(facts(9.0)), _ACC, solve_name="st_roll_roll_9", solver="highs", noted=noted,
+                        pending=pending)
+    flush_solver_outcome_notes(pending, noted)
     assert "Note:" not in coded_log()
 
 
@@ -362,6 +399,8 @@ def test_rolling_ipm_solve_notes_follow_highs_log(tmp_path_factory, monkeypatch,
         else:
             assert len(w0540) == 1 and _same_3_digits(w0540[0].fmt["factor"], x), (x, w0540)
     printed = [line for line in coded_log().splitlines() if line.startswith("Note:") and "[W-054" in line]
-    first = next(x for x in logged if x is not None)
-    assert printed == [_IPX, f"Note: solve '{roll}' optimal by HiGHS at up to {first:.3g}x its relative "
-                             "tolerances [W-0540]"]
+    hits = [x for x in logged if x is not None]
+    worst = max(hits)
+    rolls = f"{len(hits)} roll{'s' if len(hits) != 1 else ''}"
+    assert printed == [_IPX, f"Note: solve '{roll}' optimal by HiGHS at up to {worst:.3g}x its relative "
+                             f"tolerances in {rolls} [W-0540]"]

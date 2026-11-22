@@ -591,7 +591,7 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
     ),
     WarningSpec(
         code="W-0540",
-        message="solve '{solve}' optimal by HiGHS at up to {factor}x its relative tolerances",
+        message="solve '{solve}' optimal by HiGHS at up to {factor}x its relative tolerances{rolls}",
         title="Optimal within a multiple of the relative tolerances",
         topic=_SOLVER,
         severity=NOTE,
@@ -607,8 +607,9 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "levels and costs are accurate to about a millionth (1e-6) of their size, which is far below the "
             "accuracy of any input data: the results are usable. The duals (prices) are less exact than the primal values: small "
             "differences in prices between equivalent nodes or time steps can be numerical noise. The debug log "
-            "names the checks and their largest violations. Each solve is noted once; a later roll of a rolling "
-            "solve with the same outcome goes to the debug log.\n\n"
+            "names the checks and their largest violations. Each solve is noted once: for a rolling solve the "
+            "note comes after its rolls, says in how many rolls it happened and gives the largest factor; the "
+            "debug log names each roll, the worst first.\n\n"
             "**How to fix:** usually nothing. If prices or small values matter, or the factor is large: "
             + _CROSSOVER_FIX
         ),
