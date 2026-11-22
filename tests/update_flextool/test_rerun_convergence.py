@@ -16,11 +16,12 @@ import json
 from pathlib import Path
 
 import pytest
-from spinedb_api import DatabaseMapping, import_data, to_database
+from spinedb_api import import_data, to_database
 
 from flextool._resources import package_data_path
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool.db_migration import _DEFINITION_RENAMES, _REUSED_DEFINITIONS
+from flextool.update_flextool.db_handle import open_database_mapping
 from flextool.update_flextool.fixture_schema import unpack_value
 from flextool.update_flextool.initialize_database import initialize_database
 
@@ -47,7 +48,7 @@ LEGACY_CASES = ((22, 35), (42, 44), (43, 56), (55, 65), (50, 62), (31, 56), (23,
 def _seed_data(path: Path, *, base: bool) -> None:
     """A unit between two nodes, a connection, a group, a reserve, a profile and a commodity, their relations, and a
     few values in alternative ``a1`` (``coefficient`` 0.5 in, 2.0 out); with *base*, also a ``Base`` alternative."""
-    with DatabaseMapping(url_of(path)) as db:
+    with open_database_mapping(url_of(path)) as db:
         db.add_alternative(name="a1")
         if base:
             db.add_alternative(name="Base")
@@ -113,7 +114,7 @@ def v75_chain(v2_chain, tmp_path_factory) -> dict:
     current = copy_db(v2_chain[75], folder / "current.sqlite")
     with open(SEED75, encoding="utf-8") as f:
         data = json.load(f)
-    with DatabaseMapping(url_of(current)) as db:
+    with open_database_mapping(url_of(current)) as db:
         _, errors = import_data(db, unparse_value=unpack_value, **{key: data[key] for key in (
             "alternatives", "scenarios", "scenario_alternatives", "entities", "entity_alternatives",
             "parameter_values")})
@@ -188,7 +189,7 @@ def test_a_rerun_keeps_the_definitions_v23_brought_back(v2_chain, tmp_path) -> N
     """v13 and v15 removed ``node.storate_state_end`` and ``node.invest_forced``, v23 typed them again: steps 15..34
     rerun on content 34 keep those definitions and their values."""
     expected = copy_db(v2_chain[34], tmp_path / "expected.sqlite")
-    with DatabaseMapping(url_of(expected)) as db:
+    with open_database_mapping(url_of(expected)) as db:
         for name, value in (("invest_forced", 25.0), ("storate_state_end", 0.5)):
             val, typ = to_database(value)
             db.add_parameter_value(entity_class_name="node", entity_byname=("n_in",), parameter_definition_name=name,
@@ -237,6 +238,32 @@ def test_v52_rerun_after_its_first_commit_converges(v2_chain, tmp_path) -> None:
     """v52 commits its value lists (the ``solver`` list already renamed ``solvers``) before its definitions."""
     assert _commits(v2_chain[51], 52) == 3
     assert _kill_and_rerun(v2_chain, 52, 1, tmp_path) == []
+
+
+@pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="needs /proc to list the open files")
+def test_the_helpers_and_a_killed_migration_release_the_file(v2_chain, tmp_path) -> None:
+    """Nothing keeps the file open after a killed migration, a rerun or the helpers that read it (Windows cannot
+    delete or replace an open file: ``with DatabaseMapping`` closes only the session, not the engine's pooled
+    connection).  Checked on the open file descriptors, so it fails here as well as on Windows."""
+    import gc
+    import os
+
+    def held(path: Path) -> list[str]:
+        target = os.path.realpath(path)
+        return [fd for fd in os.listdir("/proc/self/fd")
+                if os.path.realpath(f"/proc/self/fd/{fd}") in (target, target + "-wal", target + "-shm")]
+
+    path = copy_db(v2_chain[51], tmp_path / "db.sqlite")
+    gc.disable()  # an engine left open must not be closed by a collection that happens to run
+    try:
+        with pytest.raises(Kill), kill_after_commit(1):
+            migrate(path, up_to=52)
+        assert held(path) == []
+        for read in (version_of, snapshot, lambda p: restamp_file(p, 50), lambda p: migrate(p, up_to=52)):
+            read(path)
+            assert held(path) == [], read
+    finally:
+        gc.enable()
 
 
 def test_a_kill_in_a_step_leaves_the_previous_steps_stamp(v2_chain, tmp_path) -> None:
@@ -322,7 +349,7 @@ def test_the_rename_registry_matches_the_migration_chain(v2_chain) -> None:
     ``_REUSED_DEFINITIONS``."""
     present: dict[tuple[str, str], set[int]] = {}
     for k in range(FLEXTOOL_DB_VERSION + 1):
-        with DatabaseMapping(url_of(v2_chain[k])) as db:
+        with open_database_mapping(url_of(v2_chain[k])) as db:
             for d in db.get_items("parameter_definition"):
                 present.setdefault((d["entity_class_name"], d["name"]), set()).add(k)
     wrong = [entry for entry in _DEFINITION_RENAMES
@@ -365,7 +392,7 @@ def test_v56_backfills_a_user_set_upper_limit_default(v2_chain, tmp_path) -> Non
     """A ``unit__node__profile.profile_method`` default set to ``upper_limit`` by hand before v56 (no ``none`` member
     yet) is not taken for v56's own: the entity still gets its explicit ``none``."""
     path = copy_db(v2_chain[55], tmp_path / "db.sqlite")
-    with DatabaseMapping(url_of(path)) as db:
+    with open_database_mapping(url_of(path)) as db:
         pdef = db.get_item("parameter_definition", entity_class_name="unit__node__profile", name="profile_method")
         val, typ = to_database("upper_limit")
         db.update_parameter_definition(id=pdef["id"], default_value=val, default_type=typ)
@@ -373,7 +400,7 @@ def test_v56_backfills_a_user_set_upper_limit_default(v2_chain, tmp_path) -> Non
     with already_applied_records() as records:
         migrate(path, up_to=56)
     assert records == []
-    with DatabaseMapping(url_of(path)) as db:
+    with open_database_mapping(url_of(path)) as db:
         values = [(v["alternative_name"], v["parsed_value"]) for v in db.find_parameter_values(
             entity_class_name="unit__node__profile", parameter_definition_name="profile_method")]
     assert values == [("Base", "none")]
