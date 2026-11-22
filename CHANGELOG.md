@@ -1,4 +1,4 @@
-## Unreleased
+## Release 4.6.1 (22.11.2026) — fixes: Benders results with a final solve, migration reruns converge, reverse flows of one-variable connections, stochastic CO2 price, two-stage realization; precise HiGHS solver note
 
 Patch release (4.6.2): no new data version. Results can change for models with a `no_losses_no_variable_cost`
 connection or a line of a `dc_power_flow_with_angles` group that has an `efficiency` other than 1 or an

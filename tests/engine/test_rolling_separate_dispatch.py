@@ -31,13 +31,27 @@ This is pure orchestration + handoff routing — NO new var/cstr/param family
 autoscale invariant #1 is not triggered.
 
 Fixture (``rolling_separate_dispatch.json``, built from JSON per CLAUDE.md
-invariant 3): 72 steps = 3 jump-24 rolls (horizon 48).  A committable BINARY
-fleet (MIP): ``gas_plant`` (2 units × 250 MW, binary, min_load 0.4,
-min_up/down 3) and ``coal_plant`` (3 units × 600 MW, binary, efficiency 0.4,
-min_load 0.4, min_up/down 4, startup_cost 100) back ``wind`` (branch-varying
-forecast; freely curtailable) + ``hydro`` (small reservoir water-loss penalty)
-against 3000 MW demand; the ``rlz``/``upper``/``mid``/``lower`` fan re-reveals
-at each roll boundary.  Operational only (no invest).
+invariant 3): 72 steps = 3 jump-24 rolls (horizon 48).  A committable INTEGER
+fleet (MIP, ``startup_method: binary``): ``gas_plant`` (2 units × 250 MW,
+efficiency 0.9, gas price 6 → fuel 6.67 per MWh out, min_load 0.4, min_up/down
+3, startup_cost 50) and ``coal_plant`` (3 units × 600 MW, efficiency 0.4, coal
+price 16 → fuel 40 per MWh out, min_load 0.4, min_up/down 4, startup_cost 100)
+back ``wind`` (branch-varying forecast; freely curtailable) + ``hydro``
+(spilling to ``downriver`` costs 1 per MWh) against 3000 MW demand; the
+``realized``/``upper``/``mid``/``lower`` fan re-reveals at each roll boundary.
+Operational only (no invest).  Coal is the EXPENSIVE thermal unit here, not a
+cheap baseload.
+
+What the fleet does: the stochastic UC hedges the low-wind forecasts by
+committing 2 gas + 2 coal units (the same commitment in every forecast over the
+jump).  The realized wind is high, so in the realized dispatch the ``==`` pin
+keeps those units online and both fleets run at their min-load floor every hour
+(the surplus is curtailed / spilled); coal drops to one unit at t0072.  Gas is
+therefore NOT marginal in this fixture; re-tuning it so gas is genuinely
+marginal is item 300 (``specs/github_issues.md``).  The expected values were
+first recorded under polar-high 3.16.0, whose MPS path read the unbounded
+integer ``v_online`` as binary (one unit online at most); see
+``specs/two_stage_fix_rolling_dispatch_diagnosis.md``.
 
 Owner-confirmed semantics (``==`` pin): the realized dispatch is LOCKED to the
 plan's committed hedge (per-unit ``==``/``≤`` is a future setting).  The test
@@ -71,7 +85,35 @@ N_ROLLS = 3
 GAS = "gas_plant"
 COAL = "coal_plant"
 REALIZED_PERIOD = "period1"            # the realized trunk the sibling owns
-GAS_MIN_LOAD = 0.4                     # per-unit min-load fraction
+
+# Fixture data used for the hand-derived checks.  ``v_flow`` of a unit is in
+# units of its ``virtual_unitsize`` (1.0 = one unit at full output).
+UNIT = {   # p: (unitsize MW, efficiency, fuel price per MWh fuel, min_load)
+    GAS: (250.0, 0.9, 6.0, 0.4),
+    COAL: (600.0, 0.4, 16.0, 0.4),
+}
+SPILL_NODE = "downriver"               # the only node with a nonzero penalty_down
+SPILL_PENALTY = 1.0                    # downriver.penalty_down
+ANNUALISE = 8760.0 / 72.0              # the 72 h period scaled to a year
+
+
+def _floor_fuel_per_unit_hour(p: str) -> float:
+    """Fuel cost of one unit of *p* running at its min-load floor for one hour."""
+    size, eff, price, min_load = UNIT[p]
+    return size * min_load / eff * price
+
+
+COAL_FLOOR_H = _floor_fuel_per_unit_hour(COAL)   # 600 * 0.4 / 0.4 * 16 = 9600
+GAS_FLOOR_H = _floor_fuel_per_unit_hour(GAS)     # 250 * 0.4 / 0.9 * 6 = 666.67
+
+# Hand-derived fuel cost of each realized-dispatch roll (24 h): 2 gas + 2 coal
+# units at their floor every hour (24 x (19 200 + 1 333.33) = 492 800); roll 2
+# runs one coal unit at its last step, t0072.
+DISP_FUEL = {
+    0: 24 * (2 * COAL_FLOOR_H + 2 * GAS_FLOOR_H),
+    1: 24 * (2 * COAL_FLOOR_H + 2 * GAS_FLOOR_H),
+    2: 23 * (2 * COAL_FLOOR_H + 2 * GAS_FLOOR_H) + (COAL_FLOOR_H + 2 * GAS_FLOOR_H),
+}
 
 # Rolling config from the fixture (``solve.jump`` / ``solve.horizon`` hours at
 # 1 h/step): each roll optimises HORIZON steps, commits/realises JUMP steps.
@@ -79,16 +121,18 @@ JUMP_STEPS = 24
 HORIZON_STEPS = 48
 
 # Per-roll committed gas hedge (solver-determined tied forecast commitment,
-# pinned verbatim into the dispatch sibling): gas is committed as ONE unit.
-HEDGE = {0: 1.0, 1: 1.0, 2: 1.0}
+# pinned verbatim into the dispatch sibling): both gas units are committed.
+HEDGE = {0: 2.0, 1: 2.0, 2: 2.0}
 
 # Realized-DISPATCH per-roll objectives (deterministic LP regression anchors;
-# ``v_online`` pinned → the dispatch is a pure LP).  UC-parent objectives are
-# deliberately NOT anchored (discarded-look-ahead VOLL — see module docstring).
+# ``v_online`` pinned → the dispatch is a pure LP).  Each one is
+# ANNUALISE x (DISP_FUEL[k] + downriver spill x 1): 8760/72 x (492 800 + 12 655.10)
+# for roll 0; ``test_dispatch_per_solve_objectives`` checks that decomposition.
+# UC-parent objectives are deliberately NOT anchored (see module docstring).
 DISP_OBJ = {
-    "1week_rolling__realized_dispatch_roll_0": 34650718.860,
-    "1week_rolling__realized_dispatch_roll_1": 32678805.286,
-    "1week_rolling__realized_dispatch_roll_2": 31490226.310,
+    "1week_rolling__realized_dispatch_roll_0": 61497036.896,
+    "1week_rolling__realized_dispatch_roll_1": 60803426.250,
+    "1week_rolling__realized_dispatch_roll_2": 59372411.365,
 }
 
 
@@ -226,35 +270,70 @@ def test_each_dispatch_roll_pinned_to_its_uc_commitment(chain):
         assert disp_commit > 0.0, f"roll {k}: dispatch commitment is zero"
 
 
+def _unit_flow(step, p: str) -> pl.DataFrame:
+    """``v_flow`` of unit *p* summed per ``(d, t)`` (in units of its unitsize)."""
+    return (step.solution.value("v_flow").filter(pl.col("p") == p)
+            .group_by(["d", "t"]).agg(pl.col("value").sum().alias("flow")))
+
+
+def _fuel_cost(step) -> float:
+    """Fuel cost of the solve from its flows: Σ flow x unitsize / efficiency x price."""
+    total = 0.0
+    for p, (size, eff, price, _) in UNIT.items():
+        total += float(_unit_flow(step, p)["flow"].sum()) * size / eff * price
+    return total
+
+
 @pytest.mark.solver
-def test_gas_dispatch_runs_above_min_load(chain):
-    """Gas is a genuine marginal committable: committed as ONE unit yet its
-    OUTPUT rises ABOVE the min-load floor in some hours (not pinned at the
-    floor) — the realistic UC behaviour the 2×250 MW capacity limit forces.
-    Checked on the realized-dispatch rolls (floor = ``min_load * v_online``)."""
+def test_dispatch_within_committed_unit_limits(chain):
+    """In every realized-dispatch roll and step, each committable unit's online
+    count equals its UC roll's commitment at that step (in every forecast), and
+    its output lies within [min_load x online, capacity x online].  A dispatch
+    that ignored the pinned commitment, ran a unit with none online, or ran it
+    below its floor or above the committed capacity fails here."""
     steps, _ = chain
-    any_above = False
     for k in range(N_ROLLS):
         disp = steps[DISP.format(k=k)]
-        on = _online(disp, GAS).select("d", "t", "value").rename(
-            {"value": "online"})
-        flow = (disp.solution.value("v_flow")
-                .filter(pl.col("p") == GAS)
-                .group_by(["d", "t"]).agg(pl.col("value").sum().alias("fl")))
-        j = on.join(flow, on=["d", "t"], how="left").with_columns(
-            floor=pl.col("online") * GAS_MIN_LOAD)
-        if j.filter(pl.col("fl") > pl.col("floor") + 1e-3).height > 0:
-            any_above = True
-    assert any_above, (
-        "gas never ran above its min-load floor in any dispatch roll — the "
-        "fleet is not exercising genuine UC dispatch"
-    )
+        uc = steps[UC.format(k=k)]
+        for p, (_, _, _, min_load) in UNIT.items():
+            on = _online(disp, p).select("d", "t", pl.col("value").alias("online"))
+            assert on.height == JUMP_STEPS, f"roll {k} {p}: {on.height} online rows"
+            assert set(on["d"].unique()) == {REALIZED_PERIOD}
+            uc_on = _online(uc, p).filter(pl.col("d") != REALIZED_PERIOD)
+            for forecast in uc_on["d"].unique().sort().to_list():
+                plan = dict(uc_on.filter(pl.col("d") == forecast).select("t", "value").rows())
+                for t, online in on.select("t", "online").rows():
+                    assert online == pytest.approx(plan[t], abs=1e-6), (
+                        f"roll {k} {p} {t}: online {online} != UC {forecast} {plan[t]}"
+                    )
+            j = on.join(_unit_flow(disp, p), on=["d", "t"], how="left").with_columns(
+                pl.col("flow").fill_null(0.0))
+            low = j.filter(pl.col("flow") < pl.col("online") * min_load - 1e-6)
+            high = j.filter(pl.col("flow") > pl.col("online") + 1e-6)
+            assert low.height == 0, f"roll {k} {p}: below the min-load floor:\n{low}"
+            assert high.height == 0, f"roll {k} {p}: above the committed capacity:\n{high}"
+
+
+@pytest.mark.solver
+def test_dispatch_fuel_cost_hand_derived(chain):
+    """The fuel cost of each realized-dispatch roll, computed from its flows,
+    equals the closed form ``DISP_FUEL`` (2 gas + 2 coal units at their floor
+    every hour; one coal unit at t0072): 492 800 for rolls 0 and 1, 483 200 for
+    roll 2."""
+    steps, _ = chain
+    assert DISP_FUEL[0] == pytest.approx(492_800.0)
+    assert DISP_FUEL[2] == pytest.approx(483_200.0)
+    for k in range(N_ROLLS):
+        got = _fuel_cost(steps[DISP.format(k=k)])
+        assert got == pytest.approx(DISP_FUEL[k], rel=1e-9), (
+            f"roll {k}: fuel cost {got} != hand-derived {DISP_FUEL[k]}"
+        )
 
 
 @pytest.mark.solver
 def test_coal_committed_and_used(chain):
-    """Coal (the cheap baseload) is committed in the realized dispatch (the
-    capacity-limited gas cannot cover demand alone)."""
+    """Coal is committed in the realized dispatch: the UC hedges the low-wind
+    forecasts, where the 2 x 250 MW of gas cannot cover the demand alone."""
     steps, _ = chain
     coal = _online(steps[DISP.format(k=0)], COAL)
     assert coal.height > 0, "coal has no online var"
@@ -316,14 +395,23 @@ def test_all_rolls_optimal_and_realized_demand_met(chain):
 @pytest.mark.solver
 def test_dispatch_per_solve_objectives(chain):
     """Regression anchors for the realized-DISPATCH objectives (deterministic
-    LP — ``v_online`` is pinned).  UC-parent objectives are deliberately not
-    anchored (discarded-look-ahead VOLL; see module docstring)."""
+    LP — ``v_online`` is pinned), and their decomposition: each objective is
+    ``ANNUALISE x (fuel + downriver spill x penalty)`` with the hand-derived fuel
+    cost ``DISP_FUEL`` (no start-up and no unserved load in these rolls).
+    UC-parent objectives are deliberately not anchored (see module docstring)."""
     steps, _ = chain
-    for name, expected in DISP_OBJ.items():
+    for k in range(N_ROLLS):
+        name = DISP.format(k=k)
         assert name in steps, f"missing solve {name}"
-        got = steps[name].solution.obj
-        assert got == pytest.approx(expected, rel=1e-6), (
-            f"{name}: objective {got} != {expected}"
+        sol = steps[name].solution
+        got = sol.obj
+        assert got == pytest.approx(DISP_OBJ[name], rel=1e-6), (
+            f"{name}: objective {got} != {DISP_OBJ[name]}"
+        )
+        spill = float(sol.value("vq_state_down")
+                      .filter(pl.col("n") == SPILL_NODE)["value"].sum())
+        assert got == pytest.approx(ANNUALISE * (DISP_FUEL[k] + SPILL_PENALTY * spill), rel=1e-9), (
+            f"{name}: objective {got} is not 8760/72 x (fuel {DISP_FUEL[k]} + spill {spill})"
         )
 
 

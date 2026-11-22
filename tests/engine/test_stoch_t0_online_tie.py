@@ -133,8 +133,8 @@ def _drop_separate_dispatch(d: dict) -> None:
 def _to_integer_online(d: dict) -> None:
     """Integer online: ``startup_method=binary`` (-> METHOD_MIP ->
     v_online_integer) and ``high`` wind CF -> 1.0 so high's own optimum is 0
-    units — the jump tie forces it UP to low's 1 unit (a genuine integer
-    hedge)."""
+    units — the jump tie forces it UP to low's 2 units (a genuine integer
+    hedge: ``low`` has no wind, so 100 MW of demand / 50 MW per unit = 2)."""
     def _encs(x):
         return [base64.b64encode(json.dumps(x).encode()).decode(), "str"]
     for r in d["parameter_values"]:
@@ -309,8 +309,13 @@ def test_integer_v_online_tied_over_jump(integer_chain):
     """The jump tie fires for the INTEGER online family too
     (non_anticipativity_online_integer over dtna_online): ``high`` (wind now
     fully covers demand, so its own optimum is 0 units) is forced UP to low's
-    committed unit over the whole jump."""
+    committed units over the whole jump.  ``low`` has no wind, so the peaker
+    covers the full 100 MW demand with 100 / 50 = 2 units (``TIED_COMMIT``; one
+    unit would leave 50 MW unserved).  The value 1.0 recorded earlier came from
+    polar-high 3.16.0, whose MPS path read the integer ``v_online`` as binary
+    (see ``specs/two_stage_fix_rolling_dispatch_diagnosis.md``)."""
     fr = _online(integer_chain, PARENT, "v_online_integer")
     for t in STEPS:
+        assert _at(fr, LOW, t) == pytest.approx(TIED_COMMIT, abs=1e-9)
         assert _at(fr, HIGH, t) == pytest.approx(_at(fr, LOW, t), abs=1e-9)
-        assert _at(fr, HIGH, t) == pytest.approx(1.0, abs=1e-9)
+        assert _at(fr, HIGH, t) == pytest.approx(TIED_COMMIT, abs=1e-9)
