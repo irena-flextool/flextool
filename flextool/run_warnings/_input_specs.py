@@ -417,7 +417,7 @@ INPUT_SPECS: tuple[WarningSpec, ...] = (
        "**How to fix:** check the list (a checklist):\n\n"
        "1. Make a copy of the database and work on the copy.\n"
        "2. In the Spine DB editor, open *Parameter value list* and the named list (`invest_methods`). Check that "
-       "it contains `not_allowed` (another list: all the members the parameter reference lists).\n"
+       "it contains `not_allowed` (for another list: check it has every member listed in the parameter reference).\n"
        "3. If a member is missing, add it to the list.\n"
        "4. For `invest_methods`, set the default value of `invest_method` of `unit`, `connection` and `node` "
        "to `not_allowed` (the shipped default).\n"

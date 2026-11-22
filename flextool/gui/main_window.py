@@ -3180,6 +3180,11 @@ class MainWindow(tk.Tk):
                 "\n".join(upgrade_messages),
                 parent=self,
             )
+        # W-0490 (TODO(v5.0.0): remove): a warning about the database, in its own box, never in the
+        # "Database migration failed" one, whose cause it is not.
+        check_messages = self.input_source_mgr.take_check_messages()
+        if check_messages:
+            messagebox.showwarning("Database check", "\n\n".join(check_messages), parent=self)
 
         sources = self.input_source_mgr.refresh()
 

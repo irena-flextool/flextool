@@ -11,6 +11,7 @@ A database records no library version, only its migration sessions (the commits 
 to version N``, with a date).  This module reads them read-only (``sqlite3`` only, ``mode=ro&immutable=1``) and
 names each session in the risk window whose first list-value step appends to an existing list.  It never changes
 a database and never looks at the values (design: ``specs/two_stage_fix_D_invest_methods_list.md``, rev 3).
+Only SQLite files are checked: a database on a server (not a ``sqlite:///`` URL) is never checked.
 
 TODO(v5.0.0): remove this module, W-0490 (``run_warnings/_input_specs.py``), its call sites
 (``engine/solve/_orchestration.py``, ``gui/input_sources.py``) and its tests.  The warning is temporary.
@@ -58,37 +59,54 @@ class Finding:
     date: str
 
 
-def _version_commits(path: Path) -> list[tuple[int, str]]:
+#: The commit of a migration step that adds value list members (``db_migration.add_value_list_manual``).
+_LIST_STEP = "Added new parameter value lists"
+
+
+def _version_commits(path: Path) -> tuple[list[tuple[int, str, int, int]], list[tuple[int, str]]]:
+    """``(versions, list_steps)``: the version commits as ``(version, date, first id, last id)`` (repeats of a version
+    collapsed) and the ``(id, date)`` of the value-list step commits."""
     from flextool.update_flextool.frozen import ro_uri
 
     con = sqlite3.connect(ro_uri(path) + "&immutable=1", uri=True)
     try:
-        rows = con.execute('SELECT comment, date FROM "commit" WHERE comment LIKE ? ORDER BY id',
-                           (_PREFIX + "%",)).fetchall()
+        rows = con.execute('SELECT id, comment, date FROM "commit" WHERE comment LIKE ? OR comment = ? ORDER BY id',
+                           (_PREFIX + "%", _LIST_STEP)).fetchall()
     finally:
         con.close()
-    out: list[tuple[int, str]] = []
-    for comment, date in rows:
+    out: list[tuple[int, str, int, int]] = []
+    steps: list[tuple[int, str]] = []
+    for cid, comment, date in rows:
+        if comment == _LIST_STEP:
+            steps.append((cid, str(date)[:10]))
+            continue
         try:
             version = int(float(comment[len(_PREFIX):]))
-        except ValueError:
+        except (ValueError, OverflowError):
             continue
-        if not out or out[-1][0] != version:
-            out.append((version, str(date)[:10]))
-    return out
+        if out and out[-1][0] == version:
+            out[-1] = (*out[-1][:3], cid)
+        else:
+            out.append((version, str(date)[:10], cid, cid))
+    return out, steps
 
 
 def possible_value_list_overwrite_ro(path: str | Path) -> list[Finding]:
     """The migration sessions of *path* that may have overwritten a value list member; ``[]`` when none, or when the
-    file cannot be read (a check that cannot read the history does not warn)."""
+    file cannot be read (a check that cannot read the history does not warn).
+
+    A session is dated by its earliest value-list step commit, else by its closing version commit: a migration that
+    failed after such a step (before the all-or-nothing backup) and was retried after the window kept the step's
+    overwrite, but its closing commit is from the retry."""
     try:
-        commits = _version_commits(Path(path))
+        commits, list_steps = _version_commits(Path(path))
     except (sqlite3.Error, OSError) as exc:
         logger.debug("value list history of %s not read: %s", path, exc)
         return []
     findings = []
     # The first version commit has no known start: the database came from a template or a JSON import.
-    for (start, _), (end, date) in zip(commits, commits[1:]):
+    for (start, _, _, after), (end, end_date, before, _) in zip(commits, commits[1:]):
+        date = min([end_date, *(d for cid, d in list_steps if after < cid < before)])
         if not WINDOW_START <= date <= WINDOW_END or end <= start:
             continue
         touched = [s for s in TOUCH if start < s <= end]

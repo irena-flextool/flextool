@@ -12,7 +12,8 @@ Codes           Module                                                 What
 W-0001..W-0004  this module (``_SPECS``)                               the first codes (groups / flowGroups,
                                                                        user constraints), kept where the API
                                                                        was introduced; no new codes here
-W-0100..W-0499  ``flextool/run_warnings/_input_specs.py``              the input derivation's checks, plots
+W-0100..W-0499  ``flextool/run_warnings/_input_specs.py``              the input derivation's checks, plots,
+                                                                       and the input database (W-049x)
 W-0500..W-0599  ``flextool/run_warnings/_engine_specs.py``             the engine: solves, preprocessing,
                                                                        results, the solver's outcome
 W-0600..W-0699  ``flextool/run_warnings/_behaviour_specs.py``          behaviour-change notices (merged into
@@ -125,7 +126,8 @@ _SPECS: tuple[WarningSpec, ...] = (
     ),
 )
 
-# The input-side codes (W-0100..W-0499: the input derivation's validators, plots) live in their own module.
+# The input-side codes (W-0100..W-0499: the input derivation's validators, plots, and the input database
+# (W-049x)) live in their own module.
 from flextool.run_warnings._input_specs import INPUT_SPECS  # noqa: E402
 # The solve-side codes (W-0500..W-0999: the engine's solves, preprocessing and results) likewise.
 from flextool.run_warnings._engine_specs import ENGINE_SPECS  # noqa: E402

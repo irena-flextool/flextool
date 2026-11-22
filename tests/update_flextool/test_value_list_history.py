@@ -27,7 +27,8 @@ def _add_commits(path: Path, commits: list[tuple[str, str]]) -> None:
     con = sqlite3.connect(path)
     with con:
         con.executemany('INSERT INTO "commit" (comment, date, user) VALUES (?, ?, ?)',
-                        [(_PREFIX + v, f"{d} 12:00:00", "spinedb_api") for v, d in commits])
+                        [("Added new parameter value lists" if v == "list" else _PREFIX + v, f"{d} 12:00:00",
+                          "spinedb_api") for v, d in commits])
     con.close()
 
 
@@ -61,6 +62,10 @@ CYPRUS = [("20", "2024-05-27"), ("21", "2024-07-17"), ("22", "2024-09-19")]
     pytest.param([("21", "2024-07-17"), ("22", "2025-07-08")], [], id="day_after_window_end"),
     pytest.param([("21", "2024-04-01"), ("22", "2024-04-28")], [], id="day_before_window_start"),
     pytest.param([("22", "2024-09-19")], [], id="first_commit_has_no_start"),
+    pytest.param([("21", "2024-07-17"), ("list", "2024-09-19"), ("list", "2025-08-01"), ("22", "2025-08-01")],
+                 [Finding(22, ("invest_methods",), 21, 22, "2024-09-19")], id="failed_in_window_retried_after"),
+    pytest.param([("21", "2024-07-17"), ("list", "2025-08-01"), ("22", "2025-08-01")], [],
+                 id="list_step_after_window"),
 ])
 def test_findings(make, commits, expected) -> None:
     assert vlh.possible_value_list_overwrite_ro(make(commits)) == expected
@@ -145,13 +150,34 @@ def test_gui_shows_the_text_once_per_opened_project(make, tmp_path: Path) -> Non
     make([("19", "2024-08-28"), ("22", "2024-08-28")], "fine.sqlite", project / "input_sources")
     mgr = InputSourceManager(project, ProjectSettings())
     messages = mgr.plan_db_migrations()[3]
-    flagged = [m for m in messages if "W-0490" in m]
+    assert not [m for m in messages if "W-0490" in m], "not with the migration messages (their own box)"
+    flagged = [m for m in mgr.take_check_messages() if "W-0490" in m]
     assert len(flagged) == 1 and flagged[0].startswith("cyprus.sqlite: ")
     assert "from data version 21 to 22 on 2024-09-19" in flagged[0] and "'not_allowed'" in flagged[0]
     assert run_warnings.docs_url("W-0490") in flagged[0]
-    assert not [m for m in mgr.plan_db_migrations()[3] if "W-0490" in m], "a refresh does not repeat it"
+    assert not mgr.take_check_messages(), "taken once"
+    mgr.plan_db_migrations()
+    assert not mgr.take_check_messages(), "a refresh does not repeat it"
     again = InputSourceManager(project, ProjectSettings())
-    assert len([m for m in again.plan_db_migrations()[3] if "W-0490" in m]) == 1, "opening it again does"
+    again.plan_db_migrations()
+    assert len([m for m in again.take_check_messages() if "W-0490" in m]) == 1, "opening it again does"
+
+
+def test_gui_planning_survives_an_unexpected_history_error(make, tmp_path: Path, monkeypatch) -> None:
+    """An unexpected error of the check (implausible data) is logged, and the migration planning goes on."""
+    from flextool.gui.data_models import ProjectSettings
+    from flextool.gui.input_sources import InputSourceManager
+
+    project = tmp_path / "project"
+    make(CYPRUS, "cyprus.sqlite", project / "input_sources")
+
+    def boom(path):
+        raise OverflowError("cannot convert float infinity to integer")
+
+    monkeypatch.setattr(vlh, "gui_messages", boom)
+    mgr = InputSourceManager(project, ProjectSettings())
+    assert len(mgr.plan_db_migrations()) == 4
+    assert mgr.take_check_messages() == []
 
 
 def test_guard_stops_an_import_that_rewrites_a_member(schema_db_url: str, tmp_path: Path, monkeypatch) -> None:

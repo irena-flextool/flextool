@@ -73,6 +73,8 @@ class InputSourceManager:
         self._frozen_declined: set[Path] = set()
         # The sources whose W-0490 text was shown since the project was opened (TODO(v5.0.0): remove).
         self._value_list_checked: set[Path] = set()
+        # Their W-0490 texts, shown in their own box, not with the migration messages (take_check_messages).
+        self._check_messages: list[str] = []
         # SHA-256 of frozen files by (path, size, mtime), for the migrated-copy check.
         self._sha_cache: dict[tuple[Path, int, int], str] = {}
 
@@ -570,6 +572,12 @@ class InputSourceManager:
                 )
         return result
 
+    def take_check_messages(self) -> list[str]:
+        """The W-0490 texts of the sources :meth:`plan_db_migrations` checked since the last call (then cleared).
+        TODO(v5.0.0): remove with W-0490."""
+        out, self._check_messages = self._check_messages, []
+        return out
+
     def plan_db_migrations(
         self,
     ) -> tuple[
@@ -623,7 +631,10 @@ class InputSourceManager:
         for name, path, external in candidates:
             if path.resolve() not in self._value_list_checked:
                 self._value_list_checked.add(path.resolve())
-                planning_messages.extend(gui_messages(path))
+                try:  # a check of the history never stops the migration planning
+                    self._check_messages.extend(gui_messages(path))
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("value list history of %s not checked: %s", path, exc)
             try:
                 frozen = self._frozen_needing_migration(path, target_version)
             except FrozenCheckError as exc:

@@ -2257,7 +2257,9 @@ def add_value_list_manual(db, new_value_lists):
     changed = sorted(f"{lst}: {from_database(v, t)!r}" for i, (lst, v, t) in before.items() if after.get(i) != (lst, v, t))
     if changed:
         raise FlexToolMigrationError("Adding value list members changed existing members (" + ", ".join(changed)
-                                     + "); the migration stops so that no default or value changes with them.")
+                                     + "); the migration stops so that no default or value changes with them. "
+                                     "The file was restored from the backup; check that spinedb_api >= 0.35 is "
+                                     "installed (pip show spinedb_api).")
     try:
         _commit_step(db,"Added new parameter value lists")
     except SpineDBAPIError:
