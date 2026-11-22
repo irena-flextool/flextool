@@ -515,13 +515,15 @@ def _realized_branches() -> list:
 
 
 def test_realization_solve_pins_coarse_units_online_once_per_day(tmp_path_factory) -> None:
-    """2-day stochastic dispatch with a realized designation (every hour tied): top_turbine is coarse in the
-    stochastic solve, its committed units online are handed to the realization solve on every hour (the value of
-    its day), so the pin is the same on every hour of each day and top_turbine is coarse there too, pinned by one
-    online_fix_eq row per day; its realized units online equal the committed ones."""
+    """2-day stochastic dispatch with a realized designation (every hour tied): top_turbine (binary, so its units
+    online are pinned; linear ones are decided again) is coarse in the stochastic solve, its committed units online
+    are handed to the realization solve on every hour (the value of its day), so the pin is the same on every hour of
+    each day and top_turbine is coarse there too, pinned by one online_fix_eq row per day; its realized units online
+    equal the committed ones."""
+    values = [v for v in _top_values(24.0) if not (v[1] == "top_turbine" and v[2] == "startup_method")]
     url, scen = make_db(tmp_path_factory, alt="co_pin",
-                        values=_top_values(24.0) + [["solve", "2day_dispatch", "stochastic_branches",
-                                                     _realized_branches()]],
+                        values=values + [["unit", "top_turbine", "startup_method", _s("binary")],
+                                         ["solve", "2day_dispatch", "stochastic_branches", _realized_branches()]],
                         base_chain=_chain(STOCH, "2_day_stochastic_dispatch"), entities=_TOP_ENTITIES,
                         fixture_json=STOCH)
     steps = run(tmp_path_factory, url, scen)
@@ -534,9 +536,9 @@ def test_realization_solve_pins_coarse_units_online_once_per_day(tmp_path_factor
     days = [pin["value"][:24].unique().to_list(), pin["value"][24:].unique().to_list()]
     assert all(len(v) == 1 for v in days)
     pb = build(fd)
-    rows = row_terms(pb, "online_fix_eq_linear", "top_turbine,")
+    rows = row_terms(pb, "online_fix_eq_integer", "top_turbine,")
     assert sorted(_keys(r)[-1] for r in rows) == ["t0001", "t0025"]
-    on = utf8(real[0].solution.value("v_online_linear")).filter(pl.col("p") == "top_turbine").sort("t")
+    on = utf8(real[0].solution.value("v_online_integer")).filter(pl.col("p") == "top_turbine").sort("t")
     assert on["value"].to_list() == pytest.approx([days[0][0], days[1][0]], abs=1e-9)
 
 

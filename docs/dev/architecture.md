@@ -1472,7 +1472,8 @@ by `realized_cohort` / `realized_retire`.
 
 A realization solve (the deterministic solve after a stochastic one) takes
 the PIN carriers of its parent: the investments and `fix_online` (the
-NA-tied units online, `online_fix_eq`). It does not take reserve: it meets
+NA-tied units online of the binary units, `online_fix_eq_integer`; linear
+units online are re-decided, so `online_fix_eq_linear` has no rows). It does not take reserve: it meets
 the reserve requirements with its own data. A `fix_reserve` carrier with an
 exact per-unit pin (`reserve_fix_eq`) shipped in 4.2.0–4.6.0 and was
 removed (it is in git history). A later reserve-market stage that realizes

@@ -632,7 +632,11 @@ def add_constraints(b: "_Build") -> None:
     # v_online[p,d,t] = p_fix_online[p,d,t]   ∀ (p,d,t) ∈ online_rows with a p_fix_online value
     #   (a coarse process: at the first fine step of each coarse step; its pin is the same on every fine step of
     #   the step, or the process keeps the solve's step, flex_data.coarse_pin_varies)
-    # In a separate-dispatch solve, pins units online to the commitment of the parent solve.
+    # In a realization solve, pins the units online of the processes with integer (binary) online variables to the
+    # parent's commitment, also when the solve relaxes integers (reduce_unit_detail_method integers*); linear units
+    # online are not pinned (p_fix_online has none: the realization re-decides them with the realized data), so
+    # online_fix_eq_linear has no rows.  The realization's first step is a free start like the parent's, whatever
+    # step the parent started from: a free start relaxes any predecessor, so the pinned commitment stays feasible.
     # Only declared v_online cells are pinned.  p_fix_online is Utf8-keyed: it is joined to
     # the native-typed index through Utf8 copies of (p, d, t).
     if d.p_fix_online is not None and d.p_fix_online.frame.height > 0:

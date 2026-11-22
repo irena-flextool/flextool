@@ -1,8 +1,9 @@
 """The realization solve of a stochastic fan (owner decision "Stochastic realization model (2026-11-01)").
 
 A stochastic solve optimises over forecasts only.  Its realized operations come from a realization solve that runs
-right after it over the same committed window, with its investments fixed and its non-anticipativity-tied units
-online inherited (the value of the first sorted forecast, on the tied cells).  Reserve is not inherited: the
+right after it over the same committed window, with its investments fixed and the non-anticipativity-tied units
+online of its binary units inherited (the value of the first sorted forecast, on the tied cells); linear units
+online are decided again with the realized data.  Reserve is not inherited: the
 realization solve meets the reserve requirements with its own data.  A ``realized: yes`` designation whose fan
 reaches the committed window makes the engine add that solve when none is configured.
 
@@ -138,6 +139,25 @@ def designated(tmp_path_factory):
     return _run(_variant(T0_FIXTURE, tmp, "designated", _drop_separate_dispatch), tmp, capture_mps=True)
 
 
+def _binary_peaker(data: dict) -> None:
+    for r in data["parameter_values"]:
+        if r[1] == "peaker" and r[2] == "startup_method":
+            r[3] = [base64.b64encode(json.dumps("binary").encode()).decode(), "str"]
+
+
+@pytest.fixture(scope="module")
+def designated_binary(tmp_path_factory):
+    """:func:`designated` with a binary peaker (startup_method = binary; its units online are pinned) and the
+    forecast CF high 0.8 / low 0.6 (realized 0.5)."""
+    tmp = tmp_path_factory.mktemp("realization_designated_binary")
+
+    def mutate(data: dict) -> None:
+        _drop_separate_dispatch(data)
+        _binary_peaker(data)
+        _set_profile(data, {"rlz": 0.5, "high": 0.8, "low": 0.6})
+    return _run(_variant(T0_FIXTURE, tmp, "designated_binary", mutate), tmp)
+
+
 @pytest.fixture(scope="module")
 def separate(tmp_path_factory):
     """The same solve WITH dispatch_realization_method = separate_dispatch."""
@@ -169,15 +189,36 @@ def test_auto_spawned_realization_solve_equals_separate_dispatch(designated, sep
 
 
 @pytest.mark.solver
-def test_realization_online_is_first_sorted_forecast(designated) -> None:
-    """The realization solve's units online equal the stochastic solve's first sorted forecast (``p2035_high``) on
-    the tied cells (the committed window p2035 t0001-t0003), re-keyed to the anchor period."""
-    steps, _ = designated
-    parent = _value(steps, PARENT, "v_online_linear")
-    sib = _value(steps, SIBLING, "v_online_linear")
+def test_realization_online_is_first_sorted_forecast(designated_binary) -> None:
+    """The realization solve's units online of a binary peaker equal the stochastic solve's first sorted forecast
+    (``p2035_high``) on the tied cells (the committed window p2035 t0001-t0003), re-keyed to the anchor period.
+    Hand derivation (50 MW units, min load 25 MW, 10 €/MWh; wind free and curtailable): ``high`` needs 20 MW and
+    ``low`` 40 MW of peaker.  One unit serves both (``high`` at its 25 MW min load, wind curtailed); two would hold
+    50 MW of peaker output in each (+10 €/MWh on the extra), none would leave a shortfall at 10,000 €/MWh: 1 unit in
+    both forecasts, unique.  The realization (CF 0.5: 50 MW of peaker) keeps it."""
+    steps, _ = designated_binary
+    parent = _value(steps, PARENT, "v_online_integer")
+    sib = _value(steps, SIBLING, "v_online_integer")
     for t in STEPS:
+        assert _at(parent, p="peaker", d=FIRST_FORECAST, t=t) == pytest.approx(1.0, abs=1e-9)
         assert _at(sib, p="peaker", d=ANCHOR, t=t) == pytest.approx(
             _at(parent, p="peaker", d=FIRST_FORECAST, t=t), abs=1e-9)
+
+
+@pytest.mark.solver
+def test_linear_realization_online_is_decided_again(designated) -> None:
+    """A linear peaker is not pinned: the realization solve has no online_fix_eq_linear row and decides its units
+    online with the realized data (wind CF 0.5: 50 MW of peaker, between 1 and 2 units by its capacity and min load;
+    the value in between is a tie, so only the bounds are asserted) at the realized cost 50 MW × 10 €/MWh per step.
+    The stochastic solve has investments, so W-0509 (nothing kept) does not apply."""
+    steps, mps = designated
+    assert b"online_fix_eq_linear" not in mps[SIBLING]
+    assert steps[SIBLING].flex_data.p_fix_online is None
+    sib = _value(steps, SIBLING, "v_online_linear")
+    flow = _value(steps, SIBLING, "v_flow")
+    for t in STEPS:
+        assert 1.0 - 1e-9 <= _at(sib, p="peaker", d=ANCHOR, t=t) <= 2.0 + 1e-9
+        assert _at(flow, p="peaker", d=ANCHOR, t=t) * 50.0 == pytest.approx(50.0, abs=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -319,37 +360,57 @@ def test_realization_reserve_needs_commitment(tmp_path_factory) -> None:
 # feasibility pre-check on a hard-balance node
 # ---------------------------------------------------------------------------
 
-def _hard_variant(cf: dict):
+def _hard_variant(cf: dict, binary: bool = False):
     def mutate(data: dict) -> None:
         _drop_separate_dispatch(data)
         _hard_node(data)
         _set_profile(data, cf)
+        if binary:
+            _binary_peaker(data)
     return mutate
 
 
 @pytest.mark.solver
 def test_hard_node_realized_shortfall_raises_before_solve(tmp_path_factory) -> None:
-    """``elec`` has no balance slack.  Forecast CF high 0.8 / low 0.6: high needs 20 MW of peaker, so the min_load
-    floor 0.5 · 50 · v_online ≤ 20 keeps v_online ≤ 0.8; low needs 40 MW, so v_online ≥ 0.8 — the tied commitment is
-    0.8 units = 40 MW.  Realized CF 0.0: the realized need is 100 MWh per step against at most 40 (peaker) + 0 (wind)
-    MWh, so the realization solve raises, naming the node and the first step, before it is solved."""
+    """``elec`` has no balance slack; a binary peaker (2 units of 50 MW, min_load 0.5).  Forecast CF high 0.7 / low
+    0.6: the peaker serves 30 / 40 MW, which one unit can (25..50 MW) and two cannot (their min load is 50 MW, and
+    there is no slack): the tied commitment is 1 unit = 50 MW.  Realized CF 0.0: the realized need is 100 MWh per
+    step against at most 50 (peaker) + 0 (wind) MWh, so the realization solve raises, naming the node and the first
+    step, before it is solved."""
     from flextool.engine.input._solve_state import FlexToolConfigError
     tmp = tmp_path_factory.mktemp("realization_hard_short")
-    jf = _variant(T0_FIXTURE, tmp, "hard_short", _hard_variant({"rlz": 0.0, "high": 0.8, "low": 0.6}))
+    jf = _variant(T0_FIXTURE, tmp, "hard_short", _hard_variant({"rlz": 0.0, "high": 0.7, "low": 0.6}, binary=True))
     with pytest.raises(FlexToolConfigError, match=r"cannot balance node 'elec'.*'p2035', step 't0001'"):
         _run(jf, tmp)
 
 
 @pytest.mark.solver
+def test_hard_node_linear_units_online_follow_the_realized_need(tmp_path_factory) -> None:
+    """The same hard node with the linear peaker (forecast CF high 0.8 / low 0.6, tied 0.8 units = 40 MW): it is not
+    pinned, so the realized CF 0.0 no longer raises.  The realization decides 2 units online (100 MW ÷ 50 MW per
+    unit; existing 2, so unique), the peaker serves the 100 MW and there is no slack (the node has none)."""
+    tmp = tmp_path_factory.mktemp("realization_hard_linear")
+    jf = _variant(T0_FIXTURE, tmp, "hard_linear", _hard_variant({"rlz": 0.0, "high": 0.8, "low": 0.6}))
+    steps, _ = _run(jf, tmp)
+    parent = _value(steps, PARENT, "v_online_linear")
+    sib = _value(steps, SIBLING, "v_online_linear")
+    flow = _value(steps, SIBLING, "v_flow")
+    for t in STEPS:
+        assert _at(parent, p="peaker", d=FIRST_FORECAST, t=t) == pytest.approx(0.8, abs=1e-9)
+        assert _at(sib, p="peaker", d=ANCHOR, t=t) == pytest.approx(2.0, abs=1e-9)
+        assert _at(flow, p="peaker", d=ANCHOR, t=t) * 50.0 == pytest.approx(100.0, abs=1e-6)
+
+
+@pytest.mark.solver
 def test_hard_node_realized_within_pin_solves(tmp_path_factory) -> None:
-    """Same commitment (0.8 units = 40 MW); realized CF 0.7: wind ≤ 70 MW and the peaker 20..40 MW cover the 100 MW
-    demand (peaker 30 MW), so the check passes and the realization solve reaches an optimum."""
+    """Same binary commitment (1 unit = 50 MW); realized CF 0.55: wind ≤ 55 MW and the one unit 25..50 MW cover the
+    100 MW demand (peaker 45 MW), so the check passes and the realization solve reaches an optimum with the pin."""
     tmp = tmp_path_factory.mktemp("realization_hard_ok")
-    jf = _variant(T0_FIXTURE, tmp, "hard_ok", _hard_variant({"rlz": 0.7, "high": 0.8, "low": 0.6}))
+    jf = _variant(T0_FIXTURE, tmp, "hard_ok", _hard_variant({"rlz": 0.55, "high": 0.7, "low": 0.6}, binary=True))
     steps, _ = _run(jf, tmp)
     assert SIBLING in steps and steps[SIBLING].solution is not None
-    sib = _value(steps, SIBLING, "v_online_linear")
-    assert _at(sib, p="peaker", d=ANCHOR, t="t0001") == pytest.approx(0.8, abs=1e-9)
+    sib = _value(steps, SIBLING, "v_online_integer")
+    assert _at(sib, p="peaker", d=ANCHOR, t="t0001") == pytest.approx(1.0, abs=1e-9)
 
 
 # ---------------------------------------------------------------------------

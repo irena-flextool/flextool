@@ -7268,12 +7268,16 @@ def build_handoff_from_solution(
         and solve_name in realized_dispatch_parents
     )
 
-    # ---- fix_online: NA-tied v_online for the realization solve ----
+    # ---- fix_online: NA-tied integer v_online for the realization solve ----
     # For the parent of a realization solve (its name is a registered
-    # realization parent) carry the committed ``v_online`` so the
+    # realization parent) carry the committed integer ``v_online`` so the
     # realization solve PINS it instead of re-deciding commitment (owner
-    # decision: the realization solve inherits the NA-tied units online,
-    # never reserve).  The value is the reference forecast's (the first sorted forecast branch of
+    # decision: the realization solve inherits the NA-tied units online of
+    # the binary units, never reserve).  Linear units online are a relaxation, not a
+    # schedule: they are never pinned, the realization re-decides them with the realized data.  The integer
+    # class is the user's startup_method = binary, also when the solve relaxes integers
+    # (reduce_unit_detail_method integers*): the relaxed values are pinned.  The value is the reference forecast's
+    # (the first sorted forecast branch of
     # each anchor, the ``d_ref`` of non_anticipativity_online), on the
     # online tie cells only (``online_tie_cells``: the tied steps; nothing
     # when nothing is tied), re-keyed from the forecast branch
@@ -7286,15 +7290,14 @@ def build_handoff_from_solution(
             and flex_data is not None
             and getattr(flex_data, "period_branch_full", None) is not None
             and flex_data.period_branch_full.height > 0
-            and (("v_online_linear" in sol._vars)
-                 or ("v_online_integer" in sol._vars))):
+            and "v_online_integer" in sol._vars):
         from flextool.engine.model._non_anticipativity import online_tie_cells
         _cells = online_tie_cells(flex_data)
         _parts: list[pl.DataFrame] = []
         if _cells is not None:
             from flextool.engine.output._coarse_flows import var_values
 
-            for _vn in ("v_online_linear", "v_online_integer"):
+            for _vn in ("v_online_integer",):
                 # Every fine step (a coarse process's units online hold through its coarse step).
                 _all = var_values(sol, flex_data, _vn)
                 if _all is None:

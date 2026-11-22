@@ -3762,8 +3762,14 @@ def _drive_cascade(
             ):
                 from flextool.engine.solve._realization import (
                     check_pinned_realization_feasible,
+                    note_realization_inherits_nothing,
                 )
                 check_pinned_realization_feasible(data, complete_solve_name)
+                _parent = self.state.solve.realized_dispatch_parent[complete_solve_name]
+                note_realization_inherits_nothing(
+                    data, complete_solve_name, _parent,
+                    bool((getattr(self.state.solve, "invest_periods", None) or {}).get(
+                        re.sub(r"_roll_\d+$", "", _parent))))
             _window_check = getattr(self.state, "current_committed_window_check", None)
             if _window_check is not None:
                 from flextool.engine.solve._realization import check_committed_window_realized

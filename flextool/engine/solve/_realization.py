@@ -18,6 +18,7 @@ module holds the config-time predicates that decide the registration and the per
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
@@ -227,11 +228,37 @@ def _join_value(base: pl.DataFrame, param, name: str, default: float) -> pl.Data
     return base.join(vals, on=keys, how="left").with_columns(pl.col(name).fill_null(default))
 
 
+def note_realization_inherits_nothing(d, solve: str, parent: str, parent_invests: bool) -> None:
+    """Note when the realization solve *solve* keeps nothing its stochastic solve *parent* decided.
+
+    A realization solve takes from its parent the units online of its binary units (``p_fix_online``) and the
+    investments (when *parent_invests*: the parent has ``invest_periods``).  With neither, the realized results do
+    not depend on the stochastic solve: W-0509 when the realization's units online are all linear (they are
+    re-decided with the realized data; the linear processes are named), W-0588 when it has no units online at all.
+    Nothing when binary units are online, even unpinned (a stochastic solve with nothing tied)."""
+    from flextool import run_warnings
+
+    def _names(frame) -> list[str]:
+        return [] if frame is None or frame.height == 0 else sorted(set(frame["p"].cast(pl.Utf8).to_list()))
+
+    if parent_invests or _rows(_frame(getattr(d, "p_fix_online", None))):
+        return
+    linear = _names(getattr(d, "process_online_linear", None))
+    integer = _names(getattr(d, "process_online_integer", None))
+    parent = re.sub(r"_roll_\d+$", "", parent)
+    if linear and not integer:
+        run_warnings.note("W-0509", linear, solve=solve, parent=parent, per_run=True)
+    elif not linear and not integer:
+        run_warnings.note("W-0588", solve=solve, parent=parent)
+
+
 def check_pinned_realization_feasible(d, solve: str, *, rtol: float = 1e-6) -> None:
     """Raise when a pinned realization solve cannot balance a node without balance slack.
 
-    A realization solve pins units online (``p_fix_online``) to values the stochastic solve chose for its
-    forecasts; the realized data was not among them.  On a node with
+    A realization solve pins the units online of its binary units (``p_fix_online``) to values the stochastic
+    solve chose for its forecasts; the realized data was not among them.  Linear units online are not pinned: such a
+    process counts here with its existing capacity, a valid upper bound, and a realization that pins nothing (only
+    linear units, or none) is not checked.  On a node with
     ``penalty_method = off`` (no balance slack) the realized net load may then exceed what the supply into the node
     can deliver, and the LP is infeasible.  This check finds that case before the solve and names the node and step.
 

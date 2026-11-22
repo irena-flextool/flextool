@@ -3,8 +3,9 @@
 Patch release: no new data version (input databases stay at 82). Requires `polar-high>=3.16.0`. Results can change
 for Benders solves followed by other solves, for flow groups and user constraints that include a
 `no_losses_no_variable_cost` or DC power-flow connection, for stochastic solves with a cumulative CO2 cap (the
-total CO2 price was missing before), for the realization solves of stochastic solves with reserves, and for
-models with units online (the first time step of each solve and period, and the end of the horizon).
+total CO2 price was missing before), for the realization solves of stochastic solves with reserves or with
+linear units online, and for models with units online (the first time step of each solve and period, and the end
+of the horizon).
 
 ### Fixes
 
@@ -69,6 +70,14 @@ models with units online (the first time step of each solve and period, and the 
   solve of a rolling two-stage model with linear units online and minimum up / down times: the stochastic roll
   and its realization linked their first step to different steps (the end of the horizon and the end of the
   jump), so the realization owed a start-up the stochastic roll had not made.
+- **A realization solve decides linear units online again with the realized data** (`startup_method` = *linear*,
+  or online only through `minimum_time_method`), with their minimum up and down times and the history of the
+  previous realization. Units with `startup_method` = *binary* keep the stochastic solve's commitment, also when
+  the solve relaxes integers (`reduce_unit_detail_method` *integers*). Before, the linear commitment was pinned to
+  the stochastic solve's value: a relaxation, not a schedule, which the realized data could not follow. Realized
+  results of two-stage models with linear units online change. Two new notes say when a realization solve keeps
+  nothing of its stochastic solve, so that its results are a dispatch of each committed window without look-ahead:
+  W-0509 (its units online are all linear) and W-0588 (no units online and no investments).
 - **A database migration that was interrupted (killed process, power loss) and whose backup copy is gone can be
   migrated again.** Each step's commit now also records the previous step's version, so a rerun replays at most
   the step that was interrupted. The steps recognise their own completed work and the definitions, parameter

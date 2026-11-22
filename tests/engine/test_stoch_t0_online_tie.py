@@ -37,10 +37,12 @@ Hand-calc (H = 8760/3 = 2920 h/step):
       + 0.5*10*2920*(100*3) [low]   = 4 380 000  ->  6 570 000.
     (t0001 is a free start in both forecasts and the commitment is constant -> no start-up.)
   * SIBLING ``stoch_rd__realized_dispatch``: dispatches the realized rlz wind
-    0.5 -> wind 50, peaker 50; the pin fixes v_online = 2.0 (the parent's
-    commitment) — binding (free dispatch would pick 1.0) but feasible (min_load
-    floor 0.5*2.0*50 = 50 = the realized need, no VOLL).  Objective =
-    50 MW * 10 * 2920 * 3 = 4 380 000.
+    0.5 -> wind 50, peaker 50.  The peaker is linear, so its units online are
+    not pinned: the sibling decides them again, anywhere in [1, 2] (50 MW needs
+    one unit of 50 MW, the min_load floor 0.5*v*50 <= 50 allows two, and the
+    first step is a free start: a tie).  Objective =
+    50 MW * 10 * 2920 * 3 = 4 380 000.  With a binary peaker
+    (``integer_chain``) the sibling keeps the parent's tied commitment.
 """
 from __future__ import annotations
 
@@ -245,16 +247,28 @@ def test_parent_objective(sep_chain):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.solver
-def test_sibling_v_online_pinned_to_parent_commitment(sep_chain):
-    """The sibling's v_online is PINNED to the parent's committed schedule
-    over the jump (the realized period ``p2035``): 2.0 every step — NOT the
-    1.0 it would re-decide freely for the realized 50 MW residual."""
-    parent = _online(sep_chain, PARENT, "v_online_linear")
+def test_sibling_linear_v_online_decided_again(sep_chain):
+    """A linear peaker's units online are not pinned in the sibling (no
+    ``p_fix_online``): it decides them again for the realized 50 MW, between
+    1 and 2 units (a tie, see the module docstring), and the peaker serves the
+    realized 50 MW at every step."""
+    steps, _ = sep_chain
+    assert steps[SIBLING].flex_data.p_fix_online is None
     sib = _online(sep_chain, SIBLING, "v_online_linear")
+    flow = _online(sep_chain, SIBLING, "v_flow").filter(pl.col("p").cast(pl.Utf8) == "peaker")
     for t in STEPS:
-        committed = _at(parent, HIGH, t)        # the tied parent commitment
-        assert _at(sib, REALIZED, t) == pytest.approx(committed, abs=1e-9)
-        assert _at(sib, REALIZED, t) == pytest.approx(TIED_COMMIT, abs=1e-9)
+        assert 1.0 - 1e-9 <= _at(sib, REALIZED, t) <= 2.0 + 1e-9
+        assert _at(flow, REALIZED, t) * 50.0 == pytest.approx(50.0, abs=1e-6)
+
+
+@pytest.mark.solver
+def test_sibling_integer_v_online_pinned_to_parent_commitment(integer_chain):
+    """A binary peaker's units online ARE pinned in the sibling to the parent's
+    tied commitment over the jump (the realized period ``p2035``), every step."""
+    parent = _online(integer_chain, PARENT, "v_online_integer")
+    sib = _online(integer_chain, SIBLING, "v_online_integer")
+    for t in STEPS:
+        assert _at(sib, REALIZED, t) == pytest.approx(_at(parent, HIGH, t), abs=1e-9)
 
 
 @pytest.mark.solver

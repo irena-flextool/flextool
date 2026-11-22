@@ -228,9 +228,10 @@ def test_two_stage_rolling_with_min_up_down_times_solves(tmp_path_factory, start
     """The reported case: a rolling two-stage solve (one forecast + realized, 24-h jump, 48-h horizon) whose units
     have 10-h minimum up and down times.  With linear units the first realization roll was infeasible: its first
     step wrapped to the jump end, the stochastic roll's to the horizon end, so the pinned units online implied a
-    start-up the stochastic roll never made, inside the minimum up time.  Now all six solves are optimal (the linear
-    units online are still pinned here), and at t0001 the start-ups and shut-downs are 0 in the stochastic roll and
-    its realization alike (a free start in both)."""
+    start-up the stochastic roll never made, inside the minimum up time.  Now all six solves are optimal, and at
+    t0001 the start-ups and shut-downs are 0 in the stochastic roll and its realization alike (a free start in both).
+    The free start alone made the linear case feasible with its units online still pinned; since then a realization
+    decides linear units online again (test_realization_inherits), and only the binary ones stay pinned."""
     var = f"v_online_{'linear' if startup == 'linear' else 'integer'}"
     steps = _run_rolling(tmp_path_factory.mktemp(f"reporter_{startup}"), _reporter(startup))
     assert list(steps) == ROLLS
@@ -240,8 +241,8 @@ def test_two_stage_rolling_with_min_up_down_times_solves(tmp_path_factory, start
         for ev in ("v_startup", "v_shutdown"):
             at = _at(step, ev + var[len("v_online"):], d, "t0001")
             assert set(at) == {"coal_plant", "gas_plant"} and all(v == 0.0 for v in at.values()), (d, ev, at)
-    # The realization keeps the stochastic roll's units online on the tied steps (pinned in both variants here).
-    assert _at(rz, var, "period1", "t0001") == pytest.approx(_at(da, var, "period1_mid", "t0001"), abs=1e-9)
+    if startup == "binary":     # the realization keeps the binary units online of the stochastic roll's tied steps
+        assert _at(rz, var, "period1", "t0001") == pytest.approx(_at(da, var, "period1_mid", "t0001"), abs=1e-9)
 
 
 def _links(pb, kind: str, rename: dict[str, str], cells: set) -> dict:

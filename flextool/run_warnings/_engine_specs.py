@@ -12,7 +12,7 @@ the registry merges them.
 * W-055x warm start and how the solves are run (in this process or a separate one)
 * W-057x the results of a Benders solve: its final solve (the whole model with the Benders investments fixed)
 * W-058x W-0580..W-0583 storage notes (continued from W-053x); from W-0584 the overflow of the full sub-ranges
-  (W-051x inputs, W-052x lifetimes: the topic of each code says which)
+  (W-050x solves, W-051x inputs, W-052x lifetimes: the topic of each code says which)
 * W-06xx behaviour-change notices (their texts: :mod:`flextool.run_warnings._behaviour_specs`)
 """
 from __future__ import annotations
@@ -168,6 +168,26 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "roll whose horizon reaches them.\n\n"
             "**How to fix:** to use these forecasts, make a roll start there (`rolling_solve_jump`) or put the "
             "later fan in a separate solve; otherwise remove these `stochastic_branches` rows."
+        ),
+    ),
+    WarningSpec(
+        code="W-0509",
+        message="realization '{solve}' re-decides linear units online; keeps nothing of '{parent}'",
+        title="Realization solve with only linear units online",
+        topic=_SOLVES,
+        severity=NOTE,
+        body=(
+            "The realization solve takes from its stochastic solve the units online of the binary units "
+            "(`startup_method` = *binary*) and the investments. The units named here have linear units online "
+            "(`startup_method` = *linear*, or online only through `minimum_time_method`): a linear commitment is a "
+            "relaxation, not a schedule, so the realization solve decides them again with the realized data, their "
+            "minimum up and down times and the history of the previous realization. This realization solve has no "
+            "binary units online and its stochastic solve has no investments, so nothing that solve decides reaches "
+            "the realized results: they are a dispatch of each committed window with the realized data and no "
+            "look-ahead, and the forecasts only change the stochastic solve's own results. The note is printed "
+            "once per run.\n\n"
+            "**How to fix:** nothing, if that is meant. For a day-ahead commitment that holds in the realization, "
+            "use `startup_method` = *binary* for those units."
         ),
     ),
     WarningSpec(
@@ -1004,6 +1024,26 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "and parameter.\n\n"
             "**How to fix:** nothing, if the value is not meant for this solve; otherwise check that the entity "
             "takes part in the solve with the parameter."
+        ),
+    ),
+    WarningSpec(
+        code="W-0588",
+        message="realization '{solve}' keeps nothing of '{parent}': a myopic dispatch of each window",
+        title="Realization solve that inherits nothing",
+        topic=_SOLVES,
+        severity=NOTE,
+        entityless=True,
+        body=(
+            "The realization solve takes from its stochastic solve the units online of the binary units "
+            "(`startup_method` = *binary*) and the investments. Here there are neither: no unit or connection has "
+            "units online in the realization solve (no `startup_method`, or `reduce_unit_detail_method` left the "
+            "online variables out), and the stochastic solve has no `invest_periods`. Storage and the other states "
+            "continue from the previous realization, not from the stochastic solve, and reserve is met again with "
+            "the realized data. So the realized results are a dispatch of each committed window with the realized "
+            "data and no look-ahead, and the forecasts only change the stochastic solve's own results. The note is "
+            "printed once per realization solve.\n\n"
+            "**How to fix:** nothing, if that is meant. For a two-stage model in which the day-ahead decisions hold, "
+            "give the units that commit a day ahead `startup_method` = *binary*."
         ),
     ),
 ) + BEHAVIOUR_SPECS
