@@ -165,8 +165,8 @@ def test_gui_text_for_one_file() -> None:
     text = vlh.gui_dialog_text([("cyprus.sqlite", Finding(22, ("invest_methods",), 21, 22, "2024-09-19"))])
     assert text == (
         "cyprus.sqlite may contain wrong investment settings.\n\n"
-        "When it was upgraded on 19.9.2024, a bug in a library FlexTool uses may have changed `not_allowed` into "
-        "`cumulative_limits`. Units, connections or nodes that should not invest could then invest without "
+        "When it was upgraded on 19.9.2024, a bug in a library FlexTool uses may have changed 'not_allowed' into "
+        "'cumulative_limits'. Units, connections or nodes that should not invest could then invest without "
         "limit.\n\n"
         "The documentation has a short checklist for finding and fixing this.")
 
@@ -183,7 +183,7 @@ def test_gui_text_lists_every_flagged_file_once() -> None:
     assert paragraphs[0] == ("These databases may contain wrong investment settings:\n"
                              "  a.sqlite (upgraded on 19.9.2024)\n  b.sqlite (upgraded on 5.1.2025)")
     assert paragraphs[1].startswith("When they were upgraded, a bug in a library FlexTool uses may have changed")
-    assert paragraphs[2] == "c.sqlite may contain wrong settings in the value list `minimum_time_methods`."
+    assert paragraphs[2] == "c.sqlite may contain wrong settings in the value list 'minimum_time_methods'."
     assert paragraphs[3].startswith("When it was upgraded on 1.3.2025, a bug")
     assert paragraphs[-1] == "The documentation has a short checklist for finding and fixing this."
     assert text.count("checklist") == 1

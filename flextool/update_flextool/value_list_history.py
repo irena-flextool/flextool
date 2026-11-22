@@ -161,10 +161,10 @@ def gui_dialog_text(flagged: list[tuple[str, Finding]]) -> str:
                 f"When they were upgraded, a bug in a library FlexTool uses {effect}"]
 
     paragraphs = section(invest, "investment settings",
-                         "may have changed `not_allowed` into `cumulative_limits`. Units, connections or nodes that "
+                         "may have changed 'not_allowed' into 'cumulative_limits'. Units, connections or nodes that "
                          "should not invest could then invest without limit.")
     lists = sorted({name for _, f in flagged if "invest_methods" not in f.lists for name in f.lists})
-    paragraphs += section(other, "settings in the value list " + ", ".join(f"`{n}`" for n in lists),
+    paragraphs += section(other, "settings in the value list " + ", ".join(f"'{n}'" for n in lists),
                           "may have replaced the first choice in that list with another one.")
     paragraphs.append("The documentation has a short checklist for finding and fixing this.")
     return "\n\n".join(paragraphs)
