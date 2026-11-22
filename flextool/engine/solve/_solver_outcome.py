@@ -204,7 +204,7 @@ _ONCE_PER_RUN = frozenset({IPM_RELATIVE_ONLY})
 
 
 def note_solver_outcome(sol: Any, acceptance: Any, *, solve_name: str, solver: str, noted: set,
-                        pending: dict | None = None) -> None:
+                        pending: dict | None = None, sub_solve: str | None = None) -> None:
     """Print the notes on *sol*'s accepted solve (see the module docstring), once per code and complete solve
     (:data:`IPM_RELATIVE_ONLY`, the generic one: once per run, printed before W-0540 as it explains the IPX
     warnings above both).
@@ -213,7 +213,8 @@ def note_solver_outcome(sol: Any, acceptance: Any, *, solve_name: str, solver: s
     code); a later case of the same solve with the same outcome only goes to the debug log.  Prints at once
     (flushes an open ``collecting()`` scope), so the note stands next to the solver's output it explains.
 
-    A roll's :data:`RELATIVE_TOLERANCES` with *pending* (a dict the caller keeps for the run) is gathered instead:
+    A roll's :data:`RELATIVE_TOLERANCES` (*sub_solve*, the roll, other than the complete solve, or a
+    ``<solve>_roll_<k>`` *solve_name*) with *pending* (a dict the caller keeps for the run) is gathered instead:
     :func:`flush_solver_outcome_notes` prints one line per complete solve, with the number of its rolls that had
     the outcome and the largest factor among them.
     """
@@ -230,17 +231,17 @@ def note_solver_outcome(sol: Any, acceptance: Any, *, solve_name: str, solver: s
     else:
         return
     complete = run_warnings.complete_solve(solve_name) or solve_name
+    roll = sub_solve if sub_solve and sub_solve != complete else (solve_name if solve_name != complete else None)
     for one in found:
         key = (one.code, None if one.code in _ONCE_PER_RUN else complete)
         if key in noted:
             _LOGGER.debug("%s also in '%s': %s", one.code, solve_name, one.detail)
             continue
-        if (one.code == RELATIVE_TOLERANCES and pending is not None and solve_name != complete
-                and one.value is not None):
-            pending.setdefault(complete, {})[solve_name] = (one.value, one.detail)
+        if one.code == RELATIVE_TOLERANCES and pending is not None and roll is not None and one.value is not None:
+            pending.setdefault(complete, {})[roll] = (one.value, one.detail)
             continue
         noted.add(key)
-        run_warnings.note(one.code, solve=complete, details=f"in '{solve_name}': {one.detail}", **one.fmt)
+        run_warnings.note(one.code, solve=complete, details=f"in '{roll or solve_name}': {one.detail}", **one.fmt)
         run_warnings.flush()
 
 

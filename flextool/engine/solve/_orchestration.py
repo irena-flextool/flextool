@@ -5070,6 +5070,7 @@ def _drive_cascade(
                     sol, _acc, solve_name=_outcome_name, solver=_active_solver_cfg.name,
                     noted=self.state.__dict__.setdefault("_solver_outcome_noted", set()),
                     pending=self.state.__dict__.setdefault("_solver_outcome_pending", {}),
+                    sub_solve=getattr(self.state, "current_scale_solve_name", None),
                 )
             except Exception:  # noqa: BLE001
                 logging.getLogger(__name__).debug(
