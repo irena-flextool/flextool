@@ -1,3 +1,19 @@
+## Unreleased (4.6.3)
+
+### Behaviour changes — read before upgrading
+
+- Because the migration now sees the list-valued defaults of a database last saved by FlexTool 3.x (see Fixes), a
+  storage node that relied on the old `storage_start_end_method` default `fix_start` with its own start value
+  keeps `fix_start`, as in an unaffected database (FlexTool 4.6.2 left its start free); the migration notice
+  (W-0601) names it.
+
+### Fixes
+
+- **Migrating a database last saved by FlexTool 3.x (data version 22–25, August 2024 onwards) no longer empties
+  its list-valued defaults (such as `conversion_method`, `invest_method`, `solve_mode`).** An older Spine library
+  had stored them as text, so the database editor showed them empty and the migration then cleared them. A
+  database already migrated keeps the empty defaults.
+
 ## Release 4.6.2 (22.11.2026) — fixes: one-variable connections ignore variable cost and losses (efficiency only converts between units); warning for databases possibly hit by the spinedb_api value-list bug, with a checklist
 
 Patch release: no new data version (input databases stay at 82). Requires `polar-high>=3.16.1`. Results change

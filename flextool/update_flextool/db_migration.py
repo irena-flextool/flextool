@@ -229,25 +229,39 @@ def migrate_database(
 
         local = path is not None and path.is_file()
         with restored_on_failure(path) if backup and local else contextlib.nullcontext():
+            if local:
+                # Before the first spinedb_api open: it reads a list default stored as text as None (item 279).
+                from flextool.update_flextool.list_default_repair import repair_list_defaults
+
+                repair_list_defaults(path)
+                current = _current_version_ro(path, up_to)
+                if current is not None:
+                    print(database_path + " already up-to-date at version " + str(current))
+                    return
+            else:
+                logging.debug("%s is not a local file; list defaults not checked", database_path)
             _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback, cancel_check)
 
 
 def _current_version_ro(path, up_to: int | None) -> int | None:
     """The data version of *path* when it has nothing to migrate or refresh (read read-only), else ``None``.
 
-    Nothing to do means: the current data version (and not below *up_to*), a current SpineDB schema revision, no
-    superseded unit-count description (:func:`_refresh_unit_count_texts` would rewrite one), every definition and
-    list member the current version's schema step adds and no superseded shipped default and description pair
-    (:func:`_refresh_head_schema` would add or replace one).  Anything that cannot be read gives ``None``: it is
+    Nothing to do means: the current data version (and not below *up_to*), no list default stored as text that
+    :func:`~flextool.update_flextool.list_default_repair.repair_list_defaults` repairs (checked first: the later
+    probes parse defaults), a current SpineDB schema revision, no superseded unit-count description
+    (:func:`_refresh_unit_count_texts` would rewrite one), every definition and list member the current version's
+    schema step adds and no superseded shipped default and description pair (:func:`_refresh_head_schema` would add
+    or replace one).  Anything that cannot be read gives ``None``: it is
     decided under the lock.
     """
     from flextool.update_flextool.frozen import read_db_version_ro, schema_outdated_ro
+    from flextool.update_flextool.list_default_repair import list_defaults_repairable_ro
 
     version = read_db_version_ro(path)
     if version != FLEXTOOL_DB_VERSION or (up_to is not None and up_to > version):
         return None
-    if (schema_outdated_ro(path) or _unit_count_texts_stale_ro(path) or _head_schema_missing_ro(path)
-            or _head_defaults_stale_ro(path)):
+    if (list_defaults_repairable_ro(path) or schema_outdated_ro(path) or _unit_count_texts_stale_ro(path)
+            or _head_schema_missing_ro(path) or _head_defaults_stale_ro(path)):
         return None
     return version
 
@@ -2248,18 +2262,24 @@ def _list_members(db, names) -> dict:
     return members
 
 
-def add_value_list_manual(db, new_value_lists):
-    # Post-condition guard: an import adds members, it never rewrites one.  spinedb_api 0.31-0.34 could overwrite
-    # a list's first member here (and every default and value that used it), see value_list_history.
-    before = _list_members(db, dict.fromkeys(name for name, *_ in new_value_lists))
-    (num,log) = import_data(db,parameter_value_lists = new_value_lists)
-    after = _list_members(db, dict.fromkeys(name for name, *_ in new_value_lists))
+def _import_value_lists_checked(db, lists):
+    """``import_data`` of the value lists *lists* with a post-condition guard: an import adds members, it never
+    rewrites one.  spinedb_api 0.31-0.34 could overwrite a list's first member here (and every default and value
+    that used it), see value_list_history."""
+    before = _list_members(db, dict.fromkeys(name for name, *_ in lists))
+    num_log = import_data(db, parameter_value_lists=lists)
+    after = _list_members(db, dict.fromkeys(name for name, *_ in lists))
     changed = sorted(f"{lst}: {from_database(v, t)!r}" for i, (lst, v, t) in before.items() if after.get(i) != (lst, v, t))
     if changed:
         raise FlexToolMigrationError("Adding value list members changed existing members (" + ", ".join(changed)
                                      + "); the migration stops so that no default or value changes with them. "
                                      "The file was restored from the backup; check that spinedb_api >= 0.35 is "
                                      "installed (pip show spinedb_api).")
+    return num_log
+
+
+def add_value_list_manual(db, new_value_lists):
+    _import_value_lists_checked(db, new_value_lists)
     try:
         _commit_step(db,"Added new parameter value lists")
     except SpineDBAPIError:
@@ -2274,7 +2294,7 @@ def add_new_parameters(db, filepath):
 
     #Parameter values need to be added first! Otherwise the new value_list_name cannot be connected!
     #Add parameter_value_lists. Note that object_parameter import and value_list import work differently. Former replaces all, latter adds what is missing.
-    (num,log) = import_data(db, parameter_value_lists = template["parameter_value_lists"])
+    (num,log) = _import_value_lists_checked(db, template["parameter_value_lists"])
 
     #With objective parameters, no duplicates are created. These will replace the old ones or create new. There will always be imports.
     (num,log) = import_data(db, object_parameters = template["object_parameters"])
@@ -12328,7 +12348,9 @@ def _head_defaults_stale_ro(path) -> bool:
         if value is None:
             return None
         if typ == "list_value_ref":
-            member = members.get(int(value))
+            # A payload that is not an id (a member's text, item 279) reads as None, as in spinedb_api.
+            raw = value.encode() if isinstance(value, str) else bytes(value)
+            member = members.get(int(raw)) if raw.isdigit() else None
             return from_database(*member) if member is not None else None
         return from_database(value, typ)
 
