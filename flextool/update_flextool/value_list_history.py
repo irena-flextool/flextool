@@ -15,13 +15,15 @@ Only SQLite files are checked: a database on a server (not a ``sqlite:///`` URL)
 
 TODO(v5.0.0): remove this module, W-0490 (``run_warnings/_input_specs.py``), its call sites
 (``engine/solve/_orchestration.py``, ``gui/input_sources.py``, ``gui/main_window.py``,
-``gui/dialogs/database_check_dialog.py``) and its tests.  The warning is temporary.
+``gui/dialogs/database_check_dialog.py``), the repair tool ``flextool-repair-value-list``
+(``update_flextool/value_list_repair.py``, ``cli/cmd_repair_value_list.py``) and their tests.  The warning is
+temporary.
 """
 from __future__ import annotations
 
 import logging
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -48,6 +50,18 @@ TOUCH: frozenset[int] = frozenset(
     [*range(1, 12), 13, 17, 21, 25, 29, 40, 42, 51, 52, 53, 55, 56, 58, 60, 62, 64, 65, 67, 71, 74, 76, 77,
      79, 80, 81, 82, *APPEND])
 
+# The repair tool's data (value_list_repair).  Only step 22 can give a finding (no session in the window ran a
+# later APPEND step), so these tables have exactly the key 22 and the tool refuses a finding for any other step.
+#: The shipped members of the step's list before the step, in template order (``pre_v26/flextool_template_v2.json``).
+PRIOR_MEMBERS: dict[int, tuple[str, ...]] = {22: (
+    "not_allowed", "invest_no_limit", "invest_period", "invest_total", "invest_period_total", "retire_no_limit",
+    "retire_period", "retire_total", "retire_period_total", "invest_retire_no_limit", "invest_retire_period",
+    "invest_retire_total", "invest_retire_period_total")}
+#: The member the step appends (the one the bug wrote over the list's first member).
+APPENDED: dict[int, str] = {22: "cumulative_limits"}
+#: The step's own commit message (``db_migration._commit_step``), the commit right after its value-list commit.
+STEP_COMMIT: dict[int, str] = {22: "Added cumulative investments"}
+
 _PREFIX = "Updated Flextool data structure to version "
 
 
@@ -58,6 +72,11 @@ class Finding:
     start: int
     end: int
     date: str
+    #: Commit ids, not compared: the last id of the start version commit, the first id of the closing one, and the
+    #: session's first value-list step commit (0 when none).
+    start_commit: int = field(default=0, compare=False)
+    end_commit: int = field(default=0, compare=False)
+    list_commit: int = field(default=0, compare=False)
 
 
 #: The commit of a migration step that adds value list members (``db_migration.add_value_list_manual``).
@@ -107,13 +126,15 @@ def possible_value_list_overwrite_ro(path: str | Path) -> list[Finding]:
     findings = []
     # The first version commit has no known start: the database came from a template or a JSON import.
     for (start, _, _, after), (end, end_date, before, _) in zip(commits, commits[1:]):
-        date = min([end_date, *(d for cid, d in list_steps if after < cid < before)])
+        inside = [(cid, d) for cid, d in list_steps if after < cid < before]
+        date = min([end_date, *(d for _, d in inside)])
         if not WINDOW_START <= date <= WINDOW_END or end <= start:
             continue
         touched = [s for s in TOUCH if start < s <= end]
         first = min(touched, default=None)
         if first in APPEND:
-            findings.append(Finding(first, APPEND[first], start, end, date))
+            findings.append(Finding(first, APPEND[first], start, end, date, after, before,
+                                    min((cid for cid, _ in inside), default=0)))
     return findings
 
 
