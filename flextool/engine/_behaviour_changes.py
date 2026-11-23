@@ -18,8 +18,8 @@ each entity of a change once per run, so rolls and repeated solves of the same r
 once-per-run scope.
 
 ``gui_solver_defaults`` is not a database change: its marker is the ``solver_settings_revision`` of a GUI
-project's settings.yaml, and the GUI shows the notice once when it updates an older file
-(``flextool.gui.settings_io``).
+project's settings.yaml; when the GUI updates an older file it prints the notice once and lists it in its message
+list until dismissed (``flextool.gui.settings_io``).
 """
 from __future__ import annotations
 
@@ -101,8 +101,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "solve; the GUI no longer has a MIP-gap setting). Results of MIP solves (integer "
                      "investments, online variables) can change within the gap; an LP keeps its optimal "
                      "objective value."),
-            silence=("This notice is shown once. To keep the old behaviour, choose presolve 'Choose' in the "
-                     "Solver options dialog and set solver_mip_gap on the solves in the database."),
+            silence=("To keep the old behaviour, choose presolve 'Choose' in the Solver options dialog and set "
+                     "solver_mip_gap on the solves in the database."),
             since="4.2.0",
             published="7.11.2026",
         ),

@@ -75,12 +75,14 @@ def solver_defaults_notice(project_name: str) -> str:
     return notice_text("gui_solver_defaults", "projects", [project_name])
 
 
-def solver_defaults_dialog_text(project_name: str) -> str:
-    """The same notice for the dialog: its items (what changed, the project, how to keep the old behaviour) on
-    their own lines (:func:`flextool.engine._behaviour_changes.display_text`)."""
-    from flextool.engine._behaviour_changes import display_text, notice_parts
+def solver_defaults_message(project_name: str) -> tuple[str, ...]:
+    """The same notice as the paragraphs of the message list's "solver settings were updated" message: what
+    changed and how to keep the old behaviour (:func:`flextool.engine._behaviour_changes.notice_parts` without its
+    "Affected projects" part, which the message's subject line names)."""
+    from flextool.engine._behaviour_changes import notice_parts
 
-    return display_text([notice_parts("gui_solver_defaults", "projects", [project_name])])
+    parts = notice_parts("gui_solver_defaults", "projects", [project_name])
+    return (parts[0], *parts[2:])
 
 
 def load_project_settings(
@@ -90,7 +92,7 @@ def load_project_settings(
 
     Returns defaults if the file does not exist or cannot be parsed.  When the file holds the solver settings
     of an earlier GUI and the update changes how its runs solve, *on_solver_defaults_reset* is called (the
-    caller shows :func:`solver_defaults_notice` and saves, which records the update).
+    caller prints :func:`solver_defaults_notice`, lists the message and saves, which records the update).
     """
     settings_file = project_path / SETTINGS_FILENAME
     if not settings_file.exists():

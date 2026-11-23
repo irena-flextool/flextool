@@ -21,6 +21,22 @@ SUPPORTED_EXTENSIONS = {".xlsx", ".ods", ".sqlite"}
 
 
 @dataclass(frozen=True)
+class PlanningNote:
+    """A file :meth:`InputSourceManager.plan_db_migrations` could not plan for (design
+    ``gui_message_list_design.md`` §3.1 "Planning notes").
+
+    *kind* ``"unreadable"``: an external file whose data version cannot be read (skipped); ``"frozen_unreadable"``:
+    a file whose frozen marker cannot be read (not migrated).  The message list shows each as a
+    ``database_unreadable`` message while the latest plan has it.  *text* is the technical detail (log line).
+    """
+
+    kind: str
+    name: str
+    path: Path
+    text: str
+
+
+@dataclass(frozen=True)
 class FrozenMigration:
     """A frozen sqlite source older than this FlexTool: the user chooses how to migrate it."""
 
@@ -79,6 +95,8 @@ class InputSourceManager:
         self._value_list_checked: set[Path] = set()
         # Their W-0490 findings, shown in their own box, not with the migration messages (take_check_findings).
         self._check_findings: list[tuple[str, Finding]] = []
+        # The notes of the latest plan_db_migrations (replaced at each plan; the message list reads them).
+        self.planning_notes: list[PlanningNote] = []
         # SHA-256 of frozen files by (path, size, mtime), for the migrated-copy check.
         self._sha_cache: dict[tuple[Path, int, int], str] = {}
 
@@ -588,19 +606,21 @@ class InputSourceManager:
         list[tuple[str, Path]],
         list[tuple[str, Path, int, int]],
         list[FrozenMigration],
-        list[str],
+        list[PlanningNote],
     ]:
         """Probe sqlite input sources for needed FlexTool DB migrations.
 
         Returns ``(internal_to_migrate, external_to_migrate,
-        frozen_to_migrate, planning_messages)``.  Internal entries are
+        frozen_to_migrate, planning_notes)``.  Internal entries are
         ``(source_name, abs_path)``; external entries include current and
         target version numbers for the consent dialog.  A frozen source
         (internal or external) older than this FlexTool is never in the
         first two lists: it is in *frozen_to_migrate*, unless the user
         declined it this session or a registered source is already its
         migrated copy.  Every probe reads the file with sqlite3 read-only,
-        so planning never changes a file.
+        so planning never changes a file.  The notes (files that could not
+        be planned, :class:`PlanningNote`) are also kept in
+        :attr:`planning_notes` until the next plan.
         """
         from flextool.gui.db_version_check import (
             _read_flextool_version,
@@ -612,7 +632,7 @@ class InputSourceManager:
         internal_to_migrate: list[tuple[str, Path]] = []
         external_to_migrate: list[tuple[str, Path, int, int]] = []
         frozen_to_migrate: list[FrozenMigration] = []
-        planning_messages: list[str] = []
+        planning_notes: list[PlanningNote] = []
 
         target_version = get_target_flextool_version()
 
@@ -643,7 +663,7 @@ class InputSourceManager:
             try:
                 frozen = self._frozen_needing_migration(path, target_version)
             except FrozenCheckError as exc:
-                planning_messages.append(f"{name}: {exc}")
+                planning_notes.append(PlanningNote("frozen_unreadable", name, path, exc.reason))
                 continue
             if frozen is not None:
                 info, current, _schema_outdated = frozen
@@ -662,31 +682,27 @@ class InputSourceManager:
                 if needs is True:
                     internal_to_migrate.append((name, path))
                 elif needs is None:
-                    planning_messages.append(
-                        f"{name}: could not read FlexTool version; "
-                        f"migration will attempt to surface the error."
-                    )
+                    # Migrated all the same: its migration result reports the error (no note).
+                    logger.info("%s: could not read its FlexTool version; the migration will surface the error.",
+                                name)
                     internal_to_migrate.append((name, path))
                 continue
             if needs is True:
                 current_version = _read_flextool_version(sqlite_url_string(path))
                 if current_version is None:
-                    planning_messages.append(
-                        f"{name}: external file's FlexTool version "
-                        f"became unreadable between checks; skipped."
-                    )
+                    planning_notes.append(PlanningNote(
+                        "unreadable", name, path, "its FlexTool version became unreadable between checks"))
                     continue
                 external_to_migrate.append(
                     (name, path, current_version, target_version)
                 )
             elif needs is None:
-                planning_messages.append(
-                    f"{name}: could not read external file's FlexTool "
-                    f"version; skipped (open it in a tool that can read the "
-                    f"file to investigate)."
-                )
+                planning_notes.append(PlanningNote("unreadable", name, path, "its FlexTool version cannot be read"))
 
-        return internal_to_migrate, external_to_migrate, frozen_to_migrate, planning_messages
+        for note in planning_notes:
+            logger.info("%s: not migrated: %s", note.name, note.text)
+        self.planning_notes = list(planning_notes)
+        return internal_to_migrate, external_to_migrate, frozen_to_migrate, planning_notes
 
     # ── Frozen sources ────────────────────────────────────────────────
 

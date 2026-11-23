@@ -9,6 +9,20 @@
 
 ### New features
 
+- **The FlexTool GUI collects its notices in a message list.** A **Messages** button at the top right opens it
+  and shows how many there are. When the project opens or you press Refresh, the list opens by itself if a new
+  message is waiting. **Close for now** brings the messages back the next time the project is opened; **Dismiss**
+  removes a message for good. A message that only reports something opens the list by itself at most twice. The
+  list shows:
+  - one "This database was upgraded" message for each database FlexTool upgraded (this replaces the "Database
+    upgrades" box), with the data versions before and after;
+  - "FlexTool cannot read this database file" while an external database's version or a database's frozen marker
+    cannot be read;
+  - "This project's solver settings were updated", the notice that was a box until now;
+  - "A newer FlexTool is available", for a FlexTool installed from PyPI with the start-up update check on.
+
+  Dismissals are kept in `gui_messages.json` in FlexTool's user settings folder, never in a database. A failed
+  upgrade, and an external database that could not be copied into the project, still get a box.
 - **`flextool-repair-value-list` repairs a database that W-0490 names, and restores list-valued defaults that an
   upgrade before 4.6.3 left empty.** It never changes the database: it writes a repaired copy
   (`<name>_repaired.sqlite`) with a report. It puts the lost `not_allowed` member back into `invest_methods` and

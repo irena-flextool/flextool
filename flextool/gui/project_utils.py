@@ -123,8 +123,22 @@ def rename_project(old_name: str, new_name: str) -> Path:
             local.move_trusted_workspace(old_resolved, new_path)
         except local.LocalSolverSettingsError:
             pass
+    _rename_messages(old_path, new_path)
     _run_project_hook(_assistant_project_renamed, old_resolved, new_path.resolve())
     return new_path
+
+
+def _rename_messages(old_path: Path, new_path: Path) -> None:
+    """Move the message list's entries of the renamed project (its pending events, ``shown`` counts and those of
+    its own databases) to the new folder.  The store keys the paths as the GUI gives them, never resolved
+    (``flextool.gui.messages``).  The store never raises; anything else is logged and the rename stands."""
+    try:
+        from flextool.gui.messages import STORE_NAME, MessageStore
+        from flextool.user_dirs import user_config_dir
+
+        MessageStore(user_config_dir() / STORE_NAME).rename_prefix(old_path, new_path)
+    except Exception:  # noqa: BLE001 — never undo or fail a rename for the message list
+        logger.warning("The message list entries of project %s were not moved", old_path.name, exc_info=True)
 
 
 # --- the AI assistant's project hooks ---------------------------------------------------------------------------

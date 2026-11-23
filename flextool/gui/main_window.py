@@ -30,7 +30,6 @@ from flextool.gui.settings_io import (
     load_project_settings,
     save_global_settings,
     save_project_settings,
-    solver_defaults_dialog_text,
     solver_defaults_notice,
 )
 from flextool.gui.assistant.entry import AssistantEntry
@@ -57,6 +56,7 @@ from flextool.gui.execution_window import ExecutionWindow
 from flextool.gui.output_actions import OutputActionManager
 from flextool.gui.result_viewer import ResultViewer
 from flextool.gui.db_version_check import check_and_upgrade_database
+from flextool.gui.message_sources import UpgradeResult
 from flextool.gui.dialogs.migration_consent_dialog import (
     ask_external_migration_consent,
     ask_frozen_migration_choice,
@@ -134,6 +134,10 @@ _EXT_IID_PREFIX = "ext:"      # external reference
 _GHOST_IID_PREFIX = "ghost:"  # retired source (file gone, results survive)
 
 
+#: The docs section of database upgrades (the message list's ``database_upgraded`` spec has the same).
+_DOCS_MIGRATION = "flextool_gui_interface.md#migration-and-frozen-databases"
+
+
 def _source_name_from_iid(iid: str) -> str:
     """Strip the ``ext:`` prefix used for external-reference tree iids."""
     if iid.startswith(_EXT_IID_PREFIX):
@@ -176,6 +180,45 @@ def _migrate_frozen_copy(
         f"{marker.version} to the current version as {copy_path.name}, a new input source. "
         f"The frozen file is unchanged."
     ]
+
+
+def upgrade_one(
+    name: str,
+    path: Path,
+    mode: str,
+    copy_path: Path | None,
+    *,
+    progress_callback,
+    cancel_check,
+) -> UpgradeResult:
+    """Migrate one file of a migration run (no Tk; the worker of ``_run_db_migrations_with_ui``).
+
+    *mode* ``"plain"``, ``"frozen_in_place"`` or ``"frozen_copy"`` (then *copy_path* is the copy).  The data
+    version is read read-only before (from *path*) and after (from the copy for a frozen copy); an after-read
+    that fails on an upgraded file counts as the target version.
+    """
+    from flextool.gui.db_version_check import _read_flextool_version, get_target_flextool_version
+    from flextool.sqlite_url import sqlite_url_string
+
+    before = _read_flextool_version(sqlite_url_string(path))
+    if mode == "frozen_copy":
+        assert copy_path is not None
+        upgraded, failed, messages = _migrate_frozen_copy(
+            path, copy_path, progress_callback=progress_callback, cancel_check=cancel_check,
+        )
+        result_path, copy_of = copy_path, name
+    else:
+        upgraded, failed, messages = check_and_upgrade_database(
+            path, progress_callback=progress_callback, cancel_check=cancel_check,
+            allow_frozen=mode == "frozen_in_place",
+        )
+        result_path, copy_of = path, None
+    after = before
+    if upgraded and not failed:
+        after = _read_flextool_version(sqlite_url_string(result_path))
+        if after is None:
+            after = get_target_flextool_version()
+    return UpgradeResult(name, result_path, before, after, copy_of, upgraded, failed, list(messages))
 
 
 def _is_ghost_iid(iid: str) -> bool:
@@ -1271,7 +1314,9 @@ class MainWindow(tk.Tk):
 
         Skipped when the "Check for updates on startup" preference is off (set
         in the Update FlexTool dialog) or when ``FLEXTOOL_NO_UPDATE_CHECK`` is
-        set — either way, no outbound request is made.
+        set — either way, no outbound request is made.  For a PyPI install the
+        offered version is also kept for the message list (design §3.1
+        ``update_available``); a git checkout gets the button only.
         """
         if os.environ.get("FLEXTOOL_NO_UPDATE_CHECK"):
             return
@@ -1279,20 +1324,32 @@ class MainWindow(tk.Tk):
             return
 
         def _worker() -> None:
+            latest: str | None = None
+            conclusive = False
             try:
                 from flextool.update_flextool import install_info
 
-                available = install_info.update_available()
+                if install_info.is_git_install():
+                    available = install_info.update_available()
+                else:
+                    latest = install_info.latest_pypi_version()
+                    conclusive = latest is not None
+                    available = conclusive and install_info.is_newer_than_installed(latest)
             except Exception:
                 logger.debug("Update check failed", exc_info=True)
                 available = False
-            self.post_to_main(self._apply_update_indicator, available)
+            self.post_to_main(self._apply_update_indicator, available, latest if conclusive else None, conclusive)
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _apply_update_indicator(self, available: bool | None) -> None:
-        """Blue-highlight the Update button when an update is available."""
+    def _apply_update_indicator(self, available: bool | None, latest: str | None = None,
+                                conclusive: bool = False) -> None:
+        """Blue-highlight the Update button when an update is available.  A conclusive PyPI answer (*latest*)
+        stores the offered version for the message list, or removes it when nothing is newer; no answer (offline,
+        a git checkout) leaves the stored one as it is."""
         self._update_available = available
+        if conclusive:
+            self._store_offered_version(latest if available else None)
         if not hasattr(self, "update_btn") or not self.update_btn.winfo_exists():
             return
         self.update_btn.configure(
@@ -1302,6 +1359,26 @@ class MainWindow(tk.Tk):
             from flextool.gui.hover_tooltip import attach_tooltip
 
             attach_tooltip(self.update_btn, "A newer FlexTool version is available.")
+
+    def _store_offered_version(self, version: str | None) -> None:
+        """Keep the offered FlexTool version (``None``: nothing newer) in the message store and recompute."""
+        controller = getattr(self, "_messages", None)
+        if controller is None:
+            return
+        try:
+            if controller.center is not None:
+                store = controller.center.store
+            else:
+                from flextool.gui.messages import MessageStore
+
+                store = MessageStore(controller.store_path())
+            if store.offered_version() == version:
+                return
+            store.set_offered_version(version)
+        except Exception:  # noqa: BLE001 — the message list never breaks the update check
+            logger.warning("Message list: the offered version was not stored", exc_info=True)
+            return
+        self._messages_recompute("other")
 
     # ── Native solver-stack compatibility self-check ──────────────
     def _check_polars_async(self, force: bool = False, from_crash: bool = False) -> None:
@@ -1997,16 +2074,12 @@ class MainWindow(tk.Tk):
             project_path, on_solver_defaults_reset=_on_solver_defaults_reset,
         )
         if solver_defaults_reset:
-            # Shown once: saving records the updated solver settings
-            # (their revision) in settings.yaml.
+            # Printed once: saving records the updated solver settings (their revision) in settings.yaml.  The
+            # message list keeps it until dismissed (posted below, once the project's list exists).
             _notice = solver_defaults_notice(name)
             logger.warning("%s", _notice)
             print(_notice, flush=True)
             save_project_settings(project_path, self.project_settings)
-            _dialog_text = solver_defaults_dialog_text(name)
-            self.after_idle(
-                lambda: messagebox.showinfo("Solver settings updated", _dialog_text, parent=self)
-            )
 
         # Create input source manager and scenario managers
         self.input_source_mgr = InputSourceManager(project_path, self.project_settings)
@@ -2024,9 +2097,20 @@ class MainWindow(tk.Tk):
         # Sync auto-generate checkboxes with loaded settings
         self._load_auto_gen_vars()
 
-        # A new message list for this project (nothing seen yet); its sources come in M3a/M3b.
+        # A new message list for this project (nothing seen yet).
         if getattr(self, "_messages", None) is not None:
-            self._messages.open_project(name, sources=())
+            from flextool.gui.message_sources import project_sources
+
+            self._messages.open_project(name, sources=project_sources(self, project_path, name))
+            if solver_defaults_reset and self._messages.center is not None:
+                from datetime import datetime
+
+                from flextool.gui.messages import project_key
+
+                self._messages.center.post_event(
+                    "solver_defaults_updated", project_key(project_path), f"Project {name}",
+                    run=datetime.now().isoformat(timespec="seconds"),
+                )
 
         self._clear_all_lists()
         self._refresh_input_sources(trigger="project_open")
@@ -3008,29 +3092,25 @@ class MainWindow(tk.Tk):
             return
         self._refresh_input_sources(trigger="refresh")
 
-    def _run_db_migrations_with_ui(self) -> tuple[bool, list[str]]:
+    def _run_db_migrations_with_ui(self) -> tuple[list[str], list[str]]:
         """Plan, gather consent for, and run pending DB migrations with UI.
 
-        Returns a ``(failed, messages)`` tuple.  *failed* is ``True`` if any
-        database could not be migrated and had to be rolled back, in which
-        case the caller should not proceed to use those sources.  Step-level
-        progress is streamed to the Execution window; a modal dialog keeps
-        the interface locked until the run finishes.
+        Returns ``(failure lines, copy errors)``: the lines of the "upgrade failed" box (``failure_lines``) and the
+        errors of external files that could not be copied into the project.  Each upgraded file gets a
+        ``database_upgraded`` event in the message list (one per database, design §3.1); the files that could not
+        be planned are the input source manager's ``planning_notes``.  Step-level progress is streamed to the
+        Execution window; a modal dialog keeps the interface locked until the run finishes.
         """
         from flextool.gui.execution_manager import JobType
 
         assert self.input_source_mgr is not None
         mgr = self.input_source_mgr
 
-        (
-            internal_to_migrate,
-            external_to_migrate,
-            frozen_to_migrate,
-            planning_messages,
-        ) = mgr.plan_db_migrations()
+        internal_to_migrate, external_to_migrate, frozen_to_migrate, _notes = mgr.plan_db_migrations()
+        copy_errors: list[str] = []
 
         if not internal_to_migrate and not external_to_migrate and not frozen_to_migrate:
-            return False, planning_messages
+            return [], copy_errors
 
         consent: str = "in_place"
         if external_to_migrate:
@@ -3053,7 +3133,7 @@ class MainWindow(tk.Tk):
                     final_list.append((name, dst, "plain", None))
                     settings_changed = True
                 else:
-                    planning_messages.append(error)
+                    copy_errors.append(error)
             if settings_changed:
                 save_project_settings(
                     get_projects_dir() / self.current_project,
@@ -3072,14 +3152,12 @@ class MainWindow(tk.Tk):
             elif choice == "in_place":
                 final_list.append((entry.source_name, entry.path, "frozen_in_place", None))
             else:
+                # The user chose it; the tree shows "frozen, older version".
                 mgr.decline_frozen(entry.path)
-                planning_messages.append(
-                    f"{entry.source_name} is frozen ('{entry.label}') and was not "
-                    f"migrated; it cannot be run in this session."
-                )
+                logger.info("%s is frozen and was not migrated (the user chose Cancel).", entry.source_name)
 
         if not final_list:
-            return False, planning_messages
+            return [], copy_errors
 
         total = len(final_list)
 
@@ -3112,7 +3190,10 @@ class MainWindow(tk.Tk):
             if exec_mgr is not None and job_id is not None:
                 exec_mgr.append_stdout(job_id, line)
 
-        worker_messages: list[str] = []
+        from datetime import datetime
+
+        run_id = datetime.now().isoformat(timespec="seconds")
+        results: list[UpgradeResult] = []
         outcome = {"failed": False}
 
         def _worker() -> None:
@@ -3139,26 +3220,17 @@ class MainWindow(tk.Tk):
                             f"v{curr} → v{nxt} (target v{target})"
                         )
 
-                    if mode == "frozen_copy":
-                        assert copy_path is not None
-                        was_upgraded, failed, messages = _migrate_frozen_copy(
-                            path, copy_path,
-                            progress_callback=_progress_cb,
-                            cancel_check=lambda: dialog.cancel_requested,
-                        )
-                    else:
-                        was_upgraded, failed, messages = check_and_upgrade_database(
-                            path,
-                            progress_callback=_progress_cb,
-                            cancel_check=lambda: dialog.cancel_requested,
-                            allow_frozen=mode == "frozen_in_place",
-                        )
-                    worker_messages.extend(messages)
-                    for msg in messages:
+                    result = upgrade_one(
+                        name, path, mode, copy_path,
+                        progress_callback=_progress_cb,
+                        cancel_check=lambda: dialog.cancel_requested,
+                    )
+                    results.append(result)
+                    for msg in result.messages:
                         _emit(msg)
-                    if not messages and not was_upgraded:
+                    if not result.messages and not result.upgraded:
                         _emit(f"[{i}/{total}] {name}: already up to date.")
-                    if failed:
+                    if result.failed:
                         outcome["failed"] = True
             finally:
                 if exec_mgr is not None and job_id is not None:
@@ -3174,7 +3246,11 @@ class MainWindow(tk.Tk):
         threading.Thread(target=_worker, daemon=True).start()
         self.wait_window(dialog)
 
-        return outcome["failed"], planning_messages + worker_messages
+        from flextool.gui.message_sources import failure_lines, post_upgrades
+
+        controller = getattr(self, "_messages", None)
+        post_upgrades(getattr(controller, "center", None), results, run_id)
+        return failure_lines(results, cancelled=dialog.cancel_requested), copy_errors
 
     def _refresh_input_sources(self, trigger: str = "other") -> None:
         """Re-scan input sources and repopulate the treeview; *trigger* (``"project_open"`` / ``"refresh"`` /
@@ -3182,22 +3258,29 @@ class MainWindow(tk.Tk):
         if not self.input_source_mgr:
             return
 
-        migration_failed, upgrade_messages = self._run_db_migrations_with_ui()
-        if migration_failed:
-            messagebox.showerror(
-                "Database migration failed",
-                "\n".join(upgrade_messages)
-                + "\n\nThe full log is shown in the Execution window.",
-                parent=self,
+        failures, copy_errors = self._run_db_migrations_with_ui()
+        from flextool.gui.dialogs import message_box
+
+        if failures:
+            message_box.tell(
+                self, "The database upgrade failed: see the Execution window",
+                "FlexTool could not upgrade these databases. Each was put back as it was where possible:",
+                message_box.name_list(failures),
+                "The full log is in the Execution window.",
+                kind="error", docs=_DOCS_MIGRATION,
             )
-        elif upgrade_messages:
-            messagebox.showinfo(
-                "Database upgrades",
-                "\n".join(upgrade_messages),
-                parent=self,
+        if copy_errors:
+            one = len(copy_errors) == 1
+            message_box.tell(
+                self,
+                "This file was not copied into the project" if one else "These files were not copied into the project",
+                message_box.name_list(copy_errors),
+                "It stays outside the project and was not upgraded." if one
+                else "They stay outside the project and were not upgraded.",
+                kind="error", docs=_DOCS_MIGRATION,
             )
         # W-0490 (TODO(v5.0.0): remove): a warning about the database, in its own box, never in the
-        # "Database migration failed" one, whose cause it is not.
+        # "database upgrade failed" one, whose cause it is not.
         flagged = self.input_source_mgr.take_check_findings()
         if flagged:
             from flextool.gui.dialogs.database_check_dialog import show_database_check

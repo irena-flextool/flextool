@@ -1,6 +1,7 @@
 """The GUI message list's Tk-free core (``flextool/gui/messages.py``; design ``gui_message_list_design.md`` §3, §5).
 
-Stub sources stand in for the real ones (packages M3a, M3b, P7b); every store lives in ``tmp_path`` (the shared
+Stub sources stand in for the sources of later packages (M3b, P7b), next to the real M3a ones
+(``message_sources.py``, at the end); every store lives in ``tmp_path`` (the shared
 ``FLEXTOOL_USER_HOME`` of a worker would leak dismissals between tests).  Expected values follow from the rules
 of the design, written next to each case, never from this code's output.
 """
@@ -16,9 +17,11 @@ import sys
 import unicodedata
 from datetime import date, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from flextool.gui import message_sources as ms
 from flextool.gui import messages as m
 from flextool.gui.messages import (
     MESSAGE_SPECS,
@@ -31,6 +34,7 @@ from flextool.gui.messages import (
     message_docs_url,
     project_key,
 )
+from flextool.gui.message_sources import UpgradeResult
 
 REPO = Path(__file__).resolve().parents[2]
 DAY0 = date(2026, 1, 1)
@@ -438,3 +442,299 @@ def test_non_dismissable_note_is_capped_but_stays(tmp_path):
         center.dismiss(center.messages[0])
     states[:] = [_msg(NOTE_STUB, key, "hash2")]                          # a changed set of empty defaults
     assert _open_project(path, _static(states)) == states[0].key
+
+
+# == M3a: the real sources (flextool/gui/message_sources.py) =========================================================
+# Expected texts are the inventory's (specs/gui_message_list_inventory.md L2a, L2b, L3, L4); the data versions come
+# from how each case is built.
+_SENTENCE_END = re.compile(r"[.!?](\s|$)")
+
+
+def _check_style(msg: GuiMessage) -> None:
+    """Design §4.5 / §5: a title of at most 60 characters, at most 4 sentences in the whole message."""
+    assert len(msg.title) <= 60, msg.title
+    assert sum(len(_SENTENCE_END.findall(p)) for p in msg.paragraphs) <= 4, msg.paragraphs
+
+
+def _result(path: Path, before, after, *, upgraded=True, failed=False, copy_of=None, messages=()) -> UpgradeResult:
+    return UpgradeResult(path.name, path, before, after, copy_of, upgraded, failed, list(messages))
+
+
+def test_upgraded_messages_from_upgrade_results(tmp_path):
+    store_path = tmp_path / "s.json"
+    project = tmp_path / "P" / "input_sources"
+    project.mkdir(parents=True)
+    for name in ("a.sqlite", "schema.sqlite", "a_v82.sqlite", "failed.sqlite", "same.sqlite"):
+        (project / name).write_bytes(b"")
+    other = tmp_path / "other.sqlite"                        # upgraded, but not a source of this project
+    other.write_bytes(b"")
+    results = [
+        _result(project / "a.sqlite", 80, 82),
+        _result(project / "schema.sqlite", 82, 82),          # SpineDB schema only: same data version
+        _result(project / "a_v82.sqlite", 80, 82, copy_of="frozen.sqlite"),
+        _result(project / "failed.sqlite", 80, 80, upgraded=False, failed=True, messages=["failed.sqlite: x"]),
+        _result(project / "same.sqlite", 82, 82, upgraded=False),
+        _result(other, 80, 82),
+    ]
+    center = _center(store_path, ms.upgraded_source(lambda: [database_key(p) for p in project.iterdir()]))
+    ms.post_upgrades(center, results, "2026-11-23T10:15:02")
+    center.recompute("project_open")
+    by_label = {msg.subject_label: msg for msg in center.messages}
+    # One message per upgraded database of the project; neither the failed, the unchanged nor the other one.
+    assert sorted(by_label) == ["a.sqlite", "a_v82.sqlite", "schema.sqlite"]
+    assert by_label["a.sqlite"].title == "This database was upgraded"
+    assert "from data version 80 to 82" in by_label["a.sqlite"].paragraphs[0]
+    assert "data version" not in by_label["schema.sqlite"].paragraphs[0]
+    assert "database format" in by_label["schema.sqlite"].paragraphs[0]
+    assert by_label["a_v82.sqlite"].title == "An upgraded copy was added"
+    assert "frozen database frozen.sqlite (from data version 80 to 82)" in by_label["a_v82.sqlite"].paragraphs[0]
+    for msg in center.messages:
+        assert msg.instance == "2026-11-23T10:15:02" and msg.spec.dismissable and not msg.spec.attention
+        _check_style(msg)
+    facts = MessageStore(store_path).pending("database_upgraded")
+    assert facts[database_key(project / "schema.sqlite")]["facts"]["schema"] is True
+    assert "schema" not in facts[database_key(project / "a.sqlite")]["facts"]
+    # A newer run of the same file replaces its message (one per database).
+    ms.post_upgrades(center, [_result(project / "a.sqlite", 82, 83)], "2026-11-24T08:00:00")
+    center.recompute("other")
+    again = [msg for msg in center.messages if msg.subject_label == "a.sqlite"]
+    assert len(again) == 1 and "from data version 82 to 83" in again[0].paragraphs[0]
+
+
+def test_failure_lines_route_failed_and_unexplained_results():
+    p = Path("/p")
+    # The shape of check_and_upgrade_database's failure message.
+    tb = "x.sqlite: migration FAILED — copy the traceback below.\n\nError: boom\n\nTraceback:\n..."
+    results = [
+        _result(p / "x.sqlite", 80, 80, upgraded=False, failed=True, messages=[tb]),
+        _result(p / "y.sqlite", 80, 80, upgraded=False, messages=["Cannot check database version (spinedb_api)"]),
+        _result(p / "z.sqlite", 80, 82, messages=["z.sqlite: FlexTool data upgraded from version 80 to 82."]),
+    ]
+    # The traceback stays in the Execution window (and the text says so); the error line is kept.
+    failed = "x.sqlite: migration FAILED — copy the traceback in the Execution window. Error: boom"
+    assert ms.failure_lines(results, cancelled=False) == [failed, "Cannot check database version (spinedb_api)"]
+    # After the user's Cancel a restored file is not a failure; a failed one still is.
+    assert ms.failure_lines(results, cancelled=True) == [failed]
+
+
+def _empty_sqlite(path: Path) -> Path:
+    """A valid SQLite file that is not a Spine database: its data version cannot be read."""
+    import sqlite3
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(path)
+    with con:
+        con.execute("CREATE TABLE t (x)")
+    con.close()
+    return path
+
+
+def test_planning_note_kinds(tmp_path, monkeypatch):
+    from flextool.gui.data_models import ProjectSettings
+    from flextool.gui.input_sources import InputSourceManager
+    from flextool.update_flextool.frozen import FrozenCheckError
+
+    project = tmp_path / "project"
+    _empty_sqlite(project / "input_sources" / "internal.sqlite")
+    _empty_sqlite(tmp_path / "shared" / "external.sqlite")
+    settings = ProjectSettings()
+    settings.external_refs = {"external.sqlite": "../shared/external.sqlite"}
+    mgr = InputSourceManager(project, settings)
+    internal, _external, _frozen, notes = mgr.plan_db_migrations()
+    # The internal file is still migrated (no note); the external one is skipped with an "unreadable" note.
+    assert [name for name, _ in internal] == ["internal.sqlite"]
+    assert [(n.kind, n.name) for n in notes] == [("unreadable", "external.sqlite")]
+    assert mgr.planning_notes == notes
+    center = _center(tmp_path / "s.json", ms.unreadable_source(lambda: mgr.planning_notes))
+    assert center.recompute("other") is not None             # a new attention message opens the list
+    (msg,) = center.messages
+    assert (msg.title, msg.subject_label) == ("FlexTool cannot read this database file", "external.sqlite")
+    assert msg.subject_key == database_key((tmp_path / "shared" / "external.sqlite").resolve())
+    assert not msg.spec.dismissable and msg.spec.attention
+    _check_style(msg)
+
+    # A frozen marker that cannot be read: the frozen variant, for an internal file too.
+    def locked(path, _target):
+        raise FrozenCheckError(Path(path), "database is locked")
+
+    monkeypatch.setattr(InputSourceManager, "_frozen_needing_migration", staticmethod(locked))
+    notes = mgr.plan_db_migrations()[3]
+    assert sorted((n.kind, n.name) for n in notes) == [("frozen_unreadable", "external.sqlite"),
+                                                      ("frozen_unreadable", "internal.sqlite")]
+    center.recompute("refresh")
+    assert {msg.title for msg in center.messages} == {"FlexTool cannot tell whether this file is frozen"}
+    assert all("database is locked" in msg.paragraphs[-1] for msg in center.messages)
+    for msg in center.messages:
+        _check_style(msg)
+
+    # A frozen file the user declined: nothing (the tree shows it); notes are replaced at each plan.
+    def needs(path, target):
+        return SimpleNamespace(label="L", version=target - 1), target - 1, False
+
+    monkeypatch.setattr(InputSourceManager, "_frozen_needing_migration", staticmethod(needs))
+    for path in mgr._registered_sqlite_paths():
+        mgr.decline_frozen(path)
+    assert mgr.plan_db_migrations() == ([], [], [], []) and mgr.planning_notes == []
+    center.recompute("refresh")
+    assert center.messages == ()
+
+
+def test_solver_settings_message_is_the_shared_notice(tmp_path):
+    from flextool.gui.settings_io import solver_defaults_message, solver_defaults_notice
+
+    paragraphs = solver_defaults_message("my_project")
+    # With the "Affected projects" part (the subject line) put back, it is the printed line word for word.
+    assert " ".join((paragraphs[0], "Affected projects: my_project.", *paragraphs[1:])) == solver_defaults_notice(
+        "my_project")
+    assert paragraphs[0].startswith("Behaviour changed in FlexTool 4.2.0")
+    assert "else mip_rel_gap in solver_config/highs.opt" in paragraphs[0]
+    assert paragraphs[-1].startswith("To keep the old behaviour") and "shown once" not in " ".join(paragraphs)
+
+    project_dir = tmp_path / "projects" / "my_project"
+    project_dir.mkdir(parents=True)
+    center = _center(tmp_path / "s.json", ms.solver_defaults_source(project_dir, "my_project"))
+    assert center.recompute("project_open") is None
+    center.post_event("solver_defaults_updated", project_key(project_dir), "Project my_project", run="r1")
+    assert center.recompute("project_open") is not None
+    (msg,) = center.messages
+    assert (msg.title, msg.subject_label, msg.paragraphs) == (
+        "This project's solver settings were updated", "Project my_project", paragraphs)
+    _check_style(msg)
+    center.dismiss(msg)
+    assert MessageStore(tmp_path / "s.json").pending("solver_defaults_updated") == {}
+
+
+def test_update_source(tmp_path, monkeypatch):
+    path = tmp_path / "s.json"
+    flags = {"enabled": True, "git": False, "installed": "4.6.3"}
+
+    def newer(v):
+        return tuple(map(int, v.split("."))) > tuple(map(int, flags["installed"].split(".")))
+
+    source = ms.update_source(enabled=lambda: flags["enabled"], is_git=lambda: flags["git"],
+                              installed=lambda: flags["installed"], is_newer=newer)
+    center = _center(path, source)
+    center.recompute("other")
+    assert center.messages == ()                             # nothing stored
+    MessageStore(path).set_offered_version("4.6.4")
+    center = _center(path, source)
+    center.recompute("project_open")
+    (msg,) = center.messages
+    assert msg.title == "A newer FlexTool is available" and msg.instance == "4.6.4"
+    assert msg.paragraphs[0].startswith("FlexTool 4.6.4 is available; you have 4.6.3.")
+    _check_style(msg)
+    flags["installed"] = "4.6.4"                             # installed meanwhile: gone by itself
+    center.recompute("other")
+    assert center.messages == ()
+    flags.update(installed="4.6.3", git=True)                # a git checkout: the button only
+    center.recompute("other")
+    assert center.messages == ()
+    flags.update(git=False, enabled=False)                   # the start-up check is off
+    center.recompute("other")
+    assert center.messages == ()
+    monkeypatch.setenv("FLEXTOOL_NO_UPDATE_CHECK", "1")
+    assert not ms.update_check_enabled(SimpleNamespace(check_updates_on_startup=True))
+    monkeypatch.delenv("FLEXTOOL_NO_UPDATE_CHECK")
+    assert ms.update_check_enabled(SimpleNamespace(check_updates_on_startup=True))
+    assert not ms.update_check_enabled(SimpleNamespace(check_updates_on_startup=False))
+
+
+def test_update_check_answer_stores_or_removes_the_offered_version(tmp_path):
+    from flextool.gui.main_window import MainWindow
+
+    path = tmp_path / "s.json"
+    recomputed: list[str] = []
+
+    class Host:
+        _apply_update_indicator = MainWindow._apply_update_indicator
+        _store_offered_version = MainWindow._store_offered_version
+
+        def __init__(self):
+            self._messages = SimpleNamespace(center=None, store_path=lambda: path)
+
+        def _messages_recompute(self, trigger="other"):
+            recomputed.append(trigger)
+
+    host = Host()
+    host._apply_update_indicator(True, "4.6.4", True)        # a conclusive newer version: stored
+    assert MessageStore(path).offered_version() == "4.6.4" and recomputed == ["other"]
+    host._apply_update_indicator(False, None, False)         # offline: kept
+    assert MessageStore(path).offered_version() == "4.6.4"
+    host._apply_update_indicator(False, "4.6.4", True)       # a conclusive "nothing newer": removed
+    assert MessageStore(path).offered_version() is None
+
+
+def test_install_info_version_helpers(monkeypatch):
+    from flextool.update_flextool import install_info
+
+    monkeypatch.setattr(install_info, "flextool_version", lambda: "4.6.3")
+    assert install_info.is_newer_than_installed("4.6.4")
+    assert not install_info.is_newer_than_installed("4.6.3")
+    assert not install_info.is_newer_than_installed("not a version")
+
+    def offline(*_a, **_k):
+        raise OSError("offline")
+
+    monkeypatch.setattr(install_info, "urlopen", offline)
+    assert install_info.latest_pypi_version(timeout=0.1) is None
+
+
+def test_project_rename_keeps_its_messages(tmp_path, monkeypatch):
+    from flextool import user_dirs
+    from flextool.gui import project_utils
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(user_dirs, "user_config_dir", lambda: tmp_path / "config")
+    db = tmp_path / "projects" / "Alpha" / "input_sources" / "a.sqlite"
+    db.parent.mkdir(parents=True)
+    db.write_bytes(b"")
+    store_path = tmp_path / "config" / m.STORE_NAME
+    store = MessageStore(store_path)
+    store.post("database_upgraded", database_key(db), "a.sqlite", run="r1")
+    store.post("solver_defaults_updated", project_key(tmp_path / "projects" / "Alpha"), "Project Alpha", run="r1")
+    project_utils.rename_project("Alpha", "Beta")
+    after = MessageStore(store_path)
+    assert set(after.pending("database_upgraded")) == {
+        database_key(tmp_path / "projects" / "Beta" / "input_sources" / "a.sqlite")}
+    assert set(after.pending("solver_defaults_updated")) == {project_key(tmp_path / "projects" / "Beta")}
+
+
+def _set_version(path: Path, version: int) -> None:
+    """As ``tests/update_flextool/test_frozen_guard.py::_set_version``: the ``model.version`` default."""
+    from spinedb_api import DatabaseMapping, import_data
+
+    db = DatabaseMapping(f"sqlite:///{path}", upgrade=False)
+    try:
+        with db:
+            import_data(db, object_parameters=[["model", "version", version, None, "test"]])
+            db.commit_session("test: set version")
+    finally:
+        db.close()
+
+
+def test_two_databases_one_version_back_give_two_upgraded_messages(schema_db_url, tmp_path):
+    """M3a acceptance: two schema databases set one data version back, migrated headless by the worker's per-file
+    step, give two ``database_upgraded`` messages from that version to the current one."""
+    import shutil
+
+    from flextool.gui.main_window import upgrade_one
+    from flextool.update_flextool import FLEXTOOL_DB_VERSION
+
+    old = FLEXTOOL_DB_VERSION - 1
+    folder = tmp_path / "P" / "input_sources"
+    folder.mkdir(parents=True)
+    paths = []
+    for name in ("one.sqlite", "two.sqlite"):
+        path = folder / name
+        shutil.copy2(schema_db_url.removeprefix("sqlite:///"), path)
+        _set_version(path, old)
+        paths.append(path)
+    results = [upgrade_one(p.name, p, "plain", None, progress_callback=None, cancel_check=None) for p in paths]
+    assert [(r.before, r.after, r.upgraded, r.failed) for r in results] == [
+        (old, FLEXTOOL_DB_VERSION, True, False)] * 2
+    center = _center(tmp_path / "s.json", ms.upgraded_source(lambda: [database_key(p) for p in paths]))
+    ms.post_upgrades(center, results, "run1")
+    center.recompute("project_open")
+    assert sorted(msg.subject_label for msg in center.messages) == ["one.sqlite", "two.sqlite"]
+    for msg in center.messages:
+        assert f"from data version {old} to {FLEXTOOL_DB_VERSION}" in msg.paragraphs[0]

@@ -150,7 +150,7 @@ def test_gui_shows_the_text_once_per_opened_project(make, tmp_path: Path) -> Non
     make([("19", "2024-08-28"), ("22", "2024-08-28")], "fine.sqlite", project / "input_sources")
     mgr = InputSourceManager(project, ProjectSettings())
     messages = mgr.plan_db_migrations()[3]
-    assert not [m for m in messages if "W-0490" in m], "not with the migration messages (their own box)"
+    assert not [m for m in messages if "W-0490" in m.text], "not with the migration notes (their own box)"
     flagged = mgr.take_check_findings()
     assert [(name, f.step, f.date) for name, f in flagged] == [("cyprus.sqlite", 22, "2024-09-19")]
     assert not mgr.take_check_findings(), "taken once"
