@@ -1476,6 +1476,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#input-database" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Input database
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Input database">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#w-0490" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        W-0490
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#input-values" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1696,6 +1724,39 @@
     <span class="md-ellipsis">
       
         W-0587
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#w-0589" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        W-0589
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#w-0590" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        W-0590
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#w-0591" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        W-0591
       
     </span>
   </a>
@@ -5227,6 +5288,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#input-database" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Input database
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Input database">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#w-0490" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        W-0490
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#input-values" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5447,6 +5536,39 @@
     <span class="md-ellipsis">
       
         W-0587
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#w-0589" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        W-0589
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#w-0590" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        W-0590
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#w-0591" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        W-0591
       
     </span>
   </a>
@@ -7135,6 +7257,23 @@ of each code. <code>Note:</code> lines are information, not problems.</p>
 </code></pre></div>
 <p>The reserve group (<code>reserve__upDown__group</code>) has an <code>increase_reserve_ratio</code>, which adds the demand of the group's nodes to the dynamic reserve requirement only. Its <code>reserve_method</code> is not dynamic, so the ratio is ignored.</p>
 <p><strong>How to fix:</strong> use a dynamic <code>reserve_method</code> (<code>dynamic_only</code>, <code>timeseries_and_dynamic</code>, <code>dynamic_and_large_failure</code> or <code>all</code>), or remove the ratio.</p>
+<h2 id="input-database">Input database</h2>
+<h3 id="w-0490">W-0490</h3>
+<p><strong>Value list possibly changed by a spinedb_api bug</strong> (warning). Console line:</p>
+<div class="highlight"><pre><span></span><code>Warning: a spinedb_api bug may have changed the value list on &lt;date&gt; (&lt;N&gt; cases, e.g. '&lt;name&gt;') [W-0490]
+</code></pre></div>
+<p>The database's own migration history shows a migration session, between 2024-04-29 and 2025-07-07, that may have run with spinedb_api 0.31 to 0.34. Those versions had a bug: adding a member to a value list could overwrite the list's first member, and every default and value that used that member then silently changed with it. The line names the lists to check; the debug log and the run log give the data versions of the session. FlexTool does not know which library the migration used, so this is a possibility, not a finding. The GUI shows a short "Please check this database" box when it opens the project, with a button to this checklist. The message repeats at every run and every time the GUI opens the database, also after you have checked, until a repair is recorded in the database (a repair tool is planned).</p>
+<p>For <code>invest_methods</code> (migration from data version 21 to 22): the list should contain <code>not_allowed</code>. If it is missing, the class default of <code>invest_method</code> (unit, connection, node) and any value that was <code>not_allowed</code> before that date now read <code>cumulative_limits</code>, which since FlexTool 4.4 lets those entities invest and retire without limit.</p>
+<p><strong>How to fix:</strong> check the list (a checklist):</p>
+<ol>
+<li>Make a copy of the database and work on the copy.</li>
+<li>In the Spine DB editor, open <em>Parameter value list</em> and the named list (<code>invest_methods</code>). Check that it contains <code>not_allowed</code> (for another list: check it has every member listed in the parameter reference).</li>
+<li>If a member is missing, add it to the list.</li>
+<li>For <code>invest_methods</code>, set the default value of <code>invest_method</code> of <code>unit</code>, <code>connection</code> and <code>node</code> to <code>not_allowed</code> (the shipped default).</li>
+<li>Filter the parameter values by <code>invest_method</code> = <code>cumulative_limits</code>. For each one, decide whether it was meant: compare with a copy from before the migration date, your Excel input or your notes. An entity that has no <code>cumulative_max_capacity</code> and should not invest should be <code>not_allowed</code>.</li>
+<li>Re-run, and compare the investments and retirements with the previous results.</li>
+</ol>
+<p>If you copied data from this database into another one, check that one too.</p>
 <h2 id="input-values">Input values</h2>
 <h3 id="w-0222">W-0222</h3>
 <p><strong>Connection efficiency above 1</strong> (warning). Console line:</p>
@@ -7245,6 +7384,24 @@ of each code. <code>Note:</code> lines are information, not problems.</p>
 </code></pre></div>
 <p>The entity has a stochastic-time value (a map over branches and time) of the parameter, but the solve does not use the parameter for it (the entity is outside the solve's use of the parameter), so the value has no folded row in the solve and is not applied. Each entity is named once per run and parameter.</p>
 <p><strong>How to fix:</strong> nothing, if the value is not meant for this solve; otherwise check that the entity takes part in the solve with the parameter.</p>
+<h3 id="w-0589">W-0589</h3>
+<p><strong>Efficiency of a one-variable connection as a unit conversion</strong> (warning). Console line:</p>
+<div class="highlight"><pre><span></span><code>Warning: one-variable connection: efficiency converts units, the same both ways (&lt;N&gt; cases, e.g. '&lt;name&gt;') [W-0589]
+</code></pre></div>
+<p>A one-variable connection (<code>transfer_method</code> <em>no_losses_no_variable_cost</em>) carries both directions in one signed flow. Its two nodes have different <code>unit_of_measure</code> values, so its <code>efficiency</code> (other than 1) is used as a unit conversion (e.g. MWh to t): the flow f arriving at the second node takes f / efficiency from the first node, and in the reverse direction the first node gets f / efficiency for the f taken from the second. The same conversion holds both ways, so it cannot model losses. The debug log gives the efficiency of each connection. The warning is printed once per solve.</p>
+<p><strong>How to fix:</strong> nothing, if the efficiency is a unit conversion. For losses, use <code>transfer_method</code> <em>regular</em> or <em>exact</em>.</p>
+<h3 id="w-0590">W-0590</h3>
+<p><strong>Variable cost of a one-variable connection</strong> (warning). Console line:</p>
+<div class="highlight"><pre><span></span><code>Warning: one-variable connection has other_operational_cost; ignored (&lt;N&gt; cases, e.g. '&lt;name&gt;') [W-0590]
+</code></pre></div>
+<p>A one-variable connection (<code>transfer_method</code> <em>no_losses_no_variable_cost</em>, and the lines of a <code>dc_power_flow_with_angles</code> group) carries both directions in one signed flow, so a cost on that flow would be a cost in one direction and a revenue in the other. Its <code>other_operational_cost</code> is ignored (treated as zero) in the solve and in the cost results. The warning is printed once per solve.</p>
+<p><strong>How to fix:</strong> use <code>transfer_method</code> <em>variable_cost_only</em>, <em>regular</em> or <em>exact</em> for a connection with a variable cost, or remove the cost.</p>
+<h3 id="w-0591">W-0591</h3>
+<p><strong>Efficiency of a one-variable connection ignored</strong> (warning). Console line:</p>
+<div class="highlight"><pre><span></span><code>Warning: cannot model losses with one flow variable; efficiency ignored (&lt;N&gt; cases, e.g. '&lt;name&gt;') [W-0591]
+</code></pre></div>
+<p>A one-variable connection (<code>transfer_method</code> <em>no_losses_no_variable_cost</em>, and the lines of a <code>dc_power_flow_with_angles</code> group, which use it internally) carries both directions in one signed flow, so it cannot model losses: a loss in one direction would be a gain in the other. Its <code>efficiency</code> is ignored (treated as 1) on a line of a <code>dc_power_flow_with_angles</code> group, and on a <em>no_losses_no_variable_cost</em> connection unless both its nodes have a <code>unit_of_measure</code> and the two differ (then the efficiency is a unit conversion: W-0589). The debug log gives the efficiency that was ignored. The warning is printed once per solve.</p>
+<p><strong>How to fix:</strong> for losses, use <code>transfer_method</code> <em>regular</em> or <em>exact</em> (for a DC power-flow line, accept a lossless line), or remove the efficiency.</p>
 <h2 id="lifetimes-investments-and-units">Lifetimes, investments and units</h2>
 <h3 id="w-0520">W-0520</h3>
 <p><strong>Existing capacity replaced automatically</strong> (note). Console line:</p>
