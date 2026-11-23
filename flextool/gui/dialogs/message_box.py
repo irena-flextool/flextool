@@ -4,6 +4,8 @@
 * :func:`ask` — a question answered by action-named buttons ("Delete", "Replace it", "Stop and close"), never
   Yes/No; returns the chosen answer, ``None`` for the cancel answer, Escape and the window button.
 * :func:`name_list` — a list of names for a paragraph, capped at 12 lines + "and N more".
+* :func:`all_names` — every name, for a destructive or in-place question (what is deleted or changed is never
+  hidden): more than 12 show in a scrolled list.
 
 The layout is the message list's: the title as the heading (and the window title), the paragraphs, an "Open
 documentation" button on the left when *docs* is given, the answer buttons on the right.  The box is synchronous
@@ -45,6 +47,16 @@ def name_list(names: Iterable[object], limit: int = NAME_LIST_LIMIT) -> str:
     return "\n".join([*items[:limit], f"and {len(items) - limit} more"])
 
 
+class NameList(str):
+    """A paragraph of every name, one per line (:func:`all_names`): the box shows more than
+    :data:`NAME_LIST_LIMIT` of them in a scrolled list."""
+
+
+def all_names(names: Iterable[object]) -> NameList:
+    """Every one of *names*, one per line, for a question about deleting or changing them."""
+    return NameList("\n".join(str(name) for name in names))
+
+
 def docs_url(docs: str) -> str:
     """The web address of *docs*: a URL as it is, a coded warning (``"W-0490"``) its section, else a
     ``"page.md#anchor"`` of ``docs/``."""
@@ -79,7 +91,10 @@ class MessageBox(ModalBase):
         self.text = "\n\n".join([title, *paragraphs])
         self.heading(self.body, title)
         for paragraph in paragraphs:
-            self.paragraph(self.body, paragraph, pady=(self.lh // 2, 0))
+            if isinstance(paragraph, NameList) and paragraph.count("\n") >= NAME_LIST_LIMIT:
+                self._scrolled_names(paragraph)
+            else:
+                self.paragraph(self.body, paragraph, pady=(self.lh // 2, 0))
         row = ttk.Frame(self.body, name="buttons")
         row.pack(fill="x", pady=(self.lh, 0))
         self.docs_button: ttk.Button | None = None
@@ -112,6 +127,19 @@ class MessageBox(ModalBase):
         self.bind("<Map>", self._lift_once, add="+")
         self._lifted = False
         self.show()
+
+    def _scrolled_names(self, names: str) -> None:
+        """*names* in a read-only list, :data:`NAME_LIST_LIMIT` lines high, scrolled (widget name ``names``)."""
+        frame = ttk.Frame(self.body)
+        frame.pack(fill="x", pady=(self.lh // 2, 0))
+        text = tk.Text(frame, name="names", height=NAME_LIST_LIMIT, width=60, wrap="none",
+                       font=self.text_fonts["base"], relief="flat", borderwidth=0, highlightthickness=0)
+        bar = ttk.Scrollbar(frame, orient="vertical", command=text.yview)
+        text.configure(yscrollcommand=bar.set)
+        text.insert("1.0", names)
+        text.configure(state="disabled")
+        bar.pack(side="right", fill="y")
+        text.pack(side="left", fill="x", expand=True)
 
     def initial_focus(self) -> tk.Misc | None:
         return self.answer_buttons.get(self._focus_answer)
@@ -161,8 +189,7 @@ def tell(parent: tk.Misc | None, title: str, *paragraphs: str, kind: str = "info
     MessageBox(_parent_or_root(parent), title, paragraphs, ((CLOSE_LABEL, "close"),), kind=kind, docs=docs).wait()
 
 
-def ask(parent: tk.Misc | None, title: str, *paragraphs: str,
-        buttons: Sequence[tuple[str, str | None]] = (("Delete", "delete"), (CANCEL_LABEL, None)),
+def ask(parent: tk.Misc | None, title: str, *paragraphs: str, buttons: Sequence[tuple[str, str | None]],
         default: str | None = None, kind: str = "question", docs: str | None = None) -> str | None:
     """Ask *title*; *buttons* are ``(label, answer)`` pairs with ``None`` the cancel answer.  Returns the answer of
     the pressed button, or ``None`` for Escape and the window button."""

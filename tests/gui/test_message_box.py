@@ -251,11 +251,61 @@ def test_modal_grab_waits_for_a_withdrawn_dialog_to_be_mapped(host, monkeypatch)
         dialog.destroy()
 
 
+def test_a_late_grab_of_an_earlier_dialog_never_takes_it_from_a_box_over_it(host) -> None:
+    """Dialog A's deferred grab is still retrying when box B opens over it: B holds the grab while open, also after
+    A is mapped; closing B hands the grab to A (A stays modal)."""
+    a, b = tk.Toplevel(host), tk.Toplevel(host)
+    a.withdraw()
+    grab_a, grab_b = _modal_base.ModalGrab(a), _modal_base.ModalGrab(b)
+    try:
+        grab_a.start()                                  # A is not viewable yet: retrying
+        pump(b, lambda: bool(b.winfo_viewable()))
+        grab_b.start()
+        pump(host, lambda: grab_b.held)
+        a.deiconify()
+        pump(host, lambda: bool(a.winfo_viewable()))
+        pump(host, timeout=0.2)                         # A's retries run meanwhile
+        assert not grab_a.held and host.grab_current() is b
+        grab_b.release()
+        pump(host, lambda: grab_a.held)
+        assert host.grab_current() is a
+    finally:
+        grab_b.release()
+        grab_a.release()
+        a.destroy()
+        b.destroy()
+    assert _modal_base._ACTIVE == []
+
+
 def test_name_list_caps_at_twelve() -> None:
     names = [f"scenario_{i}" for i in range(20)]
     assert message_box.name_list(names) == "\n".join(names[:12] + ["and 8 more"])
     assert message_box.name_list(names[:12]) == "\n".join(names[:12])
     assert message_box.name_list(names[:3], limit=2) == "scenario_0\nscenario_1\nand 1 more"
+
+
+def test_a_destructive_question_shows_every_name(host) -> None:
+    """Consent: all 30 names to delete are in the box (a scrolled list past 12), none cut to "and N more"."""
+    names = [f"scenario_{i}" for i in range(30)]
+    errors: list[BaseException] = []
+    seen: list[str] = []
+
+    def read(box: MessageBox) -> None:
+        listed = [w for w in box.body.winfo_children() for w in w.winfo_children() if isinstance(w, tk.Text)]
+        seen.append(listed[0].get("1.0", "end-1c"))
+        _button(box, "cancel").invoke()
+
+    _when_open(host, read, errors)
+    assert message_box.ask(host, "Delete these results?", "These are deleted:", message_box.all_names(names),
+                           buttons=(("Delete", "delete"), ("Cancel", None)), kind="danger") is None
+    assert not errors, errors
+    assert seen == ["\n".join(names)]
+    assert message_box.all_names(names[:3]) == "scenario_0\nscenario_1\nscenario_2"
+
+
+def test_ask_has_no_default_buttons(host) -> None:
+    with pytest.raises(TypeError):
+        message_box.ask(host, "Which buttons?")
 
 
 def test_bad_buttons_are_refused(host) -> None:

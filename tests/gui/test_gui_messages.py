@@ -31,7 +31,6 @@ from flextool.gui.messages import (
     MessageStore,
     database_key,
     docs_page_url,
-    message_docs_url,
     project_key,
 )
 from flextool.gui.message_sources import UpgradeResult
@@ -68,8 +67,8 @@ def _db(folder: Path, name: str) -> str:
     return database_key(folder / name)
 
 
-def _center(store: Path, *sources, today: date = DAY0, rank=None) -> MessageCenter:
-    return MessageCenter(store, sources, today=lambda: today, rank=rank)
+def _center(store: Path, *sources, today: date = DAY0, rank=None, project_dir=None) -> MessageCenter:
+    return MessageCenter(store, sources, today=lambda: today, rank=rank, project_dir=project_dir)
 
 
 def _open_project(store: Path, *sources, today: date = DAY0) -> str | None:
@@ -136,7 +135,9 @@ def test_docs_urls():
             == site + "flextool_gui_interface/#migration-and-frozen-databases")
     assert docs_page_url("how_to/stochastics.md") == site + "how_to/stochastics/"
     assert docs_page_url("index.md") == site
-    assert message_docs_url(W0490) == site + "reference/warnings/#w-0490"
+    from flextool.gui.dialogs.message_box import docs_url
+
+    assert docs_url(W0490.docs) == site + "reference/warnings/#w-0490"
 
 
 def test_register_spec_refuses_a_different_spec_under_a_used_id():
@@ -254,15 +255,19 @@ def test_offered_version(tmp_path):
 
 
 def test_pruning(tmp_path):
+    """Rule: a subject goes after PRUNE_DAYS (180) days without a write; a deleted file (its folder exists, the file
+    does not) goes at once only inside the opened project's folder, since only that folder is probed."""
     path = tmp_path / "gui_messages.json"
     folder = tmp_path / "projects"
     folder.mkdir()
+    (tmp_path / "elsewhere").mkdir()
     kept_file = folder / "kept.sqlite"
     kept_file.write_bytes(b"")
     old_file = folder / "old.sqlite"
     old_file.write_bytes(b"")
     subjects = {
-        "deleted": database_key(folder / "deleted.sqlite"),            # folder exists, file gone → dropped
+        "deleted": database_key(folder / "deleted.sqlite"),            # in the project, file gone → dropped
+        "outside": database_key(tmp_path / "elsewhere" / "gone.sqlite"),    # gone, but outside: not probed → kept
         "offline": database_key(tmp_path / "offline_drive" / "x.sqlite"),   # folder gone too → kept
         "kept": database_key(kept_file),
         "old": database_key(old_file),
@@ -274,10 +279,69 @@ def test_pruning(tmp_path):
     MessageStore(path, today=lambda: DAY0 - timedelta(days=1)).post("database_upgraded", subjects["old"], "old",
                                                                      run="r")
     # 180 days after DAY0 the entries written on DAY0 stay; 181 days after the day before DAY0, "old" goes.
-    _center(path, today=DAY0 + timedelta(days=180))
-    assert set(MessageStore(path).pending("database_upgraded")) == {subjects["offline"], subjects["kept"]}
+    _center(path, today=DAY0 + timedelta(days=180))                     # no project folder: nothing is probed
+    assert set(MessageStore(path).pending("database_upgraded")) == set(subjects.values()) - {subjects["old"]}
+    _center(path, today=DAY0 + timedelta(days=180), project_dir=folder)
+    assert set(MessageStore(path).pending("database_upgraded")) == {subjects[k] for k in ("outside", "offline",
+                                                                                          "kept")}
     _center(path, today=DAY0 + timedelta(days=181))
     assert set(MessageStore(path).pending("database_upgraded")) == set()
+
+
+def test_pruning_probes_no_path_outside_the_project(tmp_path):
+    """An offline network drive can block a probe for tens of seconds: no file-system call for paths elsewhere."""
+    path = tmp_path / "gui_messages.json"
+    project = tmp_path / "P"
+    MessageStore(path, today=lambda: DAY0).post("database_upgraded", database_key(r"/net/share/x.sqlite"), "x",
+                                                run="r")
+    probed: list[str] = []
+
+    class Probe:
+        def __getattr__(self, name):
+            fn = getattr(os.path, name)
+            if name in ("isdir", "exists"):
+                return lambda p: probed.append(p) or fn(p)
+            return fn
+    MessageCenter(path, [], today=lambda: DAY0, pathmod=Probe(), project_dir=project)
+    assert probed == []
+
+
+# -- a malformed store (finding 1 of the GUI review) -----------------------------------------------------------
+def test_wrong_typed_entries_are_dropped_and_later_saves_work(tmp_path):
+    """The reproduced shape: ``"pending": []`` (a hand edit, a sync conflict).  Every later post, resolve and shown
+    count must work and be saved; the good parts of the file are kept."""
+    path = tmp_path / "gui_messages.json"
+    a, b, c = "db:/p/a.sqlite", "db:/p/b.sqlite", "db:/p/c.sqlite"
+    path.write_text(json.dumps({"format": 1, "subjects": {
+        a: {"label": "a.sqlite", "updated": DAY0.isoformat(), "pending": []},
+        b: {"label": "b.sqlite", "updated": DAY0.isoformat(), "shown": {"database_upgraded|r1": "two", "x|": 1},
+            "dismissed": ["oops"]},
+        c: {"label": "c.sqlite", "updated": DAY0.isoformat(),
+            "pending": {"database_upgraded": {"run": "r0", "posted": "2026-01-01", "facts": {}}, "bad": 3}},
+    }}), encoding="utf-8")
+    store = MessageStore(path, today=lambda: DAY0)
+    store.post("database_upgraded", a, "a.sqlite", run="r1")                 # raised AttributeError before
+    store.count_shown([_msg(UPGRADED, b, "r1")])                             # int("two") raised before
+    store.resolve(_msg(UPGRADED, a, "r1"))
+    store.post("database_upgraded", b, "b.sqlite", run="r2")
+    after = MessageStore(path)
+    assert set(after.pending("database_upgraded")) == {b, c}                 # a resolved, c kept as it was
+    assert after.shown(_msg(UPGRADED, b, "r1")) == 1                         # "two" counts as 0, then +1
+    assert after.shown(_msg(MessageSpec("x", "database", True, False, "W-0490"), b)) == 1
+    _center(path, _upgraded_source).window_closed([])                        # opening a project still works
+
+
+def test_a_change_that_raises_is_dropped_not_replayed(tmp_path):
+    path = tmp_path / "gui_messages.json"
+    store = MessageStore(path)
+
+    def broken(_data):
+        raise RuntimeError("cannot apply")
+
+    store._mutate(broken)                                     # logged, never raised into the GUI
+    store.post("database_upgraded", "db:/p/a.sqlite", "a.sqlite", run="r1")
+    assert list(MessageStore(path).pending("database_upgraded")) == ["db:/p/a.sqlite"]
+    assert store._unsaved == []
 
 
 def test_rename_prefix_moves_pending_shown_and_dismissals(tmp_path):
@@ -365,6 +429,32 @@ def test_non_dismissable_message_cannot_be_dismissed(tmp_path):
     with pytest.raises(ValueError):
         center.post_event("value_list_check", "db:/P/a.sqlite", "a.sqlite")
     assert not (tmp_path / "s.json").exists()        # an attention message has no store entry at all
+
+
+def test_a_stored_dismissal_never_hides_a_non_dismissable_message(tmp_path):
+    """Only a repair record ends W-0490: a ``dismissed`` key for it in the store (a hand edit) is ignored."""
+    path = tmp_path / "s.json"
+    subject = "db:/P/a.sqlite"
+    path.write_text(json.dumps({"format": 1, "subjects": {subject: {
+        "label": "a.sqlite", "updated": DAY0.isoformat(), "dismissed": {"value_list_check|": "2026-01-01"}}}}),
+        encoding="utf-8")
+    center = _center(path, _static([_msg(W0490, subject)]))
+    assert center.recompute("project_open") == f"value_list_check|{subject}|"
+
+
+def test_one_database_failing_keeps_w0490_for_the_others():
+    """The text of database a cannot be built (a date it cannot parse): a gets the generic W-0490 message, b its
+    own; neither is hidden."""
+    from flextool.update_flextool.value_list_history import Finding
+
+    bad = [Finding(22, ("invest_methods",), 21, 22, "not a date")]
+    good = [Finding(22, ("invest_methods",), 21, 22, "2024-09-19")]
+    source = ms.value_list_source(lambda: [(Path("/P/a.sqlite"), bad), (Path("/P/b.sqlite"), good)],
+                                  lambda _text: None)
+    a, b = source(None)
+    assert (a.spec, a.subject_label, a.title) == (W0490, "a.sqlite", "Please check this database")
+    assert a.paragraphs == ms.W0490_FALLBACK[1] and a.action is not None
+    assert (b.spec, b.subject_label) == (W0490, "b.sqlite") and "upgraded on 19.9.2024" in b.paragraphs[0]
 
 
 def test_a_failing_source_is_skipped(tmp_path):
@@ -770,7 +860,7 @@ def _w0490_project(tmp_path: Path, schema_db_url: str):
 
 def test_w0490_message_for_the_original_only(schema_db_url, tmp_path):
     """The hit file gives one non-dismissable W-0490 message, upgraded on 19.9.2024 (``HIT_DATE``); its repaired
-    copy, which holds a valid record, gives none.  The button copies exactly ``repair_command(path)``."""
+    copy, which holds a valid record, gives none.  The button copies exactly ``repair_command(path, shell=repair_shell())``."""
     from flextool.cli.cmd_repair_value_list import repair_command
 
     mgr, sources = _w0490_project(tmp_path, schema_db_url)
@@ -787,9 +877,11 @@ def test_w0490_message_for_the_original_only(schema_db_url, tmp_path):
         center.dismiss(msg)
     assert msg.action is not None and msg.action.label == "Copy repair command"
     assert msg.action.run() == "Copied"
-    assert copied == [repair_command(sources / "model.sqlite")]
+    assert copied == [repair_command(sources / "model.sqlite", shell=ms.repair_shell())]
     assert msg.action.tooltip == ms.repair_tooltip()
-    assert (ms.repair_tooltip("nt"), ms.repair_tooltip("posix")) == ("Paste into Command Prompt",
+    # Windows: the PowerShell form (Windows Terminal's default shell), said so on the button; posix elsewhere.
+    assert (ms.repair_shell("nt"), ms.repair_shell("posix")) == ("powershell", "posix")
+    assert (ms.repair_tooltip("nt"), ms.repair_tooltip("posix")) == ("Paste into PowerShell",
                                                                     "Paste into a terminal")
 
 
@@ -897,7 +989,7 @@ def test_w0491_message_for_the_original_only_and_capped(schema_db_url, tmp_path)
     with pytest.raises(ValueError):
         center.dismiss(msg)
     assert msg.action.label == "Copy repair command" and msg.action.run() == "Copied"
-    assert copied == [repair_command(sources / "model.sqlite")]
+    assert copied == [repair_command(sources / "model.sqlite", shell=ms.repair_shell())]
     assert _open_project(store, source) is not None
     assert _open_project(store, source) is not None
     third = _center(store, source)

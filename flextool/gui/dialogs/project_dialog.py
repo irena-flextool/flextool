@@ -236,7 +236,7 @@ class ProjectDialog(tk.Toplevel):
     def _on_open(self) -> None:
         name = self._selected_project()
         if name is None:
-            message_box.tell(self, "Select a project first", "Click a project in the list, then press Open.")
+            message_box.tell(self, "Select a project first", "Click a project in the list, then press Open the selected project.")
             return
         self.result = name
         self.grab_release()

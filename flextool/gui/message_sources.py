@@ -22,6 +22,7 @@ its messages, texts included, from current facts at every recompute.  No Tk here
 """
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -40,6 +41,8 @@ from flextool.gui.messages import (
     database_key,
     project_key,
 )
+
+_logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from flextool.gui.input_sources import PlanningNote
@@ -147,9 +150,15 @@ REPAIR_LABEL = "Copy repair command"
 REPAIR_COPIED = "Copied"
 
 
+def repair_shell(os_name: str = os.name) -> str:
+    """The shell the copied repair command is written for: PowerShell on Windows (the default shell of Windows
+    Terminal; a cmd-quoted command fails there when the Python path has a space), a POSIX shell elsewhere."""
+    return "powershell" if os_name == "nt" else "posix"
+
+
 def repair_tooltip(os_name: str = os.name) -> str:
-    """Where to paste the copied repair command: cmd quoting on Windows (``repair_command``'s default)."""
-    return "Paste into Command Prompt" if os_name == "nt" else "Paste into a terminal"
+    """Where to paste the copied repair command (:func:`repair_shell`)."""
+    return "Paste into PowerShell" if os_name == "nt" else "Paste into a terminal"
 
 
 LIST_DEFAULTS_TITLE = "Shipped defaults lost in an old upgrade"
@@ -182,12 +191,21 @@ def update_text(offered: str, installed: str) -> tuple[str, tuple[str, ...]]:
         "install it.",)
 
 
+#: The W-0490 message when its text cannot be built for a database (the finding stands; the docs explain it).
+W0490_FALLBACK = ("Please check this database", (
+    "A bug in a library that FlexTool uses may have changed this database when it was upgraded. Open the "
+    "documentation to see what to check.",
+    "FlexTool's repair tool writes a repaired copy and leaves this file as it is: the Copy repair command button "
+    "copies the command to paste into a terminal.",
+    "This message stays until a repaired file is in its place."))
+
+
 # -- sources ---------------------------------------------------------------------------------------------------------
 def copy_repair_action(path: Path, clipboard: Callable[[str], None]) -> MessageAction:
-    """The "Copy repair command" button: puts ``repair_command(path)`` (the repair tool's one command builder,
-    default shell) on the clipboard; the button then reads "Copied" for a moment.  The GUI never runs the tool."""
+    """The "Copy repair command" button: puts ``repair_command(path, shell=repair_shell())`` (the repair tool's one
+    command builder) on the clipboard; the button then reads "Copied" for a moment.  The GUI never runs the tool."""
     def run() -> str:
-        clipboard(repair_command(path))
+        clipboard(repair_command(path, shell=repair_shell()))
         return REPAIR_COPIED
     return MessageAction(REPAIR_LABEL, run, tooltip=repair_tooltip())
 
@@ -201,7 +219,11 @@ def value_list_source(findings: Callable[[], Iterable[tuple[Path, list[Finding]]
 
         out = []
         for path, found in findings():
-            title, paragraphs = gui_message(found)
+            try:        # one database's text failing must not hide W-0490 for the others, nor for itself
+                title, paragraphs = gui_message(found)
+            except Exception:
+                _logger.exception("Message list: the W-0490 text of %s failed", path)
+                title, paragraphs = W0490_FALLBACK
             out.append(GuiMessage(_VALUE_LIST, database_key(path), Path(path).name, title, paragraphs,
                                   action=copy_repair_action(path, clipboard)))
         return out
@@ -216,9 +238,12 @@ def list_defaults_source(findings: Callable[[], Iterable[tuple[Path, LostDefault
     def source(_store: MessageStore) -> list[GuiMessage]:
         out = []
         for path, lost in findings():
-            title, paragraphs = list_defaults_text(lost.names)
-            out.append(GuiMessage(_LIST_DEFAULTS, database_key(path), Path(path).name, title, paragraphs,
-                                  instance=lost.empty_hash, action=copy_repair_action(path, clipboard)))
+            try:        # one database failing must not hide the others' messages
+                title, paragraphs = list_defaults_text(lost.names)
+                out.append(GuiMessage(_LIST_DEFAULTS, database_key(path), Path(path).name, title, paragraphs,
+                                      instance=lost.empty_hash, action=copy_repair_action(path, clipboard)))
+            except Exception:
+                _logger.exception("Message list: the W-0491 message of %s failed", path)
         return out
     return source
 

@@ -18,19 +18,24 @@ The store (``user_config_dir()/gui_messages.json``, one per user, never inside a
 "facts"}}, "dismissed": {"<id>|<instance>": date}, "shown": {"<id>|<instance>": n}}, "user": {..., "offered":
 {"version", "checked"}}}}``.
 
-- Subject keys: :func:`database_key` / :func:`project_key` (``"db:"`` / ``"project:"`` + ``normcase(abspath)``,
-  never ``resolve()``: on Windows that turns a mapped drive into its UNC path while the drive is online and leaves
+- Subject keys: :func:`database_key` / :func:`project_key` (``"db:"`` / ``"project:"`` + ``normcase(abspath)``
+  of the path the caller gives, never resolved here: on Windows that turns a mapped drive into its UNC path while the drive is online and leaves
   ``Z:\\...`` while it is offline, which would give one file two keys).  The same file reached through a drive
-  letter and through its UNC path still has two keys: FlexTool keys the path its input source list holds.  On
+  letter and through its UNC path still has two keys: FlexTool keys the path its input source list holds (for a
+  database outside the project folder that path is already resolved when it is added, so it is consistent).  On
   macOS ``normcase`` does nothing, so ``Model.sqlite`` and ``model.sqlite`` get two keys on its
   case-insensitive file system; that errs toward showing a message again and is accepted.
-- Pruning (at load): a database or project subject goes when its parent folder exists and the file (folder) does
-  not, or when it was last written (``updated``) more than :data:`PRUNE_DAYS` days ago.  An offline network drive
-  or an unplugged disk keeps its entries (its parent folder is missing too).
+- Pruning (at each project open): a database or project subject goes when it was last written (``updated``) more
+  than :data:`PRUNE_DAYS` days ago, or, only for subjects inside the opened project's folder, when its parent folder
+  exists and the file (folder) does not.  Paths elsewhere are never probed (an offline network drive can block a
+  file-system call for tens of seconds on Windows), so their entries go by age only.
 - Writes are read-modify-write (merged with the file, so two FlexTool windows keep each other's entries), through
   a temporary file and ``os.replace`` (retried once after a ``PermissionError``, which Windows raises while another
-  window reads the file).  A failed write keeps the change in memory and replays it at the next write.  A corrupt
-  file counts as empty (one log warning); a file of an unknown format is read as empty and never overwritten.
+  window reads the file).  A failed write keeps the change in memory and replays it at the next write; a change
+  that raises (it cannot apply to the file's content) is logged and dropped.  There is no lock: two windows writing
+  at the same moment can lose one dismissal or ``shown`` count (accepted).  A corrupt file counts as empty (one log
+  warning); entries of the wrong type inside a known-format file are dropped at read (the rest is kept); a file of
+  an unknown format is read as empty and never overwritten.
   Nothing here raises into the GUI except :meth:`MessageCenter.dismiss` of a non-dismissable message.
 
 Auto-show (``recompute(trigger)``; design §3.4, decisions 18 and 20)
@@ -54,7 +59,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
-from flextool.run_warnings.registry import DOCS_BASE_URL, docs_url
+from flextool.run_warnings.registry import DOCS_BASE_URL
 
 _logger = logging.getLogger(__name__)
 
@@ -76,7 +81,8 @@ class MessageSpec:
     dismissable: bool
     #: True: listed first, accent on the indicator, never capped; False: auto-show capped, dismissable or not.
     attention: bool
-    #: ``"W-0490"`` (a coded warning's section) or ``"page.md#anchor"`` (a page of ``docs/``).
+    #: ``"W-0490"`` (a coded warning's section) or ``"page.md#anchor"`` (a page of ``docs/``); the window opens it
+    #: with ``message_box.docs_url``.
     docs: str
 
 
@@ -144,11 +150,6 @@ def docs_page_url(ref: str) -> str:
     return DOCS_BASE_URL + path + (f"#{anchor}" if anchor else "")
 
 
-def message_docs_url(spec: MessageSpec) -> str:
-    """The web documentation of *spec*: a coded warning's section, or a page of ``docs/``."""
-    return docs_url(spec.docs) if spec.docs.startswith("W-") else docs_page_url(spec.docs)
-
-
 def _path_key(prefix: str, path: str | os.PathLike, pathmod: Any) -> str:
     return prefix + pathmod.normcase(pathmod.abspath(os.fspath(path)))
 
@@ -199,7 +200,7 @@ class MessageStore:
             self._warn("Message list: %s has an unknown format; it is left as it is.", self.path)
             self._writable = False
             return None
-        return {k: v for k, v in raw["subjects"].items() if isinstance(k, str) and isinstance(v, dict)}
+        return {k: _clean_subject(v) for k, v in raw["subjects"].items() if isinstance(k, str) and isinstance(v, dict)}
 
     def _section(self, subject: str, name: str) -> dict:
         value = self._data.get(subject, {}).get(name, {})
@@ -216,7 +217,8 @@ class MessageStore:
         return out
 
     def is_dismissed(self, msg: GuiMessage) -> bool:
-        return msg.store_key in self._section(msg.subject_key, "dismissed")
+        """Whether *msg* was dismissed (always ``False`` for a non-dismissable kind, whatever the file holds)."""
+        return msg.spec.dismissable and msg.store_key in self._section(msg.subject_key, "dismissed")
 
     def shown(self, msg: GuiMessage) -> int:
         value = self._section(msg.subject_key, "shown").get(msg.store_key, 0)
@@ -233,13 +235,10 @@ class MessageStore:
         replay it at the next write.  When the file cannot be read now, only the in-memory state changes."""
         fresh = self._read() if self._writable else None
         if fresh is None:
-            change(self._data)
-            if self._writable:
+            if _apply(change, self._data) and self._writable:
                 self._unsaved.append(change)    # replayed over the file at the next successful read
             return
-        self._unsaved.append(change)
-        for unsaved in self._unsaved:
-            unsaved(fresh)
+        self._unsaved = [c for c in (*self._unsaved, change) if _apply(c, fresh)]
         self._data = fresh
         if self._write(fresh):
             self._unsaved.clear()
@@ -265,7 +264,12 @@ class MessageStore:
             return False
 
     def _subject(self, data: dict, subject: str, label: str | None = None) -> dict:
-        entry = data.setdefault(subject, {})
+        entry = data.get(subject)
+        if not isinstance(entry, dict):
+            entry = data[subject] = {}
+        for name in _SECTIONS:
+            if not isinstance(entry.get(name, {}), dict):
+                entry[name] = {}
         if label is not None:
             entry["label"] = label
         entry["updated"] = self._today().isoformat()
@@ -303,7 +307,8 @@ class MessageStore:
         def change(data: dict) -> None:
             for msg in msgs:
                 shown = self._subject(data, msg.subject_key, msg.subject_label).setdefault("shown", {})
-                shown[msg.store_key] = int(shown.get(msg.store_key, 0)) + 1
+                old = shown.get(msg.store_key, 0)
+                shown[msg.store_key] = (old if isinstance(old, int) else 0) + 1
         self._mutate(change)
 
     def set_offered_version(self, version: str | None) -> None:
@@ -334,10 +339,12 @@ class MessageStore:
                     data[f"{prefix}:{new_path}{path[len(old_path):]}"] = entry
         self._mutate(change)
 
-    def prune(self) -> None:
-        """Drop the subjects of deleted files and those not written for :data:`PRUNE_DAYS` days (module docstring)."""
+    def prune(self, within: str | os.PathLike | None = None) -> None:
+        """Drop the subjects not written for :data:`PRUNE_DAYS` days, and the subjects of deleted files inside the
+        folder *within* (the opened project; ``None``: none is probed) (module docstring)."""
         pm = self._pathmod
         oldest = (self._today() - timedelta(days=PRUNE_DAYS)).isoformat()
+        root = pm.normcase(pm.abspath(os.fspath(within))).rstrip(pm.sep) if within is not None else None
 
         def gone(subject: str, entry: dict) -> bool:
             prefix, sep, path = subject.partition(":")
@@ -345,6 +352,8 @@ class MessageStore:
                 return False
             if str(entry.get("updated", "9999")) < oldest:
                 return True
+            if root is None or not (path == root or path.startswith(root + pm.sep)):
+                return False
             parent = pm.dirname(path.rstrip(pm.sep))
             try:
                 return pm.isdir(parent) and not pm.exists(path)
@@ -354,6 +363,30 @@ class MessageStore:
         stale = [s for s, e in self._data.items() if gone(s, e)]
         if stale:
             self._mutate(lambda data: [data.pop(s, None) for s in stale])
+
+
+_SECTIONS = ("pending", "dismissed", "shown", "offered")
+
+
+def _clean_subject(entry: dict) -> dict:
+    """*entry* with its sections of the wrong type dropped (a hand edit, a sync conflict): a section must be a dict,
+    a pending event a dict, a ``shown`` count an int."""
+    clean = {k: v for k, v in entry.items() if k not in _SECTIONS or isinstance(v, dict)}
+    if "pending" in clean:
+        clean["pending"] = {k: v for k, v in clean["pending"].items() if isinstance(v, dict)}
+    if "shown" in clean:
+        clean["shown"] = {k: v for k, v in clean["shown"].items() if isinstance(v, int) and not isinstance(v, bool)}
+    return clean
+
+
+def _apply(change: Callable[[dict], None], data: dict) -> bool:
+    """Apply *change* to *data*; a change that raises is logged and dropped (``False``), never raised to the GUI."""
+    try:
+        change(data)
+    except Exception:
+        _logger.exception("Message list: a change to the stored messages failed and is dropped")
+        return False
+    return True
 
 
 #: A source of messages (module docstring).
@@ -369,9 +402,9 @@ class MessageCenter:
 
     def __init__(self, store_path: Path, sources: Iterable[MessageSource], *,
                  rank: Callable[[str], int] | None = None, today: Callable[[], date] = date.today,
-                 pathmod: Any = os.path) -> None:
+                 pathmod: Any = os.path, project_dir: str | os.PathLike | None = None) -> None:
         self.store = MessageStore(store_path, today=today, pathmod=pathmod)
-        self.store.prune()
+        self.store.prune(within=project_dir)
         self.sources = list(sources)
         self._rank = rank or (lambda _key: 0)
         self.seen: set[str] = set()

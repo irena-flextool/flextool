@@ -4,9 +4,10 @@ Every box goes through ``flextool.gui.dialogs.message_box`` (``message_box.tell`
 attributes, so a test's monkeypatch reaches them).  An AST scan of all of ``flextool/**/*.py`` fails on any use of
 ``tkinter.messagebox`` however it is spelled (``import tkinter.messagebox as mb``, ``from tkinter import
 messagebox``, ``from tkinter.messagebox import showinfo``, ``tk.messagebox.showinfo``, a ``"tkinter.messagebox"``
-import by name), on ``from flextool.gui.dialogs.message_box import ask|tell``, and on any ``simpledialog`` use
+import by name, Tcl's own ``tk_messageBox`` / ``tk_dialog`` through ``.tk.call`` / ``.tk.eval``), on ``from flextool.gui.dialogs.message_box import ask|tell``, and on any ``simpledialog`` use
 outside the kept input prompts below.  ``flextool/env_check.py`` keeps native boxes: it runs before the GUI exists,
-with the standard library only (design §4.4).  A plain text grep misses the aliased and attribute spellings.
+with the standard library only (design §4.4).  Both allow-lists are exact: the number of native box calls in
+``env_check.py`` and of each kept prompt call per function are pinned.  A plain text grep misses the aliased and attribute spellings.
 Tk-free.
 """
 from __future__ import annotations
@@ -19,16 +20,18 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = ROOT / "flextool"
 
-#: Files that may use native ``tkinter.messagebox``.
-NATIVE_ALLOWED = {"flextool/env_check.py"}
+#: Files that may use native ``tkinter.messagebox``, and how many ``messagebox.<function>(...)`` calls each has.
+NATIVE_ALLOWED = {"flextool/env_check.py": 4}
 
-#: The kept input prompts (design decision 12): (file, function, simpledialog function).
+#: The kept input prompts (design decision 12): (file, function, simpledialog function) → number of calls.
 PROMPTS_ALLOWED = {
-    ("flextool/gui/main_window.py", "_on_combo_rename", "askstring"),
-    ("flextool/gui/main_window.py", "_on_freeze_source", "askstring"),
-    ("flextool/gui/main_window.py", "_on_font_size_custom", "askinteger"),
-    ("flextool/gui/main_window.py", "_on_code_font_size_custom", "askinteger"),
+    ("flextool/gui/main_window.py", "_on_combo_rename", "askstring"): 1,
+    ("flextool/gui/main_window.py", "_on_freeze_source", "askstring"): 1,
+    ("flextool/gui/main_window.py", "_on_font_size_custom", "askinteger"): 1,
+    ("flextool/gui/main_window.py", "_on_code_font_size_custom", "askinteger"): 1,
 }
+#: Tcl's native dialogs, reachable through ``widget.tk.call(...)`` / ``.tk.eval(...)`` without tkinter.messagebox.
+TCL_DIALOGS = ("tk_messageBox", "tk_dialog")
 PROMPT_FILES = {path for path, _function, _call in PROMPTS_ALLOWED}
 
 _BOX_MODULE = "flextool.gui.dialogs.message_box"
@@ -53,11 +56,14 @@ def _findings(source: str, rel: str) -> list[str]:
                     enclosing[child] = func.name
 
     allowed_prompt_nodes: set[int] = set()
+    used: dict[tuple[str, str, str], int] = {}
     for node in ast.walk(tree):
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and isinstance(node.func.value, ast.Name) and node.func.value.id == "simpledialog"
-                and (rel, enclosing.get(node, ""), node.func.attr) in PROMPTS_ALLOWED):
-            allowed_prompt_nodes.add(id(node.func.value))
+                and isinstance(node.func.value, ast.Name) and node.func.value.id == "simpledialog"):
+            triple = (rel, enclosing.get(node, ""), node.func.attr)
+            used[triple] = used.get(triple, 0) + 1
+            if used[triple] <= PROMPTS_ALLOWED.get(triple, 0):
+                allowed_prompt_nodes.add(id(node.func.value))
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -95,7 +101,16 @@ def _findings(source: str, rel: str) -> list[str]:
                 bad(node, f"string {node.value!r}")
             if node.value in ("tkinter.simpledialog", "simpledialog"):
                 bad(node, f"string {node.value!r}")
+            if any(name in node.value for name in TCL_DIALOGS):
+                bad(node, f"Tcl dialog in string {node.value!r}")
     return found
+
+
+def native_calls(source: str) -> int:
+    """The number of ``messagebox.<function>(...)`` calls in *source*."""
+    return sum(1 for node in ast.walk(ast.parse(source))
+               if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+               and isinstance(node.func.value, ast.Name) and node.func.value.id == "messagebox")
 
 
 def test_no_native_message_box_in_flextool() -> None:
@@ -108,9 +123,15 @@ def test_no_native_message_box_in_flextool() -> None:
     assert not findings, "native boxes left (use flextool.gui.dialogs.message_box):\n" + "\n".join(findings)
 
 
+def test_the_native_boxes_of_env_check_are_pinned() -> None:
+    """A new native box in env_check.py (or a removed one: a stale count) is a visible test edit."""
+    for rel, count in NATIVE_ALLOWED.items():
+        assert native_calls((ROOT / rel).read_text(encoding="utf-8")) == count, rel
+
+
 def test_the_kept_prompts_still_exist() -> None:
-    """A stale allow-list entry would let a new prompt in under an old name: each entry must match a call."""
-    seen: set[tuple[str, str, str]] = set()
+    """A stale allow-list entry would let a new prompt in under an old name: each entry must match its calls."""
+    seen: dict[tuple[str, str, str], int] = {}
     for rel in PROMPT_FILES:
         tree = ast.parse((ROOT / rel).read_text(encoding="utf-8"))
         for func in ast.walk(tree):
@@ -118,8 +139,9 @@ def test_the_kept_prompts_still_exist() -> None:
                 for node in ast.walk(func):
                     if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                             and isinstance(node.func.value, ast.Name) and node.func.value.id == "simpledialog"):
-                        seen.add((rel, func.name, node.func.attr))
-    assert PROMPTS_ALLOWED <= seen, PROMPTS_ALLOWED - seen
+                        triple = (rel, func.name, node.func.attr)
+                        seen[triple] = seen.get(triple, 0) + 1
+    assert {k: seen.get(k, 0) for k in PROMPTS_ALLOWED} == PROMPTS_ALLOWED
 
 
 @pytest.mark.parametrize("snippet", [
@@ -138,6 +160,8 @@ def test_the_kept_prompts_still_exist() -> None:
     "from flextool.gui.dialogs.message_box import tell as say",
     "from flextool.gui.dialogs.message_box import *",
     "import flextool.gui.dialogs.message_box as mbx",
+    "import tkinter as tk\ntk.Tk().tk.call('tk_messageBox', '-message', 'hi')",
+    "def f(w):\n    w.tk.eval('tk_dialog .d Title Text {} 0 OK')",
 ])
 def test_the_scan_catches_every_spelling(snippet: str) -> None:
     assert _findings(snippet, "flextool/gui/somewhere.py"), snippet
@@ -149,5 +173,6 @@ def test_the_scan_allows_the_box_and_the_kept_prompts() -> None:
     assert _findings("from tkinter import messagebox\nmessagebox.showerror('a', 'b')", "flextool/env_check.py") == []
     prompt = "from tkinter import simpledialog\ndef _on_combo_rename(self):\n    simpledialog.askstring('a', 'b')\n"
     assert _findings(prompt, "flextool/gui/main_window.py") == []
-    # The same prompt in another function of that file is not allowed.
+    # The same prompt in another function of that file is not allowed, nor a second one in the same function.
     assert _findings(prompt.replace("_on_combo_rename", "_on_other"), "flextool/gui/main_window.py")
+    assert _findings(prompt + "    simpledialog.askstring('c', 'd')\n", "flextool/gui/main_window.py")

@@ -8,7 +8,8 @@
   it calls :meth:`MessageCenter.window_closed` once with every message it listed.
 * :class:`MessageListController` — what ``main_window.py`` holds: one :class:`MessageCenter` per open project, the
   indicator button, the one window, and the deferred auto-show (after idle, then once the main window is viewable
-  — retried every 250 ms for at most 5 s — and no grab is held — retried every 250 ms as long as it is).  An open
+  — retried every 250 ms for at most 5 s from the first try that finds it hidden — and no grab is held — retried
+  every 250 ms as long as it is; when the message it was for is gone by then, nothing opens).  An open
   window is updated in place by :meth:`MessageListController.recompute`, never raised.
 
 Widget names (tests find them with ``nametowidget``): ``header.position``, ``header.previous``, ``header.next``,
@@ -20,22 +21,18 @@ from __future__ import annotations
 import logging
 import time
 import tkinter as tk
-import tkinter.font as tkfont
-import webbrowser
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from tkinter import ttk
 
+from flextool.gui.dialogs import message_box
 from flextool.gui.dialogs._modal_base import ModalBase
 from flextool.gui.hover_tooltip import attach_tooltip
 from flextool.gui.messages import (
-    STORE_NAME, GuiMessage, MessageCenter, MessageSource, Trigger, database_key, message_docs_url,
+    STORE_NAME, GuiMessage, MessageCenter, MessageSource, Trigger, database_key,
 )
 
 logger = logging.getLogger(__name__)
-
-#: Opens the documentation (a test replaces it).
-open_url: Callable[[str], object] = webbrowser.open
 
 BODY_LINES = 12
 EMPTY_TITLE = "No messages."
@@ -70,12 +67,7 @@ class MessageListWindow(ModalBase):
         self.listed: set[str] = set()
         self.index = 0
         self.current: GuiMessage | None = None
-        self._closed = False
         self._note_after: str | None = None
-        bold = self.text_fonts["bold"]
-        size = int(bold.actual("size"))
-        self._heading_font = tkfont.Font(self, font=bold)
-        self._heading_font.configure(size=size - 1 if size < 0 else size + 1)
         wrap = self.cw * 60
         self.body.columnconfigure(0, minsize=wrap)
 
@@ -96,7 +88,7 @@ class MessageListWindow(ModalBase):
         self.content = ttk.Frame(self.body, name="content")
         self.content.grid(row=2, column=0, sticky="new")
         self.body.rowconfigure(2, minsize=self.lh * BODY_LINES)
-        self.title_label = ttk.Label(self.content, name="title", font=self._heading_font, wraplength=wrap,
+        self.title_label = ttk.Label(self.content, name="title", font=self.text_fonts["bold"], wraplength=wrap,
                                      justify="left")
         self.title_label.pack(anchor="w")
         self.subject_label = ttk.Label(self.content, name="subject", font=self.text_fonts["base"],
@@ -202,10 +194,6 @@ class MessageListWindow(ModalBase):
             ttk.Label(self.text, text=paragraph, font=self.text_fonts["base"], wraplength=self.cw * 60,
                       justify="left").pack(anchor="w", fill="x", pady=(self.lh // 2, 0))
 
-    def refresh_list(self) -> None:
-        """The center recomputed: show its messages in place (no raise, no focus)."""
-        self.render()
-
     # -- buttons ---------------------------------------------------------------------------------------------------
     def page(self, step: int) -> str:
         if self.messages:
@@ -216,14 +204,18 @@ class MessageListWindow(ModalBase):
 
     def _open_docs(self) -> None:
         if self.current is not None:
-            open_url(message_docs_url(self.current.spec))
+            message_box.open_url(message_box.docs_url(self.current.spec.docs))
 
     def _run_action(self) -> None:
         """Run the message's action; a text it returns ("Copied") shows on the button for 2 s."""
         msg = self.current
         if msg is None or msg.action is None:
             return
-        note = msg.action.run()
+        try:
+            note = msg.action.run()
+        except Exception:           # an offline drive while resolving a path, a clipboard error
+            logger.exception("Message list: the %r action failed", msg.action.label)
+            note = "Not copied" if msg.action.label.startswith("Copy") else "Failed"
         if isinstance(note, str) and note:
             self._cancel_note()
             self.action_button.configure(text=note)
@@ -267,22 +259,19 @@ class MessageListWindow(ModalBase):
                 logger.exception("Message list: updating the indicator failed")
 
     def _on_destroy(self, event: tk.Event) -> None:  # type: ignore[type-arg]
-        if event.widget is not self or self._closed:
+        if event.widget is not self:
             return
-        self._closed = True
         self._cancel_note()
         if self.center is not None:
             self.center.window_closed(self.listed, opened_by=self.opened_by)
-        try:
-            self.tk.call("font", "delete", self._heading_font.name)
-        except tk.TclError:
-            pass
-        self._heading_font.delete_font = False      # deleted here, on the Tk thread
         self._changed()
 
     @property
     def closed(self) -> bool:
-        return self._closed
+        try:
+            return not self.winfo_exists()
+        except tk.TclError:
+            return True
 
 
 class MessageListController:
@@ -299,7 +288,7 @@ class MessageListController:
         self._ranks: dict[str, int] = {}
         self._pending: tuple[str, Trigger] | None = None
         self._pending_after: str | None = None
-        self._waiting_since = 0.0
+        self._waiting_since: float | None = None
         if button is not None:
             button.configure(text=indicator_text(0), command=self.open_from_indicator)
             attach_tooltip(button, INDICATOR_TOOLTIP)
@@ -312,12 +301,14 @@ class MessageListController:
         return user_config_dir() / STORE_NAME
 
     # -- project ---------------------------------------------------------------------------------------------------
-    def open_project(self, project: str, sources: Iterable[MessageSource] = ()) -> None:
-        """A project was opened (also at GUI start): close the old list, start a new center (nothing seen)."""
+    def open_project(self, project: str, sources: Iterable[MessageSource] = (), *,
+                     folder: Path | None = None) -> None:
+        """A project was opened (also at GUI start): close the old list, start a new center (nothing seen).
+        *folder* is the project's folder: only stored paths inside it are probed when pruning."""
         self.close()
         self.project = project
         try:
-            self.center = MessageCenter(self.store_path(), sources, rank=self._rank)
+            self.center = MessageCenter(self.store_path(), sources, rank=self._rank, project_dir=folder)
         except Exception:           # the message list must never stop a project from opening
             logger.exception("Message list: cannot start for project %s", project)
             self.center = None
@@ -345,10 +336,10 @@ class MessageListController:
             logger.exception("Message list: recompute failed")
             return
         if self.window is not None:
-            self.window.refresh_list()          # in place, never raised
+            self.window.render()                # in place, never raised
         elif key is not None and self._pending is None:
             self._pending = (key, trigger)
-            self._waiting_since = time.monotonic()
+            self._waiting_since = None
             self._schedule(idle=True)
         self.update_indicator()
 
@@ -382,23 +373,19 @@ class MessageListController:
         except (tk.TclError, KeyError):
             self._pending = None
             return
-        if not viewable:
-            if time.monotonic() - self._waiting_since < VIEWABLE_WAIT_S:
-                self._schedule()
-            else:
+        if not viewable:        # the clock starts here, not at recompute (a slow first map at GUI start)
+            if self._waiting_since is None:
+                self._waiting_since = time.monotonic()
+            elif time.monotonic() - self._waiting_since >= VIEWABLE_WAIT_S:
                 self._pending = None
-            return
-        if grabbed:             # another form is modal: wait as long as it holds the grab
+                return
+        if not viewable or grabbed:     # hidden, or another form is modal (wait as long as it holds the grab)
             self._schedule()
             return
         key, trigger = self._pending
         self._pending = None
-        keys = {m.key for m in self.center.messages}
-        if key not in keys:
-            key = next((m.key for m in self.center.messages if m.key not in self.center.seen), None)
-            if key is None:
-                return
-        self._open(trigger, key)
+        if any(m.key == key for m in self.center.messages):     # gone meanwhile: the next recompute decides
+            self._open(trigger, key)
 
     # -- the window ------------------------------------------------------------------------------------------------
     def _open(self, opened_by: Trigger | None, key: str | None) -> None:

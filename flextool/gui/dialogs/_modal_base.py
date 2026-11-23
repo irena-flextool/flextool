@@ -60,15 +60,22 @@ def raise_parent(parent: tk.Misc) -> None:
         pass
 
 
+#: The started, not yet released :class:`ModalGrab` objects, oldest first (Tk thread only).
+_ACTIVE: list[ModalGrab] = []
+
+
 class ModalGrab:
     """The modal grab of *dialog*: taken once the dialog is viewable, the grab it replaced given back on release.
 
-    :meth:`start` remembers the window that holds the grab now (another dialog), then tries every 20 ms until the
-    dialog is viewable and ``grab_set`` works, or 5 s have passed (a dialog that is never mapped: a log line, no
-    grab).  ``grab_set`` is never called on a dialog that is not viewable yet (it raises there, and a window manager
-    may map the dialog later than xvfb does).  :meth:`release` drops the grab and gives the remembered one back when
-    that window still exists; the dialog's ``<Destroy>`` does the same, so a dialog destroyed with its parent leaves
-    no grab behind.
+    Started grabs form a stack (:data:`_ACTIVE`): the last started one is the one that may hold the grab.
+    :meth:`start` puts the dialog on top (and remembers a grab held now by a window that is not on the stack), then
+    tries every 20 ms until the dialog is viewable and ``grab_set`` works, or 5 s have passed (a dialog that is never
+    mapped: a log line, no grab).  ``grab_set`` is never called on a dialog that is not viewable yet (it raises
+    there, and a window manager may map the dialog later than xvfb does), nor while a later-started grab is on the
+    stack, so an earlier dialog's late retry cannot take the grab from a box opened over it.  :meth:`release` drops
+    the grab and hands it to the new top of the stack (which tries again as at start), or, with an empty stack, back
+    to the remembered window when it still exists; the dialog's ``<Destroy>`` does the same, so a dialog destroyed
+    with its parent leaves no grab behind.
     """
 
     def __init__(self, dialog: tk.Toplevel, *, focus: Callable[[], tk.Misc | None] | None = None) -> None:
@@ -87,13 +94,22 @@ class ModalGrab:
             current = self.dialog.grab_current()
         except (tk.TclError, KeyError):
             current = None
-        self._previous = current if current is not None and current is not self.dialog else None
+        stacked = {id(g.dialog) for g in _ACTIVE}
+        self._previous = (current if current is not None and current is not self.dialog
+                          and id(current) not in stacked else None)
+        if self not in _ACTIVE:
+            _ACTIVE.append(self)
+        self._resume()
+
+    def _resume(self) -> None:
         self._started = time.monotonic()
         self._try()
 
     def _try(self) -> None:
         dialog = self.dialog
         if self._released or dialog is None or not self._exists(dialog):
+            return
+        if _ACTIVE and _ACTIVE[-1] is not self:     # a later dialog is over this one: it hands the grab back
             return
         try:
             if not dialog.winfo_viewable():
@@ -124,6 +140,9 @@ class ModalGrab:
         if self._released:
             return
         self._released = True
+        was_top = bool(_ACTIVE) and _ACTIVE[-1] is self
+        if self in _ACTIVE:
+            _ACTIVE.remove(self)
         if self.held and self.dialog is not None:
             try:
                 self.dialog.grab_release()
@@ -135,6 +154,10 @@ class ModalGrab:
         # The dialog no longer needs its grab: dropping the references keeps a closed dialog from being held by it.
         self.dialog = None
         self._focus = None
+        if _ACTIVE:
+            if was_top:
+                _ACTIVE[-1]._resume()
+            return
         if previous is not None and self._exists(previous):
             try:
                 previous.grab_set()

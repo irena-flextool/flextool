@@ -227,7 +227,7 @@ def test_escape_and_the_window_button_close(host, center3) -> None:
 @gui
 def test_docs_button_opens_the_section_and_the_window_stays(host, center3, monkeypatch) -> None:
     opened: list[str] = []
-    monkeypatch.setattr(mlw, "open_url", opened.append)
+    monkeypatch.setattr(mlw.message_box, "open_url", opened.append)
     window = MessageListWindow(host, center3)
     try:
         pump(window, lambda: bool(window.winfo_viewable()))
@@ -381,6 +381,46 @@ def test_a_pending_auto_show_is_cancelled_by_close(controller, host, tmp_path) -
     controller.close()
     pump(host, timeout=0.4)
     assert controller.window is None and controller._pending is None
+
+
+@gui
+def test_a_pending_auto_show_whose_message_is_gone_opens_nothing(controller, host, tmp_path) -> None:
+    """Rule: the deferred open is for one message; when it is gone by then, the next recompute decides (here: an
+    unseen "upgraded" note under trigger "other" would never open the list by itself)."""
+    a, b = _db(tmp_path, "a.sqlite"), _db(tmp_path, "b.sqlite")
+    states = [_check(a)]
+    controller.open_project("P", sources=[lambda _s: list(states), _upgraded_source])
+    form = tk.Toplevel(host)
+    form.geometry("200x100+60+60")
+    pump(form, lambda: bool(form.winfo_viewable()))
+    form.grab_set()
+    try:
+        controller.recompute("other")                       # a new attention message: an open is pending
+        states.clear()                                      # the file became readable meanwhile
+        controller.center.post_event("database_upgraded", b, "b.sqlite", run="r1")
+        controller.center.recompute("other")
+    finally:
+        form.grab_release()
+        form.destroy()
+    pump(host, timeout=0.6)
+    assert controller.window is None and controller._pending is None
+
+
+@gui
+def test_the_viewable_wait_starts_at_the_first_try_not_at_recompute(controller, host, tmp_path, monkeypatch) -> None:
+    """A slow start (the rest of MainWindow.__init__ between recompute and the first try) must not use up the 5 s."""
+    a = _db(tmp_path, "a.sqlite")
+    clock = [1000.0]
+    monkeypatch.setattr(mlw, "time", SimpleNamespace(monotonic=lambda: clock[0]))      # this module only
+    controller.open_project("P", sources=[lambda _s: [_check(a)]])
+    host.withdraw()
+    controller.recompute("project_open")
+    clock[0] += 60.0                                        # a minute passes before the first try
+    pump(host, timeout=0.6)
+    assert controller.window is None and controller._pending is not None
+    host.deiconify()
+    pump(host, lambda: controller.window is not None, timeout=2)
+    assert controller.window.opened_by == "project_open"
 
 
 # ── main_window wiring (Tk-free: unbound methods on stand-in hosts) ────────────────────────────────────────────

@@ -2124,7 +2124,8 @@ class MainWindow(tk.Tk):
         if getattr(self, "_messages", None) is not None:
             from flextool.gui.message_sources import project_sources
 
-            self._messages.open_project(name, sources=project_sources(self, project_path, name))
+            self._messages.open_project(name, sources=project_sources(self, project_path, name),
+                                        folder=project_path)
             if solver_defaults_reset and self._messages.center is not None:
                 from datetime import datetime
 
@@ -2862,7 +2863,7 @@ class MainWindow(tk.Tk):
         answer = message_box.ask(
             self, "Delete the old results?",
             f"{_folders(len(folders))} of input source {number}, which no longer exists:",
-            message_box.name_list(names),
+            message_box.all_names(names),
             "Deleting cannot be undone.",
             buttons=(("Delete", "delete"), ("Cancel", None)), kind="danger",
         )
@@ -3295,10 +3296,11 @@ class MainWindow(tk.Tk):
 
         if failures:
             message_box.tell(
-                self, "The database upgrade failed: see the Execution window",
-                "FlexTool could not upgrade these databases. Each was put back as it was where possible:",
+                self, "The database upgrade failed",
+                "These problems stopped the upgrade:",
                 message_box.name_list(failures),
-                "The full log is in the Execution window.",
+                "A database whose upgrade failed was put back as it was where possible. The full log is in the "
+                "Execution window.",
                 kind="error", docs=_DOCS_MIGRATION,
             )
         if copy_errors:
@@ -4936,18 +4938,21 @@ class MainWindow(tk.Tk):
         if local_names:
             paragraphs += [
                 f"These files are deleted from the input_sources folder of project {self.current_project}:",
-                message_box.name_list(local_names),
+                message_box.all_names(local_names),
             ]
         if external_names:
             paragraphs += [
                 "These external files are removed from the project; the files themselves stay where they are:",
-                message_box.name_list(external_names),
+                message_box.all_names(external_names),
             ]
         if local_names:
             paragraphs.append("Deleting cannot be undone.")
+            verb = "Delete"
+        else:
+            verb = "Remove"     # nothing is deleted: the external files are only unlinked
         if message_box.ask(
-            self, "Delete this input source?" if len(names) == 1 else "Delete these input sources?",
-            *paragraphs, kind="danger",
+            self, f"{verb} this input source?" if len(names) == 1 else f"{verb} these input sources?",
+            *paragraphs, buttons=((verb, "delete"), ("Cancel", None)), kind="danger",
         ) != "delete":
             return
 
@@ -5948,9 +5953,9 @@ class MainWindow(tk.Tk):
         if message_box.ask(
             self, "Delete these results?",
             "All output files of these scenarios are deleted (parquet, plots, Excel, CSV):",
-            message_box.name_list([name for _, name in selected_ids]),
+            message_box.all_names([name for _, name in selected_ids]),
             "This cannot be undone.",
-            kind="danger",
+            buttons=(("Delete", "delete"), ("Cancel", None)), kind="danger",
         ) != "delete":
             return
 

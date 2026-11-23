@@ -39,7 +39,7 @@ def ask_external_migration_consent(
     answer = message_box.ask(
         parent, "Upgrade files outside the project?",
         f"These files are outside the project folder, and this FlexTool needs data version {target_version}:",
-        message_box.name_list(lines),
+        message_box.all_names(lines),
         "Upgrading changes the files. Upgrade them where they are, or copy them into the project and upgrade the "
         "copies.",
         buttons=(("Upgrade in place", "in_place"), ("Copy into project and upgrade", "copy_to_project"),
