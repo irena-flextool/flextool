@@ -11,6 +11,11 @@
   with only its own side balanced, a free source in one region, so the investments came out wrong (or, with an
   investment in the unit, the solve stopped with an internal error). A unit with one input and one output between
   two regions is cut between the regions like a connection, as before.
+- Benders with a `no_losses_no_variable_cost` connection between two regions (or between a region and the master)
+  now models its reverse direction. Before, each region subproblem got a free, unlimited source at one end of the
+  connection: the investments were wrong and the final solve paid unserved energy for it. Results of such models
+  change. A DC power-flow line (`dc_power_flow_with_angles`) between regions is now refused with an error saying
+  how to fix the model; before, it ran without its angle coupling.
 
 ### New features
 
