@@ -151,9 +151,11 @@ def realized_analysis_times(info: list, timeline: list[tuple[str, str]], start: 
     solve (or roll) that runs ``dispatch_realization_method`` ``deterministic`` reads its realized branch through,
     flattened into one timeline (``_pdt_lookup.ts_tiers``, ``read_first`` = ``flat``).
 
-    Distance is counted in steps of *timeline*, the ``(period, step)`` order of the whole solve (every roll), so
-    an analysis time before a roll's start counts as well; of two at the same distance the earlier one comes
-    first.  A row whose ``(period, analysis time)`` is not on *timeline* is left out; each step is listed once.
+    Distance is counted in steps of *timeline*, the ``(period, step)`` order of the full timeline of every period
+    of the solve (all steps of each period's timeline, also those no roll uses), so an analysis time before the
+    solve's or a roll's start counts as well; of two at the same distance the earlier one comes first.  Whether a
+    series covers a step is checked later (``_check_pre_reveal_reads_have_forecast``).  A row whose
+    ``(period, analysis time)`` is not on *timeline* is left out; each step is listed once.
     """
     position = {ps: i for i, ps in enumerate(timeline)}
     origin = position[start]

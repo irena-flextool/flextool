@@ -1844,13 +1844,27 @@ def native_run_model(state, solver) -> int:
     # the nearest realized series that covers it; a step none covers is an
     # input error (``_check_pre_reveal_reads_have_forecast``).  Rolls only cut
     # that timeline.  No fan: no fan start, no branch weight but the self row's.
+    # Distance to the roll's start is counted on each period's full timeline
+    # (every step of the timeline of the period's timeset, also those the
+    # solve does not use), so a realized series made before the solve's
+    # first step is read; a step it does not cover is left to the coverage
+    # check.
     deterministic_branches = getattr(state.solve, "deterministic_branches", None) or {}
     flat_time_start_lists: dict[str, list[tuple[str, str]]] = {}
-    _det_timelines: dict[str, dict[tuple[str, str], None]] = {}
+    _det_active: dict[str, dict[str, dict[str, None]]] = {}
     for _s in all_solves:
         if complete_solve[_s] in deterministic_branches:
-            _det_timelines.setdefault(complete_solve[_s], {}).update(dict.fromkeys(
-                (_p, _e.timestep) for _p, _ats in active_time_lists[_s].items() for _e in _ats))
+            _by_period = _det_active.setdefault(complete_solve[_s], {})
+            for _p, _ats in active_time_lists[_s].items():
+                _by_period.setdefault(_p, {}).update(dict.fromkeys(_e.timestep for _e in _ats))
+    _det_timelines: dict[str, dict[tuple[str, str], None]] = {}
+    for _c, _by_period in _det_active.items():
+        _timeset_of = dict(state.solve.timesets_used_by_solves.get(_c, []))
+        _line = _det_timelines.setdefault(_c, {})
+        for _p, _active in _by_period.items():
+            _tl = state.timeline.timesets__timeline.get(_timeset_of.get(_p))
+            _full = [_step for _step, *_ in state.timeline.timelines.get(_tl, [])]
+            _line.update(dict.fromkeys((_p, _step) for _step in (_full if set(_active) <= set(_full) else _active)))
     for _s in all_solves:
         _info = deterministic_branches.get(complete_solve[_s])
         _steps = [(_p, _e.timestep) for _p, _ats in active_time_lists[_s].items() for _e in _ats]
@@ -1861,9 +1875,10 @@ def native_run_model(state, solver) -> int:
             _name = state.solve.map2d_duplicate_of.get(complete_solve[_s], (complete_solve[_s],))[0]
             raise FlexToolConfigError(
                 f"Solve '{_name}' has stochastic_branches and dispatch_realization_method deterministic, but no "
-                "realized: yes row of its stochastic_branches starts at a time step of the solve, so it has no "
-                "realized series to read. Give the realized: yes rows the analysis_time of a time step the "
-                "solve uses, or set dispatch_realization_method within_solve or separate_dispatch.")
+                "realized: yes row of its stochastic_branches starts at a time step of the timeline of its "
+                "periods, so it has no realized series to read. Give the realized: yes rows the analysis_time "
+                "of a time step of that timeline, or set dispatch_realization_method within_solve or "
+                "separate_dispatch.")
         _branch = next(row[1] for row in _info if row[3] == "yes")
         branch_start_time_lists[_s] = None
         solve_branch__time_branch_lists[_s] = [(_d, _branch) for _d in active_time_lists[_s]]

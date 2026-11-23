@@ -657,8 +657,9 @@ def add_constraints(b: "_Build") -> None:
     # relaxes any predecessor the parent had, so the pinned commitment stays feasible.  A later roll carries the
     # previous realization's units online in both stages (the stochastic roll k and realization roll k).
     # A unit pinned > 0 at a step of B (B as in minimum_uptime; an outage only the realized data have) keeps its
-    #   pins before the first such step and loses them there and at every later step: it is decided again under its
-    #   own rows from the outage on (flex_data.carried_obligations_yield_to_outages, W-0592).
+    #   pins before the first such step and loses them there and at every later step it reaches along the timeline
+    #   (dt_ramp_link): it is decided again under its own rows from the outage on
+    #   (flex_data.carried_obligations_yield_to_outages, W-0592).
     # Only declared v_online cells are pinned.  p_fix_online is Utf8-keyed: it is joined to
     # the native-typed index through Utf8 copies of (p, d, t).
     if d.p_fix_online is not None and d.p_fix_online.frame.height > 0:

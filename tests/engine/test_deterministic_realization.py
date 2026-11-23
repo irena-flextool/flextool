@@ -43,11 +43,11 @@ def _made_at(at: str) -> dict[str, float]:
 
 def _spec(*, stochastic: bool, rolling: bool | tuple[float, float] = False, realized_row: bool = True,
           method: str | None = None, forecasts: "dict[str, tuple[str, ...]] | None" = None,
-          plain: "dict[str, float] | None" = None) -> dict:
+          plain: "dict[str, float] | None" = None, start: str = "t01") -> dict:
     """The model; *stochastic*: ``stochastic_branches`` with the forecasts made at the analysis times of
     *forecasts* (``{analysis time: steps it covers}``, default t01 over all steps) and the profile as a branch map,
     else *plain* (default the series made at t01) as a plain profile.  *rolling*: ``(jump, horizon)``, ``True`` =
-    ``(2, 4)``."""
+    ``(2, 4)``.  *start*: the first step of the timeset (it runs to t06)."""
     forecasts = forecasts or {"t01": STEPS}
     plain = plain or _made_at("t01")
     from flextool.update_flextool.fixture_schema import schema_sections
@@ -78,7 +78,8 @@ def _spec(*, stochastic: bool, rolling: bool | tuple[float, float] = False, real
         ["timeline", "tl", "timestep_duration", pack(pmap([(t, 1.0) for t in STEPS], index_name="time"), "map"),
          "init"],
         ["timeset", "ts", "timeline", pack("tl", "str"), "init"],
-        ["timeset", "ts", "timeset_duration", pack(pmap([("t01", 6.0)], index_name="time"), "map"), "init"],
+        ["timeset", "ts", "timeset_duration", pack(pmap([(start, 7.0 - int(start[1:]))], index_name="time"),
+                                                    "map"), "init"],
         ["node", "elec", "node_type", pack("balance", "str"), "init"],
         ["node", "elec", "penalty_up", pack(10000.0, "float"), "init"],
         ["node", "elec", "penalty_down", pack(10000.0, "float"), "init"],
@@ -175,6 +176,32 @@ def test_rolling_deterministic_solve_reads_one_flattened_timeline(tmp_path_facto
     case, _ = scm.run_spec(_spec(stochastic=True, rolling=True, forecasts=ABUTTING), tmp_path_factory.mktemp("case"))
     oracle, _ = scm.run_spec(_spec(stochastic=False, rolling=True, plain=flattened), tmp_path_factory.mktemp("oracle"))
     assert [s for s, _, _ in case] == ["st"] * 3
+    _assert_same_lp(case, oracle)
+
+
+def test_realized_series_made_before_the_solve_starts(tmp_path_factory) -> None:
+    """The timeset starts at t03 (t03..t06) and the only realized series is made at t01 (two steps before the
+    solve's first step, off its active steps) over t01..t06: it covers every step, so the solve reads its values at
+    t03..t06 (0.22, 0.62, 0.42, 0.12 -- REAL + 0 for t01) -- the LP of the plain profile made at t01 on the same
+    timeset."""
+    case, _ = scm.run_spec(_spec(stochastic=True, start="t03"), tmp_path_factory.mktemp("case"))
+    oracle, _ = scm.run_spec(_spec(stochastic=False, start="t03"), tmp_path_factory.mktemp("oracle"))
+    assert [s for s, _, _ in case] == ["st"]
+    _assert_same_lp(case, oracle)
+
+
+def test_rolling_reads_the_nearer_later_series_first(tmp_path_factory) -> None:
+    """Rolls t01..t03 and t04..t06 (jump 3, horizon 3); series made at t01 (over t01..t06) and at t05 (over
+    t05..t06).  Roll 2 starts at t04: t05 is one step away, t01 three, so t05's series is read first where it
+    covers (t05: 0.4 + 0.04 = 0.44, t06: 0.1 + 0.04 = 0.14) and t01's at t04 (0.6).  Roll 1 reads t01's (distance
+    0).  A rule "the latest made at or before the start" would read t01's 0.4 / 0.1 at t05 / t06 instead."""
+    forecasts = {"t01": STEPS, "t05": ("t05", "t06")}
+    flattened = {t: _real("t05" if t in ("t05", "t06") else "t01", t) for t in STEPS}
+    case, _ = scm.run_spec(_spec(stochastic=True, rolling=(3.0, 3.0), forecasts=forecasts),
+                           tmp_path_factory.mktemp("case"))
+    oracle, _ = scm.run_spec(_spec(stochastic=False, rolling=(3.0, 3.0), plain=flattened),
+                             tmp_path_factory.mktemp("oracle"))
+    assert [s for s, _, _ in case] == ["st"] * 2
     _assert_same_lp(case, oracle)
 
 
