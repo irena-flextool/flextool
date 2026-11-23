@@ -1280,20 +1280,21 @@ def node_profile_fixed(source: "InputSource") -> pl.DataFrame:
 # §1.10 — Online / min_load Projections
 # ---------------------------------------------------------------------------
 
-def _online_by_startup(source: "InputSource", methods: tuple[str, ...]) -> pl.DataFrame:
-    """Modelled units and connections whose startup method is in ``methods``.  Schema: ``[p]``.
+def _online_by_startup(source: "InputSource", methods: tuple[str, ...], *, fix_in_uc: bool = False) -> pl.DataFrame:
+    """Modelled units and connections whose startup method is in ``methods`` (with ``fix_in_uc``: only those whose
+    ``startup_method`` is a ``_fix_in_uc`` member).  Schema: ``[p]``.
 
-    The startup method is the classifier's (``_derived._classify_process_method``): ``startup_method`` of units
-    and connections, promoted to ``linear`` by a unit's ``minimum_time_method``; processes whose method triplet
-    is not modelled are left out.  Online-ness comes from the startup method, not from the internal method, so a
-    two-way connection keeps its flow shape (and ``exact`` its direction switch).
+    The startup method is the classifier's (``_derived._classify_process_method``): the startup class of
+    ``startup_method`` of units and connections, promoted to ``linear`` by a unit's ``minimum_time_method``;
+    processes whose method triplet is not modelled are left out.  Online-ness comes from the startup method, not
+    from the internal method, so a two-way connection keeps its flow shape (and ``exact`` its direction switch).
     """
     from flextool.engine.preprocess.params._derived import _classify_process_method
     classified = _classify_process_method(source)
     if classified.height == 0:
         return _empty({"p": pl.Utf8})
     return (classified.lazy()
-              .filter(pl.col("startup").is_in(list(methods)))
+              .filter(pl.col("startup").is_in(list(methods)) & (pl.col("fix_in_uc") | (not fix_in_uc)))
               .select(alias_to_axis("p", "p"))
               .unique()
               .sort("p")
@@ -1314,6 +1315,13 @@ def process_online_linear(source: "InputSource") -> pl.DataFrame:
 def process_online_integer(source: "InputSource") -> pl.DataFrame:
     """Units and connections with a binary startup method.  Schema: ``[p]``."""
     return _online_by_startup(source, ("binary",))
+
+
+def process_online_fix_in_uc(source: "InputSource") -> pl.DataFrame:
+    """Units and connections with online variables whose ``startup_method`` is ``linear_fix_in_uc`` or
+    ``integer_fix_in_uc``: a separate realization solve keeps their units online at the stochastic solve's value.
+    Schema: ``[p]``."""
+    return _online_by_startup(source, ("linear", "binary"), fix_in_uc=True)
 
 
 def process_min_load_eff(source: "InputSource") -> pl.DataFrame:

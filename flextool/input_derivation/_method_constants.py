@@ -75,3 +75,22 @@ RAMP_METHOD: frozenset[str] = frozenset(("ramp_limit", "ramp_cost", "both"))
 RAMP_LIMIT_METHOD: frozenset[str] = frozenset(("ramp_limit", "both"))
 
 RAMP_COST_METHOD: frozenset[str] = frozenset(("ramp_cost", "both"))
+
+#: ``startup_method`` member → ``(startup class, fix_in_uc)``.  The engine keeps the classes ``no_startup``,
+#: ``linear`` and ``binary`` (whole units, a MIP); ``fix_in_uc`` marks the members whose units online a separate
+#: realization solve keeps at the stochastic solve's value.  ``binary`` (the member before data version 83) reads
+#: as ``integer_fix_in_uc``: only a database that was never upgraded, or a row written with raw SQL, still has it.
+STARTUP_CLASSES: dict[str, tuple[str, bool]] = {
+    "no_startup": ("no_startup", False),
+    "linear": ("linear", False),
+    "linear_fix_in_uc": ("linear", True),
+    "integer": ("binary", False),
+    "integer_fix_in_uc": ("binary", True),
+    "binary": ("binary", True),
+}
+
+
+def startup_class(raw: str) -> tuple[str, bool]:
+    """``(startup class, fix_in_uc)`` of the ``startup_method`` value *raw* (:data:`STARTUP_CLASSES`); an unknown
+    value is its own class, without ``fix_in_uc``."""
+    return STARTUP_CLASSES.get(raw, (raw, False))

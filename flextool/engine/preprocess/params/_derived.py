@@ -80,6 +80,7 @@ from flextool.engine.preprocess.params._per_solve_sets import (
 )
 from flextool.engine.input._solve_state import CommissioningLagError, FlexToolConfigError
 from flextool.engine.input._solve_step_aggregation import aggregate_if_active
+from flextool.input_derivation._method_constants import STARTUP_CLASSES
 from flextool.engine.input._param_shapes import (
     broadcast_to_period_time,
     parameter_has_values,
@@ -1861,12 +1862,16 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
     """Build the per-process internal-method classification.
 
     Returns a DataFrame with schema ``[p, ct, startup, fork, method,
-    klass]``:
+    klass, fix_in_uc]``:
 
       * ``ct`` — user-facing ``conversion_method`` / ``transfer_method``.
-      * ``startup`` — user-facing ``startup_method`` (default ``no_startup``,
-        promoted to ``linear`` when ``minimum_time_method ∈ {min_uptime,
+      * ``startup`` — the startup class (``no_startup`` / ``linear`` /
+        ``binary``, :func:`~flextool.input_derivation._method_constants.startup_class`)
+        of ``startup_method`` (default ``no_startup``, promoted to
+        ``linear`` when ``minimum_time_method ∈ {min_uptime,
         min_downtime, both}``; mirrors input_writer.py:1294-1304).
+      * ``fix_in_uc`` — the ``startup_method`` is a ``_fix_in_uc`` member
+        (``False`` for the promotions and the default).
       * ``fork`` — ``fork_yes`` when |sources|>1 OR |sinks|>1 OR delayed,
         else ``fork_no`` (input_writer.py:1350-1354).
       * ``method`` — internal method per :data:`_METHODS_MAPPING`; rows
@@ -1923,7 +1928,7 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
         return pl.DataFrame(schema={
             "p": schema_dtype(_enums, "p"),
             "ct": pl.Utf8, "startup": pl.Utf8,
-            "fork": pl.Utf8, "method": pl.Utf8, "klass": pl.Utf8,
+            "fork": pl.Utf8, "method": pl.Utf8, "klass": pl.Utf8, "fix_in_uc": pl.Boolean,
         })
     base = pl.concat(parts).unique()
 
@@ -2021,8 +2026,11 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
         lf = lf.join(sm_lazy, on="p", how="left")
     else:
         lf = lf.with_columns(startup_raw=pl.lit(None).cast(pl.Utf8))
+    raw = pl.col("startup_raw").cast(pl.Utf8)
     lf = lf.with_columns(
-        startup=pl.col("startup_raw").fill_null("no_startup")
+        startup=raw.replace({k: cls for k, (cls, _fix) in STARTUP_CLASSES.items()}).fill_null("no_startup"),
+        fix_in_uc=raw.replace_strict({k: fix for k, (_cls, fix) in STARTUP_CLASSES.items()}, default=False,
+                                     return_dtype=pl.Boolean).fill_null(False),
     ).drop("startup_raw")
     # Step 5 — minimum_time_method overrides startup → linear when active.
     if mtm_lazy is not None:
@@ -2088,7 +2096,7 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
 
     # Step 8 — drop not_applicable; project final columns.
     out = (lf.filter(pl.col("method") != "not_applicable")
-              .select("p", "ct", "startup", "fork", "method", "klass")
+              .select("p", "ct", "startup", "fork", "method", "klass", "fix_in_uc")
               .sort("p")
               .collect())
     return out

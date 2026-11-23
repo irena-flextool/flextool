@@ -10,7 +10,10 @@ The derivation reads raw input through
 * ``input/process_min_uptime``     (process_min_uptime,)
 * ``input/process_min_downtime``   (process_min_downtime,)
 
-and adds the automatic start-ups of ``piecewise_linear`` units to ``input/process__startup_method``.
+and adds the automatic start-ups of ``piecewise_linear`` units to ``input/process__startup_method``.  The method
+LUT is looked up with the startup class of each ``startup_method`` value
+(:func:`~flextool.input_derivation._method_constants.startup_class`); :func:`write_startup_classes` puts the classes
+into ``input/process__startup_method``.
 
 ``piecewise_linear`` units (``specs/piecewise_efficiency_final.md`` §2.2): a unit whose curve
 (``unit.piecewise_linear_efficiency``) burns fuel at zero output -- the efficiency rises from the first point
@@ -44,8 +47,23 @@ import polars as pl
 from flextool import run_warnings
 
 from flextool.engine.input._piecewise_curve import curves_by_unit, rises_first, unit_flags
+from flextool.input_derivation._method_constants import STARTUP_CLASSES, startup_class
 from flextool.input_derivation._piecewise import parse_piecewise_curves
 from flextool.input_derivation._specs import METHODS_MAPPING
+
+
+def write_startup_classes(provider) -> None:
+    """Rewrite the frame ``input/process__startup_method`` (the raw ``startup_method`` values) with the startup
+    class of each value (:data:`STARTUP_CLASSES`), so that it holds only ``no_startup``, ``linear`` and ``binary``:
+    its readers compare those strings.  An unknown value is kept."""
+    if not provider.has("input/process__startup_method"):
+        return
+    sm = provider.get("input/process__startup_method")
+    if sm is None or "startup_method" not in sm.columns:
+        return
+    classes = {raw: cls for raw, (cls, _fix) in STARTUP_CLASSES.items() if raw != cls}
+    provider.put("input/process__startup_method", sm.with_columns(
+        pl.col("startup_method").cast(pl.Utf8).replace(classes).cast(sm.schema["startup_method"])))
 
 
 def derive_process_method(
@@ -231,7 +249,7 @@ def derive_process_method(
         is_multi_line = process_class == "unit" and process_name in multi_line
         fork = "fork_yes" if (n_sources > 1 or n_sinks > 1 or is_delayed or is_multi_line) else "fork_no"
 
-        key = (ct, startup, fork)
+        key = (ct, startup_class(startup)[0], fork)
         method = METHODS_MAPPING.get(key)
         if method is None:
             run_warnings.warn("W-0227", process_name, details={
