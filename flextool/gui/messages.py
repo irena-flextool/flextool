@@ -325,7 +325,9 @@ class MessageStore:
         """Move every subject under the folder *old* (a renamed project) to *new*."""
         pm = self._pathmod
         old_path = pm.normcase(pm.abspath(os.fspath(old)))
-        new_path = pm.normcase(pm.abspath(os.fspath(new)))
+        new_abs = pm.abspath(os.fspath(new))
+        new_path = pm.normcase(new_abs)
+        new_label = pm.basename(new_abs.rstrip(pm.sep))       # the name as typed: normcase lowercases on Windows
 
         def change(data: dict) -> None:
             for subject in list(data):
@@ -335,7 +337,7 @@ class MessageStore:
                 if path == old_path or path.startswith(old_path.rstrip(pm.sep) + pm.sep):
                     entry = data.pop(subject)
                     if prefix == "project" and path == old_path:
-                        entry["label"] = pm.basename(new_path.rstrip(pm.sep))
+                        entry["label"] = new_label
                     data[f"{prefix}:{new_path}{path[len(old_path):]}"] = entry
         self._mutate(change)
 

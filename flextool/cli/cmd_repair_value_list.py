@@ -52,10 +52,10 @@ def repair_command(db_path: str | Path, *, python: str | None = None, shell: str
     quotes).  Default: ``"cmd"`` on Windows, ``"posix"`` elsewhere.  *python* defaults to
     :data:`sys.executable`; a ``pythonw.exe`` is swapped for the ``python.exe`` next to it (a pythonw process has no
     console, so it cannot ask)."""
-    exe = Path(python or sys.executable)
-    if exe.name.lower() == "pythonw.exe" and (console := exe.with_name("python.exe")).exists():
-        exe = console
-    argv = python_module_argv(MODULE, str(Path(db_path).resolve()), python=str(exe))
+    exe = python or sys.executable        # kept as given: Path() turns "/" into a backslash on Windows
+    if Path(exe).name.lower() == "pythonw.exe" and (console := Path(exe).with_name("python.exe")).exists():
+        exe = str(console)
+    argv = python_module_argv(MODULE, str(Path(db_path).resolve()), python=exe)
     shell = shell or ("cmd" if os.name == "nt" else "posix")
     if shell == "posix":
         return shlex.join(argv)

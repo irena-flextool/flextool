@@ -138,7 +138,7 @@ def test_storage_suspects(tmp_path, schema_db_url) -> None:
     assert _defaults(found)[STORAGE].suggestion == "set:fix_nothing"
     # no v77 commit or no fingerprint: no storage suspects
     for kwargs in ({"v77": False}, {"fingerprint": False}):
-        folder = tmp_path / str(kwargs)
+        folder = tmp_path / f"no_{next(iter(kwargs))}"          # a dict repr ({, :, ') is no Windows folder name
         folder.mkdir()
         other = make_lost_defaults(folder, [STORAGE], schema_db=schema_db_url, before=before,
                                    scenarios={"s1": ["base"]}, **kwargs)
