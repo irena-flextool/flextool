@@ -14,7 +14,9 @@ module finds them, with ``sqlite3`` only (read-only), in a snapshot at the curre
   both;
 - :func:`part_b_suspects`: a default suspect for each empty reference default bound to its shipped list, and a
   storage suspect for each node the version 77 upgrade would have given ``fix_start`` had the default been readable
-  (:func:`storage_suspects`).  A storage suspect has no pre-selected answer (owner answer QB (b)).
+  (:func:`storage_suspects`).  A storage suspect has no pre-selected answer (owner answer QB (b));
+- :func:`list_defaults_lost_ro` / :func:`note_at_run_start`: the run and GUI note W-0491, until the tool's part B
+  record carries the hash of the current empty set.
 
 The bug leaves no trace on the row, so the evidence is per database (the fingerprint commit of the FlexTool 3.x v22
 step) and per row (a hand edit after the last version commit).  Standard library only at module level: the run note
@@ -26,6 +28,7 @@ import contextlib
 import functools
 import hashlib
 import json
+import logging
 import sqlite3
 from pathlib import Path
 from typing import NamedTuple
@@ -55,6 +58,13 @@ MIGRATE_FIRST = ("Empty shipped defaults: migrate the database first (open it in
                  "flextool-migrate-database), then run the tool again to restore empty defaults.")
 _SCHEMAS = Path(__file__).resolve().parents[1] / "schemas"
 _COMMENT_CHARS = 60
+#: The run / GUI note for a database whose defaults are still empty (:func:`list_defaults_lost_ro`).
+NOTE_CODE = "W-0491"
+#: Seconds the note's check waits for a writer's lock: a locked file gives no note, not a stalled project open.
+NOTE_TIMEOUT_S = 0.5
+_STORAGE_NAME = ".".join(STORAGE)
+
+logger = logging.getLogger(__name__)
 
 
 def _definitions(path: Path) -> dict[tuple[str, str], tuple[str, str]]:
@@ -156,6 +166,69 @@ def parse_part_b_record(conn: sqlite3.Connection) -> PartBRecord | None:
             isinstance(data.get(k), int) and not isinstance(data.get(k), bool) for k in ("set", "kept", "storage")):
         return None
     return PartBRecord(data["date"], data["set"], data["kept"], data["storage"], data["empty"], row[1], row[3])
+
+
+class LostDefaults(NamedTuple):
+    """What the note W-0491 is about: the sorted bug-reachable empty ``class.parameter`` names, and
+    :func:`empty_hash` of the **full** empty set (the hash a part B record carries; the GUI message's instance)."""
+
+    names: tuple[str, ...]
+    empty_hash: str
+
+
+def _data_version(con: sqlite3.Connection) -> int | None:
+    row = con.execute("SELECT pd.default_value FROM parameter_definition pd JOIN entity_class ec ON ec.id = "
+                      "pd.entity_class_id WHERE ec.name = 'model' AND pd.name = 'version'").fetchone()
+    try:
+        return int(float(json.loads(_decode(row[0])))) if row else None
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def list_defaults_lost_ro(path: str | Path) -> LostDefaults | None:
+    """W-0491's check, cheap and read-only (one ``sqlite3`` connection, :data:`NOTE_TIMEOUT_S`): the empty
+    bug-reachable defaults of a database at the current data version that has the fingerprint, unless a valid part
+    B record (:func:`parse_part_b_record`) carries the hash of the full empty set.  ``None`` when there is nothing
+    to say, and on any read error (a locked or unreadable file gives no note)."""
+    from flextool.update_flextool import FLEXTOOL_DB_VERSION
+    from flextool.update_flextool.frozen import _connect_ro
+
+    try:
+        with contextlib.closing(_connect_ro(Path(path), timeout=NOTE_TIMEOUT_S)) as con:
+            if _data_version(con) != FLEXTOOL_DB_VERSION or not any(
+                    str(d or "")[:10] >= FINGERPRINT_SINCE
+                    for (d,) in con.execute('SELECT date FROM "commit" WHERE comment = ?', (FINGERPRINT,))):
+                return None
+            empty = empty_shipped_defaults(con)
+            names = tuple(n for n in empty if tuple(n.split(".", 1)) in bug_reachable())
+            if not names:
+                return None
+            digest = empty_hash(empty)
+            record = parse_part_b_record(con)
+            return None if record is not None and record.empty == digest else LostDefaults(names, digest)
+    except (sqlite3.Error, OSError) as exc:
+        logger.debug("list defaults of %s not checked: %s", path, exc)
+        return None
+
+
+def note_order(names) -> list[str]:
+    """*names* as the note shows them: ``node.storage_start_end_method`` first (the one that can change results),
+    the rest sorted."""
+    return sorted(names, key=lambda n: (n != _STORAGE_NAME, n))
+
+
+def note_at_run_start(db_url: str) -> None:
+    """W-0491 for the run's input database, once per run; the run log lists every name with its shipped value."""
+    from flextool import run_warnings
+    from flextool.update_flextool.frozen import sqlite_path_from
+
+    path = sqlite_path_from(db_url)
+    if path is None or not path.is_file() or (lost := list_defaults_lost_ro(path)) is None:
+        return
+    ref = reference()
+    details = {n: f"empty class default; FlexTool uses the shipped {ref[tuple(n.split('.', 1))][1]}"
+               for n in note_order(lost.names)}
+    run_warnings.warn_grouped(NOTE_CODE, note_order(lost.names), details=details, per_run=True, run_log=True)
 
 
 def _commits(con: sqlite3.Connection) -> dict[int, tuple[str, str]]:

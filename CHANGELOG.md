@@ -18,6 +18,9 @@
     list at every project open, has no Dismiss, and ends only when a repaired copy is in its place. Its **Copy
     repair command** button copies the `flextool-repair-value-list` command for that database, to paste into a
     terminal;
+  - "Shipped defaults lost in an old upgrade" for each database whose list-valued defaults an upgrade before
+    4.6.3 left empty (note W-0491). It has no Dismiss and the same button, opens the list by itself at most twice,
+    and ends only when the database holds the repair tool's record;
   - one "This database was upgraded" message for each database FlexTool upgraded (this replaces the "Database
     upgrades" box), with the data versions before and after;
   - "FlexTool cannot read this database file" while an external database's version or a database's frozen marker
@@ -36,7 +39,8 @@
   unaffected database keeps fixed it asks, with no recommended answer, whether to fix the start. Answers can be
   given at the prompt or in a CSV file (`--dry-run --write-answers`, then `--answers`); an older copy of the
   database can serve as evidence (`--archive`). When every item has an answer, the copy records the repair, and
-  W-0490 and the GUI's "Please check this database" message end for it. See "Repairing a value list (W-0490)" in
+  W-0490 and the GUI's "Please check this database" message end for it. Until a copy records the restored
+  defaults, each run notes the empty ones (W-0491: only `storage_start_end_method` can change results). See "Repairing a value list (W-0490)" in
   the terminal workflow documentation.
 
 ### Fixes

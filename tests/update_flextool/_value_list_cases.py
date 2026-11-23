@@ -238,3 +238,28 @@ def make_hit(tmp_path: Path, schema_db: str | Path, *, name: str = "hit.sqlite",
         sql(path, "UPDATE list_value SET commit_id = ? WHERE id = ?", (c, appended))
     write_values(path, after)
     return HitCase(path, list_id, r_id, start, c, end, template_commit)
+
+
+def repair_part_b(source: Path, output: Path, *, keep=(), skip_storage: bool = False) -> Path:
+    """The repair tool's write (P5's ``write_copy``) on *source* into *output*: each part B default ``set:`` its
+    shipped member, except the ``class.parameter`` names in *keep* (answered ``keep``); each storage question
+    ``set:fix_start``, or skipped with *skip_storage* (then no part B record is written)."""
+    from flextool.update_flextool import list_default_restore as ldr
+    from flextool.update_flextool import value_list_answers as va
+    from flextool.update_flextool import value_list_repair as vr
+    from flextool.update_flextool import value_list_write as vw
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    a = vr.analyse(vr.snapshot(source, output.parent, name=output.name))
+    found = vr.all_suspects(a)
+    answers = {}
+    for s in found:
+        if s.kind == ldr.STORAGE_KIND:
+            if not skip_storage:
+                answers[s.item] = va.Answer(va.SET, "fix_start")
+        elif f"{s.cls}.{s.parameter}" in keep:
+            answers[s.item] = va.Answer(va.KEEP)
+        else:
+            answers[s.item] = va.Answer(va.SET, s.suggestion.removeprefix("set:"))
+    vw.write_copy(a, va.make_plan(a, found, answers), output, source=source)
+    return output

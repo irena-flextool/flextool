@@ -5765,6 +5765,13 @@ def run_chain_from_db(
         warn_at_run_start(db_url)
     except Exception:  # noqa: BLE001 - a check of the history never stops a run
         logging.getLogger(__name__).debug("value list history check failed", exc_info=True)
+    # W-0491: list defaults an upgrade before 4.6.3 left empty, until the repair tool's record (own try: a W-0490
+    # error never hides it; TODO(v5.0.0): remove).
+    try:
+        from flextool.update_flextool.list_default_restore import note_at_run_start
+        note_at_run_start(db_url)
+    except Exception:  # noqa: BLE001 - a check of the defaults never stops a run
+        logging.getLogger(__name__).debug("list defaults check failed", exc_info=True)
     _reset_solver_args_echo()
 
     if work_folder is None:

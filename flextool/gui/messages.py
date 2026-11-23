@@ -125,6 +125,7 @@ def register_spec(spec: MessageSpec) -> MessageSpec:
 _GUI_MIGRATION = "flextool_gui_interface.md#migration-and-frozen-databases"
 for _spec in (
     MessageSpec("value_list_check", "database", dismissable=False, attention=True, docs="W-0490"),
+    MessageSpec("list_defaults_lost", "database", dismissable=False, attention=False, docs="W-0491"),
     MessageSpec("database_unreadable", "database", dismissable=False, attention=True, docs=_GUI_MIGRATION),
     MessageSpec("database_upgraded", "database", dismissable=True, attention=False, docs=_GUI_MIGRATION),
     MessageSpec("solver_defaults_updated", "project", dismissable=True, attention=False,

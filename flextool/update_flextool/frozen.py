@@ -178,9 +178,10 @@ def ro_uri(path: str | Path | PurePath) -> str:
     return "file://" + quote(posix, safe="/:") + "?mode=ro"
 
 
-def _connect_ro(path: Path) -> sqlite3.Connection:
-    """A read-only connection: never creates the file, never writes, never upgrades."""
-    return sqlite3.connect(ro_uri(path), uri=True, timeout=_BUSY_TIMEOUT_S)
+def _connect_ro(path: Path, timeout: float = _BUSY_TIMEOUT_S) -> sqlite3.Connection:
+    """A read-only connection: never creates the file, never writes, never upgrades (*timeout*: seconds to wait
+    for a writer's lock)."""
+    return sqlite3.connect(ro_uri(path), uri=True, timeout=timeout)
 
 
 def _is_missing_table(exc: sqlite3.Error) -> bool:

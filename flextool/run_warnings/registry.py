@@ -67,6 +67,8 @@ class WarningSpec:
     #: The code names no entity: it is emitted without names (``warn_grouped(code)``) and its line has no
     #: ``(...)`` part.  Every other code names what it is about (the log guard checks this).
     entityless: bool = False
+    #: How many names a line of several cases shows after "e.g." (1 for nearly every code).
+    examples: int = 1
 
 
 _SPECS: tuple[WarningSpec, ...] = (

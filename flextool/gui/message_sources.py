@@ -7,6 +7,11 @@ its messages, texts included, from current facts at every recompute.  No Tk here
   ``possible_value_list_overwrite_ro`` flags (:meth:`~flextool.gui.input_sources.InputSourceManager.value_list_findings`),
   with a "Copy repair command" button.  Not dismissable: a valid repair record (the repair tool) ends the finding,
   and with it the message.  TODO(v5.0.0): remove with W-0490.
+- ``list_defaults_lost`` (W-0491, package P7b): one message per input-source database whose shipped list defaults
+  an upgrade before 4.6.3 left empty
+  (:meth:`~flextool.gui.input_sources.InputSourceManager.list_defaults_findings`), with the same button.  Not
+  dismissable and not attention (a note: it opens the list by itself at two project opens per set of empty
+  defaults); only the repair tool's part B record ends it.  TODO(v5.0.0): remove with W-0491.
 - ``database_upgraded``: one message per database with a pending upgrade event (posted by :func:`post_upgrades`
   after a migration run), for the databases that are input sources of the open project.
 - ``database_unreadable``: one message per :class:`~flextool.gui.input_sources.PlanningNote` of the latest
@@ -38,9 +43,11 @@ from flextool.gui.messages import (
 
 if TYPE_CHECKING:
     from flextool.gui.input_sources import PlanningNote
+    from flextool.update_flextool.list_default_restore import LostDefaults
     from flextool.update_flextool.value_list_history import Finding
 
 _VALUE_LIST = MESSAGE_SPECS["value_list_check"]
+_LIST_DEFAULTS = MESSAGE_SPECS["list_defaults_lost"]
 _UPGRADED = MESSAGE_SPECS["database_upgraded"]
 _UNREADABLE = MESSAGE_SPECS["database_unreadable"]
 _SOLVER = MESSAGE_SPECS["solver_defaults_updated"]
@@ -145,6 +152,26 @@ def repair_tooltip(os_name: str = os.name) -> str:
     return "Paste into Command Prompt" if os_name == "nt" else "Paste into a terminal"
 
 
+LIST_DEFAULTS_TITLE = "Shipped defaults lost in an old upgrade"
+_STORAGE_DEFAULT = "node.storage_start_end_method"
+
+
+def list_defaults_text(names: Iterable[str]) -> tuple[str, tuple[str, ...]]:
+    """Title and paragraph of a ``list_defaults_lost`` message (W-0491) for the empty bug-reachable *names*: the
+    storage sentence only when ``node.storage_start_end_method`` is among them (the one default that can change
+    results)."""
+    first = "An earlier upgrade left some default values of this database empty."
+    stays = "This message stays until the repair is recorded."
+    if _STORAGE_DEFAULT in set(names):
+        return LIST_DEFAULTS_TITLE, (
+            f"{first} Results can differ only in storage start and end handling (storage_start_end_method). The "
+            "repair tool makes a repaired copy and asks about those storage nodes: use \"Copy repair command\" "
+            f"and paste it into a terminal. {stays}",)
+    return LIST_DEFAULTS_TITLE, (
+        f"{first} Results do not change. The repair tool makes a repaired copy with the shipped defaults: use "
+        f"\"Copy repair command\" and paste it into a terminal. {stays}",)
+
+
 SOLVER_DEFAULTS_TITLE = "This project's solver settings were updated"
 
 
@@ -177,6 +204,21 @@ def value_list_source(findings: Callable[[], Iterable[tuple[Path, list[Finding]]
             title, paragraphs = gui_message(found)
             out.append(GuiMessage(_VALUE_LIST, database_key(path), Path(path).name, title, paragraphs,
                                   action=copy_repair_action(path, clipboard)))
+        return out
+    return source
+
+
+def list_defaults_source(findings: Callable[[], Iterable[tuple[Path, LostDefaults]]],
+                         clipboard: Callable[[str], None]) -> MessageSource:
+    """``list_defaults_lost`` (W-0491) messages, one per database in *findings()* (``list_defaults_findings``);
+    the instance is the hash of the database's full set of empty defaults, so a changed set is a new message.
+    TODO(v5.0.0): remove with W-0491."""
+    def source(_store: MessageStore) -> list[GuiMessage]:
+        out = []
+        for path, lost in findings():
+            title, paragraphs = list_defaults_text(lost.names)
+            out.append(GuiMessage(_LIST_DEFAULTS, database_key(path), Path(path).name, title, paragraphs,
+                                  instance=lost.empty_hash, action=copy_repair_action(path, clipboard)))
         return out
     return source
 
@@ -264,12 +306,17 @@ def project_sources(main: Any, project_dir: Path, project_name: str) -> list[Mes
         m = mgr()
         return m.value_list_findings() if m is not None else []
 
+    def list_defaults_findings() -> list[tuple[Path, LostDefaults]]:
+        m = mgr()
+        return m.list_defaults_findings() if m is not None else []
+
     def clipboard(text: str) -> None:
         main.clipboard_clear()
         main.clipboard_append(text)
 
     return [
         value_list_source(value_list_findings, clipboard),
+        list_defaults_source(list_defaults_findings, clipboard),
         unreadable_source(notes),
         upgraded_source(database_keys),
         solver_defaults_source(project_dir, project_name),

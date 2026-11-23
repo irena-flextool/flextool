@@ -28,8 +28,10 @@ _PLOTS = "Plots"
 _DATABASE = "Input database"
 
 
-def _w(code: str, message: str, title: str, topic: str, body: str, severity: str = WARNING) -> WarningSpec:
-    return WarningSpec(code=code, message=message, title=title, topic=topic, body=body, severity=severity)
+def _w(code: str, message: str, title: str, topic: str, body: str, severity: str = WARNING,
+       examples: int = 1) -> WarningSpec:
+    return WarningSpec(code=code, message=message, title=title, topic=topic, body=body, severity=severity,
+                       examples=examples)
 
 
 INPUT_SPECS: tuple[WarningSpec, ...] = (
@@ -438,6 +440,22 @@ INPUT_SPECS: tuple[WarningSpec, ...] = (
        "was meant: compare with a copy from before the migration date, your Excel input or your notes. An "
        "entity that has no `cumulative_max_capacity` and should not invest should be `not_allowed`.\n"
        "6. Re-run, and compare the investments and retirements with the previous results.\n"
-       "7. Run the repair tool on the fixed copy to record the repair: the warning stays until one is recorded.\n\n"
+       "7. Run the repair tool on the fixed copy to record the repair: the warning stays until one is recorded. "
+       "If the tool still cannot read the list (it says so again), the warning stays: report the file.\n\n"
        "If you copied data from this database into another one, check that one too."),
+    # TODO(v5.0.0): remove W-0491 with the repair tool (flextool/update_flextool/list_default_restore.py).
+    _w("W-0491", "defaults emptied by an old upgrade", "Shipped defaults lost in an old upgrade", _DATABASE,
+       "An upgrade of this database before FlexTool 4.6.3 left some default values empty: an old Spine library "
+       "had stored them in a form the upgrade could not read. The line names them (up to three; the run log "
+       "lists all of them with their shipped values). An empty default works like the shipped one, because "
+       "FlexTool uses the shipped value when none is stored. Only `storage_start_end_method` can change results; "
+       "when the line names it, an unaffected database keeps the start of storage nodes with their own start "
+       "value fixed (`fix_start`), and this one leaves it free. The GUI lists a \"Shipped defaults lost in an "
+       "old upgrade\" message for it when it opens the project, with a button that copies the repair command.\n\n"
+       "**How to fix:** run the repair tool on the database: `flextool-repair-value-list \"<database>\"` (or "
+       "`python -P -m flextool.cli.cmd_repair_value_list \"<database>\"`). It writes a repaired copy next to the "
+       "original, puts the shipped defaults back and asks about each such storage node. Then use the copy in "
+       "place of the original. The note stops once the database holds the tool's repair record. The steps are "
+       "in [Repairing a value list](../terminal_workflow.md#repairing-a-value-list-w-0490).",
+       severity=NOTE, examples=3),
 )

@@ -5,13 +5,15 @@ import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from flextool.gui.data_models import InputSourceInfo, ProjectSettings, ScenarioInfo
 from flextool.gui.settings_io import save_project_settings
 from flextool.sqlite_url import sqlite_url_string
 
 if TYPE_CHECKING:
+    from flextool.update_flextool.list_default_restore import LostDefaults
     from flextool.update_flextool.value_list_history import Finding
 
 logger = logging.getLogger(__name__)
@@ -91,9 +93,9 @@ class InputSourceManager:
         # Frozen sources the user chose not to migrate this session: not asked
         # again, shown as "frozen, older version" and not runnable.
         self._frozen_declined: set[Path] = set()
-        # W-0490 findings by path, kept while the file's (size, mtime_ns) is unchanged (value_list_findings;
-        # TODO(v5.0.0): remove with W-0490).
-        self._value_list_cache: dict[Path, tuple[tuple[int, int], list[Finding]]] = {}
+        # W-0490 findings and W-0491 results by (check, path), kept while the file's (size, mtime_ns) is unchanged
+        # (value_list_findings, list_defaults_findings; TODO(v5.0.0): remove with W-0490 / W-0491).
+        self._check_cache: dict[tuple[str, Path], tuple[tuple[int, int], Any]] = {}
         # The notes of the latest plan_db_migrations (replaced at each plan; the message list reads them).
         self.planning_notes: list[PlanningNote] = []
         # SHA-256 of frozen files by (path, size, mtime), for the migrated-copy check.
@@ -593,29 +595,44 @@ class InputSourceManager:
                 )
         return result
 
-    def value_list_findings(self) -> list[tuple[Path, list[Finding]]]:
-        """W-0490: ``(path, findings)`` of every registered ``.sqlite`` source (internal and external) that
-        :func:`~flextool.update_flextool.value_list_history.possible_value_list_overwrite_ro` flags, in source
-        order.  That check is already filtered by the repair record, so a repaired file has no entry.  The result
-        of each file is cached by ``(size, mtime_ns)``: an unchanged file is not read again, a changed or swapped
-        one is.  A file that cannot be read or checked has no entry.  TODO(v5.0.0): remove with W-0490."""
-        from flextool.update_flextool import value_list_history
-
-        out: list[tuple[Path, list[Finding]]] = []
+    def _cached_checks(self, kind: str, check: Callable[[Path], Any]) -> list[tuple[Path, Any]]:
+        """``(path, check(path))`` of every registered ``.sqlite`` source whose result is truthy, in source order;
+        each result is cached by ``(size, mtime_ns)`` (an unchanged file is not read again, a changed or swapped
+        one is).  A file that cannot be stat'ed or checked (any exception) has no entry."""
+        out: list[tuple[Path, Any]] = []
         for path in self._registered_sqlite_paths():
-            try:  # a check of the history never stops a refresh
+            try:  # a check never stops a refresh
                 stat = path.stat()
                 stamp = (stat.st_size, stat.st_mtime_ns)
-                cached = self._value_list_cache.get(path)
+                cached = self._check_cache.get((kind, path))
                 if cached is None or cached[0] != stamp:
-                    cached = (stamp, list(value_list_history.possible_value_list_overwrite_ro(path)))
-                    self._value_list_cache[path] = cached
+                    cached = (stamp, check(path))
+                    self._check_cache[(kind, path)] = cached
             except Exception as exc:  # noqa: BLE001
-                logger.debug("value list history of %s not checked: %s", path, exc)
+                logger.debug("%s of %s not checked: %s", kind, path, exc)
                 continue
             if cached[1]:
                 out.append((path, cached[1]))
         return out
+
+    def value_list_findings(self) -> list[tuple[Path, list[Finding]]]:
+        """W-0490: ``(path, findings)`` of every registered ``.sqlite`` source (internal and external) that
+        :func:`~flextool.update_flextool.value_list_history.possible_value_list_overwrite_ro` flags, in source
+        order.  That check is already filtered by the repair record, so a repaired file has no entry.  Cached as
+        :meth:`_cached_checks`.  TODO(v5.0.0): remove with W-0490."""
+        from flextool.update_flextool import value_list_history
+
+        return self._cached_checks(
+            "value list history", lambda p: list(value_list_history.possible_value_list_overwrite_ro(p)))
+
+    def list_defaults_findings(self) -> list[tuple[Path, LostDefaults]]:
+        """W-0491: ``(path, lost)`` of every registered ``.sqlite`` source for which
+        :func:`~flextool.update_flextool.list_default_restore.list_defaults_lost_ro` gives a result (empty shipped
+        defaults and no part B record of that set), in source order; cached as :meth:`_cached_checks`.
+        TODO(v5.0.0): remove with W-0491."""
+        from flextool.update_flextool import list_default_restore
+
+        return self._cached_checks("list defaults", list_default_restore.list_defaults_lost_ro)
 
     def plan_db_migrations(
         self,

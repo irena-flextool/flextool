@@ -193,7 +193,8 @@ def format_line(code: str, names: Iterable[Any] = (), *, solve: str | None = Non
     if len(texts) == 1:
         line += f" ('{_short(texts[0])}')"
     elif texts:
-        line += f" ({len(texts)} cases, e.g. '{_short(texts[0])}')"
+        shown = "', '".join(_short(t) for t in texts[:spec.examples])
+        line += f" ({len(texts)} cases, e.g. '{shown}')"
     return f"{line} [{code}]"
 
 

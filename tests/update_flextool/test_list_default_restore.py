@@ -20,11 +20,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from flextool.update_flextool import list_default_restore as ldr
 from flextool.update_flextool import value_list_repair as vr
 from flextool.update_flextool import value_list_suspects as vs
 from tests.update_flextool._value_list_cases import (add_commit, clear_defaults, make_hit, make_lost_defaults,
-                                                     member_id, sql)
+                                                     member_id, repair_part_b, sql)
 
 SCHEMAS = Path(__file__).resolve().parents[2] / "flextool" / "schemas"
 THREE = ["unit.conversion_method", "solve.solve_mode", "node.storage_binding_method"]
@@ -189,3 +191,134 @@ def test_older_snapshot_gets_the_migrate_first_line(tmp_path, schema_db_url) -> 
     sql(case.path, "UPDATE parameter_definition SET default_value = ? WHERE name = 'version'", (b"76.0",))
     a, found = _all(case.path, tmp_path)
     assert a.version == 76 and found == () and vr.part_b_line(a) == ldr.MIGRATE_FIRST
+
+
+# -- W-0491: the run / GUI note (package P7b) ------------------------------------------------------------------------
+# Oracles (by hand): the note names the empty bug-reachable ``class.parameter`` names (sorted; in the line the
+# storage one first) and carries sha1("\n".join(sorted full empty set))[:12]; it is off without the fingerprint,
+# below the current data version, on an unreadable file, and when a valid part B record (comment ``REPAIR_COMMIT``)
+# carries that hash.  ``unit.end_of_life_method`` is a reference default the bug could not reach (not in the v25
+# template).
+TWO = ["unit.conversion_method", "solve.solve_mode"]
+NOT_REACHABLE = "unit.end_of_life_method"
+
+
+def _hash(names) -> str:
+    return hashlib.sha1("\n".join(sorted(names)).encode("utf-8")).hexdigest()[:12]
+
+
+def test_note_names_the_empty_bug_reachable_defaults_until_the_repair(tmp_path, schema_db_url) -> None:
+    import os
+
+    case = make_lost_defaults(tmp_path, TWO, schema_db=schema_db_url)
+    source = _sha(case.path)
+    assert ldr.list_defaults_lost_ro(case.path) == ldr.LostDefaults(
+        ("solve.solve_mode", "unit.conversion_method"), _hash(TWO))
+    assert _sha(case.path) == source  # read-only
+    fd = Path("/proc/self/fd")
+    if fd.is_dir():  # no handle left open (Linux)
+        assert not [p for p in fd.iterdir() if os.path.realpath(p) == str(case.path.resolve())]
+    repaired = repair_part_b(case.path, tmp_path / "out" / "lost_repaired.sqlite")
+    assert ldr.list_defaults_lost_ro(repaired) is None
+    # a default emptied after the repair: the note is back, with the hash of the new set
+    clear_defaults(repaired, ["unit.startup_method"], add_commit(repaired, "Updated", "2026-11-24"))
+    assert ldr.list_defaults_lost_ro(repaired) == ldr.LostDefaults(("unit.startup_method",),
+                                                                   _hash(["unit.startup_method"]))
+    # the record copied into the original by an import: not the tool's commit, the note stays
+    ((value,),) = sql(repaired, "SELECT value FROM metadata WHERE name = ?", (ldr.PART_B_RECORD_KEY,))
+    commit = add_commit(case.path, "Import 3 items", "2026-11-24")
+    sql(case.path, "INSERT INTO metadata (name, value, commit_id) VALUES (?, ?, ?)",
+        (ldr.PART_B_RECORD_KEY, value, commit))
+    assert ldr.list_defaults_lost_ro(case.path).names == ("solve.solve_mode", "unit.conversion_method")
+    case.path.unlink()  # nothing holds the file (Windows)
+
+
+def test_note_is_off_without_the_sign_of_the_bug_or_when_unreadable(tmp_path, schema_db_url) -> None:
+    for kwargs in ({"fingerprint": False}, {}):
+        folder = tmp_path / str(len(kwargs))
+        folder.mkdir()
+        case = make_lost_defaults(folder, TWO, schema_db=schema_db_url, **kwargs)
+        if not kwargs:  # an older file (data version 76): not checked
+            sql(case.path, "UPDATE parameter_definition SET default_value = ?, default_type = 'float' WHERE name = "
+                           "'version' AND entity_class_id = (SELECT id FROM entity_class WHERE name = 'model')",
+                (b"76.0",))
+        assert ldr.list_defaults_lost_ro(case.path) is None, kwargs
+    # only a default the bug could not reach is empty
+    assert (tuple(NOT_REACHABLE.split(".")) in ldr.reference()
+            and tuple(NOT_REACHABLE.split(".")) not in ldr.bug_reachable())
+    case = make_lost_defaults(tmp_path, [NOT_REACHABLE], schema_db=schema_db_url, name="unreach.sqlite")
+    assert ldr.list_defaults_lost_ro(case.path) is None
+    broken = tmp_path / "broken.sqlite"
+    broken.write_bytes(b"not a database")
+    assert ldr.list_defaults_lost_ro(broken) is None
+    assert ldr.list_defaults_lost_ro(tmp_path / "missing.sqlite") is None
+
+
+def test_note_record_hash_covers_the_full_empty_set(tmp_path, schema_db_url) -> None:
+    """R1: a repair that keeps a default empty (a bug-reachable one, or one the bug could not reach) writes the hash
+    of what stays empty, so the note ends; R2: a skipped storage question writes no record, so the note stays and
+    names the storage default."""
+    case = make_lost_defaults(tmp_path, TWO + [NOT_REACHABLE], schema_db=schema_db_url)
+    assert ldr.list_defaults_lost_ro(case.path) == ldr.LostDefaults(
+        ("solve.solve_mode", "unit.conversion_method"), _hash(TWO + [NOT_REACHABLE]))
+    for keep in ([NOT_REACHABLE], ["solve.solve_mode"]):
+        out = repair_part_b(case.path, tmp_path / keep[0] / "out.sqlite", keep=keep)
+        assert ldr.list_defaults_lost_ro(out) is None, keep
+    held = make_lost_defaults(tmp_path, [STORAGE], schema_db=schema_db_url, name="held.sqlite",
+                              before=[("node", "A", "storage_state_start", "base", 0.5)], scenarios={"s1": ["base"]})
+    out = repair_part_b(held.path, tmp_path / "held_out" / "out.sqlite", skip_storage=True)
+    assert ldr.list_defaults_lost_ro(out) == ldr.LostDefaults((STORAGE,), _hash([STORAGE]))
+
+
+def test_note_at_run_start(tmp_path, schema_db_url) -> None:
+    """One Note line on the hit file, storage name first and three names shown; none on the repaired copy."""
+    from flextool import run_warnings
+    from flextool.run_warnings.registry import NOTE, WARNINGS
+    from tests._support.coded_warnings import capture_coded
+
+    case = make_lost_defaults(tmp_path, TWO + [STORAGE, "node.invest_method"], schema_db=schema_db_url)
+    repaired = repair_part_b(case.path, tmp_path / "out" / "lost_repaired.sqlite")
+    from flextool.cli import cmd_repair_value_list as cli
+
+    spec = WARNINGS["W-0491"]
+    assert spec.severity == NOTE and "`storage_start_end_method`" in spec.body
+    assert f'python -P -m {cli.MODULE} "' in spec.body and 'flextool-repair-value-list "' in spec.body
+    for path, expected in ((case.path, 1), (repaired, 0)):
+        run_warnings.start_run()
+        with capture_coded() as got:
+            ldr.note_at_run_start(f"sqlite:///{path}")
+            ldr.note_at_run_start(f"sqlite:///{path}")  # once per run
+        assert len(got.printed) == expected, path.name
+    assert [c.names for c in got.calls] == []
+    run_warnings.start_run()
+    with capture_coded() as got:
+        ldr.note_at_run_start(f"sqlite:///{case.path}")
+    (call,) = got.calls
+    assert call.names == [STORAGE, "node.invest_method", "solve.solve_mode", "unit.conversion_method"]
+    assert got.printed == ["Note: defaults emptied by an old upgrade (4 cases, e.g. 'node.storage_start_end_method', "
+                           "'node.invest_method', 'solve.solve_mode') [W-0491]"]
+
+
+def test_a_failing_w0490_check_does_not_stop_w0491(tmp_path, monkeypatch) -> None:
+    """The run start calls W-0491 in its own ``try``: W-0490 raising still lets it run (the run is stopped right
+    after, at the next call of the run start)."""
+    from flextool.engine.solve import _orchestration as orch
+    from flextool.update_flextool import value_list_history as vlh
+
+    class Stop(Exception):
+        pass
+
+    def boom(db_url):
+        raise RuntimeError("W-0490 check failed")
+
+    def stop():
+        raise Stop
+
+    seen = []
+    monkeypatch.setattr(vlh, "warn_at_run_start", boom)
+    monkeypatch.setattr(ldr, "note_at_run_start", seen.append)
+    monkeypatch.setattr(orch, "_reset_solver_args_echo", stop)
+    db = tmp_path / "x.sqlite"
+    with pytest.raises(Stop):
+        orch.run_chain_from_db(f"sqlite:///{db}", "s", work_folder=tmp_path / "w")
+    assert seen == [f"sqlite:///{db}"]

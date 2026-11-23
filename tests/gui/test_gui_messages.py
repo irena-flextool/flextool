@@ -844,3 +844,82 @@ def test_w0490_unreadable_file_gives_no_message(tmp_path, monkeypatch):
     (sources / "broken.sqlite").write_bytes(b"still not a database")
     center.recompute("refresh")
     assert center.messages == ()
+
+
+# -- W-0491 (P7b) ----------------------------------------------------------------------------------------------------
+LIST_DEFAULTS = MESSAGE_SPECS["list_defaults_lost"]
+_LOST = ["unit.conversion_method", "solve.solve_mode"]
+_STORAGE = "node.storage_start_end_method"
+
+
+def _w0491_project(tmp_path: Path, schema_db_url: str):
+    """A project with ``model.sqlite`` (``make_lost_defaults``: two empty bug-reachable defaults and the storage
+    default) and its repaired copy ``model_repaired.sqlite`` (P5's writer, every default restored: a valid part B
+    record of the empty set ``[]``)."""
+    import shutil
+
+    from flextool.gui.data_models import ProjectSettings
+    from flextool.gui.input_sources import InputSourceManager
+    from tests.update_flextool._value_list_cases import make_lost_defaults, repair_part_b
+
+    case = make_lost_defaults(tmp_path, [*_LOST, _STORAGE], schema_db=schema_db_url)
+    output = repair_part_b(case.path, tmp_path / "out" / "lost_repaired.sqlite")
+    sources = tmp_path / "P" / "input_sources"
+    sources.mkdir(parents=True)
+    shutil.copy2(case.path, sources / "model.sqlite")
+    shutil.copy2(output, sources / "model_repaired.sqlite")
+    return InputSourceManager(tmp_path / "P", ProjectSettings()), sources
+
+
+def test_w0491_message_for_the_original_only_and_capped(schema_db_url, tmp_path):
+    """The file with lost defaults gives one non-dismissable, non-attention message whose instance is the hash of
+    its sorted empty set (sha1 of the newline-joined names, 12 hex); the repaired copy gives none.  It opens the
+    list at two project opens, not at the third, and stays listed; the button copies ``repair_command(path)``."""
+    import hashlib
+
+    from flextool.cli.cmd_repair_value_list import repair_command
+
+    mgr, sources = _w0491_project(tmp_path, schema_db_url)
+    copied: list[str] = []
+    store = tmp_path / "s.json"
+    source = ms.list_defaults_source(mgr.list_defaults_findings, copied.append)
+    center = _center(store, source)
+    center.recompute("project_open")
+    (msg,) = center.messages
+    empty = "node.storage_start_end_method\nsolve.solve_mode\nunit.conversion_method"
+    assert (msg.spec, msg.subject_key, msg.subject_label, msg.instance) == (
+        LIST_DEFAULTS, database_key(sources / "model.sqlite"), "model.sqlite",
+        hashlib.sha1(empty.encode()).hexdigest()[:12])
+    assert (LIST_DEFAULTS.dismissable, LIST_DEFAULTS.attention, LIST_DEFAULTS.docs) == (False, False, "W-0491")
+    assert msg.title == "Shipped defaults lost in an old upgrade"
+    assert "storage start and end handling (storage_start_end_method)" in msg.paragraphs[0]
+    _check_style(msg)
+    with pytest.raises(ValueError):
+        center.dismiss(msg)
+    assert msg.action.label == "Copy repair command" and msg.action.run() == "Copied"
+    assert copied == [repair_command(sources / "model.sqlite")]
+    assert _open_project(store, source) is not None
+    assert _open_project(store, source) is not None
+    third = _center(store, source)
+    assert third.recompute("project_open") is None, "the third project open does not open the list"
+    assert [m.key for m in third.messages] == [msg.key]
+
+
+def test_w0491_text_without_the_storage_default(schema_db_url, tmp_path):
+    """Without ``node.storage_start_end_method`` among the empty names the text says results do not change and has
+    no storage sentence; a damaged file gives no message."""
+    from flextool.gui.data_models import ProjectSettings
+    from flextool.gui.input_sources import InputSourceManager
+    from tests.update_flextool._value_list_cases import make_lost_defaults
+
+    sources = tmp_path / "P" / "input_sources"
+    sources.mkdir(parents=True)
+    make_lost_defaults(sources, _LOST, schema_db=schema_db_url, name="model.sqlite")
+    (sources / "broken.sqlite").write_bytes(b"not a database")
+    mgr = InputSourceManager(tmp_path / "P", ProjectSettings())
+    center = _center(tmp_path / "s.json", ms.list_defaults_source(mgr.list_defaults_findings, lambda _t: None))
+    center.recompute("project_open")
+    (msg,) = center.messages
+    assert msg.subject_label == "model.sqlite"
+    assert "Results do not change." in msg.paragraphs[0] and "storage" not in msg.paragraphs[0]
+    _check_style(msg)
