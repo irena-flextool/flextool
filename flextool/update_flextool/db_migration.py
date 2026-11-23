@@ -12492,6 +12492,134 @@ def _v83_minimum_time_method(db) -> None:
                         [[unit, reason, list(candidates)] for unit, reason, candidates, _m in plan.undecided])
 
 
+#: The members part 2 of v83 appends to ``startup_methods`` (when missing), in this order, and the one it replaces.
+_V83_STARTUP_METHODS = ("linear_fix_in_uc", "integer", "integer_fix_in_uc")
+_V83_STARTUP_RENAMES = {"binary": "integer_fix_in_uc"}
+_V83_ONLINE_NEED = ("Needs online variables (startup_method linear or binary",
+                    "Needs online variables (a startup_method other than no_startup")
+_V83_CONTINUOUS = ("With linear startup the number is continuous.",
+                   "With startup_method linear or linear_fix_in_uc the number is continuous.")
+
+
+def _v83_startup_texts() -> dict[tuple[str, str], tuple[str, str]]:
+    """``{(class, name): (old, new)}``: the descriptions that name a ``startup_method`` member, as every database at 82
+    has them unless the user edited them, and their v83 texts (part 2 of v83, :func:`_replace_superseded_texts`)."""
+    online_coeff = ("[unit of the constraint per unit online] A map of coefficients (Index: constraint name, value: "
+                    "coefficient). Puts the number of units {what}online in each time step on the left side of the "
+                    "user constraint. One unit is virtual_unitsize; without it, the largest existing capacity, else "
+                    "1000 MW (set virtual_unitsize when the capacity is invested). Needs online variables "
+                    "(startup_method linear or binary{mt}); a coefficient without them is an error. With linear "
+                    "startup the number is continuous. For MW online, use the unit size (MW per unit) as the "
+                    "coefficient.")
+    startup_input = (
+        "[choice] What the input arc supplies. just_input (default): the normal input flow. startup_and_input: the "
+        "normal input flow, and each start-up of the unit also takes startup_energy x MW started from this node. "
+        "startup_only: only the start-up energy; the arc has no flow and takes no part in the conversion, the "
+        "capacity, input shares or ramps. The start-up input can be fuel (oil to start a coal unit), heat (from the "
+        "tank of a CSP plant) or electricity. Needs online variables (startup_method linear or binary, or a "
+        "minimum_time_method). The start-up input is priced as the node's commodity, counts in CO2 prices and caps "
+        "and is dropped with the start-ups by reduce_unit_detail_method online. It is not part of "
+        "constraint_flow_coeff, flow groups or the capacity margin.")
+    reduce_detail = (
+        "[choice] Detail of units and connections that this solve leaves out, to make it faster (typically an "
+        "investment solve). none (default): all detail. integers: binary startup_method is solved as continuous and "
+        "exact connections behave as regular. integers_ramps: integers, and no ramp limits or ramp costs. "
+        "integers_min_limits: integers, and no min_load, capacity_min_coeff floors or minimum up / down times; a "
+        "min_load_efficiency unit that is more efficient at min load than at full load (efficiency_at_min_load "
+        "above efficiency) then runs at its full-load efficiency. integers_ramps_min_limits: integers, no ramps and "
+        "no min limits. Under the integers levels, a unit or connection whose online variables nothing in the solve "
+        "still uses (no start-up cost, min_load, capacity_min_coeff floor, minimum up / down time, "
+        "min_load_efficiency curve, piecewise_linear curve whose efficiency rises from its first point, "
+        "constraint_online_coeff in a user constraint, reserve, inertia or ramp limit left) has none, as with "
+        "startup_method no_startup; the run log names them. online: everything of integers_min_limits, and no "
+        "online variables: no start-up costs, user constraints that count units online are left out whole, "
+        "min_load_efficiency and piecewise_linear units run at their full-load efficiency (the same fuel at full "
+        "output; at part load less or more fuel than with their curve), and ramp limits apply to the capacity. "
+        "Reserves are then limited by built capacity, not online capacity, and inertia is counted from flows. "
+        "online_ramps: online, and no ramp limits or ramp costs. Never adds detail.")
+    out = {
+        ("unit", "startup_method"): (
+            "[choice] Whether the unit has online variables. linear: any share of the capacity can be online. "
+            "binary: whole units only (slower to solve). Online status links to the previous time step; that link "
+            "stops at a gap in the timeline.",
+            "[choice] Whether the unit has online variables. linear: any share of the capacity can be online. "
+            "integer: whole units only (a MIP, slower to solve); several units of one entity are counted as whole "
+            "units. linear_fix_in_uc and integer_fix_in_uc: the same, and in a separate realization solve (a "
+            "rolling separate_dispatch solve, or a single solve with a realized: yes branch) the units online over "
+            "the jump are kept at what the stochastic (unit commitment) solve chose; without _fix_in_uc the "
+            "realization decides them again with the realized data. Elsewhere, including a rolling within_solve "
+            "solve, a member and its _fix_in_uc variant are the same. Online status links to the previous time "
+            "step; that link stops at a gap in the timeline."),
+        ("connection", "startup_method"): (
+            "[choice] Gives the connection online capacity in both directions. Flows and reserves are limited by the "
+            "online capacity, and startup_cost is paid per MW brought online. No minimum load or minimum up/down "
+            "time. Not allowed for dc_power_flow_with_angles lines.",
+            "[choice] Gives the connection online capacity in both directions (linear: any share; integer: whole "
+            "units, a MIP; linear_fix_in_uc and integer_fix_in_uc: the same, and in a separate realization solve "
+            "the online capacity over the jump is kept at what the stochastic solve chose). Flows and reserves are "
+            "limited by the online capacity, and startup_cost is paid per MW brought online. No minimum load or "
+            "minimum up/down time. Not allowed for dc_power_flow_with_angles lines."),
+        ("unit__inputNode", "startup_input_method"): (startup_input, startup_input.replace(*_V83_ONLINE_NEED)),
+        ("solve", "reduce_unit_detail_method"): (reduce_detail, reduce_detail.replace(
+            "integers: binary startup_method is solved as continuous",
+            "integers: startup_method integer and integer_fix_in_uc are solved as continuous")),
+    }
+    for cls, what, mt in (("unit", "", ", or a minimum_time_method"), ("connection", "of the connection ", "")):
+        old = online_coeff.format(what=what, mt=mt)
+        out[(cls, "constraint_online_coeff")] = (old, old.replace(*_V83_ONLINE_NEED).replace(*_V83_CONTINUOUS))
+    return out
+
+
+def _replace_superseded_texts(db, superseded: dict[tuple[str, str], str], texts: dict[tuple[str, str], str]) -> None:
+    """Replace the description of each definition ``(class, name)`` of *superseded* that is exactly the old shipped
+    text with the text of *texts*, whatever its default (a description-only update; :func:`_replace_superseded_pairs`
+    is for a default and description pair).  A description the user edited is kept.  Idempotent."""
+    for key, old in superseded.items():
+        pdef = _pdef_or_none(db, *key)
+        if pdef is not None and (pdef["description"] or "") == old:
+            db.update_parameter_definition(id=pdef["id"], description=texts[key])
+
+
+def _v83_startup_method(db) -> None:
+    """Part 2 of v83: ``startup_methods`` becomes no_startup, linear, linear_fix_in_uc, integer, integer_fix_in_uc.
+
+    Appends the missing new members, rewrites every value ``binary`` of every definition on the list (every class
+    and alternative; a list reference or a plain string) and a ``binary`` default to ``integer_fix_in_uc`` (the
+    same model), then removes the ``binary`` member (after the rewrites: a removed member leaves a reference that
+    reads as nothing), and replaces the six descriptions that name the members (:func:`_v83_startup_texts`, by text
+    alone).  ``linear`` is untouched.  Skips a database without the list.  Idempotent; no commit."""
+    if db.get_item("parameter_value_list", name="startup_methods"):
+        before = _list_members(db, ["startup_methods"])
+        _append_list_members(db, "startup_methods", _V83_STARTUP_METHODS)
+        _v83_check_members(db, "startup_methods", before)  # a changed member would fail the by-value writes first
+        rewritten = []
+        for pdef in db.get_items("parameter_definition"):
+            if pdef["parameter_value_list_name"] != "startup_methods":
+                continue
+            for pv in db.find_parameter_values(entity_class_name=pdef["entity_class_name"],
+                                               parameter_definition_name=pdef["name"]):
+                new = _V83_STARTUP_RENAMES.get(pv["parsed_value"]) if isinstance(pv["parsed_value"], str) else None
+                if new is not None:
+                    rewritten.append(f"{_describe_pv(pv)} ({pdef['name']})")
+                    val, typ = to_database(new)
+                    db.update_parameter_value(id=pv["id"], value=val, type=typ)
+        if rewritten:
+            print("v83: startup_method binary is now integer_fix_in_uc (the same model) for:")
+            for line in rewritten:
+                print("  " + line)
+        pending = _detach_list_defaults(db, "startup_methods", _V83_STARTUP_RENAMES)
+        removed = set()
+        for lv in db.get_items("list_value", parameter_value_list_name="startup_methods"):
+            if lv["parsed_value"] in _V83_STARTUP_RENAMES:
+                removed.add(getattr(lv["id"], "db_id", lv["id"]))
+                db.remove_item("list_value", lv["id"])
+        _attach_list_defaults(db, pending)
+        _v83_check_members(db, "startup_methods", before, removed=removed)
+    texts = _v83_startup_texts()
+    _replace_superseded_texts(db, {k: old for k, (old, _new) in texts.items()},
+                              {k: new for k, (_old, new) in texts.items()})
+
+
 #: The schema step of the current data version.  The template sync reruns it on the master template, so that schema
 #: entries appended to its tables after the version was first stamped reach the shipped schema (a database at the
 #: current version is otherwise not migrated again).
