@@ -1278,4 +1278,4 @@ def test_a_cell_keeps_its_context_block_and_facts_hash(evaluator) -> None:
     assert both["context_block"] == block
     assert both["facts_hash"] == hashlib.sha256(f"{other}\n\n{facts}".encode()).hexdigest()
     assert both["facts_hash"] != evaluator.context_fields(block)["facts_hash"]
-    assert FACTS_VERSION == 3
+    assert FACTS_VERSION == 4

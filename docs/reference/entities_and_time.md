@@ -164,7 +164,7 @@ Each `integers*` level also removes the online variables that nothing in the sol
 
 The parts in detail:
 
-- **Integer units online.** Units and connections with `startup_method` *binary* get continuous units online.
+- **Integer units online.** Units and connections with `startup_method` *integer* or *integer_fix_in_uc* get continuous units online.
 
     The rows stay the same, so units online, start-ups and shut-downs can be fractional. A connection with
     `transfer_method` *exact* behaves as *regular*: both directions keep their own flow and losses, only the binary
@@ -213,7 +213,7 @@ The parts in detail:
     *piecewise_linear* unit whose efficiency rises from the first point of its curve to the second, a
     `constraint_online_coeff` term in a user constraint of the solve, a reserve that the unit or connection holds,
     inertia (an `inertia_constant` at a node of a group with `has_inertia`), ramp limits (their start-up and
-    shut-down allowance) and, in a realization solve, the units online of binary units that it takes from its parent solve. A reserve or
+    shut-down allowance) and, in a realization solve, the units online that it takes from its parent solve (`startup_method` *linear_fix_in_uc* or *integer_fix_in_uc*). A reserve or
     an inertia limit that `reduce_system_detail_method` leaves out is no use. The ties that make the forecast branches
     of a stochastic solve have the same units online are no use either. For example, under `integers_min_limits` a
     unit with only a `min_load` loses its online variables, a unit with a start-up cost or a reserve keeps them; under

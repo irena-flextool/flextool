@@ -215,7 +215,7 @@ def test_linear_realization_online_is_decided_again(designated) -> None:
     """A linear peaker is not pinned: the realization solve has no online_fix_eq_linear row and decides its units
     online with the realized data (wind CF 0.5: 50 MW of peaker, between 1 and 2 units by its capacity and min load;
     the value in between is a tie, so only the bounds are asserted) at the realized cost 50 MW × 10 €/MWh per step.
-    The stochastic solve has investments, so W-0509 (nothing kept) does not apply."""
+    The stochastic solve has investments, so W-0588 (nothing kept) does not apply."""
     steps, mps = designated
     assert b"online_fix_eq_linear" not in mps[SIBLING]
     assert steps[SIBLING].flex_data.p_fix_online is None

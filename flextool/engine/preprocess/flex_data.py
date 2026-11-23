@@ -1404,6 +1404,11 @@ class FlexData:
     process_online: pl.DataFrame | None = None              # set: (p,)
     process_online_linear: pl.DataFrame | None = None        # set: (p,)
     process_online_integer: pl.DataFrame | None = None       # set: (p,)
+    # The processes whose startup_method is linear_fix_in_uc or integer_fix_in_uc (params._projection
+    # .process_online_fix_in_uc), online or not in this solve: a separate realization solve keeps their units online
+    # at the stochastic solve's value (the fix_online handoff, build_handoff_from_solution).  Read only there and by
+    # solve._realization; no model term reads it.
+    process_online_fix_in_uc: pl.DataFrame | None = None     # set: (p,)
     # True when the solve's reduce_unit_detail_method relaxes integers (preprocess._reduce_detail): v_online_integer
     # and v_exact_forward are then declared continuous.  False (default): integer as authored.
     relax_integrality: bool = False
@@ -7346,16 +7351,18 @@ def build_handoff_from_solution(
         and solve_name in realized_dispatch_parents
     )
 
-    # ---- fix_online: NA-tied integer v_online for the realization solve ----
+    # ---- fix_online: NA-tied v_online of the _fix_in_uc processes for the realization solve ----
     # For the parent of a realization solve (its name is a registered
-    # realization parent) carry the committed integer ``v_online`` so the
-    # realization solve PINS it instead of re-deciding commitment (owner
-    # decision: the realization solve inherits the NA-tied units online of
-    # the binary units, never reserve).  Linear units online are a relaxation, not a
-    # schedule: they are never pinned, the realization re-decides them with the realized data.  The integer
-    # class is the user's startup_method = binary, also when the solve relaxes integers
-    # (reduce_unit_detail_method integers*): the relaxed values are pinned.  The value is the reference forecast's
-    # (the first sorted forecast branch of
+    # realization parent) carry the committed ``v_online`` of the processes
+    # whose startup_method is linear_fix_in_uc or integer_fix_in_uc
+    # (``process_online_fix_in_uc``) so the realization solve PINS it
+    # instead of re-deciding commitment (the realization solve inherits the
+    # NA-tied units online of those processes, never reserve).  The units
+    # online of linear and integer processes are not pinned: the realization
+    # decides them again with the realized data.  An integer_fix_in_uc
+    # process keeps its pin when the solve relaxes integers
+    # (reduce_unit_detail_method integers*): the relaxed values are pinned.
+    # The value is the reference forecast's (the first sorted forecast branch of
     # each anchor, the ``d_ref`` of non_anticipativity_online), on the
     # online tie cells only (``online_tie_cells``: the tied steps; nothing
     # when nothing is tied), re-keyed from the forecast branch
@@ -7363,27 +7370,32 @@ def build_handoff_from_solution(
     # dispatches.  Unit-count space (NOT ×unitsize).  ``None`` on every
     # other solve → byte-identical baseline.
     fix_online_df = None
+    _fix_in_uc = getattr(flex_data, "process_online_fix_in_uc", None) if flex_data is not None else None
     if (realized_dispatch_parents is not None
             and solve_name in realized_dispatch_parents
             and flex_data is not None
             and getattr(flex_data, "period_branch_full", None) is not None
             and flex_data.period_branch_full.height > 0
-            and "v_online_integer" in sol._vars):
+            and _fix_in_uc is not None and _fix_in_uc.height > 0
+            and _has_online_var):
         from flextool.engine.model._non_anticipativity import online_tie_cells
         _cells = online_tie_cells(flex_data)
         _parts: list[pl.DataFrame] = []
         if _cells is not None:
             from flextool.engine.output._coarse_flows import var_values
 
-            for _vn in ("v_online_integer",):
+            _pinned = _fix_in_uc["p"].cast(pl.Utf8).to_list()
+            for _vn in ("v_online_linear", "v_online_integer"):
                 # Every fine step (a coarse process's units online hold through its coarse step).
                 _all = var_values(sol, flex_data, _vn)
                 if _all is None:
                     continue
-                _fr = _all.with_columns(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+                _fr = (_all.with_columns(pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                                         pl.col("t").cast(pl.Utf8))
+                       .filter(pl.col("p").is_in(_pinned)))
                 _re = (_fr.join(_cells, left_on=["d", "t"],
                                 right_on=["d_ref", "t"], how="inner")
-                       .select(pl.col("p").cast(pl.Utf8).alias("process"),
+                       .select(pl.col("p").alias("process"),
                                pl.col("anchor").alias("period"),
                                pl.col("t").alias("step"),
                                "value"))

@@ -130,7 +130,7 @@ and *wind_flow* `flowGroup` with `flowGroup__unit__node` relation wind_flow|wind
 
 **How the inertia is counted.** It depends on whether the unit has online variables:
 
-- With online variables (`startup_method` *linear* or *binary*): online capacity × `inertia_constant`.
+- With online variables (a `startup_method` other than *no_startup*): online capacity × `inertia_constant`.
 
     A unit gives its full inertia whenever it is online, also at minimum load. This is the physically right
     measure, and it lets the model keep a plant online at low output to provide inertia.
@@ -146,7 +146,7 @@ A unit with an `inertia_constant` on both its input and its output arc counts on
 
 **A synchronous condenser.** A condenser gives inertia without producing power. Make it a unit with only an electricity input:
 
-- `unit` *sync_condenser* with `existing` [MW] and `startup_method` *linear* (or *binary* for whole machines), and no `unit__outputNode`
+- `unit` *sync_condenser* with `existing` [MW] and `startup_method` *linear* (or *integer* for whole machines), and no `unit__outputNode`
 - `unit__inputNode` (*sync_condenser*, *west*) with `inertia_constant`, for example 4
 - `min_load`, for example 0.02, for its losses
 

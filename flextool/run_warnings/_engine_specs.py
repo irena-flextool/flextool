@@ -171,27 +171,6 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
         ),
     ),
     WarningSpec(
-        code="W-0509",
-        message="realization '{solve}' re-decides linear units online; keeps nothing of '{parent}'",
-        title="Realization solve with only linear units online",
-        topic=_SOLVES,
-        severity=NOTE,
-        body=(
-            "The realization solve takes from its stochastic solve the units online of the binary units "
-            "(`startup_method` = *binary*) and the investments. The units named here have linear units online "
-            "(`startup_method` = *linear*, or online only through `minimum_time_method`): a linear commitment is a "
-            "relaxation, not a schedule, so the realization solve decides them again with the realized data, their "
-            "minimum up and down times and the history of the previous realization. This realization solve has no "
-            "binary units online and its stochastic solve decides no investments (no `invest_periods`, "
-            "`realized_invest_periods` or `stochastic_invest_method`), so nothing that solve decides reaches "
-            "the realized results: they are a dispatch of each committed window with the realized data and no "
-            "look-ahead, and the forecasts only change the stochastic solve's own results. The note is printed "
-            "once per realization solve.\n\n"
-            "**How to fix:** nothing, if that is meant. For a day-ahead commitment that holds in the realization, "
-            "use `startup_method` = *binary* for those units."
-        ),
-    ),
-    WarningSpec(
         code="W-0510",
         message="annual_flow is above what peak_inflow can reach",
         title="annual_flow above the reach of peak_inflow",
@@ -407,13 +386,14 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
         title="Fractional number of existing units",
         topic=_LIFETIME,
         body=(
-            "The unit or connection has integer online variables (whole units), but its existing capacity divided "
+            "The unit or connection has integer online variables (whole units: `startup_method` *integer* or "
+            "*integer_fix_in_uc*), but its existing capacity divided "
             "by its unit size is not a whole number of units in some period. Integer online units cannot use the "
             "fraction (below 1 the unit can never be online, which can make a minimum such as `min_instant_flow` "
             "infeasible). Without `virtual_unitsize`, one unit is the largest existing capacity over the periods. "
             "The debug log gives the counts per period.\n\n"
             "**How to fix:** set `virtual_unitsize` to the size of one unit and `existing` to the number of "
-            "units, or use `startup_method` `linear`."
+            "units, or use `startup_method` `linear` (`linear_fix_in_uc` in place of `integer_fix_in_uc`)."
         ),
     ),
     WarningSpec(
@@ -1035,17 +1015,21 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
         severity=NOTE,
         entityless=True,
         body=(
-            "The realization solve takes from its stochastic solve the units online of the binary units "
-            "(`startup_method` = *binary*) and the investments. Here there are neither: no unit or connection has "
-            "units online in the realization solve (no `startup_method`, or `reduce_unit_detail_method` left the "
-            "online variables out), and the stochastic solve decides no investments (no `invest_periods`, "
-            "`realized_invest_periods` or `stochastic_invest_method`). Storage and the other states "
-            "continue from the previous realization, not from the stochastic solve, and reserve is met again with "
-            "the realized data. So the realized results are a dispatch of each committed window with the realized "
-            "data and no look-ahead, and the forecasts only change the stochastic solve's own results. The note is "
-            "printed once per realization solve.\n\n"
-            "**How to fix:** nothing, if that is meant. For a two-stage model in which the day-ahead decisions hold, "
-            "give the units that commit a day ahead `startup_method` = *binary*."
+            "The realization solve takes from its stochastic solve the units online of the units and connections "
+            "with `startup_method` *linear_fix_in_uc* or *integer_fix_in_uc*, and the investments. Here there are "
+            "neither: no unit or connection with a _fix_in_uc method has units online in the realization solve "
+            "(units with *linear* or *integer* are decided again with the realized data; units without online "
+            "variables, or with `reduce_unit_detail_method` leaving them out, have none), and the stochastic solve "
+            "decides no investments (no `invest_periods`, `realized_invest_periods` or "
+            "`stochastic_invest_method`). Storage and the other states continue from the previous realization, "
+            "not from the stochastic solve, and reserve is met again with the realized data. So the realized "
+            "results do not depend on the stochastic solve: they are a dispatch of each committed window with the "
+            "realized data and no look-ahead, and the forecasts only change the stochastic solve's own results. "
+            "The note is printed once per realization solve.\n\n"
+            "**How to fix:** nothing, if that is meant. For a commitment made in the stochastic solve that holds "
+            "in the realization, give those units `startup_method` *integer_fix_in_uc* or *linear_fix_in_uc*. "
+            "For a rolling solve that should keep nothing of a separate unit-commitment solve, use "
+            "`dispatch_realization_method` *within_solve*: each roll is then one solve."
         ),
     ),
     WarningSpec(
@@ -1121,8 +1105,7 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
     ),
     WarningSpec(
         code="W-0593",
-        message=("solve '{solve}' has stochastic_branches but dispatch_realization_method deterministic: only "
-                 "the realized: yes branch is used"),
+        message="solve '{solve}' is deterministic: only its realized: yes branch is used",
         title="Deterministic solve with stochastic branches",
         topic=_SOLVES,
         entityless=True,

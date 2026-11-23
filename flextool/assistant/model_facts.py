@@ -5,7 +5,8 @@ The facts come from two places:
 
 * the input data (:func:`input_facts`): the solve sequence (``model.solves`` and the solves nested with
   ``contains_solves``), and per solve its mode (a single solve, a rolling window with its horizon and jump,
-  stochastic forecast branches with their weights, representative periods), its periods with the years each
+  stochastic forecast branches with their weights, or the realized branch alone of a solve whose
+  ``dispatch_realization_method`` is deterministic, representative periods), its periods with the years each
   represents and which of them it does not realise (look-ahead periods, or periods whose investments only it
   realises), and the time steps it really uses: ``timeline.timestep_duration`` over the blocks of its timesets,
   or with ``solve.new_stepduration`` the steps the engine aggregates them to (:mod:`flextool.timeline_pieces`, the
@@ -38,7 +39,7 @@ if TYPE_CHECKING:
 
 #: The version of the facts: bumped whenever what the facts say or how they are worded changes (the evaluation
 #: runner records it with each cell, ``tools/assistant_eval.py`` ``setting_key``).
-FACTS_VERSION = 3
+FACTS_VERSION = 4
 #: The first line of the facts in the context block (the scenario is named on the block's Scenario line).
 HEADER = "Model facts (from the scenario's input data and latest run):"
 #: The most tokens (``budget.approx_tokens``, text) the facts may take, header included.
@@ -94,6 +95,9 @@ class SolveFacts:
     steps_per_period: tuple[int, int] | None     # the fewest and the most steps of one period
     branches: tuple[BranchFan, ...]
     representative: tuple[tuple[str, int, int], ...]   # (timeset, representative periods, base periods)
+    # dispatch_realization_method: within_solve or separate_dispatch solve the forecasts; deterministic (absent,
+    # blank or unrecognised: the engine's reading) reads only the realized branch.
+    realization: str = "deterministic"
 
 
 @dataclass(frozen=True)
@@ -368,8 +372,15 @@ def input_facts(db: Any, scenario: str) -> tuple[SolveFacts, ...]:
             steps=steps,
             steps_per_period=(min(per_period), max(per_period)) if per_period else None,
             branches=_fans(stochastic) if stochastic is not None else (),
-            representative=representative))
+            representative=representative,
+            realization=_realization(data.value("solve", solve, "dispatch_realization_method"))))
     return tuple(out)
+
+
+def _realization(raw: Any) -> str:
+    """The ``dispatch_realization_method`` as the engine reads it: absent, blank or unrecognised is deterministic."""
+    value = str(raw).strip() if raw is not None else ""
+    return value if value in ("within_solve", "separate_dispatch") else "deterministic"
 
 
 def _timeset_steps(ts: str, blocks: dict, timeline_of: dict, timelines: dict, chunks: dict) -> list[float]:
@@ -533,7 +544,8 @@ class _Renderer:
         else:
             text = f"solve_mode {self.name(s.mode)}"
         if s.branches:
-            text += "; " + self.fans(s.branches)
+            text += "; " + (self.fans(s.branches) if s.realization != "deterministic"
+                            else self.deterministic(s.branches))
         if s.representative:
             ts, reps, bases = s.representative[0]
             text += (f"; representative periods: {reps} for {bases} base period{'' if bases == 1 else 's'} "
@@ -564,6 +576,16 @@ class _Renderer:
         else:
             text += "; no realized branch, so the fan's operational results are empty"
         return text
+
+    def deterministic(self, fans: tuple[BranchFan, ...]) -> str:
+        """A solve with ``stochastic_branches`` and ``dispatch_realization_method`` deterministic: it is solved
+        with the realized branch only (the engine's flattening), or stops with an error without one."""
+        realized = next((fan.realized for fan in fans if fan.realized), None)
+        if realized:
+            return (f"deterministic (dispatch_realization_method): reads only the realized branch "
+                    f"{self.name(realized)} of its stochastic_branches, the forecasts are not solved")
+        return ("deterministic (dispatch_realization_method) with stochastic_branches but no realized branch: "
+                "the run stops with an error")
 
     def unrealised(self, s: SolveFacts) -> str:
         """The periods of *s* whose operations it does not realise: look-ahead periods (neither operations nor

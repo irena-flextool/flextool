@@ -59,7 +59,7 @@ See [Slack and penalty values](../results.md#slack-and-penalty-values).
 
 ## How to make an LP investment and a detailed dispatch check
 
-Unit commitment (`startup_method` *binary*), min loads, ramps and reserves make an investment solve slow, and an
+Unit commitment (`startup_method` *integer*), min loads, ramps and reserves make an investment solve slow, and an
 investment solve over many periods or a long sample may not finish at all. A common way out is to make the
 investment solve an LP with less detail and then check the plan with a dispatch solve that has all the detail.
 
@@ -81,7 +81,7 @@ online, ramps and holds the reserves.
 
 **An example to start from.** In *examples.sqlite*, the scenario `5weeks_invest_fullYear_dispatch_coal_wind` has
 the investment solve `invest_1year_5weeks` (alternative *5weeks_only_invest*) and the dispatch solve
-`y2020_fullYear_dispatch`. Give `coal_plant` `startup_method` *binary* (as the alternative *coal_min_load_MIP*
+`y2020_fullYear_dispatch`. Give `coal_plant` `startup_method` *integer_fix_in_uc* (as the alternative *coal_min_load_MIP*
 does), and set the two parameters on `invest_1year_5weeks`.
 
 **What to check.** Read the investment solve's info line in the run log: it lists what was left out, for which

@@ -648,10 +648,11 @@ def add_constraints(b: "_Build") -> None:
     # v_online[p,d,t] = p_fix_online[p,d,t]   ∀ (p,d,t) ∈ online_rows with a p_fix_online value
     #   (a coarse process: at the first fine step of each coarse step; its pin is the same on every fine step of
     #   the step, or the process keeps the solve's step, flex_data.coarse_pin_varies)
-    # In a realization solve, pins the units online of the processes with integer (binary) online variables to the
-    # parent's commitment, also when the solve relaxes integers (reduce_unit_detail_method integers*); linear units
-    # online are not pinned (p_fix_online has none: the realization re-decides them with the realized data), so
-    # online_fix_eq_linear has no rows.  At a free start of the realization (its roll 0, a single-solve realization,
+    # In a realization solve, pins the units online of the processes with startup_method linear_fix_in_uc
+    # (online_fix_eq_linear) or integer_fix_in_uc (online_fix_eq_integer, also when the solve relaxes integers:
+    # reduce_unit_detail_method integers*) to the parent's commitment; the units online of linear and integer
+    # processes are not pinned (p_fix_online has none: the realization re-decides them with the realized data).
+    # At a free start of the realization (its roll 0, a single-solve realization,
     # a period that does not continue the previous one) its units online are free like the parent's; a free start
     # relaxes any predecessor the parent had, so the pinned commitment stays feasible.  A later roll carries the
     # previous realization's units online in both stages (the stochastic roll k and realization roll k).

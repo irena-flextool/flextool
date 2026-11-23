@@ -141,7 +141,7 @@ WARNINGS: dict[str, WarningSpec] = {spec.code: spec for spec in sorted(_SPECS + 
                                                                    key=lambda s: s.code)}
 
 #: Codes that were used once and are retired: never give them to a new warning (old logs still name them).
-RETIRED: frozenset[str] = frozenset()
+RETIRED: frozenset[str] = frozenset({"W-0509"})
 
 
 def docs_url(code: str) -> str:

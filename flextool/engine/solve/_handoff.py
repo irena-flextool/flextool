@@ -181,10 +181,12 @@ class SolveHandoff:
     # ROLL), this carries the FULL per-(process, period, step) committed
     # schedule for the sibling of the SAME solve.  Read from a FORECAST
     # branch (the NA-tied, well-defined value), NOT the degenerate weight-0
-    # realized branch.  Unit-count space (NOT ×unitsize).  Binary units only
-    # (startup_method = binary, also with relaxed integers): linear units
-    # online are not pinned, the realization re-decides them.
-    # Producer: parent's committed v_online_integer over the jump.
+    # realized branch.  Unit-count space (NOT ×unitsize).  Only the processes
+    # with startup_method linear_fix_in_uc or integer_fix_in_uc (the latter
+    # also with relaxed integers): the units online of linear and integer
+    # processes are not pinned, the realization re-decides them.
+    # Producer: parent's committed v_online_linear / v_online_integer of the
+    # process_online_fix_in_uc processes over the jump.
     # Consumer: sibling's ``p_fix_online`` overlay (``online_fix_eq``).
     # Schema: ``[process, period, step, value]``.  No file equivalent.
     fix_online: pl.DataFrame | None = None

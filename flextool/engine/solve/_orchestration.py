@@ -3765,7 +3765,7 @@ def _drive_cascade(
             check_online_ramp_carry(data)
 
             # A realization solve fixes the stochastic solve's investments
-            # and pins its binary units online to the NA-tied values: name
+            # and pins the units online of its _fix_in_uc processes to the NA-tied values: name
             # the hard-balance node the realized data cannot balance before
             # the LP is built.
             if complete_solve_name in (

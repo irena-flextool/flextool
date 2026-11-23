@@ -838,11 +838,10 @@ def _validate_online_constraint_coeff(d) -> None:
     if missing:
         shown = ", ".join(f"{'unit' if p in units else 'connection'} '{p}' in constraint '{cn}'"
                           for p, cn in missing)
-        how = ("linear or binary (or, on a unit, a minimum_time_method)" if any(p in units for p, _ in missing)
-               else "linear or binary")
+        how = (" (or, on a unit, a minimum_time_method)" if any(p in units for p, _ in missing) else "")
         raise FlexToolConfigError(
-            f"constraint_online_coeff needs online variables, but these have none: {shown}. Set startup_method "
-            f"{how}, or remove the coefficient.")
+            f"constraint_online_coeff needs online variables, but these have none: {shown}. Set a startup_method "
+            f"other than no_startup{how}, or remove the coefficient.")
 
 
 def _validate_storage_binding_disjoint(d) -> None:
@@ -4379,7 +4378,7 @@ def _validate_startup_inputs(d) -> None:
     if missing:
         raise FlexToolConfigError(
             f"startup_input_method needs online variables, but these units have a start-up input and none: "
-            f"{', '.join(missing)}. Set startup_method linear or binary (or a minimum_time_method), or set "
+            f"{', '.join(missing)}. Set a startup_method other than no_startup (or a minimum_time_method), or set "
             "startup_input_method just_input.")
 
 
@@ -4738,8 +4737,8 @@ def _eq_user_constraints(b: _Build) -> None:
     # one-variable two-way arc (no_losses_no_variable_cost, DC power flow; signed flow = v_flow − v_flow_back) gives
     # its reverse flow v_flow_back the same coefficient: the same row for every transfer method
     # (_user_constraint_flow_terms).
-    # The online term counts the units online (of unitsize) in each step; integer with binary startup, continuous
-    # with linear.  v_online is the variable of the process's UC class (v_online_linear / v_online_integer).
+    # The online term counts the units online (of unitsize) in each step; whole units with startup_method integer
+    # or integer_fix_in_uc, continuous with linear or linear_fix_in_uc.  v_online is the variable of the process's UC class (v_online_linear / v_online_integer).
     # Terms without data are absent.  The existing-capacity terms are constants and enter as Param terms.
     # A constraint without flow, state and online terms is the same in every step of a period, so it gets one row
     # per period (the _period family) instead of one per step.  The constraint axis is cn (c is the commodity

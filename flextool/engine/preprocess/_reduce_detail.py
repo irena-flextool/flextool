@@ -203,8 +203,8 @@ class ReduceReport:
 
     ``removed``: feature -> sorted names of the entities (processes, or user constraints for
     ``user_constraints``) it was left out for; only features with something left out appear.  Keys: ``integer_online``
-    (binary units / connections now continuous), ``exact`` (exact connections now regular), ``ramp_limits``,
-    ``ramp_costs``, ``min_load``, ``capacity_min_coeff``, ``min_up_down``, ``online``, ``startup_energy`` (units whose
+    (units / connections with startup_method integer or integer_fix_in_uc now continuous), ``exact`` (exact
+    connections now regular), ``ramp_limits``, ``ramp_costs``, ``min_load``, ``capacity_min_coeff``, ``min_up_down``, ``online``, ``startup_energy`` (units whose
     start-up input draw went with the online variables), ``online_unused`` (online
     variables without a use left out under ``integers*``), ``min_load_efficiency``
     (run at their full-load efficiency: every one under ``online*``, those more efficient at min load under

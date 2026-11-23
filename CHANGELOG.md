@@ -12,6 +12,16 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
   refuses `binary`. An Excel workbook of an earlier version is migrated when the GUI imports it; with
   `flextool-read-tabular-input` without `--migration-follows`, a `binary` cell is refused, as for every earlier
   member rename.
+- **What a realization solve keeps of the units online follows `startup_method`.** In a separate realization
+  solve (a rolling `separate_dispatch` solve, or a single solve with a `realized: yes` branch), the units online of
+  the units and connections with `linear_fix_in_uc` or `integer_fix_in_uc` are kept at the stochastic solve's
+  commitment over the jump (the realized periods); with `linear` or `integer` the realization decides them again
+  with the realized data. Upgraded databases keep their results (`binary` became `integer_fix_in_uc`, `linear`
+  stays `linear`). The new members change the realization: `integer` decides whole units again (a mixed-integer
+  realization), and `linear_fix_in_uc` keeps a linear commitment (as before 4.6.1). Without a separate realization
+  solve a member and its `_fix_in_uc` variant give the same model. Note W-0509 is retired: note W-0588 now says
+  when a realization keeps nothing of its stochastic solve (no `_fix_in_uc` unit online and no investments), also
+  when its units online are all `linear` or `integer`.
 - **`min_uptime` / `min_downtime` apply only with their `minimum_time_method`.** A unit's minimum up time
   constraints are built only when its `minimum_time_method` is `min_uptime` or `both`, its minimum down time
   constraints only with `min_downtime` or `both`; without a method (the default, `none`) neither applies, as the

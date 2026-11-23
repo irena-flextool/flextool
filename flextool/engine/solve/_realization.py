@@ -241,35 +241,35 @@ def solve_decides_investments(solve_cfg, solve: str) -> bool:
 
 
 def note_realization_inherits_nothing(d, solve: str, parent: str, parent_invests: bool) -> None:
-    """Note when the realization solve *solve* keeps nothing its stochastic solve *parent* decided.
+    """Note (W-0588) when the realization solve *solve* keeps nothing its stochastic solve *parent* decided.
 
-    A realization solve takes from its parent the units online of its binary units (``p_fix_online``) and the
-    investments (when *parent_invests*: :func:`solve_decides_investments` of the parent).  With neither, the realized results do
-    not depend on the stochastic solve: W-0509 when the realization's units online are all linear (they are
-    re-decided with the realized data; the linear processes are named), W-0588 when it has no units online at all.
-    Nothing when binary units are online, even unpinned (a stochastic solve with nothing tied)."""
+    A realization solve takes from its parent the units online of the processes whose ``startup_method`` is
+    ``linear_fix_in_uc`` or ``integer_fix_in_uc`` (``p_fix_online``) and the investments (when *parent_invests*:
+    :func:`solve_decides_investments` of the parent).  The note is given when there are neither: no such process
+    has units online in the realization solve (``process_online_fix_in_uc`` ∩ its online processes, so that
+    ``reduce_unit_detail_method`` *online* counts as none) and the parent decides no investments.  Processes with
+    ``linear`` or ``integer`` are decided again with the realized data and do not prevent the note.  Nothing when a
+    ``_fix_in_uc`` process is online, even unpinned (a stochastic solve with nothing tied)."""
     from flextool import run_warnings
 
-    def _names(frame) -> list[str]:
-        return [] if frame is None or frame.height == 0 else sorted(set(frame["p"].cast(pl.Utf8).to_list()))
+    def _names(frame) -> set[str]:
+        return set() if frame is None or frame.height == 0 else set(frame["p"].cast(pl.Utf8).to_list())
 
     if parent_invests or _rows(_frame(getattr(d, "p_fix_online", None))):
         return
-    linear = _names(getattr(d, "process_online_linear", None))
-    integer = _names(getattr(d, "process_online_integer", None))
-    parent = re.sub(r"_roll_\d+$", "", parent)
-    if linear and not integer:
-        run_warnings.note("W-0509", linear, solve=solve, parent=parent)
-    elif not linear and not integer:
-        run_warnings.note("W-0588", solve=solve, parent=parent)
+    online = _names(getattr(d, "process_online_linear", None)) | _names(getattr(d, "process_online_integer", None))
+    if online & _names(getattr(d, "process_online_fix_in_uc", None)):
+        return
+    run_warnings.note("W-0588", solve=solve, parent=re.sub(r"_roll_\d+$", "", parent))
 
 
 def check_pinned_realization_feasible(d, solve: str, *, rtol: float = 1e-6) -> None:
     """Raise when a realization solve cannot balance a node without balance slack.
 
     A realization solve fixes the investments of its stochastic solve (they reach it as existing capacity) and pins
-    the units online of its binary units (``p_fix_online``) to values the stochastic solve chose for its forecasts;
-    the realized data was not among them.  Linear units online are not pinned: such a process counts here with its
+    the units online of its processes with ``startup_method`` ``linear_fix_in_uc`` or ``integer_fix_in_uc``
+    (``p_fix_online``) to values the stochastic solve chose for its forecasts; the realized data was not among them.
+    The units online of ``linear`` and ``integer`` processes are not pinned: such a process counts here with its
     existing capacity, a valid upper bound, as does every process of a realization that pins no units online.  The
     caller runs the check for every realization solve.  On a node with
     ``penalty_method = off`` (no balance slack) the realized net load may then exceed what the supply into the node

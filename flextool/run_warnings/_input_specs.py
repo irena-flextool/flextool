@@ -140,7 +140,8 @@ INPUT_SPECS: tuple[WarningSpec, ...] = (
     _w("W-0205", "existing of a {cls} is not a whole number of units (integer online)",
        "Fractional unit count with integer online variables", _UNITS,
        "With `virtual_unitsize` set, `existing` is the number of units (capacity = existing × "
-       "virtual_unitsize). The entity has integer online variables (`startup_method: binary`), which count whole "
+       "virtual_unitsize). The entity has integer online variables (`startup_method` *integer* or "
+       "*integer_fix_in_uc*), which count whole "
        "units, so a count such as 2.5 cannot all be online. Results are otherwise unchanged. The debug log gives "
        "the counts and the unit size.\n\n"
        "**How to fix:** give `existing` as a whole number of units, or change `virtual_unitsize`."),
@@ -272,14 +273,16 @@ INPUT_SPECS: tuple[WarningSpec, ...] = (
        "startup_method set to linear for a minimum time", _UNITS,
        "The process has a `minimum_time_method` (`min_uptime`, `min_downtime` or `both`), which needs online "
        "variables, and `startup_method: no_startup`; it is run with `startup_method: linear`.\n\n"
-       "**How to fix:** nothing; set `startup_method` yourself to choose `linear` or `binary`.",
+       "**How to fix:** nothing; set `startup_method` yourself to choose another member (`integer` for whole "
+       "units, a `_fix_in_uc` member to keep the stochastic solve's units online in a separate realization).",
        severity=NOTE),
     _w("W-0230", "startup_method set to linear: piecewise curve burns fuel at zero output",
        "startup_method set to linear for a rising piecewise curve", _UNITS,
        "The unit's `piecewise_linear_efficiency` curve burns fuel at zero output (its efficiency rises from the "
        "first point to the second), which needs online variables, so the unit is run with "
        "`startup_method: linear`. The debug log gives the points.\n\n"
-       "**How to fix:** nothing; set `startup_method` yourself to choose `linear` or `binary`.",
+       "**How to fix:** nothing; set `startup_method` yourself to choose another member (`integer` for whole "
+       "units, a `_fix_in_uc` member to keep the stochastic solve's units online in a separate realization).",
        severity=NOTE),
     _w("W-0231", "min_uptime / min_downtime not in minimum_time_method; ignored",
        "Minimum time without its minimum_time_method", _UNITS,

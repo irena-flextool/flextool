@@ -7,8 +7,8 @@ the bound reserve_total_upper, the per-process limits
 reserve_process_{upward,downward}, the connection rows connection_reserve_{up,down}[_online_*|_exact] (a
 connection's reserve limited by its net position at the node), the storage energy rows reserve_storage_up_floor /
 reserve_storage_down_headroom, and the shortfall penalty in the objective.  A realization solve does not pin
-v_reserve: it meets the reserve requirements with its own data, from its units online (the binary ones
-inherited, the linear ones decided again) and every other reserve provider.  The coupling
+v_reserve: it meets the reserve requirements with its own data, from its units online (those of the
+_fix_in_uc startup methods inherited, the others decided again) and every other reserve provider.  The coupling
 of units' v_reserve to process capacity (maxFlow, maxOutputSum, maxFlow_online, maxOutputSum_online,
 maxInputFlow_online, profile limits, unit floors) lives with those families.
 """

@@ -1302,18 +1302,21 @@ def _online_by_startup(source: "InputSource", methods: tuple[str, ...], *, fix_i
 
 
 def process_online(source: "InputSource") -> pl.DataFrame:
-    """Units and connections with ``startup_method ∈ {linear, binary}`` (incl. the ``minimum_time_method``
-    promotion).  Schema: ``[p]``."""
+    """Units and connections with online variables: a ``startup_method`` other than ``no_startup`` (the startup
+    classes ``linear`` and ``binary``), incl. the ``minimum_time_method`` promotion.  Schema: ``[p]``."""
     return _online_by_startup(source, ("linear", "binary"))
 
 
 def process_online_linear(source: "InputSource") -> pl.DataFrame:
-    """Units and connections with a linear startup method.  Schema: ``[p]``."""
+    """Units and connections with continuous online variables: ``startup_method`` ``linear`` or
+    ``linear_fix_in_uc`` (the startup class ``linear``), incl. the ``minimum_time_method`` promotion.  Schema:
+    ``[p]``."""
     return _online_by_startup(source, ("linear",))
 
 
 def process_online_integer(source: "InputSource") -> pl.DataFrame:
-    """Units and connections with a binary startup method.  Schema: ``[p]``."""
+    """Units and connections with whole-unit online variables: ``startup_method`` ``integer`` or
+    ``integer_fix_in_uc`` (the startup class ``binary``).  Schema: ``[p]``."""
     return _online_by_startup(source, ("binary",))
 
 
@@ -2033,6 +2036,7 @@ SIMPLE_PROJECTIONS: dict[str, callable] = {
     "process_online": process_online,
     "process_online_linear": process_online_linear,
     "process_online_integer": process_online_integer,
+    "process_online_fix_in_uc": process_online_fix_in_uc,
     "process_delayed": process_delayed,
     # Every storage_bind_* set (plain and blended) is derived authoritatively in
     # ``flex_data._load_storage`` from the per-solve
@@ -2120,7 +2124,8 @@ SIMPLE_PROJECTIONS: dict[str, callable] = {
 # Set projections whose empty result means "no member" (field set to None), not "keep the seed".
 _AUTHORITATIVE_SETS: tuple[str, ...] = (
     "groupCapacityMargin", "groupInertia", "groupNonSync",
-    "process_online", "process_online_linear", "process_online_integer", "process_sink_nonSync",
+    "process_online", "process_online_linear", "process_online_integer", "process_online_fix_in_uc",
+    "process_sink_nonSync",
     # Method-gated (invest_method), a complete read of entity__invest_method —
     # "nothing in the DB" must not fall back to a stale/wrong seed.
     "g_invest_total", "g_divest_total", "g_invest_cumulative",
