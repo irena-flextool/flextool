@@ -8944,27 +8944,27 @@ construction instead of approximately-compliant). Unlimited tiers (quantity ≥ 
 <div class="highlight"><pre><span></span><code>C[conn] ≥ 0   ∀ conn ∈ the connections of the cross-region arcs
 </code></pre></div>
 <p>Capacity invested in a trade connection, in units of its unitsize (as v_invest_p): one column per connection, summed over the periods it may invest in (the hand master, master="hand").</p>
-<p>Source: <code>flextool/engine/solve/_benders.py:1177</code> (<code>_build</code>)</p>
+<p>Source: <code>flextool/engine/solve/_benders.py:1200</code> (<code>_build</code>)</p>
 <h3 id="var-f">VAR. <code>f</code></h3>
 <div class="highlight"><pre><span></span><code>f[p,source,sink,d,t] ≥ 0   ∀ cross-region arcs (p,source,sink), (d,t) on the arc's grid
 </code></pre></div>
 <p>Trade flow on a cross-region arc, in units of the connection's unitsize, keyed by the same (p,source,sink) triple the region half-flows carry so the pin values map 1:1.</p>
-<p>Source: <code>flextool/engine/solve/_benders.py:1185</code> (<code>_build</code>)</p>
+<p>Source: <code>flextool/engine/solve/_benders.py:1208</code> (<code>_build</code>)</p>
 <h3 id="var-eta">VAR. <code>eta</code></h3>
 <div class="highlight"><pre><span></span><code>eta[r] ≥ eta_floor   ∀ regions r
 </code></pre></div>
 <p>The recourse cost of region r that the optimality cuts bound from below (scaled objective units). The large-negative finite floor (_ETA_FLOOR_MULT) keeps the cut-less iter-0 master optimal without cutting off the optimum; the f̄ = 0 bootstrap then seeds the real cuts.</p>
-<p>Source: <code>flextool/engine/solve/_benders.py:1197</code> (<code>_build</code>)</p>
+<p>Source: <code>flextool/engine/solve/_benders.py:1220</code> (<code>_build</code>)</p>
 <h3 id="eq-trade_capacity">EQ. <code>trade_capacity</code></h3>
 <div class="highlight"><pre><span></span><code>C[conn] − f[p,source,sink,d,t] ≥ 0   ∀ arcs (p,source,sink) of conn, (d,t) on the arc's grid
 </code></pre></div>
 <p>A trade flow stays within the capacity invested in its connection.  Both sides are in units of the connection's unitsize, so it cancels.  One row per (arc, d, t); the connection key is a join column so Where aligns f with its connection's C.  Existing capacity of the connection is not in the row: the hand master treats every trade connection as greenfield (the flextool master path counts it).</p>
-<p>Source: <code>flextool/engine/solve/_benders.py:1206</code> (<code>_build</code>)</p>
+<p>Source: <code>flextool/engine/solve/_benders.py:1229</code> (<code>_build</code>)</p>
 <h3 id="eq-maxinvest">EQ. <code>maxInvest</code></h3>
 <div class="highlight"><pre><span></span><code>C[conn] ≤ Σ_{d ∈ invest periods of conn} max_units[conn,d]   ∀ conn
 </code></pre></div>
 <p>Caps the invested capacity (max_units = p_entity_max_units, units of unitsize), mirroring the monolith's maxInvest_var_bound; it also bounds the master before enough cuts accumulate.</p>
-<p>Source: <code>flextool/engine/solve/_benders.py:1229</code> (<code>_build</code>)</p>
+<p>Source: <code>flextool/engine/solve/_benders.py:1252</code> (<code>_build</code>)</p>
 <h3 id="obj-master_objective">OBJ. <code>master_objective</code></h3>
 <div class="highlight"><pre><span></span><code>Σ_conn C_cost[conn] · C[conn] + Σ_r eta[r]
   C_cost[conn] = s · unitsize[conn] · Σ_{d ∈ invest periods of conn} (annual_discounted[conn,d]
@@ -8972,7 +8972,7 @@ construction instead of approximately-compliant). Unlimited tiers (quantity ≥ 
   s = obj_scale (scale_the_objective), so the master lives in the scaled space of the regions
 </code></pre></div>
 <p>The invest cost of the trade capacity, as OBJ. invest_cost_p of the monolith, plus the regions' recourse costs.</p>
-<p>Source: <code>flextool/engine/solve/_benders.py:1248</code> (<code>_build</code>)</p>
+<p>Source: <code>flextool/engine/solve/_benders.py:1271</code> (<code>_build</code>)</p>
 
 
 

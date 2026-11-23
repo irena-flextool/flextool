@@ -1748,6 +1748,21 @@ reduced cost of the pinned forward column
 monolith reference). The rewriter / half-flow metadata structure is in
 <code>_region_filter</code> (<code>HalfFlow</code>, <code>Coupling</code>, <code>split</code>); the arc / pin
 bookkeeping for the master lives in <code>_benders._build_arcs</code>.</p>
+<p>A one-variable connection (<code>process_source_sink_2way_1var</code>: one arc, signed
+flow <code>v_flow − v_flow_back</code>) keeps that form on both sides of the cut: its
+half-flows (<code>HalfFlow.one_var</code>) are one-variable arcs too, so each region's
+<code>v_flow_back</code> on the half-flow is the reverse direction with the monolith's
+balance terms (the slope at the source, a unit conversion). The severed arc
+itself is in no region's <code>process_source_sink_2way_1var</code>, and the master's
+holds only the coupling arcs. Each such arc gets a second coupling
+(<code>Coupling.var</code> / <code>_ArcMaster.var</code> = <code>v_flow_back</code>) pinned and cut like the
+forward one; the master holds both directions and the capacity
+(<code>maxFlow</code> / <code>maxFlow_back</code>). A back arc's <code>_ArcMaster.key</code> is its direction
+of travel <code>(p, sink, source)</code> (so <code>BendersResult.trade_flow</code> reads as for a
+<code>regular</code> connection's reverse arc), its <code>dim_tuples</code> the original arc (the
+master's <code>v_flow_back</code> index). The hand master and the pin diagnostic refuse
+back arcs. A DC power-flow line between regions is refused by <code>split</code>: the
+half-flows cannot carry its voltage angles.</p>
 <p>Star topologies (more than two regions sharing one pipeline) are not
 supported; the rewriter asserts bilateral arcs only.</p>
 <h3 id="24-algorithm-master-multi-cut-benders-loop">2.4 Algorithm — master + multi-cut Benders loop</h3>

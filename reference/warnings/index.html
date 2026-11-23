@@ -1498,6 +1498,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#w-0491" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        W-0491
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -5310,6 +5321,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#w-0491" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        W-0491
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -7262,18 +7284,29 @@ of each code. <code>Note:</code> lines are information, not problems.</p>
 <p><strong>Value list possibly changed by a spinedb_api bug</strong> (warning). Console line:</p>
 <div class="highlight"><pre><span></span><code>Warning: a spinedb_api bug may have changed the value list on &lt;date&gt; (&lt;N&gt; cases, e.g. '&lt;name&gt;') [W-0490]
 </code></pre></div>
-<p>The database's own migration history shows a migration session, between 2024-04-29 and 2025-07-07, that may have run with spinedb_api 0.31 to 0.34. Those versions had a bug: adding a member to a value list could overwrite the list's first member, and every default and value that used that member then silently changed with it. The line names the lists to check; the debug log and the run log give the data versions of the session. FlexTool does not know which library the migration used, so this is a possibility, not a finding. The GUI shows a short "Please check this database" box when it opens the project, with a button to this checklist. The message repeats at every run and every time the GUI opens the database, also after you have checked, until a repair is recorded in the database (a repair tool is planned).</p>
+<p>The database's own migration history shows a migration session, between 2024-04-29 and 2025-07-07, that may have run with spinedb_api 0.31 to 0.34. Those versions had a bug: adding a member to a value list could overwrite the list's first member, and every default and value that used that member then silently changed with it. The line names the lists to check; the debug log and the run log give the data versions of the session. FlexTool does not know which library the migration used, so this is a possibility, not a finding. The GUI lists a "Please check this database" message for it when it opens the project, with a button to this checklist. The message repeats at every run and every time the GUI opens the database, also after you have checked, until a repair is recorded in the database: only FlexTool's repair tool records one.</p>
 <p>For <code>invest_methods</code> (migration from data version 21 to 22): the list should contain <code>not_allowed</code>. If it is missing, the class default of <code>invest_method</code> (unit, connection, node) and any value that was <code>not_allowed</code> before that date now read <code>cumulative_limits</code>, which since FlexTool 4.4 lets those entities invest and retire without limit.</p>
-<p><strong>How to fix:</strong> check the list (a checklist):</p>
+<p><strong>How to fix:</strong> run the repair tool on the database, in a terminal:</p>
+<p><code>flextool-repair-value-list "&lt;database&gt;"</code></p>
+<p>or, with the Python of FlexTool's environment, <code>python -P -m flextool.cli.cmd_repair_value_list "&lt;database&gt;"</code>.</p>
+<p>The tool never changes the database itself. It asks about each default and value that may have changed, and writes a repaired copy (<code>&lt;name&gt;_repaired.sqlite</code> next to it) that records the repair; the warning ends when that copy is used in place of the database. If you have a copy of the database from before the upgrade (data version 21 or older), add <code>--archive "&lt;old copy&gt;"</code>: the tool then uses it as evidence. The steps (answers file, exit codes, swapping the copy in) are in <a href="../../terminal_workflow/#repairing-a-value-list-w-0490">Repairing a value list</a>.</p>
+<p>If the tool cannot repair the list (it says so), check it by hand (a checklist):</p>
 <ol>
 <li>Make a copy of the database and work on the copy.</li>
-<li>In the Spine DB editor, open <em>Parameter value list</em> and the named list (<code>invest_methods</code>). Check that it contains <code>not_allowed</code> (for another list: check it has every member listed in the parameter reference).</li>
-<li>If a member is missing, add it to the list.</li>
+<li>In the Spine DB editor, open <em>Parameter value list</em> and the named list (<code>invest_methods</code>). Check that it has every member listed in the parameter reference (14 for <code>invest_methods</code>, among them <code>not_allowed</code> and <code>cumulative_limits</code>).</li>
+<li>If a member is missing, add it to the list (at the end).</li>
 <li>For <code>invest_methods</code>, set the default value of <code>invest_method</code> of <code>unit</code>, <code>connection</code> and <code>node</code> to <code>not_allowed</code> (the shipped default).</li>
 <li>Filter the parameter values by <code>invest_method</code> = <code>cumulative_limits</code>. For each one, decide whether it was meant: compare with a copy from before the migration date, your Excel input or your notes. An entity that has no <code>cumulative_max_capacity</code> and should not invest should be <code>not_allowed</code>.</li>
 <li>Re-run, and compare the investments and retirements with the previous results.</li>
+<li>Run the repair tool on the fixed copy to record the repair: the warning stays until one is recorded. If the tool still cannot read the list (it says so again), run it with <code>--checked-by-hand</code>: you confirm that you have checked every item above, and the tool records the repair in a copy without changing any value.</li>
 </ol>
 <p>If you copied data from this database into another one, check that one too.</p>
+<h3 id="w-0491">W-0491</h3>
+<p><strong>Shipped defaults lost in an old upgrade</strong> (note). Console line:</p>
+<div class="highlight"><pre><span></span><code>Note: defaults emptied by an old upgrade (&lt;N&gt; cases, e.g. '&lt;name&gt;') [W-0491]
+</code></pre></div>
+<p>An upgrade of this database before FlexTool 4.6.3 left some default values empty: an old Spine library had stored them in a form the upgrade could not read. The line names them (up to three; the run log lists all of them with their shipped values). An empty default works like the shipped one, because FlexTool uses the shipped value when none is stored. Only <code>storage_start_end_method</code> can change results; when the line names it, an unaffected database keeps the start of storage nodes with their own start value fixed (<code>fix_start</code>), and this one leaves it free. The GUI lists a "Shipped defaults lost in an old upgrade" message for it when it opens the project, with a button that copies the repair command.</p>
+<p><strong>How to fix:</strong> run the repair tool on the database: <code>flextool-repair-value-list "&lt;database&gt;"</code> (or <code>python -P -m flextool.cli.cmd_repair_value_list "&lt;database&gt;"</code>). It writes a repaired copy next to the original, puts the shipped defaults back and asks about each such storage node. Then use the copy in place of the original. The note stops once the database holds the tool's repair record. The steps are in <a href="../../terminal_workflow/#repairing-a-value-list-w-0490">Repairing a value list</a>.</p>
 <h2 id="input-values">Input values</h2>
 <h3 id="w-0222">W-0222</h3>
 <p><strong>Connection efficiency above 1</strong> (warning). Console line:</p>
