@@ -452,6 +452,13 @@ class MainWindow(tk.Tk):
         top_right = ttk.Frame(outer)
         top_right.grid(row=row, column=5, sticky="e", padx=5)
 
+        # The message list's indicator, "Messages (N)" (dialogs/message_list_window.py).
+        from flextool.gui.dialogs.message_list_window import MessageListController
+
+        self.messages_btn = ttk.Button(top_right, text="Messages")
+        self.messages_btn.pack(side="left", padx=(0, 5))
+        self._messages = MessageListController(self, self.messages_btn)
+
         self.ui_settings_btn = ttk.Button(
             top_right, text="UI settings…", command=self._on_ui_settings_btn
         )
@@ -2017,8 +2024,12 @@ class MainWindow(tk.Tk):
         # Sync auto-generate checkboxes with loaded settings
         self._load_auto_gen_vars()
 
+        # A new message list for this project (nothing seen yet); its sources come in M3a/M3b.
+        if getattr(self, "_messages", None) is not None:
+            self._messages.open_project(name, sources=())
+
         self._clear_all_lists()
-        self._refresh_input_sources()
+        self._refresh_input_sources(trigger="project_open")
         self._refresh_executed_scenarios()
 
         # One-shot cleanup: drop scenario references from settings.yaml
@@ -2100,6 +2111,10 @@ class MainWindow(tk.Tk):
             )
             if not result:
                 return
+
+        # The message list: its window closes (recording what it listed), a pending auto-show is cancelled.
+        if getattr(self, "_messages", None) is not None:
+            self._messages.close()
 
         # The AI assistant: windows withdrawn, answers stopped without asking
         # (what was received is saved, a running tool call is recorded as not
@@ -2991,7 +3006,7 @@ class MainWindow(tk.Tk):
         """Refresh input sources by re-scanning the directory."""
         if not self.input_source_mgr:
             return
-        self._refresh_input_sources()
+        self._refresh_input_sources(trigger="refresh")
 
     def _run_db_migrations_with_ui(self) -> tuple[bool, list[str]]:
         """Plan, gather consent for, and run pending DB migrations with UI.
@@ -3161,8 +3176,9 @@ class MainWindow(tk.Tk):
 
         return outcome["failed"], planning_messages + worker_messages
 
-    def _refresh_input_sources(self) -> None:
-        """Re-scan input sources and repopulate the treeview."""
+    def _refresh_input_sources(self, trigger: str = "other") -> None:
+        """Re-scan input sources and repopulate the treeview; *trigger* (``"project_open"`` / ``"refresh"`` /
+        ``"other"``) is what the message list's auto-show goes by (``MessageCenter.recompute``)."""
         if not self.input_source_mgr:
             return
 
@@ -3277,6 +3293,17 @@ class MainWindow(tk.Tk):
 
         # Update Edit / Convert / Delete button states
         self._update_input_button_states()
+
+        self._messages_recompute(trigger, sources)
+
+    def _messages_recompute(self, trigger: str = "other", sources: list | None = None) -> None:
+        """Recompute the message list (indicator, open window, auto-show); nothing on a host without one."""
+        controller = getattr(self, "_messages", None)
+        if controller is None:
+            return
+        if sources is not None:
+            controller.set_ranks(self.input_source_mgr, sources)
+        controller.recompute(trigger)  # type: ignore[arg-type]
 
     def _update_add_button_style(self, no_sources: bool) -> None:
         """Highlight the Add button when there are no input sources.
