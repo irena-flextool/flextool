@@ -54,7 +54,7 @@ Large systems that naturally split into regions (e.g. an interconnected pan-cont
 
 Set up the regions in the database:
 
-- create one `group` per region, list its `node` members via `group__node`; units and connections belong to the region of their nodes (listing them with `group__unit` / `group__connection` is optional). A unit with several inputs or outputs that is not listed must have all its nodes in one region; a unit with one input and one output, like a connection, can join two regions. A one-variable connection (`no_losses_no_variable_cost`) between regions works in both directions; a DC power-flow line (`dc_power_flow_with_angles`) between regions is refused: put both its nodes in one region
+- create one `group` per region, list its `node` members via `group__node`; units and connections belong to the region of their nodes (listing them with `group__unit` / `group__connection` is optional). A unit that is not listed and converts through the unit itself (several inputs or outputs, or one input and one output with a `piecewise_linear_efficiency` curve of two or more segments) must have all its nodes in one region. A unit with one input and one output and a single efficiency (one direct flow) is cut between two regions like a connection, unless it has online variables (a `startup_method`) or reserves: then it is refused, as such a connection is. A one-variable connection (`no_losses_no_variable_cost`) between regions works in both directions; a DC power-flow line (`dc_power_flow_with_angles`) between regions is refused: put both its nodes in one region
 - set the group parameter `decomposition_method` to *benders_regional* on each region group
 - declare at least two such region groups in the active scenario
 

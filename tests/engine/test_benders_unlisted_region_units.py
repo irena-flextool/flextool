@@ -90,7 +90,15 @@ def test_unit_with_nodes_in_two_regions_is_refused():
                         "source": ["rA", "genX", "genX", "rA", "rA"],
                         "sink": ["genX", "rB", "rA_aux", "rB", "rB"]})
     regions = {"region_A": {"rA", "rA_aux"}, "region_B": {"rB"}}
-    with pytest.raises(FlexToolConfigError, match=r"genX \(rA, rA_aux in region_A and rB in region_B\)"):
+    with pytest.raises(FlexToolConfigError,
+                       match=r"genX \(rA, rA_aux in region_A and rB in region_B: several inputs or outputs\)"):
         _region_filter._validate_units_in_one_region(pss, regions, set())
+    # A one-input one-output unit with a piecewise curve of two or more segments (genP: arcs rA -> genP -> rB, the
+    # indirect shape of docs/reference/units.md) converts through the unit too; the message names the curve.
+    piecewise = pl.DataFrame({"p": ["genP", "genP"], "source": ["rA", "genP"], "sink": ["genP", "rB"]})
+    with pytest.raises(FlexToolConfigError, match=r"genP \(rA in region_A and rB in region_B: a piecewise efficiency"
+                                                  r" curve gives its input a flow of its own\)") as err:
+        _region_filter._validate_units_in_one_region(piecewise, regions, set())
+    assert "several inputs or outputs" not in str(err.value)
     _region_filter._validate_units_in_one_region(pss.filter(pl.col("p") != "genX"), regions, set())
     _region_filter._validate_units_in_one_region(pss, regions, {"genX"})

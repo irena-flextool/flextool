@@ -10,7 +10,10 @@
   two regions now stops with an error saying how to fix the model. Before, each region subproblem kept the unit
   with only its own side balanced, a free source in one region, so the investments came out wrong (or, with an
   investment in the unit, the solve stopped with an internal error). A unit with one input and one output between
-  two regions is cut between the regions like a connection, as before.
+  two regions, no online variables, no reserves and a single efficiency (one direct flow) is cut between the regions
+  like a connection, as before; with online variables or reserves it is refused, as before. A unit with one input and
+  one output and a piecewise efficiency curve of two or more segments has an input flow of its own and is refused
+  too (like a unit with several inputs or outputs).
 - Benders with a `no_losses_no_variable_cost` connection between two regions (or between a region and the master)
   now models its reverse direction. Before, each region subproblem got a free, unlimited source at one end of the
   connection: the investments were wrong and the final solve paid unserved energy for it. Results of such models

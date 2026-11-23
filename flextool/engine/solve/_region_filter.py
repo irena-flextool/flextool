@@ -566,29 +566,39 @@ def _validate_units_in_one_region(pss: pl.DataFrame | None, region_nodes: dict[s
                                   listed: set[str]) -> None:
     """Raise when the arcs of a unit that no region group lists have nodes in two regions.
 
-    A node-to-node arc between regions (a connection, or a unit with one input and one output) is cut into
-    half-flows.  The arcs of a unit with several inputs or outputs go through the unit itself, so the split would
-    keep the unlisted unit in each region with only that region's side balanced (a free source in one region),
-    and no region would own its investment.  A *listed* unit is kept in its own region only (unchanged here).
+    A node-to-node arc between regions (a connection, or a unit with one input, one output and one direct flow) is
+    cut into half-flows.  The arcs of a unit with several inputs or outputs, or of a unit with one input and one
+    output whose piecewise efficiency curve has two or more segments (an input flow of its own,
+    ``process_indirect``), go through the unit itself, so the split would keep the unlisted unit in each region
+    with only that region's side balanced (a free source in one region), and no region would own its investment.
+    A *listed* unit is kept in its own region only (unchanged here).
     """
     if pss is None or pss.height == 0:
         return
     node_region = {n: r for r, ns in region_nodes.items() for n in ns}
     nodes_by_region: dict[str, dict[str, set[str]]] = {}
+    ends: dict[str, list[int]] = {}   # unit -> [inputs, outputs] of its arcs through the unit itself
     for p, source, sink in pss.select(pl.col("p", "source", "sink").cast(pl.Utf8)).iter_rows():
         if p in listed or (source in node_region and sink in node_region):
             continue  # listed, or node-to-node: in one region or cut into half-flows
+        count = ends.setdefault(p, [0, 0])
+        count[0 if sink == p else 1] += 1
         for n in (source, sink):
             if n in node_region:
                 nodes_by_region.setdefault(p, {}).setdefault(node_region[n], set()).add(n)
     bad = {p: by_r for p, by_r in sorted(nodes_by_region.items()) if len(by_r) > 1}
     if bad:
+        def why(p: str) -> str:
+            # One input and one output through the unit: only a piecewise curve of two or more segments does that.
+            return ("a piecewise efficiency curve gives its input a flow of its own" if ends[p] == [1, 1]
+                    else "several inputs or outputs")
         text = "; ".join(f"{p} (" + " and ".join(f"{', '.join(sorted(ns))} in {r}" for r, ns in sorted(by_r.items()))
-                         + ")" for p, by_r in bad.items())
+                         + f": {why(p)})" for p, by_r in bad.items())
         raise FlexToolConfigError(
-            "Benders decomposition: unit(s) with nodes in more than one region: " + text + ".  The split cannot "
-            "cut a unit with several inputs or outputs between region subproblems.  Put all nodes of the unit in "
-            "one region, or join the regions with a connection.")
+            "Benders decomposition: unit(s) with nodes in more than one region: " + text + ".  The split cuts "
+            "only a node-to-node flow between region subproblems (a connection, or a unit with one input, one "
+            "output and a single efficiency); these units convert through the unit itself.  Put all nodes of the "
+            "unit in one region, or join the regions with a connection.")
 
 
 def _validate_startup_nodes(data: FlexData, region_nodes: dict[str, set[str]],
@@ -2489,10 +2499,11 @@ def _validate_cross_region_connections(data: FlexData, cross: pl.DataFrame,
             problems.append(f"{', '.join(hit)} ({what})")
     if problems:
         raise FlexToolConfigError(
-            "Benders decomposition: connection(s) between regions (or between a region and the master) cannot "
-            "have online variables, the exact transfer method or reserve, because the split replaces them with "
-            "half-flows in each region: " + "; ".join(problems) + ".  Remove these from the connections, put "
-            "both of their nodes in one region, or leave them out of the solve (reduce_system_detail_method "
+            "Benders decomposition: connection(s), or unit(s) with one input and one output, between regions (or "
+            "between a region and the master) cannot have online variables, the exact transfer method or reserve, "
+            "because the split replaces them with half-flows in each region: " + "; ".join(problems) + ".  Remove "
+            "these from the connections or units, put both of their nodes in one region, or leave them out of the "
+            "solve (reduce_system_detail_method "
             "reserves, reduce_unit_detail_method integers for exact, online for online variables).")
     flow_refs = _cross_connection_flow_references(data, procs)
     if flow_refs:
