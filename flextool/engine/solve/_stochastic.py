@@ -101,6 +101,50 @@ def _get_timeset_for_period(
     return None
 
 
+def fan_start(info: list, active_time_list: dict) -> tuple[str, str] | None:
+    """The ``(period, step)`` where a solve (or roll) with the ``stochastic_branches`` rows *info* fans out: the
+    first step of its active time, periods in order, at which a row of that period starts (``None``: no row
+    starts in its active time)."""
+    declared: defaultdict[str, set] = defaultdict(set)
+    for row in info:
+        declared[row[0]].add(row[2])
+    for period, active_time in active_time_list.items():
+        starts = declared.get(period)
+        if starts:
+            for step in active_time:
+                if step.timestep in starts:
+                    return period, step.timestep
+    return None
+
+
+def realized_branch_rows(
+    info: list, active_time_list: dict, branch_start: tuple[str, str] | None,
+    logger: logging.Logger | None = None,
+) -> list[tuple[str, str]]:
+    """The ``solve_branch__time_branch`` rows ``(period, realized branch)`` of a solve's real periods.
+
+    Realized is an optional 0-or-1 designation: a period reads the ``realized: yes`` row that starts at its first
+    step, else (from the fan on) the ``realized: yes`` row of the fan start *branch_start* (:func:`fan_start`);
+    2+ raise.  Without a realized branch a period before the reveal has no branch to read stochastic data
+    through: the readers raise a configuration error when it would read any
+    (``_check_pre_reveal_reads_have_forecast``, owner decision item 250 Q2) -- FlexTool never picks a forecast.
+    """
+    rows: list[tuple[str, str]] = []
+    for period, active_time in active_time_list.items():
+        found = [(period, row[1]) for row in info
+                 if row[0] == period and row[2] == active_time[0].timestep and row[3] == "yes"]
+        if not found and branch_start is not None:
+            found = [(period, row[1]) for row in info
+                     if row[0] == branch_start[0] and row[2] == branch_start[1] and row[3] == "yes"]
+        if len(found) > 1:
+            message = "Each period should have at most one realized branch. Found: " + str(len(found)) + "\n"
+            if logger is not None:
+                logger.error(message)
+            raise FlexToolConfigError(message)
+        rows += found
+    return rows
+
+
 def connect_two_timelines(
     state: "RunnerState",
     period: str,
@@ -831,17 +875,7 @@ class StochasticSolver:
             for row in info:
                 declared_start_steps[row[0]].add(row[2])
 
-            trig_period: str | None = None
-            trig_step: str | None = None
-            for period_w, active_time_w in active_time_list.items():
-                if period_w in declared_start_steps:
-                    for step_w in active_time_w:
-                        if step_w.timestep in declared_start_steps[period_w]:
-                            trig_period = period_w
-                            trig_step = step_w.timestep
-                            break
-                if trig_period is not None:
-                    break
+            trig_period, trig_step = fan_start(info, active_time_list) or (None, None)
 
             if trig_period is None:
                 if info and not is_rolling_sub_solve:
@@ -1129,44 +1163,9 @@ class StochasticSolver:
                     if period in fix_storage_time_list:
                         new_fix_storage_time_list[period] = fix_storage_time_list[period]
 
-            # Find the realized branch for each period.  Realized is an
-            # optional 0-or-1 designation: a period may have no realized row
-            # (forecasts-only cohort) or exactly one; 2+ → raise.  Without a
-            # realized branch a period before the reveal has no branch to read
-            # stochastic data through: the readers raise a configuration error
-            # when it would read any (``_check_pre_reveal_reads_have_forecast``,
-            # owner decision item 250 Q2) -- FlexTool never picks a forecast.
-            for period, active_time in active_time_list.items():
-                found = 0
-                # Before branching: row[0]==period, row[2]==first step,
-                # row[3]=='yes'.
-                for row in info:
-                    if (
-                        row[0] == period
-                        and row[2] == active_time[0].timestep
-                        and row[3] == "yes"
-                    ):
-                        found += 1
-                        solve_branch__time_branch_lists[solve].append((period, row[1]))
-                # After branching: lookup against the branch-start row.
-                if found == 0 and branch_start_time_lists[solve] is not None:
-                    for row in info:
-                        if (
-                            row[0] == branch_start_time_lists[solve][0]
-                            and row[2] == branch_start_time_lists[solve][1]
-                            and row[3] == "yes"
-                        ):
-                            found += 1
-                            solve_branch__time_branch_lists[solve].append(
-                                (period, row[1])
-                            )
-                if found > 1:
-                    message = (
-                        "Each period should have at most one realized branch. "
-                        "Found: " + str(found) + "\n"
-                    )
-                    self.logger.error(message)
-                    raise FlexToolConfigError(message)
+            # The realized branch of each period (``realized_branch_rows``).
+            solve_branch__time_branch_lists[solve] += realized_branch_rows(
+                info, active_time_list, branch_start_time_lists[solve], self.logger)
 
             # A period label (the original name of a period that opens a fan) has no dispatch: drop it from
             # the active, realized and fix-storage lists.  Its pre-stochastic steps and committed cells are kept
@@ -1219,6 +1218,8 @@ class StochasticSolver:
 __all__ = [
     "StochasticSolver",
     "connect_two_timelines",
+    "fan_start",
+    "realized_branch_rows",
     "find_previous_timestep",
     "find_next_timestep",
     "write_timeline_matching_map",

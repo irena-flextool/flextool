@@ -1488,6 +1488,8 @@ def _rp_stoch(data: dict, name: str, period: str, step: str) -> dict:
                     entities=[["group", "rp_stoch_g"], ["group__node", ["rp_stoch_g", "lh2_B"]]],
                     values=[["solve", _RP_SOLVE, "stochastic_branches",
                              _rp_stoch_branches(period, step, {"a": 0.3, "b": 0.7})],
+                            # The forecasts are solved: deterministic, the default since 4.7.0, would ignore them.
+                            ["solve", _RP_SOLVE, "dispatch_realization_method", "within_solve"],
                             ["group", "rp_stoch_g", "include_stochastics", "yes"]]
                     + [["node", n, "storage_binding_method", m] for n, m in _RP_METHODS_MIX.items()])
 

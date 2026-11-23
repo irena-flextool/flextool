@@ -2047,8 +2047,10 @@ def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
     """W4 Guard — validate a non-default ``dispatch_realization_method``.
 
     ``solve.dispatch_realization_method`` selects how realized operations
-    are produced.  ``'within_solve'`` (the schema default, today's
-    behaviour) is always allowed.  ``'separate_dispatch'`` (W4b) — the
+    are produced.  ``'deterministic'`` (the shipped default: a solve with
+    ``stochastic_branches`` reads only its ``realized: yes`` branch,
+    ``SolveConfig.apply_deterministic_realization``) and ``'within_solve'``
+    are always allowed.  ``'separate_dispatch'`` (W4b) — the
     engine automatically registers a deterministic realized-dispatch
     SIBLING ``<solve>__realized_dispatch`` that takes the full
     invest→dispatch handoff + last-wins path — is now ACCEPTED, but ONLY
@@ -2059,7 +2061,7 @@ def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
 
     The guard reads the RAW authored value rather than the resolver's
     output: :meth:`SolveConfig.dispatch_realization_method_for` silently
-    collapses any UNRECOGNISED value (a typo) to ``'within_solve'``, so an
+    collapses any UNRECOGNISED value (a typo) to ``'deterministic'``, so an
     authoring-time check must inspect the raw dict.  Blank / absent
     tolerate-as-default.  No-op when the solve authors nothing.
 
@@ -2071,14 +2073,14 @@ def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
     if raw is None:
         return
     val = str(raw).strip().lower()
-    if val in ("", "within_solve"):
+    if val in ("", "deterministic", "within_solve"):
         return
     if val != "separate_dispatch":
         # Typo / unknown value — unchanged hard-reject.
         raise FlexToolConfigError(
             f"Solve '{base_name}' sets dispatch_realization_method='{raw}' — "
-            f"unrecognised value.  Supported: 'within_solve' (default) and "
-            f"'separate_dispatch'."
+            f"unrecognised value.  Supported: 'deterministic' (default), "
+            f"'within_solve' and 'separate_dispatch'."
         )
     # separate_dispatch — eligible ONLY for a single top-level single_solve.
     solve_modes = getattr(solve_cfg, "solve_modes", {}) or {}
@@ -2154,7 +2156,8 @@ def _spawn_realized_dispatch_siblings(
     the entry point that ties them together:
 
     * schema (W4a): ``solve.dispatch_realization_method`` {within_solve,
-      separate_dispatch} — migration ``_migrate_v75_...``, accessor
+      separate_dispatch, deterministic (v83, no realization solve: the
+      solve reads its realized branch, ``apply_deterministic_realization``)} — migration ``_migrate_v75_...``, accessor
       ``SolveConfig.dispatch_realization_method_for``.
     * validation: ``_dispatch_realization_raw_guard`` (both wired sites) —
       accepts separate_dispatch only for a single top-level single_solve.
@@ -2254,7 +2257,12 @@ def _spawn_realized_dispatch_siblings(
     # designated solve (a ``realized: yes`` branch) without a configured realization solve.  Each
     # entry carries the reason the error messages below name.
     eligible: list[tuple[str, str]] = []
+    deterministic = getattr(solve_cfg, "deterministic_branches", None) or {}
     for p in sorted(top_level):
+        if p in deterministic:
+            # dispatch_realization_method deterministic: the solve reads its realized branch itself, no
+            # realization solve (SolveConfig.apply_deterministic_realization).
+            continue
         if solve_cfg.dispatch_realization_method_for(p) == "separate_dispatch":
             if not (getattr(solve_cfg, "realized_periods", None) or {}).get(p):
                 # Nothing to realize (an invest-only solve): no realization solve.
@@ -2432,10 +2440,10 @@ def _validate_model_solve(state: RunnerState) -> list[str]:
     # ``run()``.
     for _s in solves:
         _stochastic_invest_raw_guard(state.solve, _s)
-        # W4 Slice 1 Guard (fail-fast pass): reject a non-default
-        # dispatch_realization_method ('separate_dispatch' not yet
-        # implemented) for the model's top-level solves before any solve
-        # runs.  Like the stochastic_invest pass, this only sees the
+        # W4 Slice 1 Guard (fail-fast pass): reject an unrecognised
+        # dispatch_realization_method, or 'separate_dispatch' on a solve
+        # shape it does not support, for the model's top-level solves before
+        # any solve runs.  Like the stochastic_invest pass, this only sees the
         # top-level ``solves`` array (not solves reached via
         # ``contains_solves`` recursion / rolling), so it is a convenience —
         # the authoritative per-solve guard lives at the top of ``run()``.
@@ -3518,13 +3526,13 @@ def _drive_cascade(
             # base-name derivation below (``:2486``).
             _guard_base = re.sub(r"_roll_\d+$", "", complete_solve_name)
             _stochastic_invest_raw_guard(state.solve, _guard_base)
-            # W4 Slice 1 Guard (authoritative): reject a non-default
-            # dispatch_realization_method for any solve that RUNS —
-            # including each roll of a rolling solve and each contained/
-            # chained solve — before building its FlexData/LP.  Omitting
-            # this site would let a contained/chained solve authoring
-            # 'separate_dispatch' silently normalize to 'within_solve' via
-            # the resolver.  'separate_dispatch' is not yet implemented.
+            # W4 Slice 1 Guard (authoritative): reject an unrecognised
+            # dispatch_realization_method, or an unsupported
+            # 'separate_dispatch', for any solve that RUNS — including each
+            # roll of a rolling solve and each contained/chained solve —
+            # before building its FlexData/LP.  Omitting this site would let
+            # a contained/chained solve authoring 'separate_dispatch' run
+            # without its realization solve.
             _dispatch_realization_raw_guard(state.solve, _guard_base)
             # Cross-level eviction — release any EXHAUSTED prior solve-level's
             # live HiGHS instance + flex_data_provider BEFORE this solve builds

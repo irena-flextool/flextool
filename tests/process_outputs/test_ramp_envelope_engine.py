@@ -418,7 +418,9 @@ def _case10_stochastic() -> tuple[list, list]:
          b64({"index_type": "str", "index_name": "period", "data": [["p2020", "trunk"], ["p2025", "fan"]]}, "map")],
         ["solve", SOLVE, "realized_periods",
          b64({"value_type": "str", "index_name": "period", "data": ["p2020", "p2025"]}, "array")],
-        ["solve", SOLVE, "stochastic_branches", b64(branches, "map")]]
+        ["solve", SOLVE, "stochastic_branches", b64(branches, "map")],
+        # The forecasts are solved: deterministic, the default since 4.7.0, would ignore them.
+        ["solve", SOLVE, "dispatch_realization_method", _str("within_solve")]]
     return ents, vals
 
 
@@ -499,7 +501,9 @@ def _case4b() -> tuple[list, list]:
              b64({"index_type": "str", "index_name": "period", "data": [["p2020", "trunk"], ["p2025", "fan"]]}, "map")],
             ["solve", SOLVE, "realized_periods",
              b64({"value_type": "str", "index_name": "period", "data": ["p2020", "p2025"]}, "array")],
-            ["solve", SOLVE, "stochastic_branches", b64(branches, "map")]]
+            ["solve", SOLVE, "stochastic_branches", b64(branches, "map")],
+            # The forecasts are solved: deterministic, the default since 4.7.0, would ignore them.
+            ["solve", SOLVE, "dispatch_realization_method", _str("within_solve")]]
     return ents, vals
 
 

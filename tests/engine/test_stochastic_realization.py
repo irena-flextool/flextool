@@ -57,7 +57,11 @@ def _variant(src: Path, tmp: Path, name: str, mutate) -> Path:
 
 
 def _drop_separate_dispatch(data: dict) -> None:
-    data["parameter_values"] = [r for r in data["parameter_values"] if r[2] != "dispatch_realization_method"]
+    """``within_solve`` in place of ``separate_dispatch`` (deterministic, the default since 4.7.0, would ignore the
+    forecasts)."""
+    for r in data["parameter_values"]:
+        if r[2] == "dispatch_realization_method":
+            r[3] = [base64.b64encode(json.dumps("within_solve").encode()).decode(), "str"]
 
 
 def _set_profile(data: dict, values: dict) -> None:
@@ -134,7 +138,8 @@ def _at(frame: pl.DataFrame, **keys) -> float:
 
 @pytest.fixture(scope="module")
 def designated(tmp_path_factory):
-    """The designated single solve WITHOUT dispatch_realization_method (the engine adds the realization solve)."""
+    """The designated single solve under dispatch_realization_method within_solve (the engine adds the realization
+    solve)."""
     tmp = tmp_path_factory.mktemp("realization_designated")
     return _run(_variant(T0_FIXTURE, tmp, "designated", _drop_separate_dispatch), tmp, capture_mps=True)
 
@@ -172,7 +177,7 @@ def separate(tmp_path_factory):
 @pytest.mark.solver
 def test_designation_adds_the_realization_solve(designated) -> None:
     """A realized: yes designation reaching the committed window adds ``<solve>__realized_dispatch`` right after
-    the stochastic solve, though no dispatch_realization_method is authored."""
+    the stochastic solve, though dispatch_realization_method is within_solve."""
     steps, _ = designated
     assert list(steps) == [PARENT, SIBLING]
 
@@ -700,6 +705,8 @@ def _rolling_hedge(data: dict) -> None:
     profile = {"index_type": "str", "data": [[f"t{i:04d}", 0.8 if i <= 3 else 0.0] for i in range(1, 7)]}
     data["parameter_values"] += [
         ["solve", "stoch_2p_hedge", "stochastic_branches", enc(forecasts, "map"), "roll"],
+        # The forecasts are solved: deterministic, the default since 4.7.0, would ignore them.
+        ["solve", "stoch_2p_hedge", "dispatch_realization_method", enc("within_solve", "str"), "roll"],
         ["profile", "wprof", "profile", enc(profile, "map"), "roll"],
         ["solve", "stoch_2p_hedge", "solve_mode", enc("rolling_window", "str"), "roll"],
         ["solve", "stoch_2p_hedge", "rolling_solve_horizon", enc(4.0, "float"), "roll"],
@@ -916,9 +923,10 @@ def _rolling_online_only(data: dict) -> None:
     """``stoch_t0_commit`` as a rolling solve over a forecasts-only fan with unit commitment only: no designation,
     no ``separate_dispatch``, no investment; horizon 2 h, jump 1 h, so every roll commits its first step inside the
     fan.  Each roll start t0001-t0003 has an analysis time: ``high`` (wind CF 0.8) and ``low`` (0.0), 0.5 each."""
-    drop = {"dispatch_realization_method", "invest_periods", "realized_invest_periods", "invest_method",
+    drop = {"invest_periods", "realized_invest_periods", "invest_method",
             "invest_cost", "discount_rate", "lifetime_technical", "invest_max_total"}
     data["parameter_values"] = [r for r in data["parameter_values"] if r[2] not in drop]
+    _drop_separate_dispatch(data)
     steps = ("t0001", "t0002", "t0003")
 
     def enc(value, kind):

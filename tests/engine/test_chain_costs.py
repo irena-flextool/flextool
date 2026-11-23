@@ -617,7 +617,9 @@ def _realized_fan_chain_db(tmp_path_factory) -> tuple[str, str]:
                 ("solve", name, "period_timeset", m({period: timeset}, "period")),
                 ("solve", name, "years_represented", m({period: 2.0}, "period")),
                 ("solve", name, "invest_periods", own), ("solve", name, "realized_invest_periods", own),
-                ("solve", name, "realized_periods", own), ("solve", name, "stochastic_branches", fan(period, at))]
+                ("solve", name, "realized_periods", own), ("solve", name, "stochastic_branches", fan(period, at)),
+                # The forecasts are solved: deterministic, the default since 4.7.0, would ignore them.
+                ("solve", name, "dispatch_realization_method", "within_solve")]
 
     entities = [("model", "flextool"), ("timeline", "tl"), ("timeset", "ts30"), ("timeset", "ts40"),
                 ("node", "elec"), ("unit", "wind"), ("unit__outputNode", ("wind", "elec")), ("profile", "wprof"),

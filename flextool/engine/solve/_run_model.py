@@ -81,7 +81,7 @@ from flextool.engine.solve._recursive_solve import (
     ParentSolveInfo,
     RecursiveSolveBuilder,
 )
-from flextool.engine.solve._stochastic import StochasticSolver
+from flextool.engine.solve._stochastic import StochasticSolver, fan_start, realized_branch_rows
 from flextool.engine.solve import _carry_routing
 from flextool.engine.solve import _realization
 from flextool.engine.input._timeline import (
@@ -1831,6 +1831,21 @@ def native_run_model(state, solver) -> int:
             )
             if row[0] in _sibling_periods
         ]
+
+    # 3.7 ``dispatch_realization_method`` deterministic: the stochastic pass
+    # above solved the solve as a deterministic one (its stochastic_branches
+    # rows are set aside, ``SolveConfig.apply_deterministic_realization``).
+    # Each of its rolls reads the realized branch the way a realization
+    # solve reads its parent's (3.6): the realized rows of its periods, and
+    # the fan start of the roll for the fan-start fallback below.
+    deterministic_branches = getattr(state.solve, "deterministic_branches", None) or {}
+    for _s in all_solves:
+        _info = deterministic_branches.get(complete_solve[_s])
+        if not _info:
+            continue
+        branch_start_time_lists[_s] = fan_start(_info, active_time_lists[_s])
+        solve_branch__time_branch_lists[_s] = realized_branch_rows(
+            _info, active_time_lists[_s], branch_start_time_lists[_s], state.logger)
 
     # The fan start of each solve (``solve_data/branch_time_start``): a branch
     # period whose own first step authors no stochastic-time value for a cell

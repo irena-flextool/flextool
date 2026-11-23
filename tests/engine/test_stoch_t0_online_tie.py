@@ -121,13 +121,13 @@ def _write_variant(tmp_path: Path, name: str, mutate) -> Path:
 
 
 def _drop_separate_dispatch(d: dict) -> None:
-    """Remove separate_dispatch: the ``realized: yes`` designation of ``rlz``
-    still adds the same realization solve, and the tie holds over the whole
-    realized window."""
-    d["parameter_values"] = [
-        r for r in d["parameter_values"]
-        if r[2] != "dispatch_realization_method"
-    ]
+    """``within_solve`` in place of separate_dispatch: the ``realized: yes``
+    designation of ``rlz`` still adds the same realization solve, and the tie
+    holds over the whole realized window (deterministic, the default since
+    4.7.0, would ignore the forecasts)."""
+    for r in d["parameter_values"]:
+        if r[2] == "dispatch_realization_method":
+            r[3] = [base64.b64encode(json.dumps("within_solve").encode()).decode(), "str"]
 
 
 def _to_integer_online(d: dict) -> None:

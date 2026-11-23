@@ -1,8 +1,8 @@
 """W4 — ``dispatch_realization_method`` guard (W4a schema + W4b narrowing).
 
 ``solve.dispatch_realization_method`` selects how realized operations are
-produced.  ``'within_solve'`` (the schema default, today's behaviour) is
-always allowed.  ``'separate_dispatch'`` is ACCEPTED for a TOP-LEVEL
+produced.  ``'deterministic'`` (the shipped default since 4.7.0) and
+``'within_solve'`` are always allowed.  ``'separate_dispatch'`` is ACCEPTED for a TOP-LEVEL
 ``single_solve`` (W4b) OR a TOP-LEVEL ``rolling_window`` solve (OC1 rolling
 separate_dispatch) — for which the engine automatically registers a
 deterministic realized-dispatch sibling ``<solve>__realized_dispatch``
@@ -16,7 +16,7 @@ shapes are still rejected:
 The guard (:func:`_dispatch_realization_raw_guard`) reads the RAW authored
 value because the normalizing accessor
 (:meth:`SolveConfig.dispatch_realization_method_for`) would silently
-collapse a typo to ``'within_solve'``.  It is wired at BOTH v70-style call
+collapse a typo to ``'deterministic'``.  It is wired at BOTH v70-style call
 sites: ``_validate_model_solve`` (fail-fast over top-level solves) and the
 authoritative ``run(complete_solve_name)`` site (which strips the
 ``_roll_\\d+$`` suffix and fires for every solve that RUNS).
@@ -82,9 +82,10 @@ def test_resolver_normalisation():
     assert sc.dispatch_realization_method_for("s") == "within_solve"
     assert sc.dispatch_realization_method_for("loud") == "within_solve"
     assert sc.dispatch_realization_method_for("sep") == "separate_dispatch"
-    assert sc.dispatch_realization_method_for("blank") == "within_solve"
-    assert sc.dispatch_realization_method_for("junk") == "within_solve"
-    assert sc.dispatch_realization_method_for("absent") == "within_solve"
+    # Absent / blank: the shipped default since 4.7.0; a typo reads it too (the raw guard refuses it).
+    assert sc.dispatch_realization_method_for("blank") == "deterministic"
+    assert sc.dispatch_realization_method_for("junk") == "deterministic"
+    assert sc.dispatch_realization_method_for("absent") == "deterministic"
 
 
 # ===========================================================================

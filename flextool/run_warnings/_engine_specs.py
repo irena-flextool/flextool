@@ -1118,4 +1118,19 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "`rolling_solve_horizon`."
         ),
     ),
+    WarningSpec(
+        code="W-0593",
+        message="solve '{solve}' is deterministic: only its realized: yes branch is used",
+        title="Deterministic solve with stochastic branches",
+        topic=_SOLVES,
+        entityless=True,
+        body=(
+            "The solve has `stochastic_branches`, but its `dispatch_realization_method` is `deterministic` (the "
+            "default since FlexTool 4.7.0). It is solved once, with the data of the `realized: yes` branch. The "
+            "forecasts, `stochastic_invest_method` `recourse` and the realization solve are ignored. Without a "
+            "`realized: yes` branch the run stops with an error.\n\n"
+            "**How to fix:** set `dispatch_realization_method` to `within_solve` or `separate_dispatch` to solve "
+            "the forecasts."
+        ),
+    ),
 ) + BEHAVIOUR_SPECS

@@ -280,6 +280,8 @@ PER_SOLVE_FIELDS: tuple[str, ...] = (
 #: Attributes keyed by solve name that a solve made from another one does not get, with the reason.
 NOT_COPIED_FIELDS: dict[str, str] = {
     "solver_settings.precommand": "never run (item 236); FlexTool names it once per database solve in a warning",
+    "deterministic_branches": "set after the solves are made (apply_deterministic_realization); a solve made from "
+                              "a deterministic solve is never stochastic",
 }
 
 #: Dict attributes that are not keyed by solve name, with what they are keyed by.
@@ -470,13 +472,17 @@ class SolveConfig:
         )
 
         # v75 per-solve dispatch-realization method (solve-name ->
-        # "within_solve"/"separate_dispatch"); only authored solves appear.
-        # Resolved at access time via :meth:`dispatch_realization_method_for`
-        # (absent -> "within_solve").
+        # "within_solve"/"separate_dispatch"/"deterministic"); only authored
+        # solves appear.  Resolved at access time via
+        # :meth:`dispatch_realization_method_for` (absent -> "deterministic").
         self.dispatch_realization_method: dict = (
             dispatch_realization_method
             if dispatch_realization_method is not None else {}
         )
+        # The ``stochastic_branches`` rows of the solves that run
+        # ``deterministic``, moved aside by :meth:`apply_deterministic_realization`:
+        # such a solve reads its ``realized: yes`` branch only.
+        self.deterministic_branches: dict[str, list] = {}
 
         # v79 per-solve detail reductions (solve-name -> value-list string); only authored solves appear.
         # Resolved at access time via :meth:`reduce_unit_detail_for` / :meth:`reduce_system_detail_for`.
@@ -890,6 +896,7 @@ class SolveConfig:
         # After every period dict, so the 2D-map duplicate solves exist.
         obj._check_realized_invest_periods()
         obj._check_split_realized_periods()
+        obj.apply_deterministic_realization()
         obj.check_derived_solves()
 
         return obj
@@ -1617,27 +1624,45 @@ class SolveConfig:
     def dispatch_realization_method_for(self, solve_name: str) -> str:
         """Resolve ``solve.dispatch_realization_method`` for *solve_name*.
 
-        Returns the normalised lower-case mode (``"within_solve"`` or
-        ``"separate_dispatch"``).  Absent / blank / unrecognised ->
-        ``"within_solve"`` (the schema default, byte-identical prior
-        behaviour).  Authoring case is ignored.
-
-        This knob is the 2-stage seed of a future multi-stage market
-        structure: ``"within_solve"`` resolves branch realization inside a
-        single optimisation (today's behaviour); ``"separate_dispatch"``
-        will split realization into a dedicated downstream dispatch stage
-        (a second market-clearing pass over the revealed branch) — not yet
-        implemented, hard-rejected by the W4 Slice 1 guard until a later
-        slice lands the machinery.  There is no run-time override for this
-        knob, so absent resolves to the concrete default ``"within_solve"``.
+        Returns the normalised lower-case member: ``"deterministic"``,
+        ``"within_solve"`` or ``"separate_dispatch"``.  Absent / blank ->
+        ``"deterministic"``, the shipped default: like every ``solve``
+        parameter of this class, the definition default is not read, so the
+        fall-back is hard-coded.  An unrecognised value also reads
+        ``"deterministic"`` here; ``_dispatch_realization_raw_guard`` refuses
+        it before the solve runs.  Authoring case is ignored.  Without
+        ``stochastic_branches`` the three members give the same model.
         """
         raw = self.dispatch_realization_method.get(solve_name)
-        if raw is None:
-            return "within_solve"
-        value = str(raw).strip().lower()
-        return value if value in (
-            "within_solve", "separate_dispatch"
-        ) else "within_solve"
+        value = "" if raw is None else str(raw).strip().lower()
+        return value if value in ("within_solve", "separate_dispatch") else "deterministic"
+
+    def apply_deterministic_realization(self) -> None:
+        """Make each solve with ``stochastic_branches`` that runs ``deterministic`` a deterministic solve.
+
+        The forecasts, ``stochastic_invest_method`` and the realization solve are ignored: the solve's
+        ``stochastic_branches`` rows move to :attr:`deterministic_branches` (the solve then reads only its
+        ``realized: yes`` branch, ``native_run_model`` step 3.7) and its ``stochastic_invest_method`` is dropped.
+        One warning names the solve (W-0593).  Raises :class:`FlexToolConfigError` naming the solve when no row
+        says ``realized: yes``.  Only a blank, absent or ``deterministic`` value counts; an unknown value is
+        left for ``_dispatch_realization_raw_guard``.  Over the solves the model runs (:meth:`solves_in_run`,
+        after the 2-D map split)."""
+        from flextool import run_warnings
+
+        for s in self.solves_in_run():
+            rows = self.stochastic_branches.get(s) or []
+            raw = self.dispatch_realization_method.get(s)
+            if not rows or str("" if raw is None else raw).strip().lower() not in ("", "deterministic"):
+                continue
+            if not any(len(row) > 3 and str(row[3]).strip().lower() == "yes" for row in rows):
+                raise FlexToolConfigError(
+                    f"Solve '{s}' has stochastic_branches and dispatch_realization_method deterministic (the "
+                    "default since FlexTool 4.7.0), but no branch with realized: yes. Mark the branch that holds "
+                    "the realized data with realized: yes, or set dispatch_realization_method within_solve or "
+                    "separate_dispatch to solve the forecasts.")
+            self.deterministic_branches[s] = self.stochastic_branches.pop(s)
+            self.stochastic_invest_method.pop(s, None)
+            run_warnings.warn("W-0593", solve=s)
 
     def _reduce_detail_for(self, solve_name: str, values: dict, param: str, valid: tuple[str, ...]) -> str:
         """The authored ``solve.<param>`` of *solve_name*: its roll suffix stripped, a realization solve mapped to

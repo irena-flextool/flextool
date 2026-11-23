@@ -388,9 +388,11 @@ def test_spawn_realized_dispatch_sibling_copies_sets_and_drops(tmp_path):
     assert SIBLING not in sc.decomposition
     assert SIBLING not in sc.stochastic_invest_method
     assert SIBLING not in sc.contains_solves
-    # dispatch_realization_method absent → resolver yields within_solve →
-    # the run()-site guard no-ops → no re-spawn.
-    assert sc.dispatch_realization_method_for(SIBLING) == "within_solve"
+    # dispatch_realization_method absent → resolver yields deterministic (the
+    # default; the sibling has no stochastic_branches) → the run()-site guard
+    # no-ops → no re-spawn.
+    assert SIBLING not in sc.dispatch_realization_method
+    assert sc.dispatch_realization_method_for(SIBLING) == "deterministic"
 
 
 def test_spawn_helper_registers_in_both_reader_and_config(tmp_path):

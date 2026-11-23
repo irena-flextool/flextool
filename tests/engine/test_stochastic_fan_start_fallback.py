@@ -119,6 +119,8 @@ def _run(tmp_path_factory, *, n_periods: int, fans: list[tuple[str, str, str, st
         ("solve", "sol", "realized_periods", api.Array([f"p{k}" for k in range(1, n_periods + 1)])),
         ("solve", "sol", "years_represented", _m({f"p{k}": 1.0 for k in range(1, n_periods + 1)}, "period")),
         ("solve", "sol", "stochastic_branches", branch_map),
+        # The forecasts are solved: deterministic, the default since 4.7.0, would ignore them.
+        ("solve", "sol", "dispatch_realization_method", "within_solve"),
         *extra_values,
     ]
     if rolling:

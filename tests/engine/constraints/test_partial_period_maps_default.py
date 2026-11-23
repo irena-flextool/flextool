@@ -138,7 +138,9 @@ def _mode_values(mode: str) -> list:
             "type": "map", "index_type": "str", "data": [["t0001", {
                 "type": "map", "index_type": "str", "data": [["no", 1.0]]}]]}]]}
         return [["solve", SOLVE, "stochastic_branches",
-                 b64({"type": "map", "index_type": "str", "data": [["p2025", branch]]}, "map")]]
+                 b64({"type": "map", "index_type": "str", "data": [["p2025", branch]]}, "map")],
+                # The forecasts are solved: deterministic, the default since 4.7.0, would ignore them.
+                ["solve", SOLVE, "dispatch_realization_method", b64("within_solve", "str")]]
     raise ValueError(mode)
 
 

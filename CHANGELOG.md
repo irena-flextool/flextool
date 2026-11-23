@@ -50,6 +50,12 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
   pins are dropped, the other units keep theirs); and the carried ramp-down limit of a unit without online
   variables asks at most what the unit can produce there. Note W-0592 names the units, once per run. A solve that
   sees the outage coming still keeps the minimum up-time. Only solves that were infeasible before change.
+- **`deterministic` is the new default of `dispatch_realization_method`.** A solve with stochastic branches and no
+  method uses the `realized: yes` branch only, as a deterministic solve (warning W-0593 names it): the forecasts,
+  `stochastic_invest_method` `recourse` and the realization solve are ignored. Without a `realized: yes` branch
+  the run stops with an error naming the solve. Upgraded databases get `within_solve` written on the stochastic
+  solves that relied on the default, so their results are unchanged. Tools and scripts that write stochastic
+  solves must write `dispatch_realization_method` (`within_solve` or `separate_dispatch`) to solve the forecasts.
 
 ## Release 4.6.3 (23.11.2026) — fixes: list-valued defaults kept when migrating FlexTool 3.x databases, Benders between regions, FlexTool 2.0 conversion in the GUI; repair tool for W-0490 databases; GUI message list
 

@@ -467,6 +467,8 @@ def _stochastic() -> list:
     values = [v for v in _values() if not (v[0] == "profile" or (v[1] == "c" and v[2] == "constant"))]
     return values + [["profile", "csp_prof", "profile", b64(prof, "map")],
                      ["solve", SOLVE, "stochastic_branches", b64(branches, "map")],
+                     # The forecasts are solved: deterministic, the default since 4.7.0, would ignore them.
+                     ["solve", SOLVE, "dispatch_realization_method", _s("within_solve")],
                      ["group", "b7_stoch", "include_stochastics", _s("yes")],
                      ["constraint", "c", "constant", _map({"p2020": 21900.0}, "period")]]
 
