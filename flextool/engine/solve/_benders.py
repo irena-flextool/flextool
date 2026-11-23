@@ -1790,6 +1790,7 @@ class _Region:
 def _resolve_entity_owner(
     region_membership: dict[str, dict[str, set[str]]],
     regions: list[str],
+    by_nodes: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Build an ``entity -> owning-region`` map from region membership.
 
@@ -1810,11 +1811,15 @@ def _resolve_entity_owner(
     ``sorted(regions)`` so the tie-break is stable regardless of caller list
     order.
 
+    *by_nodes* (:func:`_region_filter.process_region_by_nodes`) gives a
+    process that NO region lists the region of its nodes: explicit
+    membership always wins, only unlisted processes take it.
+
     Returns
     -------
     dict[str, str]
         ``{entity_name: region_name}`` for every node/process appearing in
-        any region's membership.
+        any region's membership (or in *by_nodes*).
     """
     owner: dict[str, str] = {}
     claims: dict[str, list[str]] = {}
@@ -1836,6 +1841,8 @@ def _resolve_entity_owner(
             "is given to the first region in sorted order.  Shared invest-eligible entities are an untested "
             "edge case.", len(shared), "y is" if len(shared) == 1 else "ies are", first, claims[first],
         )
+    for entity, region in (by_nodes or {}).items():
+        owner.setdefault(entity, region)
     return owner
 
 
@@ -1941,6 +1948,7 @@ def _assemble_benders_invest_vars(
     region_col_values: list[np.ndarray] | None,
     master_invest_frames: dict[str, pl.DataFrame] | None,
     trade_conns: set[str],
+    process_region_by_nodes: dict[str, str] | None = None,
 ) -> dict[str, pl.DataFrame]:
     """Assemble the whole-system TIER-1 invest handoff: the UNION of each
     region's owner-selected in-region invest/divest frames and the master's
@@ -1961,6 +1969,11 @@ def _assemble_benders_invest_vars(
     them, F3), so their union is disjoint by construction too; the
     defensive ``unique`` is a belt-and-braces guard only.
 
+    A unit or connection that no region group lists (the documented setup
+    lists nodes only) is owned by the region of its nodes
+    (*process_region_by_nodes*); the split keeps it in every region as a
+    shared process, and only that region's copy has balance rows to serve.
+
     Returns the same-shaped dict the downstream ``SnapshotSolution`` /
     ``build_handoff_from_solution`` expects (each frame's columns match
     ``Solution.value(name)`` exactly: the Var's dims, then ``"value"``).
@@ -1969,7 +1982,7 @@ def _assemble_benders_invest_vars(
     # trade connections EXCLUDED (they are the master's, see docstring).
     out: dict[str, pl.DataFrame] = {}
     if region_col_values is not None:
-        owner_by_entity = _resolve_entity_owner(region_membership, regions)
+        owner_by_entity = _resolve_entity_owner(region_membership, regions, process_region_by_nodes)
 
         def _owner_of_entity(region_idx: int, entity: str) -> bool:
             if entity in trade_conns:
@@ -3091,6 +3104,8 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         region_col_values=payload.get("region_col_values"),
         master_invest_frames=payload.get("master_invest_frames"),
         trade_conns={a.conn for a in arcs},
+        process_region_by_nodes=_region_filter.process_region_by_nodes(
+            data.process_source_sink, {r: m["nodes"] for r, m in region_membership.items()}),
     )
 
     return BendersResult(

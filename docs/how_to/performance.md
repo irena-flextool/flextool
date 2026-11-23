@@ -54,7 +54,7 @@ Large systems that naturally split into regions (e.g. an interconnected pan-cont
 
 Set up the regions in the database:
 
-- create one `group` per region, list its `node` members via `group__node`
+- create one `group` per region, list its `node` members via `group__node`; units and connections belong to the region of their nodes (listing them with `group__unit` / `group__connection` is optional). A unit with several inputs or outputs that is not listed must have all its nodes in one region; a unit with one input and one output, like a connection, can join two regions
 - set the group parameter `decomposition_method` to *benders_regional* on each region group
 - declare at least two such region groups in the active scenario
 

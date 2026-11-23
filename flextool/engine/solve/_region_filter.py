@@ -213,6 +213,27 @@ def load_region_membership(
     return out
 
 
+def process_region_by_nodes(
+    pss: pl.DataFrame | None, region_nodes: dict[str, set[str]],
+) -> dict[str, str]:
+    """``{process: region}`` for each process whose arcs touch region nodes of exactly ONE region.
+
+    Read from the ``source`` / ``sink`` of the process's ``process_source_sink`` arcs; other tokens (the unit
+    itself, shared or master-hosted nodes) are ignored.  A cross-region connection, a unit with nodes in two
+    regions and a process with no region node (master-local, shared only) are left out.  Used for the region
+    investments of processes not listed in their region group (the documented setup lists nodes only).
+    """
+    if pss is None or pss.height == 0:
+        return {}
+    node_region = {n: r for r, ns in region_nodes.items() for n in ns}
+    regions_of: dict[str, set[str]] = {}
+    for p, source, sink in pss.select(pl.col("p", "source", "sink").cast(pl.Utf8)).iter_rows():
+        for n in (source, sink):
+            if n in node_region:
+                regions_of.setdefault(p, set()).add(node_region[n])
+    return {p: next(iter(rs)) for p, rs in regions_of.items() if len(rs) == 1}
+
+
 def compute_master_hosted_nodes(
     data: FlexData,
     region_membership: dict[str, dict[str, set[str]]],
@@ -528,6 +549,35 @@ def _validate_no_straddling_units(
                 f"connection, and keep the unit's arcs wholly on one "
                 f"side."
             )
+
+
+def _validate_units_in_one_region(pss: pl.DataFrame | None, region_nodes: dict[str, set[str]],
+                                  listed: set[str]) -> None:
+    """Raise when the arcs of a unit that no region group lists have nodes in two regions.
+
+    A node-to-node arc between regions (a connection, or a unit with one input and one output) is cut into
+    half-flows.  The arcs of a unit with several inputs or outputs go through the unit itself, so the split would
+    keep the unlisted unit in each region with only that region's side balanced (a free source in one region),
+    and no region would own its investment.  A *listed* unit is kept in its own region only (unchanged here).
+    """
+    if pss is None or pss.height == 0:
+        return
+    node_region = {n: r for r, ns in region_nodes.items() for n in ns}
+    nodes_by_region: dict[str, dict[str, set[str]]] = {}
+    for p, source, sink in pss.select(pl.col("p", "source", "sink").cast(pl.Utf8)).iter_rows():
+        if p in listed or (source in node_region and sink in node_region):
+            continue  # listed, or node-to-node: in one region or cut into half-flows
+        for n in (source, sink):
+            if n in node_region:
+                nodes_by_region.setdefault(p, {}).setdefault(node_region[n], set()).add(n)
+    bad = {p: by_r for p, by_r in sorted(nodes_by_region.items()) if len(by_r) > 1}
+    if bad:
+        text = "; ".join(f"{p} (" + " and ".join(f"{', '.join(sorted(ns))} in {r}" for r, ns in sorted(by_r.items()))
+                         + ")" for p, by_r in bad.items())
+        raise FlexToolConfigError(
+            "Benders decomposition: unit(s) with nodes in more than one region: " + text + ".  The split cannot "
+            "cut a unit with several inputs or outputs between region subproblems.  Put all nodes of the unit in "
+            "one region, or join the regions with a connection.")
 
 
 def _validate_startup_nodes(data: FlexData, region_nodes: dict[str, set[str]],
@@ -2581,6 +2631,7 @@ def split(
     shared_nodes = all_nodes - all_region_nodes
     shared_procs = all_procs - all_region_procs
     _validate_startup_nodes(data, region_nodes, region_procs)
+    _validate_units_in_one_region(data.process_source_sink, region_nodes, all_region_procs)
 
     if master_hosted_nodes:
         overlap = set(master_hosted_nodes) & all_region_nodes

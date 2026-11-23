@@ -6,6 +6,11 @@
   storage node that relied on the old `storage_start_end_method` default `fix_start` with its own start value
   keeps `fix_start`, as in an unaffected database (FlexTool 4.6.2 left its start free); the migration notice
   (W-0601) names it.
+- A Benders solve with a unit that is not listed in a region group and has several inputs or outputs at nodes of
+  two regions now stops with an error saying how to fix the model. Before, each region subproblem kept the unit
+  with only its own side balanced, a free source in one region, so the investments came out wrong (or, with an
+  investment in the unit, the solve stopped with an internal error). A unit with one input and one output between
+  two regions is cut between the regions like a connection, as before.
 
 ### New features
 
@@ -59,6 +64,9 @@
 - **The solver note W-0540 of a rolling solve whose rolls alternate with its realization solve, or that is nested
   in another rolling solve, counts all its rolls and gives the largest factor** (it named the first roll only).
   The note now follows the last roll's solver output.
+- **A Benders solve with an investable unit or connection that is not listed in its region group (the documented
+  setup lists nodes only) no longer stops after the loop with an internal error ("no Benders value for
+  v_invest_p").** Its investment is now taken from the region of its nodes.
 
 ## Release 4.6.2 (22.11.2026) — fixes: one-variable connections ignore variable cost and losses (efficiency only converts between units); warning for databases possibly hit by the spinedb_api value-list bug, with a checklist
 
