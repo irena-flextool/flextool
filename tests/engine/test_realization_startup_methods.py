@@ -25,6 +25,14 @@ Hand derivation (oracle; not read from a run):
   objective 50 · 10 · 2920 · 3 = 4 380 000.
 So the re-decided objective is below the pinned one for both classes.  Both ``separate_dispatch`` (a rolling solve
 with one roll) and ``within_solve`` (a single solve keeps its separate realization) give these values.
+
+Connection variant (the pin of a connection, ``separate_dispatch``): ``peaker`` is replaced by the source unit
+``gen`` (1000 MW, 10 €/MWh) on node ``ext`` and the ``unidirectional`` connection ``link`` ext -> elec (2 existing
+units of 50 MW, lossless, no cost of its own; one direction, so no flow can circulate).  Connections have no min
+load, so the user constraint ``c_full`` (50 · v_online(link) − flow(link) ≤ 0) does the work of ``min_load`` 1.0:
+with flow ≤ 50 · v_online the link's flow is exactly 50 · v_online.  Every number above then holds with ``link`` for ``peaker``: the parent's ``low`` needs 100 MW over
+the link (v_online 2, tied to ``high``); ``integer_fix_in_uc`` pins v_online 2, objective 8 760 000; ``integer``
+re-decides v_online 1, objective 4 380 000.
 """
 from __future__ import annotations
 
@@ -77,6 +85,43 @@ def _variant(startup: str, method: str):
     return patch
 
 
+def _connection_variant(startup: str):
+    """``_variant`` with ``peaker`` replaced by ``gen`` -> ``ext`` -> ``link`` -> ``elec`` (module docstring)."""
+    def patch(d: dict) -> None:
+        _variant("linear", "separate_dispatch")(d)
+
+        def keep(name) -> bool:
+            return name != "peaker" and not (isinstance(name, list) and "peaker" in name)
+        d["entities"] = [e for e in d["entities"] if keep(e[1])]
+        d["entity_alternatives"] = [e for e in d["entity_alternatives"] if keep(e[1][0])]
+        d["parameter_values"] = [r for r in d["parameter_values"] if keep(r[1])]
+        d["entities"] += [["node", "ext", None], ["unit", "gen", None], ["unit__outputNode", ["gen", "ext"], None],
+                          ["connection", "link", None], ["connection__node__node", ["link", "ext", "elec"], None],
+                          ["connection__node", ["link", "elec"], None], ["constraint", "c_full", None]]
+        d["entity_alternatives"] += [["node", ["ext"], "init", True], ["unit", ["gen"], "init", True],
+                                     ["connection", ["link"], "init", True]]
+        cmap = {"type": "map", "index_type": "str", "index_name": "constraint", "data": [["c_full", None]]}
+        d["parameter_values"] += [
+            ["node", "ext", "node_type", _enc("balance"), "base"],
+            ["unit", "gen", "efficiency", _enc(1.0), "base"],
+            ["unit", "gen", "existing", _enc(1000.0), "base"],
+            ["unit__outputNode", ["gen", "ext"], "other_operational_cost", _enc(10.0), "base"],
+            ["connection", "link", "transfer_method", _enc("unidirectional"), "base"],
+            ["connection", "link", "existing", _enc(2.0), "base"],
+            ["connection", "link", "virtual_unitsize", _enc(50.0), "base"],
+            ["connection", "link", "startup_method", _enc(startup), "base"],
+            ["connection", "link", "constraint_online_coeff", _map(cmap, 50.0), "base"],
+            ["connection__node", ["link", "elec"], "constraint_flow_coeff", _map(cmap, -1.0), "base"],
+            ["constraint", "c_full", "sense", _enc("less_than"), "base"],
+            ["constraint", "c_full", "constant", _enc(0.0), "base"]]
+    return patch
+
+
+def _map(template: dict, coeff: float) -> list:
+    value = {**template, "data": [[template["data"][0][0], coeff]]}
+    return [base64.b64encode(json.dumps(value).encode()).decode(), "map"]
+
+
 def _run(tmp_path: Path, patch) -> tuple[dict, Path]:
     from flextool.engine import run_chain_from_db
     from flextool.update_flextool.db_migration import migrate_database
@@ -110,8 +155,8 @@ def _objective(work: Path, solve: str) -> float:
     return float(pl.read_parquet(work / "output_raw" / f"v_obj__{solve}.parquet")["objective"][0])
 
 
-def _online(step, kind: str, d: str) -> list[float]:
-    v = utf8(step.solution.value(f"v_online_{kind}")).filter((pl.col("p") == "peaker") & (pl.col("d") == d))
+def _online(step, kind: str, d: str, process: str = "peaker") -> list[float]:
+    v = utf8(step.solution.value(f"v_online_{kind}")).filter((pl.col("p") == process) & (pl.col("d") == d))
     return [float(x) for x in v.sort("t")["value"]]
 
 
@@ -137,3 +182,23 @@ def test_single_solve_realization_by_startup_method(tmp_path_factory, startup, m
         assert _online(real, kind, "p2035") == pytest.approx([online] * 3, abs=1e-6)
         assert _objective(work, REALIZATION) == pytest.approx(objective, rel=1e-6)
         assert objective < PINNED_OBJECTIVE
+
+
+@pytest.mark.parametrize("startup", ["integer", "integer_fix_in_uc"])
+def test_connection_realization_by_startup_method(tmp_path_factory, startup) -> None:
+    """A connection's units online: ``integer_fix_in_uc`` pins them in the realization to the reference
+    forecast's (one ``online_fix_eq_integer`` row per step); ``integer`` decides them again (module docstring)."""
+    steps, work = _run(tmp_path_factory.mktemp(f"link_{startup}"), _connection_variant(startup))
+    assert all(s.solution.optimal for s in steps.values())
+    parent, real = steps[PARENT], steps[REALIZATION]
+    assert _online(parent, "integer", "p2035_high", "link") == pytest.approx([PINNED_ONLINE] * 3, abs=1e-9)
+    rows = row_terms(build(real.flex_data), "online_fix_eq_integer")
+    if startup == "integer_fix_in_uc":
+        assert sorted(rows) == [f"online_fix_eq_integer[link,p2035,{t}]" for t in STEPS]
+        assert _online(real, "integer", "p2035", "link") == pytest.approx([PINNED_ONLINE] * 3, abs=1e-9)
+        assert _objective(work, REALIZATION) == pytest.approx(PINNED_OBJECTIVE, rel=1e-6)
+    else:
+        online, objective = REDECIDED["integer"]
+        assert not rows and real.flex_data.p_fix_online is None
+        assert _online(real, "integer", "p2035", "link") == pytest.approx([online] * 3, abs=1e-6)
+        assert _objective(work, REALIZATION) == pytest.approx(objective, rel=1e-6)

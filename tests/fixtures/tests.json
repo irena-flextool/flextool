@@ -15263,7 +15263,7 @@
     ],
     [
       "must_run_fleet_two_online",
-      "Must-run how-to: binary online steam units with min_load 0.5 and a user constraint on the online count, sum >= 2 units."
+      "Must-run how-to: whole-unit online steam units with min_load 0.5 and a user constraint on the online count, sum >= 2 units."
     ],
     [
       "must_run_flowgroup",
@@ -15271,7 +15271,7 @@
     ],
     [
       "must_run_min_load_only",
-      "Must-run how-to: binary online steam units with min_load 0.5 and no must-run (control case: min_load is not a must-run)."
+      "Must-run how-to: whole-unit online steam units with min_load 0.5 and no must-run (control case: min_load is not a must-run)."
     ],
     [
       "must_run_profile",

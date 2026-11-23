@@ -135,7 +135,8 @@ def test_deterministic_solve_reads_the_realized_branch(tmp_path_factory, caplog)
     oracle, _ = scm.run_spec(_spec(stochastic=False), tmp_path_factory.mktemp("oracle"))
     assert [s for s, _, _ in case] == ["st"]
     _assert_same_lp(case, oracle)
-    assert lines == ["Warning: solve 'st' is deterministic: only its realized: yes branch is used [W-0593]"], lines
+    assert lines == [
+        "Warning: solve 'st' has dispatch_realization_method deterministic: forecasts not solved [W-0593]"], lines
 
 
 # Rolling cases: (jump, horizon), the forecasts, and the analysis time whose series each roll reads, hand-derived

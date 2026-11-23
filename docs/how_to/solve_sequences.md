@@ -81,8 +81,8 @@ online, ramps and holds the reserves.
 
 **An example to start from.** In *examples.sqlite*, the scenario `5weeks_invest_fullYear_dispatch_coal_wind` has
 the investment solve `invest_1year_5weeks` (alternative *5weeks_only_invest*) and the dispatch solve
-`y2020_fullYear_dispatch`. Give `coal_plant` `startup_method` *integer_fix_in_uc* (as the alternative *coal_min_load_MIP*
-does), and set the two parameters on `invest_1year_5weeks`.
+`y2020_fullYear_dispatch`. Give `coal_plant` `startup_method` *integer* (the alternative *coal_min_load_MIP* stores
+*integer_fix_in_uc*, the same model here), and set the two parameters on `invest_1year_5weeks`.
 
 **What to check.** Read the investment solve's info line in the run log: it lists what was left out, for which
 units and groups, and what that means for the detail that was kept (for example "the reserves of ... now come from

@@ -1105,7 +1105,7 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
     ),
     WarningSpec(
         code="W-0593",
-        message="solve '{solve}' is deterministic: only its realized: yes branch is used",
+        message="solve '{solve}' has dispatch_realization_method deterministic: forecasts not solved",
         title="Deterministic solve with stochastic branches",
         topic=_SOLVES,
         entityless=True,

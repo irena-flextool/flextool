@@ -4,7 +4,8 @@
 ``integer_fix_in_uc`` the class ``binary`` (whole units, a MIP); ``fix_in_uc`` marks the ``_fix_in_uc`` members.  So a
 model with ``linear_fix_in_uc`` and ``integer`` gets the same online sets, internal methods and
 ``input/process__startup_method`` classes as the same model with ``linear`` and ``integer_fix_in_uc`` (4.6.1
-``linear`` / ``binary``).  ``process_online_fix_in_uc`` holds the ``_fix_in_uc`` processes; nothing uses it yet.
+``linear`` / ``binary``).  ``process_online_fix_in_uc`` holds the ``_fix_in_uc`` processes; the realization pins (``fix_online``) and
+W-0588 read it.
 
 The model is the ``test_online_connections`` "mixed" chain on ``tests.json`` (built from JSON under the pytest tmp
 dir): ``coal_plant`` online by its ``minimum_time_method`` (class linear, no startup_method), the CHP unit

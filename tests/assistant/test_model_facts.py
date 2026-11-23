@@ -238,6 +238,7 @@ def test_a_deterministic_solve_is_not_described_as_stochastic() -> None:
     branch, so the facts name it and say the forecasts are not solved; without one the run stops."""
     assert model_facts._realization(None) == model_facts._realization("") == "deterministic"
     assert model_facts._realization("separate_dispatch") == "separate_dispatch"
+    assert model_facts._realization(" Within_Solve ") == "within_solve"
     fans = model_facts._fans({"p1": {"a": {"t1": {"no": 1.0}}, "r": {"t1": {"yes": 0.0}}}})
     line = render(ScenarioFacts((_solve("s", branches=fans),), _run())).splitlines()[1]
     assert line == ("Solve s: single solve; deterministic (dispatch_realization_method): reads only the realized "

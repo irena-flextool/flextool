@@ -385,7 +385,7 @@ Startups and shutdowns count exactly the units coming online and going offline. 
 **(examples.sqlite scenario: must_run_fleet_two_online)**
 ***init - west - coal - wind - must_run_system - must_run_fleet - must_run_fleet_two_online***
 
-**The data.** On each of *steam_1*, *steam_2* and *steam_3* set `startup_method` *integer_fix_in_uc*, `min_load` 0.5 and `constraint_online_coeff` (*steam_fleet_two_online* | 1). Create a `constraint` *steam_fleet_two_online* with `sense` *greater_than* and `constant` 2. The example also sets `solver_mip_gap` 0 on the solve, so the solver proves the best integer solution.
+**The data.** On each of *steam_1*, *steam_2* and *steam_3* set `startup_method` *integer* (the example data has *integer_fix_in_uc*, the same model here), `min_load` 0.5 and `constraint_online_coeff` (*steam_fleet_two_online* | 1). Create a `constraint` *steam_fleet_two_online* with `sense` *greater_than* and `constant` 2. The example also sets `solver_mip_gap` 0 on the solve, so the solver proves the best integer solution.
 
 **What it does.** In every time step at least two of the three units are online, and each online unit makes at least its minimum load: *steam_1* and *steam_2* are online at 50 MW each. The count is in units of `virtual_unitsize`; without it, of the unit's existing capacity (here 100 MW, so each unit is one), else of 1000 MW. Set `virtual_unitsize` on a unit that is invested. A `constraint_online_coeff` on a unit without online variables is an error. See the [two of three units online](../reference/user_constraints.md#example-two-of-three-units-online) example.
 
@@ -400,7 +400,7 @@ Startups and shutdowns count exactly the units coming online and going offline. 
 **(examples.sqlite scenario: must_run_min_load_only)**
 ***init - west - coal - wind - must_run_system - must_run_fleet - must_run_min_load_only***
 
-**What it does.** The steam units have `startup_method` *integer_fix_in_uc* and `min_load` 0.5, but no floor. The minimum load applies only while a unit is online, and the model is free to keep it offline, so all three stay off and wind covers the demand (the same result as *must_run_none*). `min_load` limits how low an online unit can go; it does not make the unit run.
+**What it does.** The steam units have `startup_method` *integer_fix_in_uc* (the same model as *integer* here) and `min_load` 0.5, but no floor. The minimum load applies only while a unit is online, and the model is free to keep it offline, so all three stay off and wind covers the demand (the same result as *must_run_none*). `min_load` limits how low an online unit can go; it does not make the unit run.
 
 ### Avoid a negative cost as a must-run bonus
 

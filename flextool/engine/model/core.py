@@ -4738,7 +4738,8 @@ def _eq_user_constraints(b: _Build) -> None:
     # its reverse flow v_flow_back the same coefficient: the same row for every transfer method
     # (_user_constraint_flow_terms).
     # The online term counts the units online (of unitsize) in each step; whole units with startup_method integer
-    # or integer_fix_in_uc, continuous with linear or linear_fix_in_uc.  v_online is the variable of the process's UC class (v_online_linear / v_online_integer).
+    # or integer_fix_in_uc, continuous with linear or linear_fix_in_uc.  v_online is the variable of the process's
+    # UC class (v_online_linear / v_online_integer).
     # Terms without data are absent.  The existing-capacity terms are constants and enter as Param terms.
     # A constraint without flow, state and online terms is the same in every step of a period, so it gets one row
     # per period (the _period family) instead of one per step.  The constraint axis is cn (c is the commodity

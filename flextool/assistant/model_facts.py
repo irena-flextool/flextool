@@ -378,8 +378,9 @@ def input_facts(db: Any, scenario: str) -> tuple[SolveFacts, ...]:
 
 
 def _realization(raw: Any) -> str:
-    """The ``dispatch_realization_method`` as the engine reads it: absent, blank or unrecognised is deterministic."""
-    value = str(raw).strip() if raw is not None else ""
+    """The ``dispatch_realization_method`` as the engine reads it (lower-cased): absent or blank is deterministic;
+    an unrecognised value is refused by the engine and shown here as deterministic."""
+    value = str(raw).strip().lower() if raw is not None else ""
     return value if value in ("within_solve", "separate_dispatch") else "deterministic"
 
 
@@ -579,7 +580,8 @@ class _Renderer:
 
     def deterministic(self, fans: tuple[BranchFan, ...]) -> str:
         """A solve with ``stochastic_branches`` and ``dispatch_realization_method`` deterministic: it is solved
-        with the realized branch only (the engine's flattening), or stops with an error without one."""
+        with the realized branch only (the engine's flattening), or stops with an error without one. Only the
+        first realized fan is named; the engine stops with an error when the realized rows name several."""
         realized = next((fan.realized for fan in fans if fan.realized), None)
         if realized:
             return (f"deterministic (dispatch_realization_method): reads only the realized branch "
@@ -790,7 +792,8 @@ def _detailed(solves: tuple[SolveFacts, ...], most: int, step_text: Callable[[So
     """The solves described on their own line: the first, then those whose mode or time steps differ from every
     one described already, at most *most*."""
     def signature(s: SolveFacts) -> tuple:
-        return (s.mode, s.horizon, s.jump, s.duration, bool(s.branches), bool(s.representative), step_text(s))
+        return (s.mode, s.horizon, s.jump, s.duration, bool(s.branches),
+                s.realization if s.branches else None, bool(s.representative), step_text(s))
 
     picked: list[SolveFacts] = []
     for s in solves:
