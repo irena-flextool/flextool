@@ -17,12 +17,14 @@ TODO(v5.0.0): remove this module, W-0490 (``run_warnings/_input_specs.py``), its
 (``engine/solve/_orchestration.py``, ``gui/input_sources.py``, ``gui/main_window.py``,
 ``gui/dialogs/database_check_dialog.py``), the repair tool ``flextool-repair-value-list``
 (``update_flextool/value_list_repair.py``, ``value_list_suspects.py``, ``value_list_archive.py``,
-``value_list_answers.py``,
+``value_list_answers.py``, ``value_list_write.py``,
 ``cli/cmd_repair_value_list.py``) and
 their tests.  The warning is temporary.
 """
 from __future__ import annotations
 
+import contextlib
+import json
 import logging
 import sqlite3
 from dataclasses import dataclass, field
@@ -65,6 +67,10 @@ APPENDED: dict[int, str] = {22: "cumulative_limits"}
 STEP_COMMIT: dict[int, str] = {22: "Added cumulative investments"}
 
 _PREFIX = "Updated Flextool data structure to version "
+
+#: The repair tool's record (metadata key) and the comment of its one commit, in every run (part A, part B or both).
+RECORD_KEY = "flextool_value_list_repair"
+REPAIR_COMMIT = "FlexTool value list repair"
 
 
 @dataclass(frozen=True)
@@ -191,3 +197,79 @@ def gui_dialog_text(flagged: list[tuple[str, Finding]]) -> str:
                           "may have replaced the first choice in that list with another one.")
     paragraphs.append("The documentation has a short checklist for finding and fixing this.")
     return "\n\n".join(paragraphs)
+
+
+@dataclass(frozen=True)
+class Record:
+    """A repair record row: its parsed JSON value, and the id, comment and date of the commit that wrote it."""
+
+    value: dict
+    commit: int | None
+    comment: str
+    date: str
+
+
+def record_row(con: sqlite3.Connection, key: str) -> tuple[str, int | None, str, str] | None:
+    """``(value, commit id, commit comment, commit date)`` of the newest metadata row *key* (several rows: the
+    newest by id), or ``None``."""
+    row = con.execute('SELECT m.value, m.commit_id, c.comment, c.date FROM metadata m LEFT JOIN "commit" c ON c.id = '
+                      "m.commit_id WHERE m.name = ? ORDER BY m.id DESC LIMIT 1", (key,)).fetchone()
+    return None if row is None else (str(row[0]), row[1], str(row[2] or ""), str(row[3] or "")[:10])
+
+
+def record_value(finding: Finding, set_: int, kept: int) -> str:
+    """The W-0490 repair record's metadata value (at most 255 characters)."""
+    return json.dumps({"v": 1, "step": finding.step, "end_commit": finding.end_commit, "end_date": finding.date,
+                       "set": set_, "kept": kept}, separators=(",", ":"))
+
+
+def parse_record(value: str) -> dict | None:
+    """The record's fields, or ``None`` when *value* is not a version 1 record."""
+    try:
+        data = json.loads(value)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("v") != 1 or not isinstance(data.get("end_date"), str) or not all(
+            isinstance(data.get(k), int) and not isinstance(data.get(k), bool)
+            for k in ("step", "end_commit", "set", "kept")):
+        return None
+    return data
+
+
+def read_record(path: str | Path) -> Record | None:
+    """The newest W-0490 repair record of *path* if it parses and its commit is the tool's (``REPAIR_COMMIT``: a
+    record copied in by an import has another comment), else ``None``; read-only."""
+    from flextool.update_flextool.frozen import _connect_ro
+
+    with contextlib.closing(_connect_ro(Path(path))) as con:
+        row = record_row(con, RECORD_KEY)
+    if row is None or row[2] != REPAIR_COMMIT or (value := parse_record(row[0])) is None:
+        return None
+    return Record(value, row[1], row[2], row[3])
+
+
+def record_ends(finding: Finding, path: str | Path) -> bool:
+    """Whether *path* holds a repair record that ends *finding*: a valid record (:func:`read_record`) for the same
+    step, ``end_commit`` and ``end_date``, written by a commit after ``end_commit``, and the step's list holds every
+    shipped member and the appended one now.  Any read error: ``False`` (the finding stays)."""
+    from flextool.update_flextool.frozen import _connect_ro
+
+    try:
+        rec = read_record(path)
+        if rec is None or rec.commit is None or rec.commit <= finding.end_commit or (
+                rec.value["step"], rec.value["end_commit"], rec.value["end_date"]) != (
+                finding.step, finding.end_commit, finding.date) or finding.step not in PRIOR_MEMBERS:
+            return False
+        with contextlib.closing(_connect_ro(Path(path))) as con:
+            rows = con.execute("SELECT lv.value FROM list_value lv JOIN parameter_value_list l ON l.id = "
+                               "lv.parameter_value_list_id WHERE l.name = ?", (APPEND[finding.step][0],)).fetchall()
+    except (sqlite3.Error, OSError) as exc:
+        logger.debug("repair record of %s not read: %s", path, exc)
+        return False
+    members = set()
+    for (value,) in rows:
+        try:
+            members.add(json.loads(bytes(value) if not isinstance(value, str) else value))
+        except (TypeError, ValueError):
+            continue
+    return {*PRIOR_MEMBERS[finding.step], APPENDED[finding.step]} <= members

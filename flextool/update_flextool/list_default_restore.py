@@ -28,6 +28,7 @@ import hashlib
 import json
 import sqlite3
 from pathlib import Path
+from typing import NamedTuple
 
 FINGERPRINT = "Added cumulative investments and parameter value types"  # FlexTool 3.x v22 step, 2024-08-28
 FINGERPRINT_SINCE = "2024-08-28"
@@ -37,6 +38,8 @@ STORAGE = ("node", "storage_start_end_method")
 #: The shipped ``node.storage_start_end_method`` default before version 77 (the v77 rule's old default).
 OLD_STORAGE_DEFAULT = "fix_start"
 STORAGE_KIND = "storage"
+#: Part B's repair record (metadata key), separate from the W-0490 record.
+PART_B_RECORD_KEY = "flextool_list_default_repair"
 
 PROBABLY = "probably emptied by a Spine library bug (spinedb_api 0.31–0.32, 2024–2025)"
 NO_SIGN = "empty; no sign of the bug"
@@ -113,6 +116,46 @@ def empty_shipped_defaults(conn: sqlite3.Connection) -> list[str]:
 def empty_hash(names) -> str:
     """The first 12 hex of sha1 over the newline-joined *names*."""
     return hashlib.sha1("\n".join(names).encode("utf-8")).hexdigest()[:12]
+
+
+class PartBRecord(NamedTuple):
+    """A valid part B repair record and the id and date of the commit that wrote it (a ``NamedTuple``: a
+    dataclass needs the module in ``sys.modules``, which a file loaded on its own is not)."""
+
+    date: str
+    set: int
+    kept: int
+    storage: int
+    empty: str
+    commit: int | None
+    commit_date: str
+
+
+def part_b_record_value(date: str, set_: int, kept: int, storage: int, empty: str) -> str:
+    """The part B record's metadata value; *empty* is :func:`empty_hash` of :func:`empty_shipped_defaults` after
+    the write (the full reference table)."""
+    return json.dumps({"v": 1, "date": date, "set": set_, "kept": kept, "storage": storage, "empty": empty},
+                      separators=(",", ":"))
+
+
+def parse_part_b_record(conn: sqlite3.Connection) -> PartBRecord | None:
+    """The newest part B record of the database on *conn* when it parses as version 1 and was written by the
+    repair tool's commit (``value_list_history.REPAIR_COMMIT``; a record copied in by an import has another
+    comment), else ``None``.  Raises :class:`sqlite3.Error` on a read error."""
+    from flextool.update_flextool.value_list_history import REPAIR_COMMIT, record_row
+
+    row = record_row(conn, PART_B_RECORD_KEY)
+    if row is None or row[2] != REPAIR_COMMIT:
+        return None
+    try:
+        data = json.loads(row[0])
+    except ValueError:
+        return None
+    if not isinstance(data, dict) or data.get("v") != 1 or not all(
+            isinstance(data.get(k), str) for k in ("date", "empty")) or not all(
+            isinstance(data.get(k), int) and not isinstance(data.get(k), bool) for k in ("set", "kept", "storage")):
+        return None
+    return PartBRecord(data["date"], data["set"], data["kept"], data["storage"], data["empty"], row[1], row[3])
 
 
 def _commits(con: sqlite3.Connection) -> dict[int, tuple[str, str]]:

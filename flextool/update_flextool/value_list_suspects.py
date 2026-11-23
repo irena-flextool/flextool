@@ -107,7 +107,7 @@ class Suspect:
     """One item the user answers.  *item* is ``pv:<parameter_value id>``, ``def:<definition id>`` or (part B)
     ``sn:<node entity id>:<alternative id>``; *current* the
     member its reference reads now in its own list *list_id* (``""``: no member); *suggestion* the pre-selected
-    answer (``set:<member>``) or ``None``; *reason* why (a class default); *keep_text* what ``keep`` means."""
+    answer (``set:<member>``; ``keep`` for a part B default kept in an earlier repair) or ``None``; *reason* why (a class default); *keep_text* what ``keep`` means."""
 
     item: str
     kind: str
