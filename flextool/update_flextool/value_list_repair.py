@@ -47,6 +47,12 @@ class RepairError(Exception):
     """A refusal or a failure; the message says why.  Nothing was written to the source."""
 
 
+def schema_outdated_message(name: str = "this database") -> str:
+    """The refusal for a database whose SpineDB schema is older than its data version expects."""
+    return (f"The Spine database schema of {name} is older than its data version expects: run "
+            "flextool-migrate-database on it (or open it in FlexTool), then run this tool again.")
+
+
 @dataclass(frozen=True)
 class Member:
     """A ``list_value`` row; *value* is the member text (``None`` when it is not a JSON string)."""

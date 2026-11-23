@@ -284,11 +284,12 @@ def _default_suspect(con, gap, commits):
 def storage_suspects(path: str | Path, commits: dict[int, tuple[str, str]] | None = None) -> list:
     """One suspect ``sn:<entity id>:<alternative id>`` per ``(node, alternative)`` where the version 77 upgrade
     writes the old default ``fix_start`` (``db_migration.classify_storage_default``, the exact v77 rule, on the
-    snapshot opened read-only).  None when the snapshot has no v77 commit."""
+    snapshot opened read-only).  None when the snapshot has no v77 commit.  Raises
+    :class:`~value_list_repair.RepairError` for an older SpineDB schema revision, before any spinedb_api open."""
     from flextool.update_flextool import db_migration as dbm
     from flextool.update_flextool import value_list_suspects as vs
     from flextool.update_flextool.db_handle import open_database_mapping
-    from flextool.update_flextool.frozen import _connect_ro
+    from flextool.update_flextool.frozen import _connect_ro, schema_outdated_ro
 
     path = Path(path)
     with contextlib.closing(_connect_ro(path)) as con:
@@ -296,6 +297,10 @@ def storage_suspects(path: str | Path, commits: dict[int, tuple[str, str]] | Non
         v77 = [i for i, (_, c) in commits.items() if c.startswith(V77_PREFIX)]
         if not v77:
             return []
+        if schema_outdated_ro(path):  # spinedb_api would refuse it without closing its engine (Windows holds the file)
+            from flextool.update_flextool.value_list_repair import RepairError, schema_outdated_message
+
+            raise RepairError(schema_outdated_message())
         with open_database_mapping(f"sqlite:///{path.resolve().as_posix()}", upgrade=False) as db:
             methods, starts, ends, scenario_alts, inactive = dbm._v77_storage_inputs(db)
         writes = dbm.classify_storage_default(methods, starts, ends, scenario_alts, OLD_STORAGE_DEFAULT, inactive)

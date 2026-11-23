@@ -236,7 +236,8 @@ def _set_back_revision(path: Path) -> None:
 
 def test_refusals_and_failures_leave_nothing(tmp_path, schema_db_url, monkeypatch) -> None:
     """Output == source / an existing output → refused.  A file created at the output while the copy is made →
-    refused, that file kept.  A write the plan does not hold → the verify refuses it.  That, or a
+    refused, that file kept.  A write the plan does not hold (a definition, or a metadata value under an unchanged
+    name) → the verify refuses it.  That, or a
     ``KeyboardInterrupt`` in the verify → no output, no partial, no side file.
     A dry run's snapshot in a temporary folder leaves nothing next to the source."""
     case = make_hit(tmp_path, schema_db_url)
@@ -263,8 +264,15 @@ def test_refusals_and_failures_leave_nothing(tmp_path, schema_db_url, monkeypatc
     def interrupt(*args):
         raise KeyboardInterrupt
 
+    def stray_metadata(a, *args):  # a metadata value changed under the same name (review finding 8)
+        done = real_apply(a, *args)
+        sql(a.path, "UPDATE metadata SET value = 'changed' WHERE name = 'note'")
+        return done
+
+    sql(case.path, "INSERT INTO metadata (name, value, commit_id) VALUES ('note', 'as it was', ?)",
+        (add_commit(case.path, "note", "2026-11-23"),))
     for name, inject, error in (("_verify", late_file, "appeared"), ("_apply", stray_write, "a definition no answer"),
-                                ("_verify", interrupt, None)):
+                                ("_apply", stray_metadata, "the metadata are"), ("_verify", interrupt, None)):
         monkeypatch.setattr(vw, name, inject)
         a, found = _prepare(case.path, out)
         with pytest.raises(KeyboardInterrupt if error is None else vr.RepairError, match=error):
@@ -425,3 +433,25 @@ def test_unanswered_storage_holds_the_storage_default(tmp_path, schema_db_url) -
     prev = vw.previous_repair(a2, found2)
     assert sorted((s.kind, s.entity) for s in prev.suspects) == [(vs.DEFAULT, ""), (ldr.STORAGE_KIND, "B")]
     vw.discard(a2.path)
+
+
+def test_storage_questions_on_an_old_spinedb_revision_open_nothing(tmp_path, schema_db_url, monkeypatch) -> None:
+    """Review finding 6: storage suspects need spinedb_api (the v77 rule); on a snapshot with an older SpineDB
+    revision the open would fail and leave its engine holding the file (Windows).  The tool refuses before any
+    spinedb_api open, with the migrate message: exit 1, nothing left next to the source."""
+    from flextool.cli import cmd_repair_value_list as cli
+    from flextool.update_flextool import db_handle
+
+    case = make_lost_defaults(tmp_path, ["node.storage_start_end_method"], schema_db=schema_db_url,
+                              before=[("node", "A", "storage_state_start", "base", 0.5)], scenarios={"s1": ["base"]})
+    _set_back_revision(case.path)
+    assert fz.schema_outdated_ro(case.path)
+    opened = []
+    monkeypatch.setattr(db_handle, "open_database_mapping", lambda *a, **k: opened.append(a) or 1 / 0)
+    sha, names = fz.sha256_of(case.path), sorted(p.name for p in tmp_path.iterdir())
+    assert cli.main([str(case.path), "--accept-certain"]) == 1
+    assert opened == [] and fz.sha256_of(case.path) == sha and sorted(p.name for p in tmp_path.iterdir()) == names
+    (tmp_path / "snap").mkdir()
+    a = vr.analyse(vr.snapshot(case.path, tmp_path / "snap"))
+    with pytest.raises(vr.RepairError, match="flextool-migrate-database"):
+        ldr.storage_suspects(a.path)

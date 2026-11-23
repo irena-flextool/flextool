@@ -16,7 +16,10 @@ Evidence and suggestion (``label`` / ``suggestion``):
 
 - a value written before C (or with a NULL commit) in state ``hit`` with the position proof: ``certain``,
   ``set:<lost member>``;
-- in ``hit-unanchored``, or without the proof: ``probably <lost>`` / a legacy member, no suggestion;
+- in ``hit-unanchored``, or without the proof: ``probably <lost>``; ``lost member not known (hand-restored X)``
+  when the lost member is only inferred from a hand-restored row, ``lost member not known (one of X, Y)`` with two
+  or more shipped members missing; ``legacy member`` when no shipped member is missing or hand-restored.  No
+  suggestion;
 - a value written after the overwrite: no suggestion (the user decides);
 - a class default, in every state: the shipped default, recommended with :data:`DEFAULT_REASON`;
 - a carried group value or a ``renamed-back`` value in (C, H): no suggestion.
@@ -37,6 +40,7 @@ from flextool.update_flextool import value_list_repair as vr
 VALUE, DEFAULT, CARRIED = "value", "default", "carried"
 CERTAIN = "certain"
 LEGACY = "legacy member"
+UNKNOWN = "lost member not known"  # + " (hand-restored X)" or " (one of X, Y)": :func:`lost_unknown`
 AFTER = "written after the overwrite"
 SHIPPED = "recommended: shipped default"
 CARRIED_LABEL = "carried by v77, inert either way"
@@ -160,10 +164,23 @@ def _ref(payload) -> int | None:
     return int(raw) if isinstance(raw, bytes) and raw.isdigit() else None
 
 
+def lost_unknown(a: vr.Analysis) -> str | None:
+    """What the label says when the lost member is not known: ``"hand-restored X"`` (one shipped member added back
+    by hand, without the position proof: it may not be the lost one) or ``"one of X, Y"`` (two or more shipped
+    members missing); ``None`` when the lost member is known or no shipped member is missing or hand-restored
+    (then R was a legacy member)."""
+    if a.lost_row is not None and not a.position_proof:
+        return f"hand-restored {a.lost}"
+    if a.lost is None and len(a.restore) > 1:
+        return f"one of {', '.join(a.restore)}"
+    return None
+
+
 def overwrite_commit(a: vr.Analysis) -> int:
-    """The commit that separates "before" from "after the overwrite": C in ``renamed-back``, else R's commit (the
+    """The commit that separates "before" from "after the overwrite": C in ``renamed-back`` and in
+    ``hit-unanchored`` (there R's commit may be a later rewrite of R, after the overwrite), else R's commit (the
     moment R got the appended text; C in ``hit``), else C, else the session's closing version commit."""
-    commit = a.c if a.state == vr.RENAMED_BACK else (a.r.commit if a.r.commit is not None else a.c)
+    commit = a.c if a.state in (vr.RENAMED_BACK, vr.HIT_UNANCHORED) or a.r.commit is None else a.r.commit
     return commit if commit is not None else a.finding.end_commit
 
 
@@ -280,6 +297,10 @@ class _Reader:
         elif a.state == vr.HIT and a.position_proof:
             label, suggestion = CERTAIN, f"set:{a.lost}"
             evidence = f"written before the overwrite on {self.overwrite_date}: it was {a.lost} then"
+        elif (unknown := lost_unknown(a)) is not None:
+            label, suggestion = f"{UNKNOWN} ({unknown})", None
+            evidence = (f"written before the overwrite on {self.overwrite_date}: then the lost member, which is "
+                        + (f"{unknown}" if a.lost_row is None else f"not proven to be the {unknown} member"))
         elif a.lost is not None:
             label, suggestion = f"probably {a.lost}", None
             evidence = f"written before the overwrite on {self.overwrite_date}: probably {a.lost} then (not proven)"

@@ -19,8 +19,10 @@ Finnish locale saves ``;``), any other encoding refused ("save as CSV UTF-8").  
   ``suggestion`` column) is never an answer until the user writes it there.
 
 **Plan** (:func:`make_plan`): what the write sets, keeps and skips, and whether each record is due.  It counts only
-explicit answers.  A record is due when every suspect of its part has ``keep`` or ``set:`` (no skip, no stale row,
-no missing answer).  While any storage question has no answer, the ``node.storage_start_end_method`` default is held
+explicit answers; a ``set:`` to the member the item reads already counts as ``keep`` (with a warning).  A record is
+due when every suspect of its part has ``keep`` or ``set:`` (no skip, no stale row, no missing answer); for part B
+that includes a part A class default that is empty (an ``invest_method`` default on a W-0490 hit, which is part
+A's only but is in the empty set the part B record's hash covers).  While any storage question has no answer, the ``node.storage_start_end_method`` default is held
 back even if it is answered ``set:`` (it is what keeps those questions alive).
 
 Standard library and the tool's own modules only; no database is written here.
@@ -265,12 +267,10 @@ class Plan:
         """``set`` / ``kept`` of one part (part B: ``set`` counts defaults, ``storage`` the ``fix_start`` writes;
         ``kept`` both), for the records and the summary."""
         mine = [d for d in self.decisions if d.suspect.part_b == part_b]
-        applied = {d.suspect.item for d in self.sets}
-        is_storage = [d.suspect.kind == ldr.STORAGE_KIND for d in mine]
-        out = {"set": sum(d.suspect.item in applied for d, st in zip(mine, is_storage) if not st),
-               "kept": sum(d.action == KEEP for d in mine)}
+        applied = [d.suspect.kind == ldr.STORAGE_KIND for d in self.sets if d.suspect.part_b == part_b]
+        out = {"set": applied.count(False), "kept": sum(d.action == KEEP for d in mine)}
         if part_b:
-            out["storage"] = sum(d.suspect.item in applied for d, st in zip(mine, is_storage) if st)
+            out["storage"] = applied.count(True)
         return out
 
 
@@ -287,23 +287,30 @@ def make_plan(a: vr.Analysis, suspects, answers, *, stale=(), warnings=(), key: 
         raise AnswersError(f"Not an item of this database: {', '.join(unknown)}.")
     allowed = choices(a, suspects)
     stale_items = {item for item, _ in stale}
-    decisions = []
+    decisions, warnings = [], list(warnings)
+    reference = ldr.reference()
     for s in suspects:
         ans = None if s.item in stale_items else answers.get(s.item)
         if ans is not None and ans.action == SET:  # check again: a prompt or a caller may pass any member
             ans = check_answer(s, ans.text(), allowed[s.item])
+            if ans.member == s.current:  # nothing to write: the same as keep
+                ans = Answer(KEEP)
+                warnings.append(f"{s.item}: set:{s.current} is what it reads already; counted as keep")
         decisions.append(Decision(s, ans))
 
+    def empty_reference_default(s: vs.Suspect) -> bool:
+        """A part A class default that is in part B's empty set too (an ``invest_method`` default on a hit)."""
+        return s.kind == vs.DEFAULT and not s.current and (s.cls, s.parameter) in reference
+
     def done(part_b: bool) -> bool:
-        return all(d.action in (KEEP, SET) for d in decisions if d.suspect.part_b == part_b)
+        return all(d.action in (KEEP, SET) for d in decisions
+                   if d.suspect.part_b == part_b or (part_b and empty_reference_default(d.suspect)))
 
     storage_open = any(d.action not in (KEEP, SET) for d in decisions if d.suspect.kind == ldr.STORAGE_KIND)
     held = tuple(d.suspect.item for d in decisions if storage_open and d.action == SET and d.suspect.part_b
                  and d.suspect.kind == vs.DEFAULT and (d.suspect.cls, d.suspect.parameter) == ldr.STORAGE)
     part_a = a.finding is not None and a.state in (vr.HIT, vr.HIT_UNANCHORED, vr.RENAMED_BACK, vr.NOT_HIT)
-    reference = ldr.reference()
-    empty_default = any(s.part_b or (s.kind == vs.DEFAULT and not s.current and (s.cls, s.parameter) in reference)
-                        for s in suspects)
+    empty_default = any(s.part_b or empty_reference_default(s) for s in suspects)
     part_b = a.version == FLEXTOOL_DB_VERSION and empty_default
     return Plan(key if key is not None else file_key(a), a.restore, tuple(decisions), tuple(stale), tuple(warnings),
                 held, part_a and done(False), part_b and done(True))

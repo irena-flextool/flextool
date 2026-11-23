@@ -3,8 +3,8 @@
 Only the snapshot (:func:`~flextool.update_flextool.value_list_repair.snapshot`, ``<output>.partial-<pid>`` in the
 output's folder) is ever written; the source is never opened for writing, and the repair is never done in place.
 
-1. Apply: one spinedb_api session on the snapshot, opened with ``upgrade=True`` (an old SpineDB revision is upgraded
-   on the private copy only, before the state the verify compares against is read), and one commit with the
+1. Apply: an old SpineDB revision is first upgraded on the private copy only (before the state the verify compares
+   against is read); then one spinedb_api session on the snapshot and one commit with the
    message ``value_list_history.REPAIR_COMMIT`` in every run.  It restores the members missing from R's list with
    ``import_data`` (guarded: no existing member may change), writes each ``set:`` answer (``to_database(member)``,
    as the v77 step writes a list default, so a default is stored as a ``list_value_ref``), adds ``fix_start`` for a
@@ -13,8 +13,8 @@ output's folder) is ever written; the source is never opened for writing, and th
 2. Verify, read-only with ``sqlite3``: every ``set:`` reads its member as a ``list_value_ref`` with an ASCII-digit
    payload; every other suspect row and every row no suspect names is unchanged; R's list holds every shipped
    member and ``cumulative_limits``; the empty shipped defaults are the expected ones (the storage default stays
-   empty while a storage question has no answer); no text-form default is left; the metadata changed only by the
-   records and the frozen marker; at most one commit was added; each written record is valid.
+   empty while a storage question has no answer); no text-form default is left; the metadata rows (name and value)
+   changed only by the records and the frozen marker; at most one commit was added; each written record is valid.
 3. Publish: the side files ``<output>.value_list_repair.csv`` (the applied answers, replayable with ``--answers``)
    and ``.txt`` (provenance) are written to temporary names, the snapshot is renamed to the output without ever
    replacing a file (a hard link on POSIX, ``os.rename`` on Windows, retried while Windows holds the file), then the
@@ -158,16 +158,16 @@ def _target(con: sqlite3.Connection, item: str):
 
 @dataclass(frozen=True)
 class _State:
-    targets: dict
+    targets: dict  # applied item -> (payload bytes, type): after the write only
     values: dict
     defaults: dict
     members: dict  # list_value id -> (list id, value bytes)
-    metadata: tuple
+    metadata: tuple  # sorted (name, value) rows
     commits: int
     empty: tuple
 
 
-def _state(path: Path, items) -> _State:
+def _state(path: Path, items=()) -> _State:
     from flextool.update_flextool.frozen import _connect_ro
 
     with contextlib.closing(_connect_ro(path)) as con:
@@ -178,7 +178,7 @@ def _state(path: Path, items) -> _State:
                 "SELECT id, default_value, default_type FROM parameter_definition")},
             {i: (lid, _raw(v)) for i, lid, v in con.execute(
                 "SELECT id, parameter_value_list_id, value FROM list_value")},
-            tuple(sorted(n for (n,) in con.execute("SELECT name FROM metadata"))),
+            tuple(sorted(con.execute("SELECT name, value FROM metadata"))),
             con.execute('SELECT count(*) FROM "commit"').fetchone()[0],
             tuple(ldr.empty_shipped_defaults(con)))
 
@@ -219,7 +219,7 @@ def _apply(a: vr.Analysis, plan: va.Plan, before: _State, previous: Previous | N
         counts = plan.counts(True)
         records[ldr.PART_B_RECORD_KEY] = ldr.part_b_record_value(today, counts["set"], counts["kept"],
                                                                   counts["storage"], ldr.empty_hash(empty))
-    with open_database_mapping(sqlite_url_string(a.path.resolve().as_posix()), create=False, upgrade=True) as db:
+    with open_database_mapping(sqlite_url_string(a.path.resolve().as_posix()), create=False, upgrade=False) as db:
         if plan.restore:
             lines.append(_restore(db, a, plan.restore))
         for d in plan.sets:
@@ -257,13 +257,9 @@ def _verify(a: vr.Analysis, plan: va.Plan, before: _State, done: dict) -> None:
     from flextool.update_flextool.list_default_repair import list_defaults_repairable_ro
 
     applied = {d.suspect.item: d for d in plan.sets}
-    after = _state(a.path, before.targets)
+    after = _state(a.path, applied)
     bad = []
-    for item, now in after.targets.items():
-        if item not in applied:
-            if now != before.targets[item]:
-                bad.append(f"{item} changed although it was not set")
-            continue
+    for item, now in after.targets.items():  # every other row: the full-table compares below
         d = applied[item]
         member = after.members.get(int(now[0])) if now and now[1] == "list_value_ref" and now[0].isdigit() else None
         if member is None or member[0] != d.suspect.list_id or vr._text(member[1]) != d.answer.member:
@@ -286,9 +282,10 @@ def _verify(a: vr.Analysis, plan: va.Plan, before: _State, done: dict) -> None:
     if after.empty != done["empty"]:
         bad.append(f"the empty shipped defaults are {list(after.empty)}, expected {list(done['empty'])}")
     keys = set(done["records"])
-    expected = sorted([n for n in before.metadata if n not in keys and n != FROZEN_KEY] + list(keys))
+    expected = sorted([r for r in before.metadata if r[0] not in keys and r[0] != FROZEN_KEY]
+                      + [(k, done["records"][k]) for k in keys])
     if list(after.metadata) != expected:
-        bad.append(f"the metadata are {list(after.metadata)}, expected {expected}")
+        bad.append(f"the metadata are {[n for n, _ in after.metadata]}, expected {[n for n, _ in expected]}")
     if after.commits - before.commits != int(done["commit"]):
         bad.append(f"{after.commits - before.commits} commits were added, expected {int(done['commit'])}")
     if list_defaults_repairable_ro(a.path):
@@ -354,7 +351,9 @@ def _report(a: vr.Analysis, plan: va.Plan, source: Path, sha: str, frozen, archi
 def write_copy(a: vr.Analysis, plan: va.Plan, output: str | Path, *, source: str | Path, archive=None,
                previous: Previous | None = None, today: str | None = None) -> Written:
     """Apply *plan* to the analysed snapshot ``a.path``, verify it and publish it as *output* with its side files
-    (module docstring).  On any failure nothing is left: the snapshot is deleted too."""
+    (module docstring).  The caller has refused an unknown SpineDB schema revision of the source with
+    :func:`check_schema` (the snapshot is a copy of it).  On any failure nothing is left: the snapshot is deleted
+    too."""
     from flextool.update_flextool import frozen as fz
 
     output, partial, today = Path(output), Path(a.path), today or datetime.date.today().isoformat()
@@ -362,7 +361,6 @@ def write_copy(a: vr.Analysis, plan: va.Plan, output: str | Path, *, source: str
     temps = [f.with_name(f"{f.name}.partial-{os.getpid()}") for f in finals]
     published = False
     try:
-        check_schema(partial)
         if fz.schema_outdated_ro(partial):  # upgrade first: the check compares against the upgraded rows
             from flextool.update_flextool.db_handle import open_database_mapping
 
@@ -370,7 +368,7 @@ def write_copy(a: vr.Analysis, plan: va.Plan, output: str | Path, *, source: str
 
             with open_database_mapping(sqlite_url_string(partial.resolve().as_posix()), create=False, upgrade=True):
                 pass
-        before = _state(partial, [d.suspect.item for d in plan.decisions])
+        before = _state(partial)
         sha, frozen = fz.sha256_of(partial), fz.read_frozen(partial)
         done, lines = _apply(a, plan, before, previous, today, frozen)
         _verify(a, plan, before, done)

@@ -114,3 +114,46 @@ def test_an_unanchored_overwrite_with_two_members_missing(tmp_path, schema_db_ur
     assert len(ask.prompts) == 2, "one question (U2), then the confirm"
     record = vlh.read_record(output)
     assert record is not None and record.value["kept"] == 1
+
+
+def _suspects(path: Path, folder: Path):
+    from flextool.update_flextool import value_list_repair as vr
+
+    folder.mkdir()
+    a = vr.analyse(vr.snapshot(path, folder))
+    return a, {s.entity: s for s in vr.all_suspects(a) if s.entity}
+
+
+def test_labels_when_the_lost_member_is_not_known(tmp_path, schema_db_url) -> None:
+    """Review findings 4 and 5 (labels only; nothing is suggested either way).
+
+    - The file of ``test_an_unanchored_overwrite_with_two_members_missing`` after steps 3-4 with U1 left as it is:
+      ``retire_total`` is the one hand-restored member (added last), but nothing proves it was the lost one
+      (R's index 0 is not its template position 7) → ``hit-unanchored``; U1 (written before the session) is
+      "lost member not known (hand-restored retire_total)", not "probably retire_total".  U2 was written after the
+      session but before R's later rewrite: the boundary is C, so it is "written after the overwrite".
+    - An anchored hit with ``retire_total`` deleted as well: ``not_allowed`` and ``retire_total`` missing (template
+      order), no single lost member → ``hit``; U1 is "lost member not known (one of not_allowed, retire_total)",
+      not "legacy member"."""
+    from flextool.update_flextool import value_list_repair as vr
+    from flextool.update_flextool import value_list_suspects as vs
+
+    (tmp_path / "a").mkdir()
+    case = make_hit(tmp_path / "a", schema_db_url, before=[("unit", "U1", "base", "not_allowed")],
+                    after=[("unit", "U2", "base", "cumulative_limits")])
+    sql(case.path, "UPDATE list_value SET commit_id = ? WHERE id = ?",
+        (add_commit(case.path, "Updated", AFTER_SESSION), case.r_id))
+    sql(case.path, "DELETE FROM list_value WHERE id = ?", (member_id(case.path, "invest_methods", "retire_total"),))
+    _checklist(case.path, ("not_allowed", "retire_total"))
+    a, by = _suspects(case.path, tmp_path / "snap_a")
+    assert (a.state, a.lost, a.position_proof) == (vr.HIT_UNANCHORED, "retire_total", False)
+    assert sorted(by) == ["U1", "U2"]
+    assert (by["U1"].label, by["U1"].suggestion) == ("lost member not known (hand-restored retire_total)", None)
+    assert (by["U2"].label, by["U2"].suggestion) == (vs.AFTER, None)
+
+    (tmp_path / "b").mkdir()
+    case = make_hit(tmp_path / "b", schema_db_url, before=[("unit", "U1", "base", "not_allowed")])
+    sql(case.path, "DELETE FROM list_value WHERE id = ?", (member_id(case.path, "invest_methods", "retire_total"),))
+    a, by = _suspects(case.path, tmp_path / "snap_b")
+    assert (a.state, a.lost, a.restore) == (vr.HIT, None, ("not_allowed", "retire_total"))
+    assert (by["U1"].label, by["U1"].suggestion) == ("lost member not known (one of not_allowed, retire_total)", None)

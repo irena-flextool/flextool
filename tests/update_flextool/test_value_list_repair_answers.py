@@ -150,7 +150,7 @@ def test_refused_files_and_answers(tmp_path, schema_db_url) -> None:
     path = tmp_path / "a.csv"
     va.write_answers(path, found, key)
     rows = _rows(path)
-    unit = _item(found, "unit")
+    (unit,) = [s.item for s in found if (s.cls, s.parameter) == ("unit", "invest_method")]
     # cp1252 (Excel's plain "CSV" in Finland) with a non-ASCII name
     _save(path, rows[:1] + [[*r[:5], "Hämeenlinna", *r[6:]] for r in rows[1:]], ";", "cp1252")
     with pytest.raises(va.AnswersError, match="CSV UTF-8"):
@@ -283,3 +283,34 @@ def test_part_a_and_part_b_records_are_due_independently(tmp_path, schema_db_url
     for answers, due in ((part_a, (True, False)), (part_b, (False, True)), ({**part_a, **part_b}, (True, True))):
         plan = va.make_plan(a, found, answers)
         assert (plan.part_a_record, plan.part_b_record) == due
+
+
+def test_part_b_record_waits_for_an_empty_part_a_default(tmp_path, schema_db_url) -> None:
+    """Review finding 7: a hit at v82 whose unit / connection / node ``invest_method`` defaults are ``NULL`` (part A
+    suspects only, but in the empty set the part B record's hash covers) and one empty part B default
+    (``unit.conversion_method``).  Part B answered, the unit default skipped → no part B record (nor part A);
+    the unit default answered too → both records."""
+    case = make_hit(tmp_path, schema_db_url)
+    clear_defaults(case.path, ["unit.invest_method", "connection.invest_method", "node.invest_method",
+                               "unit.conversion_method"], None)
+    a, found = _analyse(case.path, tmp_path)
+    (unit,) = [s.item for s in found if (s.cls, s.parameter) == ("unit", "invest_method")]
+    part_b = {s.item: va.Answer(va.SET, "constant_efficiency") for s in found if s.part_b}
+    part_a = {s.item: va.Answer(va.SET, "not_allowed") for s in found if not s.part_b and s.item != unit}
+    assert (len(part_a), len(part_b)) == (2, 1)
+    plan = va.make_plan(a, found, {**part_a, **part_b})
+    assert (plan.part_a_record, plan.part_b_record) == (False, False)
+    plan = va.make_plan(a, found, {**part_a, **part_b, unit: va.Answer(va.KEEP)})
+    assert (plan.part_a_record, plan.part_b_record) == (True, True)
+
+
+def test_set_to_the_member_it_reads_is_keep(tmp_path, schema_db_url) -> None:
+    """Review finding 3: U2 (after the overwrite) reads ``cumulative_limits``; ``set:cumulative_limits`` writes
+    nothing, so the plan holds it as ``keep`` (counted kept, not set) with a warning naming the item."""
+    case, a, found = _hit(tmp_path, schema_db_url)
+    u2 = _item(found, "unit", vs.VALUE, "U2")
+    plan = va.make_plan(a, found, {u2: va.Answer(va.SET, "cumulative_limits")})
+    (d,) = [d for d in plan.decisions if d.suspect.item == u2]
+    assert d.answer == va.Answer(va.KEEP) and plan.sets == ()
+    assert plan.counts(False) == {"set": 0, "kept": 1}
+    assert plan.warnings == (f"{u2}: set:cumulative_limits is what it reads already; counted as keep",)

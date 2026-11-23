@@ -51,8 +51,8 @@ def _hit(tmp_path, schema_db_url, name="hit.sqlite", after=True):
     return case
 
 
-def _restored(tmp_path, schema_db_url):
-    case = _hit(tmp_path, schema_db_url, "restored.sqlite", after=False)
+def _restored(tmp_path, schema_db_url, after=False):
+    case = _hit(tmp_path, schema_db_url, "restored.sqlite", after=after)
     h = add_commit(case.path, "Updated", "2025-01-10")
     sql(case.path, 'INSERT INTO list_value (parameter_value_list_id, "index", value, type, commit_id) '
                    "VALUES (?, 13, ?, 'str', ?)", (case.list_id, b'"not_allowed"', h))
@@ -244,26 +244,97 @@ def test_part_b(tmp_path, schema_db_url, capsys) -> None:
     assert (rec.set, rec.kept, rec.storage) == (4, 1, 1)
 
 
+def test_a_number_is_no_answer_where_no_members_are_listed(tmp_path, schema_db_url, capsys) -> None:
+    """Review finding 2: the three "probably" part B defaults have three different lists, so no member list is
+    shown and ``2`` would mean another member on each item: it is asked again with :data:`cli.NO_NUMBER`.  The
+    groups come in suspect order (sorted ``class.parameter``): ``commodity.price_method`` ("no sign") first, then the
+    "probably" group (node, solve, unit).  Enter, ``2`` (asked again), Enter, ``1`` for A, ``k`` for B, ``y``: 6
+    prompts and the record of ``test_part_b``."""
+    case = _lost(tmp_path, schema_db_url)
+    ask = _Ask("", "2", "", "1", "k", "y")
+    assert cli.main([str(case.path)], ask=ask) == 0
+    assert len(ask.prompts) == 6 and ask.prompts[1] == ask.prompts[2]
+    text = capsys.readouterr().out
+    assert text.count(cli.NO_NUMBER) == 1 and "solve.solve_mode (class default): empty -> single_solve" in text
+    with contextlib.closing(fz._connect_ro(vw.default_output(case.path))) as con:
+        rec = ldr.parse_part_b_record(con)
+    assert (rec.set, rec.kept, rec.storage) == (4, 1, 1)
+
+
+def test_set_to_the_current_member_and_a_spine_library_error(tmp_path, schema_db_url, monkeypatch, capsys) -> None:
+    """Review finding 3.  ``_restored`` with U2/U3: U1 skipped, U2 ``set:cumulative_limits`` (what it reads), U3
+    skipped, ``y``: the copy is written with nothing changed (no spinedb_api ``NothingToCommit``), no record, and
+    the applied answers say ``keep`` for U2.  A spinedb_api error inside the write: exit 1 with one line, no
+    traceback, nothing left next to the source."""
+    from spinedb_api.exception import SpineDBAPIError
+
+    case = _restored(tmp_path, schema_db_url, after=True)
+    sha = fz.sha256_of(case.path)
+    ask = _Ask("x", "e", "set:cumulative_limits", "x", "y")
+    assert cli.main([str(case.path)], ask=ask) == 0
+    assert "counted as keep" in capsys.readouterr().out
+    out = vw.default_output(case.path)
+    assert vlh.read_record(out) is None and fz.sha256_of(case.path) == sha
+    with open(out.with_name(out.name + vw.SIDE_CSV), encoding="utf-8-sig", newline="") as f:
+        answered = {r["entity"]: r["answer"] for r in csv.DictReader(f)}
+    assert answered == {"U1": "skip", "U2": "keep", "U3": "skip"}
+    other = tmp_path / "other"
+    other.mkdir()
+    source = _restored(other, schema_db_url).path  # U1 only: certain, so --accept-certain answers everything
+    folder = _files(source.parent)
+
+    def refuse(*args, **kwargs):
+        raise SpineDBAPIError("boom")
+
+    monkeypatch.setattr(vw, "_apply", refuse)
+    assert cli.main([str(source), "--accept-certain"]) == 1
+    err = capsys.readouterr().err
+    assert "the Spine library refused the database (boom); nothing was written" in err and "Traceback" not in err
+    assert _files(source.parent) == folder == ["hit.sqlite"]
+
+
 def test_repair_command(tmp_path, monkeypatch) -> None:
     """Expected strings written by hand for each shell; ``-P`` always; the path made absolute; ``pythonw.exe``
     swapped for ``python.exe`` only when that file exists."""
     db, py, m = tmp_path / "my db %x# ä.sqlite", "/opt/py 3/bin/python", cli.MODULE
     assert cli.repair_command(db, python=py, shell="posix") == f"'/opt/py 3/bin/python' -P -m {m} '{db}'"
-    assert cli.repair_command(db, python=py, shell="cmd") == f'"/opt/py 3/bin/python" -P -m {m} "{db}"'
+    assert cli.repair_command(db, python=py, shell="cmd") == f'"/opt/py 3/bin/python" "-P" "-m" "{m}" "{db}"'
     quote = tmp_path / "it's.sqlite"
     assert cli.repair_command(quote, python=py, shell="powershell") == \
         f"& '/opt/py 3/bin/python' '-P' '-m' '{m}' '{tmp_path}{os.sep}it''s.sqlite'"
     monkeypatch.chdir(tmp_path)
-    assert cli.repair_command("rel.sqlite", python="py", shell="cmd") == f"py -P -m {m} {tmp_path / 'rel.sqlite'}"
+    assert cli.repair_command("rel.sqlite", python="py", shell="cmd") == f'"py" "-P" "-m" "{m}" "{tmp_path / "rel.sqlite"}"'
     if os.name != "nt":
         assert cli.repair_command(db, python=py) == cli.repair_command(db, python=py, shell="posix")
     with pytest.raises(ValueError):
         cli.repair_command(db, python=py, shell="fish")
     (tmp_path / "PythonW.exe").write_bytes(b"")
     w = str(tmp_path / "PythonW.exe")
-    assert cli.repair_command("x", python=w, shell="cmd").startswith(f"{w} -P ")
+    assert cli.repair_command("x", python=w, shell="cmd").startswith(f'"{w}" "-P" ')
     (tmp_path / "python.exe").write_bytes(b"")
-    assert cli.repair_command("x", python=w, shell="cmd").startswith(f"{tmp_path / 'python.exe'} -P ")
+    assert cli.repair_command("x", python=w, shell="cmd").startswith(f'"{tmp_path / "python.exe"}" "-P" ')
+
+
+def test_repair_command_quotes_shell_characters(tmp_path) -> None:
+    """Review finding 1: a folder ``R&D``, spaces and curly quotes, for each shell; every expected line written by
+    hand.  cmd: each argument in double quotes (``&`` is then text, cmd does not cut the line); PowerShell: ``'`` and
+    the curly single quotes U+2018 / U+2019 / U+201B (and U+201A) each doubled inside single quotes; posix:
+    ``shlex`` quotes the whole argument in single quotes."""
+    m = cli.MODULE
+    folder = tmp_path / "Sales & R&D"
+    db = folder / "Juha\u2019s \u2018model\u2019 \u201bx\u201a.sqlite"
+    py = "/opt/Py 3/python"
+    exe = str(Path(py))  # Windows writes it with backslashes
+    assert cli.repair_command(db, python=py, shell="cmd") == f'"{exe}" "-P" "-m" "{m}" "{db}"'
+    ps_name = "Juha\u2019\u2019s \u2018\u2018model\u2019\u2019 \u201b\u201bx\u201a\u201a.sqlite"
+    assert cli.repair_command(db, python=py, shell="powershell") == \
+        f"& '{exe}' '-P' '-m' '{m}' '{folder}{os.sep}{ps_name}'"
+    assert cli.repair_command(db, python=py, shell="posix") == f"'{exe}' -P -m {m} '{db}'"
+    plain = tmp_path / "R&D" / "db.sqlite"
+    win_py = r"C:\Py\python.exe"
+    assert cli.repair_command(plain, python=win_py, shell="cmd") == f'"{Path(win_py)}" "-P" "-m" "{m}" "{plain}"'
+    assert cli.repair_command(tmp_path / "it's.sqlite", python=py, shell="posix") == \
+        f"'{exe}' -P -m {m} '{tmp_path}{os.sep}it'\"'\"'s.sqlite'"
 
 
 def test_import_is_light_and_module_help() -> None:

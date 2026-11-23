@@ -26,7 +26,6 @@ from __future__ import annotations
 import argparse
 import os
 import shlex
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -38,13 +37,19 @@ PROG = "flextool-repair-value-list"
 EXIT_OK, EXIT_ERROR, EXIT_NEEDS_ANSWERS, EXIT_UNCLEAR = 0, 1, 3, 4
 QUIT_SUFFIX = ".value_list_answers.csv"
 NOTHING = "no value-list overwrite and no empty shipped default found; nothing to do"
+NO_NUMBER = ("A number works only where the members are listed: type set:<member>, or e to answer each item "
+             "with its own list.")
+#: The characters PowerShell reads as a single quote (doubled inside a single-quoted string).
+_PS_QUOTES = "'\u2018\u2019\u201a\u201b"
 NO_RECORD = "No repair record was written: the warning stays until every item has an answer."
 
 
 def repair_command(db_path: str | Path, *, python: str | None = None, shell: str | None = None) -> str:
     """The command that runs this tool on *db_path* (made absolute), as one line for *shell*: ``"posix"``
-    (``shlex``), ``"cmd"`` (``subprocess.list2cmdline``; cmd cannot escape ``%`` inside quotes) or ``"powershell"``
-    (``& 'arg' ...``).  Default: ``"cmd"`` on Windows, ``"posix"`` elsewhere.  *python* defaults to
+    (``shlex``), ``"cmd"`` (every argument in double quotes, so ``&``, ``^``, ``|``, ``<`` and ``>`` stay text; a
+    Windows path cannot hold ``"``, and cmd cannot escape ``%`` inside quotes) or ``"powershell"`` (``& 'arg' ...``,
+    each single-quote character doubled: PowerShell reads ``'`` and U+2018, U+2019, U+201A, U+201B as single
+    quotes).  Default: ``"cmd"`` on Windows, ``"posix"`` elsewhere.  *python* defaults to
     :data:`sys.executable`; a ``pythonw.exe`` is swapped for the ``python.exe`` next to it (a pythonw process has no
     console, so it cannot ask)."""
     exe = Path(python or sys.executable)
@@ -55,9 +60,9 @@ def repair_command(db_path: str | Path, *, python: str | None = None, shell: str
     if shell == "posix":
         return shlex.join(argv)
     if shell == "cmd":
-        return subprocess.list2cmdline(argv)
+        return " ".join(f'"{a}"' for a in argv)
     if shell == "powershell":
-        return "& " + " ".join("'" + a.replace("'", "''") + "'" for a in argv)
+        return "& " + " ".join("'" + "".join(c * 2 if c in _PS_QUOTES else c for c in a) + "'" for a in argv)
     raise ValueError(f"unknown shell {shell!r} (posix, cmd or powershell)")
 
 
@@ -160,6 +165,9 @@ def _ask_group(items, choices: dict, ask, group: bool) -> dict:
                         "e = answer each" if group and len(items) > 1 else "", "q = quit") if o]
     while True:
         text = ask(f"  [{'; '.join(opts)}] > ")
+        if text.strip().isdigit() and not members:  # each item would map the number to its own list
+            print(f"  {NO_NUMBER}")
+            continue
         try:
             got = [_parse(text, t, choices[t.item]) for t in items]
         except va.AnswersError as exc:
@@ -213,6 +221,8 @@ def main(argv: list[str] | None = None, *, ask=None) -> int:
     args = build_parser().parse_args(argv)
     if args.write_answers and not args.dry_run:
         build_parser().error("--write-answers needs --dry-run")
+    from spinedb_api.exception import SpineDBAPIError
+
     from flextool.update_flextool import value_list_answers as va
     from flextool.update_flextool import value_list_repair as vr
 
@@ -220,6 +230,8 @@ def main(argv: list[str] | None = None, *, ask=None) -> int:
         return _run(args, ask if ask is not None else (input if _interactive() else None))
     except (vr.RepairError, va.AnswersError, OSError) as exc:
         print(f"{PROG}: {exc}", file=sys.stderr)
+    except SpineDBAPIError as exc:
+        print(f"{PROG}: the Spine library refused the database ({exc}); nothing was written.", file=sys.stderr)
     except KeyboardInterrupt:
         print(f"{PROG}: interrupted; nothing was written.", file=sys.stderr)
     return EXIT_ERROR
@@ -249,9 +261,7 @@ def _run(args, ask) -> int:
         try:
             return _work(args, ask, source, output, vr.analyse(snap))
         except SpineDBVersionError as exc:
-            raise vr.RepairError(f"The Spine database schema of {source.name} is older than its data version "
-                                 "expects: run flextool-migrate-database on it (or open it in FlexTool), then run "
-                                 "this tool again.") from exc
+            raise vr.RepairError(vr.schema_outdated_message(source.name)) from exc
         finally:
             vw.discard(snap)  # a no-op once the copy is published (the snapshot became the output)
 
@@ -271,7 +281,9 @@ def _work(args, ask, source: Path, output: Path, a) -> int:
     elif a.state == vr.NO_FINDING:
         print("No value-list overwrite (W-0490) in this file.")
     else:
-        print(f"W-0490: state {a.state}" + (f", lost member {a.lost}" if a.lost else ""))
+        unknown = vs.lost_unknown(a)
+        print(f"W-0490: state {a.state}" + (f", {vs.UNKNOWN} ({unknown})" if unknown else (
+            f", lost member {a.lost}" if a.lost else "")))
     if line := vr.part_b_line(a):
         print(line)
     found = vr.all_suspects(a)

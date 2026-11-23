@@ -544,7 +544,7 @@ In PowerShell, quote with single quotes: `flextool-repair-value-list 'C:\models\
 - a **value** saved after the upgrade: there is no suggestion, because nobody can tell from the file whether `cumulative_limits` was meant. Check it against your notes or Excel input;
 - a **storage node** (restoring empty defaults, see below): no answer is recommended.
 
-The keys: `k` keeps the current value, a number or `set:<member>` sets that member, `x` skips, `e` answers each item of a group one by one, `q` quits. A summary and a confirmation come before anything is written. If you quit, the answers so far go to `<name>_repaired.sqlite.value_list_answers.csv` (next to the database, or in the current folder if that folder cannot be written): finish them there and run the tool with `--answers` (see below).
+The keys: `k` keeps the current value, `set:<member>` sets that member (a number works too where the question lists the members), `x` skips, `e` answers each item of a group one by one, `q` quits. A summary and a confirmation come before anything is written. If you quit, the answers so far go to `<name>_repaired.sqlite.value_list_answers.csv` (next to the database, or in the current folder if that folder cannot be written): finish them there and run the tool with `--answers` (see below).
 
 **Answering in a file (dry run, answers, apply).** Without a terminal, or to think the answers over:
 
