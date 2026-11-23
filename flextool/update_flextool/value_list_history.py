@@ -17,6 +17,7 @@ TODO(v5.0.0): remove this module, W-0490 (``run_warnings/_input_specs.py``), its
 (``engine/solve/_orchestration.py``, ``gui/input_sources.py``, ``gui/main_window.py``,
 ``gui/dialogs/database_check_dialog.py``), the repair tool ``flextool-repair-value-list``
 (``update_flextool/value_list_repair.py``, ``value_list_suspects.py``, ``value_list_archive.py``,
+``value_list_answers.py``,
 ``cli/cmd_repair_value_list.py``) and
 their tests.  The warning is temporary.
 """
