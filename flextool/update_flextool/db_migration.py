@@ -12312,7 +12312,10 @@ def _v83_write_values(db, entity_class: str, name: str, writes) -> None:
 
 
 def _v83_scenarios_text(scenarios) -> str:
-    """``scenario S`` or ``scenarios S1, S2`` (the v83 prints)."""
+    """``scenario S``, ``scenarios S1, S2`` or, without scenarios (:data:`_V77_NO_SCENARIO`), ``the database``
+    (the v83 prints)."""
+    if tuple(scenarios) == (_V77_NO_SCENARIO,):
+        return "the database"
     return f"scenario{'s' if len(scenarios) > 1 else ''} {', '.join(scenarios)}"
 
 
@@ -12621,6 +12624,12 @@ def _replace_superseded_texts(db, superseded: dict[tuple[str, str], str], texts:
             db.update_parameter_definition(id=pdef["id"], description=texts[key])
 
 
+def _replace_text_pairs(db, texts: dict[tuple[str, str], tuple[str, str]]) -> None:
+    """:func:`_replace_superseded_texts` for *texts* ``{(class, name): (old shipped text, new text)}``."""
+    _replace_superseded_texts(db, {k: old for k, (old, _new) in texts.items()},
+                              {k: new for k, (_old, new) in texts.items()})
+
+
 def _v83_startup_method(db) -> None:
     """Part 2 of v83: ``startup_methods`` becomes no_startup, linear, linear_fix_in_uc, integer, integer_fix_in_uc.
 
@@ -12656,9 +12665,7 @@ def _v83_startup_method(db) -> None:
                 db.remove_item("list_value", lv["id"])
         _attach_list_defaults(db, pending)
         _v83_check_members(db, "startup_methods", before, removed=removed)
-    texts = _v83_startup_texts()
-    _replace_superseded_texts(db, {k: old for k, (old, _new) in texts.items()},
-                              {k: new for k, (_old, new) in texts.items()})
+    _replace_text_pairs(db, _v83_startup_texts())
 
 
 #: Part 5 of v83: the member appended to ``dispatch_realization_methods`` (the new shipped default) and the method
@@ -12692,10 +12699,10 @@ def plan_dispatch_realization_method(branches, methods, scenarios) -> tuple[tupl
     alternative): method, None for a null row}``; *scenarios* ``{scenario: [alternative, ...]}`` lowest rank first.
     A scenario is a candidate for a solve when its winning ``stochastic_branches`` is non-empty and no method
     resolves (a winning null row reads as no method, :func:`_v83_read`); the target is the alternative of that
-    winning value.  With the writes in place every scenario where a method resolved must read the same method and
-    every candidate must read within_solve (a null row above the target hides the write), else the solve gets no
-    write at all.  Returns ``(writes, undecided)``: ``((solve,
-    alternative), ...)`` and ``((solve, reason, candidate scenarios), ...)``."""
+    winning value, or the winning null method row when that one ranks higher (it is overwritten).  With the writes
+    in place every scenario where a method resolved must read the same method and every candidate must read
+    within_solve, else the solve gets no write at all (the reason names every scenario that fails).  Returns
+    ``(writes, undecided)``: ``((solve, alternative), ...)`` and ``((solve, reason, candidate scenarios), ...)``."""
     writes, undecided = [], []
     for solve in sorted({key[0] for key in branches}):
         before = {s: _v83_read(alts, methods, solve) for s, alts in sorted(scenarios.items())}
@@ -12704,25 +12711,23 @@ def plan_dispatch_realization_method(branches, methods, scenarios) -> tuple[tupl
             where = _v77_winner(alts, branches, solve)
             if where is not None and branches[(solve, where)] and before[s][0] is None:
                 candidates.append(s)
-                targets.add(where)
+                null_row = before[s][1]  # a winning null method row (None without one)
+                targets.add(where if null_row is None or alts.index(null_row) < alts.index(where) else null_row)
         if not candidates:
             continue
         table = {**methods, **{(solve, a): _V83_WITHIN_SOLVE for a in targets}}
-        reason = None
+        reasons = []
         for s, (own, where) in before.items():
             new, winner = _v83_read(scenarios[s], table, solve)
             if own is not None and new != own:
-                reason = (f"a value in alternative {winner} would replace your dispatch_realization_method in "
-                          f"alternative {where} in scenario {s}")
+                reasons.append(f"a value in alternative {winner} would replace your dispatch_realization_method in "
+                               f"alternative {where} in scenario {s}")
             elif s in candidates and new != _V83_WITHIN_SOLVE:
-                reason = (f"the empty dispatch_realization_method in alternative {winner} would hide the within_solve "
-                          f"written for scenario {s}")
-            if reason is not None:
-                break
-        if reason is None:
+                reasons.append(f"the within_solve written for scenario {s} would not win there")
+        if not reasons:
             writes.extend((solve, a) for a in sorted(targets))
         else:
-            undecided.append((solve, reason, tuple(candidates)))
+            undecided.append((solve, "; ".join(reasons), tuple(candidates)))
     return tuple(writes), tuple(undecided)
 
 
@@ -12752,6 +12757,7 @@ def _v83_dispatch_realization_method(db) -> None:
     if (db.get_item("entity_class", name="solve") and db.get_item("parameter_value_list", name=name)
             and _pdef_or_none(db, "solve", "dispatch_realization_method") is not None):
         before = _list_members(db, [name])
+        # Not from *before*: _list_members leaves out the members not yet committed (a rerun in the session).
         rerun = any(x["parsed_value"] == _V83_DETERMINISTIC
                     for x in db.get_items("list_value", parameter_value_list_name=name))
         _append_list_members(db, name, (_V83_DETERMINISTIC,))
@@ -12768,16 +12774,14 @@ def _v83_dispatch_realization_method(db) -> None:
                 print(f"  solve {solve} [{alternative}]")
         for solve, reason, candidates in undecided:
             print(f"v83: dispatch_realization_method not written for solve {solve}: {reason}. In "
-                  f"{_v83_scenarios_text(candidates)} it now runs deterministic: the forecasts are ignored (results change), "
-                  "or the run stops when there is no realized: yes branch. Set dispatch_realization_method "
+                  f"{_v83_scenarios_text(candidates)} it now runs deterministic: the forecasts are ignored (results "
+                  "change), or the run stops when there is no realized: yes branch. Set dispatch_realization_method "
                   "within_solve yourself where it should apply.")
         pdef = _pdef_or_none(db, "solve", "dispatch_realization_method")
-        if from_database(pdef["default_value"], pdef["default_type"]) == _V83_WITHIN_SOLVE:
+        if pdef["parsed_value"] == _V83_WITHIN_SOLVE:
             val, typ = to_database(_V83_DETERMINISTIC)
             db.update_parameter_definition(id=pdef["id"], default_value=val, default_type=typ)
-    texts = _v83_dispatch_realization_texts()
-    _replace_superseded_texts(db, {k: old for k, (old, _new) in texts.items()},
-                              {k: new for k, (_old, new) in texts.items()})
+    _replace_text_pairs(db, _v83_dispatch_realization_texts())
 
 
 #: The schema step of the current data version.  The template sync reruns it on the master template, so that schema

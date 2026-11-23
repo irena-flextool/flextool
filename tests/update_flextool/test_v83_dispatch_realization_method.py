@@ -5,7 +5,9 @@ The engine reads no solve definition default: a solve without a ``dispatch_reali
 within_solve.  So the rule (derived from plan §2a step 2 alone, not from the code): a scenario is a candidate for a
 solve when its winning (highest-ranked) ``stochastic_branches`` value is non-empty and no method value wins; the write
 goes into the alternative of that winning ``stochastic_branches`` value; with the writes in place every scenario where
-a method won before must read the same method, else nothing is written for the solve.
+a method won before must read the same method, else nothing is written for the solve.  A null method row (``b'null'``,
+no type) that wins reads as absent, as the engine reads it (within_solve today); when it ranks above the branches'
+alternative, the write goes into it (the row is overwritten), so the candidate reads within_solve.
 
 Pure planner rows first, then the part called directly on a database made from the v82 schema (``schema_db_url``,
 copied into ``tmp_path``): ``dispatch_realization_methods`` is [within_solve, separate_dispatch] with the shipped
@@ -82,6 +84,12 @@ ROWS = {
     # base's null method row reads as no method (the engine skips it: within_solve today) → candidate, target base
     # (the row is overwritten).
     "null_in_target": ({("v", "base"): True}, {("v", "base"): None}, {"S1": ["base"]}, (("v", "base"),), ()),
+    # S1 = [base, L, H]: H's null wins over L's separate_dispatch → absent (within_solve today) → candidate; H ranks
+    # above base (the branches) → H is overwritten, S1 reads within_solve.
+    "null_above_lower_method": ({("v", "base"): True}, {("v", "L"): "separate_dispatch", ("v", "H"): None},
+                                {"S1": ["base", "L", "H"]}, (("v", "H"),), ()),
+    # The same with no method in L: a write into base would be hidden by H → H.
+    "null_above_target": ({("v", "base"): True}, {("v", "H"): None}, {"S1": ["base", "H"]}, (("v", "H"),), ()),
     # Two solves are decided apart: w undecided (as target_above_method) does not stop v.
     "two_solves": ({("v", "base"): True, ("w", "base"): True}, {("w", "E"): "separate_dispatch"},
                    {"S1": ["E", "base"], "S2": ["base"]}, (("v", "base"),), ("w",)),
@@ -101,6 +109,23 @@ def test_planner_undecided_reason() -> None:
     assert m.plan_dispatch_realization_method(branches, methods, scenarios)[1] == ((
         "v", "a value in alternative base would replace your dispatch_realization_method in alternative E in "
         "scenario S1", ("S2",)),)
+
+
+def test_planner_reason_names_every_failing_scenario() -> None:
+    """S3 = [base] is the candidate; the base write would replace E's method in S1 and F's in S2: both named."""
+    branches = {("v", "base"): True}
+    methods = {("v", "E"): "separate_dispatch", ("v", "F"): "separate_dispatch"}
+    scenarios = {"S1": ["E", "base"], "S2": ["F", "base"], "S3": ["base"]}
+    assert m.plan_dispatch_realization_method(branches, methods, scenarios) == ((), ((
+        "v", "a value in alternative base would replace your dispatch_realization_method in alternative E in "
+        "scenario S1; a value in alternative base would replace your dispatch_realization_method in alternative F "
+        "in scenario S2", ("S3",)),))
+
+
+def test_scenarios_text() -> None:
+    assert m._v83_scenarios_text(("S2",)) == "scenario S2"
+    assert m._v83_scenarios_text(("S1", "S2")) == "scenarios S1, S2"
+    assert m._v83_scenarios_text((m._V77_NO_SCENARIO,)) == "the database"
 
 
 # --- on a database --------------------------------------------------------------------------------------------
@@ -257,6 +282,19 @@ def test_a_null_row_in_the_target_is_overwritten(schema_db_url: str, tmp_path: P
         db.commit_session("v83 part 5")
     with DatabaseMapping(url) as db:
         assert _methods(db) == {("v", "base"): "within_solve"}
+
+
+def test_a_null_row_above_a_method_is_overwritten(schema_db_url: str, tmp_path: Path) -> None:
+    """S1 = [base, L, H]: branches in base, separate_dispatch in L, a null row in H.  The engine reads H's null as
+    absent (within_solve today), so S1 is a candidate; H ranks above base → H gets within_solve, L is kept."""
+    url = _copy(schema_db_url, tmp_path)
+    _seed(url, {"S1": ["base", "L", "H"]}, branches=[("v", "base")],
+          methods=[("v", "L", "separate_dispatch"), ("v", "H", None)])
+    with DatabaseMapping(url) as db:
+        m._v83_dispatch_realization_method(db)
+        db.commit_session("v83 part 5")
+    with DatabaseMapping(url) as db:
+        assert _methods(db) == {("v", "L"): "separate_dispatch", ("v", "H"): "within_solve"}
 
 
 def test_edited_description_is_kept(schema_db_url: str, tmp_path: Path) -> None:
