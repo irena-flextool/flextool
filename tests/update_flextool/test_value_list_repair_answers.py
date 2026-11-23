@@ -150,7 +150,7 @@ def test_refused_files_and_answers(tmp_path, schema_db_url) -> None:
     path = tmp_path / "a.csv"
     va.write_answers(path, found, key)
     rows = _rows(path)
-    (unit,) = [s.item for s in found if (s.cls, s.parameter) == ("unit", "invest_method")]
+    unit = _item(found, "unit")
     # cp1252 (Excel's plain "CSV" in Finland) with a non-ASCII name
     _save(path, rows[:1] + [[*r[:5], "Hämeenlinna", *r[6:]] for r in rows[1:]], ";", "cp1252")
     with pytest.raises(va.AnswersError, match="CSV UTF-8"):
