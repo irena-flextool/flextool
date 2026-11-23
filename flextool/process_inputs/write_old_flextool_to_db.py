@@ -569,9 +569,13 @@ def _write_min_time_method(db: DatabaseMapping, data: OldFlexToolData, unit: Uni
                            alt_name: str, counters: _Counters, startup_written: bool) -> None:
     """FT2 gives a unit with online variables (:func:`_unit_has_online`) its min up / down times; FlexTool applies
     a time only when ``minimum_time_method`` includes it, so the unit gets that method and, unless already
-    written, ``startup_method linear``."""
+    written, ``startup_method linear``.  A unit FT2 gives no online variables (``use online`` 0) keeps its times
+    switched off with an explicit ``minimum_time_method none``, so they give no W-0231 at every run."""
     method = _min_time_method(data, unit)
-    if method is None or not _unit_has_online(data, unit):
+    if method is None:
+        return
+    if not _unit_has_online(data, unit):
+        _add_param(db, "unit", (name,), "minimum_time_method", "none", alt_name, counters)
         return
     if not startup_written:
         _add_param(db, "unit", (name,), "startup_method", "linear", alt_name, counters)

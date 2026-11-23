@@ -1131,3 +1131,46 @@ def test_min_time_unit_gets_its_method_and_use_online_off_switches_it_off(
             assert rows is None or rows.height == 0
         else:
             assert [round(x, 9) + 0.0 for x in rows["value"]] == online
+
+
+@pytest.mark.solver
+def test_use_online_off_in_the_base_writes_an_explicit_none(
+    test_solver_config_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The T5 workbook with ``use online`` 0 in the master sheet and a min uptime of 2 h on ``coal``.  FT2 gives no
+    unit online variables, so the min up / down times have no effect there.  The import still writes the times,
+    and with them ``minimum_time_method none`` in ``base``: ``steam`` (min downtime, no online variables) and the
+    ``min_load_efficiency`` ``coal`` (linear start-ups for its min load, min uptime switched off).  Without the
+    explicit none every run of the imported model names both units in W-0231 (time and method unset)."""
+    from flextool.engine import run_chain_from_db
+    from tests._support.coded_warnings import capture_coded
+
+    sheets = _min_time_sheets()
+    for row in sheets["master"]:
+        if row[0] == "use_online":
+            row[1] = 0
+    for row in sheets["unit_type"][1:]:
+        if row[0] == "coal":
+            row[UNIT_TYPE_HEADER.index("min uptime (h)")] = 2
+    xlsm = write_workbook(tmp_path / "model.xlsx", sheets)
+    url = f"sqlite:///{tmp_path / 'model.sqlite'}"
+    report = import_old_flextool_xlsm(str(xlsm), url, strict=True)
+    assert not report.failed
+    assert _values(url, "unit", "minimum_time_method") == {
+        (("steam_nodeA",), "base"): "none", (("coal_nodeA",), "base"): "none"}
+    assert _values(url, "unit", "min_downtime")[(("steam_nodeA",), "base")] == 2
+    assert _values(url, "unit", "min_uptime")[(("coal_nodeA",), "base")] == 2
+    startup = _values(url, "unit", "startup_method")
+    assert (("steam_nodeA",), "base") not in startup
+    assert startup[(("coal_nodeA",), "base")] == "linear"
+
+    monkeypatch.setenv("FLEXTOOL_AUTOSCALE_STRICT", "1")
+    monkeypatch.chdir(tmp_path)
+    work = tmp_path / "base"
+    work.mkdir()
+    with capture_coded() as got:
+        steps = run_chain_from_db(url, "base", work_folder=work, solver_config_dir=test_solver_config_dir,
+                                  keep_solutions=True)
+    (step,) = steps.values()
+    assert step.solution.optimal
+    assert got.names("W-0231") == []

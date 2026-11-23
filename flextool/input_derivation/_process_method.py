@@ -127,9 +127,14 @@ def derive_process_method(
     for process_name, override_method in ct_method_overrides_dict.items():
         ct_method_map[process_name] = override_method
 
-    # --- Collect startup_method per process ---
+    # --- Collect startup_method per process: explicit, else the definition default (the engine broadcasts it,
+    # ``params/_derived._classify_process_method``); a process absent from the map reads ``no_startup`` ---
     startup_method_map: dict[str, str] = {}
     for cl in ["unit", "connection"]:
+        default_sm = _definition_default(backend, cl, "startup_method")
+        if default_sm is not None:
+            for entity in backend.find_entities(entity_class_name=cl):
+                startup_method_map[entity["entity_byname"][0]] = str(default_sm)
         for pv in backend.find_parameter_values(
             entity_class_name=cl, parameter_definition_name="startup_method",
         ):
@@ -319,7 +324,8 @@ def _time_value(value) -> float:
 
 def _unit_times(backend, units: list[str], parameter: str) -> dict[str, float]:
     """``{unit: time}`` of the *units* whose ``unit.<parameter>`` (explicit, else the definition default) is
-    above 0, as the engine reads it (``params/_derived._process_min_time``)."""
+    above 0, as the engine reads it (``params/_derived._process_min_time``).  A non-scalar explicit value (malformed:
+    the schema type is float) reads 0 here, while the engine reads its map leaves."""
     explicit = _explicit_values(backend, parameter)
     default = _definition_default(backend, "unit", parameter)
     out = {u: _time_value(explicit.get(u, default)) for u in units}
@@ -349,7 +355,8 @@ def _warn_min_time_not_enabled(backend, times: dict[str, dict[str, float]], gate
     for unit in dict.fromkeys(u for name in times for u in missing[name]):
         if methods[unit] == "none" and unit in explicit and not corrupted and unit not in undecided:
             continue
-        method = methods[unit] if unit in explicit or methods[unit] != "none" else "none (not set)"
+        method = (methods[unit] if unit in explicit else "none (not set)" if methods[unit] == "none"
+                  else f"{methods[unit]} (default)")
         lost = [name for name in times if unit in missing[name]]
         text = ", ".join(f"{name} {times[name][unit]:g} h" for name in lost) + f", minimum_time_method {method}; "
         text += ("; ".join(_TIME_ROWS[name] for name in lost) if unit in online

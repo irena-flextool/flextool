@@ -93,6 +93,28 @@ def test_t1_down_time_applies_only_when_enabled(tmp_path_factory, method, expect
         assert got.names("W-0231") == []
 
 
+@pytest.mark.solver
+def test_startup_default_without_a_time_builds(tmp_path_factory) -> None:
+    """``coal_plant`` with ``min_load 0.5``, no ``startup_method`` of its own and the definition default ``linear``,
+    no min up / down time; demand 500 / 0 / 500 MW.  The input derivation reads the default as the engine does, so the
+    unit gets online variables and the model builds (reading explicit values only, the input derivation gave the
+    unit no online method while the engine built online rows, and the build stopped).  Oracle as T1 disabled: t1 and
+    t3 need the whole unit; at t2 a share x online dumps 250 · x MW (212 500 · x), off is free: (1, 0, 1)."""
+    from flextool.engine import run_chain_from_db
+
+    values = [["unit", PLANT, "min_load", b64(0.5, "float")]] + _steps_of(3) + [
+        ["node", "west", "inflow", time_map({"t0001": -500.0, "t0002": 0.0, "t0003": -500.0}, 0.0)]]
+    url, scen = make_db(tmp_path_factory, alt="startup_dflt", values=values, base_chain=PLANT_CHAIN)
+    with DatabaseMapping(url) as db:
+        _set_default(db, "startup_method", "linear")
+        db.commit_session("startup_method default")
+    steps = run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp("startup_dflt_w"), keep_solutions=True)
+    (step,) = steps.values()
+    assert step.solution.optimal
+    online = utf8(step.solution.value("v_online_linear")).filter(pl.col("p") == PLANT).sort("t")
+    assert [round(x, 6) + 0.0 for x in online["value"].to_list()] == [1.0, 0.0, 1.0]
+
+
 # ─── T2: up-time gate ───────────────────────────────────────────────────────
 
 
@@ -123,8 +145,15 @@ class _Provider:
         self.frames[key] = frame
 
 
+def _set_default(db: DatabaseMapping, parameter: str, value) -> None:
+    """Set the definition default of ``unit.<parameter>``."""
+    pdef = db.get_item("parameter_definition", entity_class_name="unit", name=parameter)
+    raw, typ = to_database(value)
+    db.update_item("parameter_definition", id=pdef["id"], default_value=raw, default_type=typ)
+
+
 def _w0231(schema_db_url: str, tmp_path: Path, units: dict[str, dict], *, method_default=None,
-           corrupt: bool = False, markers: dict | None = None) -> dict[str, str]:
+           startup_default=None, corrupt: bool = False, markers: dict | None = None) -> dict[str, str]:
     """``{unit: W-0231 detail}`` of ``derive_process_method`` on a current-schema database with *units*
     ``{unit: {param: value}}`` in ``base``."""
     import logging
@@ -146,9 +175,9 @@ def _w0231(schema_db_url: str, tmp_path: Path, units: dict[str, dict], *, method
                 db.add_parameter_value(entity_class_name="unit", entity_byname=(unit,),
                                        parameter_definition_name=param, alternative_name="base", value=raw, type=typ)
         if method_default is not None:
-            pdef = db.get_item("parameter_definition", entity_class_name="unit", name="minimum_time_method")
-            raw, typ = to_database(method_default)
-            db.update_item("parameter_definition", id=pdef["id"], default_value=raw, default_type=typ)
+            _set_default(db, "minimum_time_method", method_default)
+        if startup_default is not None:
+            _set_default(db, "startup_method", startup_default)
         db.commit_session("w0231")
     if corrupt:  # item D: the first member overwritten with none, [none, min_downtime, both]
         con = sqlite3.connect(path)
@@ -192,6 +221,19 @@ def test_t4_a_none_default_is_no_default(schema_db_url: str, tmp_path: Path) -> 
     """A ``none`` definition default (U2) is not a deliberate switch-off: the unit is named (N3)."""
     got = _w0231(schema_db_url, tmp_path, {"u": LINEAR_DOWN}, method_default="none")
     assert list(got) == ["u"]
+
+
+def test_t4_a_user_method_default_is_labelled(schema_db_url: str, tmp_path: Path) -> None:
+    """A ``min_uptime`` definition default leaves a min downtime out; the detail says the method is the default."""
+    got = _w0231(schema_db_url, tmp_path, {"u": LINEAR_DOWN}, method_default="min_uptime")
+    assert got == {"u": "min_downtime 2 h, minimum_time_method min_uptime (default); no minimum down time constraint"}
+
+
+def test_t4_online_through_a_startup_default(schema_db_url: str, tmp_path: Path) -> None:
+    """A ``startup_method`` definition default ``linear`` gives the unit online variables (the engine broadcasts it),
+    so W-0231 names the lost constraint, not "no online variables"."""
+    got = _w0231(schema_db_url, tmp_path, {"u": {"min_downtime": 2.0}}, startup_default="linear")
+    assert got == {"u": "min_downtime 2 h, minimum_time_method none (not set); no minimum down time constraint"}
 
 
 def test_t4_a_corrupted_list_names_the_fingerprint(schema_db_url: str, tmp_path: Path) -> None:

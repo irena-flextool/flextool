@@ -403,9 +403,9 @@ BEHAVIOUR_TEXTS: dict[str, tuple[str, str, str, str]] = {
         "W-0634", "the upgrade wrote minimum_time_method",
         ("minimum_time_method now decides whether min_uptime and min_downtime apply: a unit without it (none, "
          "the default) has no minimum up or down time. Before, a time applied whenever it was set. The "
-         "database upgrade wrote minimum_time_method (both, min_uptime or min_downtime) on these units, so "
-         "their results are unchanged. Units the upgrade could not decide got nothing written: in the "
-         "scenarios it named, their times no longer apply (results change), and warning W-0231 names them at "
+         "database upgrade wrote minimum_time_method (both, min_uptime or min_downtime, and none where a unit "
+         "is kept offline) on these units, so their results are unchanged. Units the upgrade could not decide "
+         "got nothing written: in the scenarios it named, their times no longer apply (results change), and warning W-0231 names them at "
          "each run. Set minimum_time_method on them where the times should apply."),
         _delete_marker("minimum_time_method_written"),
     ),

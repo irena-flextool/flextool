@@ -285,7 +285,7 @@ INPUT_SPECS: tuple[WarningSpec, ...] = (
        "Minimum time without its minimum_time_method", _UNITS,
        "The unit has a `min_uptime` or `min_downtime` above 0, but its `minimum_time_method` (`none` when not "
        "set) does not include that time, so the time is not applied: there is no minimum up or down time "
-       "constraint for it. A unit without online variables gets none either way. An explicit "
+       "constraint for it. A unit without online variables has no such constraint in any case. An explicit "
        "`minimum_time_method: none` switches the times off on purpose and gives no warning. The debug log and "
        "the run log give the time and the method of each unit. When the database upgrade could not decide the "
        "method of a unit, they also give the reason. When the value list `minimum_time_methods` has no "

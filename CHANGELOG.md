@@ -28,6 +28,8 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
   got online variables in the model only, and the run stopped with an internal error ("feature 'online' is active
   but data fields are not populated"). Both now read the explicit value, else the definition default, else `none`
   (and the minimum times with their definition default), so such a unit runs with linear start-ups and its times.
+  The input checks now read the `startup_method` definition default as well, as the model does: a unit without a
+  `startup_method` of its own under a default other than `no_startup` stopped the run with the same error.
 - **FlexTool 2 import.** A unit or storage discharger with online variables in FlexTool 2 (`use online` with a min
   up or down time) now gets `startup_method linear` and the matching `minimum_time_method`, so its times apply (a
   unit without a start-up cost had no online variables before). The `use online` sensitivity now also covers the
@@ -36,7 +38,9 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
   FlexTool 2. A `min_load_efficiency` unit keeps its linear start-ups under the switched-off sensitivity, as it
   does with `use online` 0 in the base (before, a start-up cost gave it `no_startup` there and the run stopped
   with an error), and its times no longer apply in new imports under `use online` 0 (FlexTool 2 has no online
-  variables there); a database imported earlier keeps them through the upgrade.
+  variables there); a database imported earlier keeps them through the upgrade. With `use online` 0 in the
+  base, a unit's min up and down times are written with `minimum_time_method none`, so they stay off without a
+  warning at each run.
 
 ## Release 4.6.3 (23.11.2026) — fixes: list-valued defaults kept when migrating FlexTool 3.x databases, Benders between regions, FlexTool 2.0 conversion in the GUI; repair tool for W-0490 databases; GUI message list
 
