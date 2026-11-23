@@ -252,6 +252,8 @@ class Plan:
     held: tuple[str, ...]
     part_a_record: bool
     part_b_record: bool
+    #: The part A record is the user's confirmation of the W-0490 checklist (``--checked-by-hand``).
+    checked_by_hand: bool = False
 
     @property
     def answers(self) -> dict[str, Answer]:
@@ -274,13 +276,17 @@ class Plan:
         return out
 
 
-def make_plan(a: vr.Analysis, suspects, answers, *, stale=(), warnings=(), key: str | None = None) -> Plan:
+def make_plan(a: vr.Analysis, suspects, answers, *, stale=(), warnings=(), key: str | None = None,
+              checked_by_hand: bool = False) -> Plan:
     """The plan for the analysed snapshot from the explicit *answers* (``{item: Answer}``, from the prompt,
     :func:`accept_certain` or :func:`read_answers`; a suggestion is never one).  Each answer is checked again
-    (:class:`AnswersError`)."""
+    (:class:`AnswersError`).  *checked_by_hand*: the user confirmed the W-0490 checklist for an ``unclear`` file
+    (:func:`~value_list_repair.by_hand_refusal` must give ``""``); part A then changes nothing and only records."""
     from flextool.update_flextool import FLEXTOOL_DB_VERSION
 
-    if a.state == vr.UNCLEAR:
+    if checked_by_hand and (why := vr.by_hand_refusal(a)):
+        raise AnswersError(why)
+    if a.state == vr.UNCLEAR and not checked_by_hand:
         raise AnswersError("The state is unclear: nothing can be written (use the checklist).")
     by_item = {s.item: s for s in suspects}
     if unknown := sorted(set(answers) - set(by_item)):
@@ -309,8 +315,9 @@ def make_plan(a: vr.Analysis, suspects, answers, *, stale=(), warnings=(), key: 
     storage_open = any(d.action not in (KEEP, SET) for d in decisions if d.suspect.kind == ldr.STORAGE_KIND)
     held = tuple(d.suspect.item for d in decisions if storage_open and d.action == SET and d.suspect.part_b
                  and d.suspect.kind == vs.DEFAULT and (d.suspect.cls, d.suspect.parameter) == ldr.STORAGE)
-    part_a = a.finding is not None and a.state in (vr.HIT, vr.HIT_UNANCHORED, vr.RENAMED_BACK, vr.NOT_HIT)
+    part_a = a.finding is not None and (checked_by_hand or a.state in (vr.HIT, vr.HIT_UNANCHORED, vr.RENAMED_BACK,
+                                                                         vr.NOT_HIT))
     empty_default = any(s.part_b or empty_reference_default(s) for s in suspects)
     part_b = a.version == FLEXTOOL_DB_VERSION and empty_default
-    return Plan(key if key is not None else file_key(a), a.restore, tuple(decisions), tuple(stale), tuple(warnings),
-                held, part_a and done(False), part_b and done(True))
+    return Plan(key if key is not None else file_key(a), () if checked_by_hand else a.restore, tuple(decisions),
+                tuple(stale), tuple(warnings), held, part_a and done(False), part_b and done(True), checked_by_hand)

@@ -108,7 +108,8 @@ def previous_repair(a: vr.Analysis, suspects) -> Previous:
     part_a = ""
     if a.finding is not None and vlh.record_ends(a.finding, a.path):
         rec = vlh.read_record(a.path)
-        part_a = f"repaired on {rec.date} ({rec.value['set']} set, {rec.value['kept']} kept)"
+        part_a = (f"checked by hand on {rec.date} (the W-0490 checklist)" if rec.value.get("checked_by_hand") else
+                  f"repaired on {rec.date} ({rec.value['set']} set, {rec.value['kept']} kept)")
     with contextlib.closing(_connect_ro(a.path)) as con:
         rec_b = ldr.parse_part_b_record(con)
         same = rec_b is not None and rec_b.empty == ldr.empty_hash(ldr.empty_shipped_defaults(con))
@@ -212,7 +213,8 @@ def _apply(a: vr.Analysis, plan: va.Plan, before: _State, previous: Previous | N
     records: dict = {}
     if plan.part_a_record and a.finding is not None and not (previous and previous.part_a):
         counts = plan.counts(False)
-        records[vlh.RECORD_KEY] = vlh.record_value(a.finding, counts["set"], counts["kept"])
+        records[vlh.RECORD_KEY] = vlh.record_value(a.finding, counts["set"], counts["kept"],
+                                                   checked_by_hand=plan.checked_by_hand)
     filled = {f"{d.suspect.cls}.{d.suspect.parameter}" for d in plan.sets if d.suspect.kind == vs.DEFAULT}
     empty = tuple(n for n in before.empty if n not in filled)
     if plan.part_b_record and not (previous and previous.part_b and empty == before.empty):
@@ -275,7 +277,7 @@ def _verify(a: vr.Analysis, plan: va.Plan, before: _State, done: dict) -> None:
     if any(after.members.get(i) != m for i, m in before.members.items()) or sorted(
             vr._text(v) for lid, v in new if lid == a.list_id) != sorted(plan.restore) or len(new) != len(plan.restore):
         bad.append("the value lists changed otherwise than by the restored members")
-    if a.finding is not None and a.state in _PART_A_STATES:
+    if a.finding is not None and (a.state in _PART_A_STATES or plan.checked_by_hand):
         listed = {vr._text(v) for lid, v in after.members.values() if lid == a.list_id}
         if not {*vlh.PRIOR_MEMBERS[a.finding.step], vlh.APPENDED[a.finding.step]} <= listed:
             bad.append("the list is not complete")
@@ -341,6 +343,8 @@ def _report(a: vr.Analysis, plan: va.Plan, source: Path, sha: str, frozen, archi
         out.append(f"archive: {archive.check}")
     out.append(f"state: {a.state}" + (f"; R = list_value {a.r.id} ({a.r.value})" if a.r else "")
                + (f"; C = commit {a.c}" if a.c is not None else "") + (f"; H = commit {a.h}" if a.h else ""))
+    if plan.checked_by_hand:
+        out.append("part A: checked by hand (the user confirmed the W-0490 checklist; no value was changed)")
     out.append(f"list-default pre-pass: {a.pre_pass.repaired} repaired, {len(a.pre_pass.unmatched)} left")
     out += [f"write: {line}" for line in lines] or ["write: nothing"]
     out += [f"not answered: {d.suspect.item}" for d in plan.decisions if d.answer is None]

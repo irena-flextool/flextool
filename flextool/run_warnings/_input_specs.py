@@ -441,7 +441,9 @@ INPUT_SPECS: tuple[WarningSpec, ...] = (
        "entity that has no `cumulative_max_capacity` and should not invest should be `not_allowed`.\n"
        "6. Re-run, and compare the investments and retirements with the previous results.\n"
        "7. Run the repair tool on the fixed copy to record the repair: the warning stays until one is recorded. "
-       "If the tool still cannot read the list (it says so again), the warning stays: report the file.\n\n"
+       "If the tool still cannot read the list (it says so again), run it with `--checked-by-hand`: you confirm "
+       "that you have checked every item above, and the tool records the repair in a copy without changing any "
+       "value.\n\n"
        "If you copied data from this database into another one, check that one too."),
     # TODO(v5.0.0): remove W-0491 with the repair tool (flextool/update_flextool/list_default_restore.py).
     _w("W-0491", "defaults emptied by an old upgrade", "Shipped defaults lost in an old upgrade", _DATABASE,

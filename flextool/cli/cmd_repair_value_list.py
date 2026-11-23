@@ -9,10 +9,11 @@ item of the group), a summary and a confirm, the answers-file route when there i
 ====  ==========================================================================================================
 0     copy written (with or without a record); nothing to do; W-0490 does not apply; rerun on a repaired copy;
       dry run finished
-1     the user quit (a partial answers file is written); newer data version or SpineDB schema; archive refused;
-      answers file refused; output exists or is the source; verify failed; any other error
+1     the user quit (a partial answers file is written) or did not confirm ``--checked-by-hand``; newer data
+      version or SpineDB schema; archive refused; answers file refused; output exists or is the source;
+      ``--checked-by-hand`` refused; verify failed; any other error
 2     usage error (argparse)
-3     answers needed, but no terminal and no ``--answers``
+3     answers needed, but no terminal and no ``--answers`` (or ``--checked-by-hand`` without ``--yes``)
 4     the list matches no known pattern (``unclear``): nothing written, use the W-0490 checklist
 ====  ==========================================================================================================
 
@@ -41,6 +42,11 @@ NO_NUMBER = ("A number works only where the members are listed: type set:<member
              "with its own list.")
 #: The characters PowerShell reads as a single quote (doubled inside a single-quoted string).
 _PS_QUOTES = "'\u2018\u2019\u201a\u201b"
+BY_HAND = ("--checked-by-hand: you confirm that you have gone through every item of the W-0490 checklist by "
+           "hand. The tool changes no value for W-0490; it only records the repair in the copy, which ends W-0490 "
+           "for that copy.")
+BY_HAND_PROMPT = "Type yes if you have checked every item in the checklist by hand: "
+BY_HAND_NO_TTY = "There is no terminal to confirm in: add --yes to confirm that you have checked every item by hand."
 NO_RECORD = "No repair record was written: the warning stays until every item has an answer."
 
 
@@ -80,6 +86,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--answers", metavar="FILE.csv", help="take the answers from this file (no questions)")
     p.add_argument("--accept-certain", action="store_true", help="answer the items the evidence makes certain with "
                    "their suggestion (class defaults and storage questions are always asked)")
+    p.add_argument("--checked-by-hand", action="store_true", help="for a database this tool cannot read (exit "
+                   "code 4): you have gone through the W-0490 checklist by hand; record the repair in the copy "
+                   "(no value is changed for W-0490)")
+    p.add_argument("--yes", action="store_true", help="with --checked-by-hand: confirm it without being asked")
     return p
 
 
@@ -114,7 +124,8 @@ def _show_unclear(a) -> None:
                 print("  commit {}: {} {}".format(*row))
         finally:
             con.close()
-    print("Use the manual checklist of W-0490 in the FlexTool documentation (warnings reference).")
+    print("Use the manual checklist of W-0490 in the FlexTool documentation (warnings reference). If the tool "
+          "still cannot read the list after it, run it again with --checked-by-hand to record the repair.")
 
 
 def _parse(text: str, s, allowed: tuple[str, ...]):
@@ -221,6 +232,10 @@ def main(argv: list[str] | None = None, *, ask=None) -> int:
     args = build_parser().parse_args(argv)
     if args.write_answers and not args.dry_run:
         build_parser().error("--write-answers needs --dry-run")
+    if args.yes and not args.checked_by_hand:
+        build_parser().error("--yes needs --checked-by-hand")
+    if args.checked_by_hand and args.archive:
+        build_parser().error("--archive is evidence for the tool's own questions; --checked-by-hand asks none")
     from spinedb_api.exception import SpineDBAPIError
 
     from flextool.update_flextool import value_list_answers as va
@@ -269,14 +284,36 @@ def _run(args, ask) -> int:
 def _work(args, ask, source: Path, output: Path, a) -> int:
     from flextool.update_flextool import value_list_answers as va
     from flextool.update_flextool import value_list_archive as varc
+    from flextool.update_flextool import value_list_history as vlh
     from flextool.update_flextool import value_list_repair as vr
     from flextool.update_flextool import value_list_suspects as vs
     from flextool.update_flextool import value_list_write as vw
 
-    if a.state == vr.UNCLEAR:
-        _show_unclear(a)
-        return EXIT_UNCLEAR
-    if a.state == vr.NO_HISTORY:
+    if args.checked_by_hand and a.state != vr.UNCLEAR:
+        raise vr.RepairError(vr.by_hand_refusal(a))
+    by_hand = False
+    if a.state == vr.UNCLEAR and (a.reason == vr.SEVERAL or not vlh.record_ends(a.finding, a.path)):
+        if not args.checked_by_hand:
+            _show_unclear(a)
+            return EXIT_UNCLEAR
+        if why := vr.by_hand_refusal(a):
+            raise vr.RepairError(why)
+        print(f"W-0490: state unclear ({a.reason}).\n{BY_HAND}")
+        if not (args.yes or args.dry_run):
+            if ask is None:
+                print(BY_HAND_NO_TTY)
+                return EXIT_NEEDS_ANSWERS
+            try:
+                confirmed = ask(BY_HAND_PROMPT).strip().lower() == "yes"
+            except (EOFError, KeyboardInterrupt):
+                confirmed = False
+            if not confirmed:
+                print("Not confirmed: nothing was written.")
+                return EXIT_ERROR
+        by_hand = True
+    elif a.state == vr.UNCLEAR:
+        print("W-0490: state unclear.")
+    elif a.state == vr.NO_HISTORY:
         print("W-0490 does not apply to this file (it has no upgrade history).")
     elif a.state == vr.NO_FINDING:
         print("No value-list overwrite (W-0490) in this file.")
@@ -302,7 +339,7 @@ def _work(args, ask, source: Path, output: Path, a) -> int:
     for s in prev.kept:
         print(f"  kept:{_where(s)} {s.cls}.{s.parameter}: {s.keep_text}")
     suspects = prev.suspects
-    if not suspects and (prev.part_a or prev.part_b or a.state in (vr.NO_HISTORY, vr.NO_FINDING)):
+    if not suspects and not by_hand and (prev.part_a or prev.part_b or a.state in (vr.NO_HISTORY, vr.NO_FINDING)):
         if not (prev.part_a or prev.part_b):
             print(NOTHING if not vr.part_b_line(a) else "Nothing to do for W-0490.")
         return EXIT_OK
@@ -337,7 +374,7 @@ def _work(args, ask, source: Path, output: Path, a) -> int:
                 answers |= _ask_group(list(g.suspects), choices, ask, True)
         except (_Quit, EOFError, KeyboardInterrupt):
             return _quit(output, suspects, key, answers)
-    plan = va.make_plan(a, suspects, answers, stale=stale, warnings=warnings, key=key)
+    plan = va.make_plan(a, suspects, answers, stale=stale, warnings=warnings, key=key, checked_by_hand=by_hand)
     if ask is not None:
         _summary(plan, output)
         try:

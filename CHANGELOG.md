@@ -36,8 +36,10 @@ Benders models with units or DC lines between regions are now refused with an er
   unaffected database keeps fixed it asks, with no recommended answer, whether to fix the start. Answers can be
   given at the prompt or in a CSV file (`--dry-run --write-answers`, then `--answers`); an older copy of the
   database can serve as evidence (`--archive`). When every item has an answer, the copy records the repair, and
-  W-0490 and the GUI's "Please check this database" message end for it. See "Repairing a value list (W-0490)" in
-  the terminal workflow documentation.
+  W-0490 and the GUI's "Please check this database" message end for it. For a database the tool cannot read even
+  after the W-0490 checklist, `--checked-by-hand` records the repair in the copy once you confirm that you have
+  checked every item by hand (no value is changed). See "Repairing a value list (W-0490)" in the terminal workflow
+  documentation.
 - **New note W-0491 for a database whose list-valued defaults an upgrade before 4.6.3 left empty.** Each run names
   the empty defaults until the database holds the repair tool's record of restoring them. Only
   `storage_start_end_method` can change results.

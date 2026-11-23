@@ -39,6 +39,7 @@ UNCLEAR = "unclear"  # anything else: show rows and commits, ask nothing, write 
 NO_HISTORY = "no-history"  # no version commits: W-0490 does not apply
 NO_FINDING = "no-finding"  # version commits, but no W-0490 session
 STATES = (HIT, HIT_UNANCHORED, RENAMED_BACK, NOT_HIT, UNCLEAR, NO_HISTORY, NO_FINDING)
+SEVERAL = "several W-0490 sessions"  # the reason of an unclear file with more than one session
 
 _BUSY_TIMEOUT_S = 5.0
 
@@ -152,7 +153,7 @@ def analyse(snapshot_path: str | Path) -> Analysis:
             raise RepairError(f"W-0490 names migration step {f.step}; this tool has data only for step "
                               f"{', '.join(map(str, vlh.PRIOR_MEMBERS))}. Please report this.")
     if len(findings) > 1:
-        return Analysis(state=UNCLEAR, finding=findings[0], reason="several W-0490 sessions", **base)
+        return Analysis(state=UNCLEAR, finding=findings[0], reason=SEVERAL, **base)
     con = _connect_ro(path)
     try:
         return _detect(con, findings[0], base)
@@ -231,6 +232,25 @@ def _detect(con: sqlite3.Connection, f: vlh.Finding, base: dict) -> Analysis:
             return Analysis(state=RENAMED_BACK, h=r.commit, lost=r.value, position_proof=True,
                             restore=() if appended in values else (appended,), **{**base, "c": anchors[0]})
     return Analysis(state=UNCLEAR, reason="the list matches no known pattern", **base)
+
+
+def by_hand_refusal(a: Analysis) -> str:
+    """Why ``--checked-by-hand`` cannot record a repair for the analysed snapshot (``""``: it can).  It needs an
+    ``unclear`` file with one W-0490 session (a record covers one session) whose list holds every member the record
+    checks (the checklist's steps 2-3)."""
+    if a.state != UNCLEAR:
+        return (f"--checked-by-hand is only for a database this tool cannot read (exit code 4); this one is "
+                f"'{a.state}': run the tool without --checked-by-hand.")
+    if a.reason == SEVERAL:
+        return ("this database has several W-0490 sessions, and a repair record covers one session only, so "
+                "--checked-by-hand cannot end the warning: please report the file.")
+    f = a.finding
+    have = {m.value for m in a.members}
+    missing = [m for m in (*vlh.PRIOR_MEMBERS[f.step], vlh.APPENDED[f.step]) if m not in have]
+    if missing:
+        return (f"the list {vlh.APPEND[f.step][0]} still lacks {', '.join(missing)}: add them (steps 2-3 of the "
+                "W-0490 checklist), then run the tool again.")
+    return ""
 
 
 def all_suspects(a: Analysis) -> tuple:

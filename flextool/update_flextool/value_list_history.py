@@ -228,10 +228,14 @@ def record_row(con: sqlite3.Connection, key: str) -> tuple[str, int | None, str,
     return None if row is None else (str(row[0]), row[1], str(row[2] or ""), str(row[3] or "")[:10])
 
 
-def record_value(finding: Finding, set_: int, kept: int) -> str:
-    """The W-0490 repair record's metadata value (at most 255 characters)."""
-    return json.dumps({"v": 1, "step": finding.step, "end_commit": finding.end_commit, "end_date": finding.date,
-                       "set": set_, "kept": kept}, separators=(",", ":"))
+def record_value(finding: Finding, set_: int, kept: int, *, checked_by_hand: bool = False) -> str:
+    """The W-0490 repair record's metadata value (at most 255 characters).  *checked_by_hand*: the user confirmed
+    the W-0490 checklist for a list the tool cannot read (``--checked-by-hand``); the record says so."""
+    data = {"v": 1, "step": finding.step, "end_commit": finding.end_commit, "end_date": finding.date, "set": set_,
+            "kept": kept}
+    if checked_by_hand:
+        data["checked_by_hand"] = True
+    return json.dumps(data, separators=(",", ":"))
 
 
 def parse_record(value: str) -> dict | None:
@@ -242,7 +246,7 @@ def parse_record(value: str) -> dict | None:
         return None
     if not isinstance(data, dict) or data.get("v") != 1 or not isinstance(data.get("end_date"), str) or not all(
             isinstance(data.get(k), int) and not isinstance(data.get(k), bool)
-            for k in ("step", "end_commit", "set", "kept")):
+            for k in ("step", "end_commit", "set", "kept")) or not isinstance(data.get("checked_by_hand", False), bool):
         return None
     return data
 
