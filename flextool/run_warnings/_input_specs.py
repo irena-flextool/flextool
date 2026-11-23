@@ -5,7 +5,7 @@ of the input derivation (``flextool/input_derivation``) and the plots.  Same rul
 * W-01xx groups, flowGroups and reserves
 * W-02xx units and connections
 * W-03xx nodes, profiles and the time / period keys of values
-* W-04xx commodities, DC power flow and plots
+* W-04xx commodities, DC power flow and plots; W-049x the input database itself (its migration history)
 
 The console line names the entity; the values behind each case (the parameter, the alternative, the key, the
 nodes) go to the debug log (``--debug``), as ``W-0123 <name>: <details>``.
@@ -25,6 +25,7 @@ _UOM = "Units of measure"
 _COMMODITIES = "Commodities"
 _DC = "DC power flow"
 _PLOTS = "Plots"
+_DATABASE = "Input database"
 
 
 def _w(code: str, message: str, title: str, topic: str, body: str, severity: str = WARNING) -> WarningSpec:
@@ -398,4 +399,33 @@ INPUT_SPECS: tuple[WarningSpec, ...] = (
        "a feature the model does not have), so those plots are skipped.\n\n"
        "**How to fix:** nothing, or remove the plots from the plot settings.",
        severity=NOTE),
+    # -- the input database (W-049x) --------------------------------------------------------------------------
+    # TODO(v5.0.0): remove W-0490 with flextool/update_flextool/value_list_history.py (keep the code retired).
+    _w("W-0490", "a spinedb_api bug may have changed the value list on {date}",
+       "Value list possibly changed by a spinedb_api bug", _DATABASE,
+       "The database's own migration history shows a migration session, between 2024-04-29 and 2025-07-07, that "
+       "may have run with spinedb_api 0.31 to 0.34. Those versions had a bug: adding a member to a value list "
+       "could overwrite the list's first member, and every default and value that used that member then "
+       "silently changed with it. The line names the lists to check; the debug log and the run log give the "
+       "data versions of the session. FlexTool does not know which library the migration used, so this is a "
+       "possibility, not a finding. The GUI shows a short \"Please check this database\" box when it opens the "
+       "project, with a button to this checklist. The message repeats at every run and every time the GUI opens "
+       "the database, also after you have checked, until a repair is recorded in the database (a repair tool is "
+       "planned).\n\n"
+       "For `invest_methods` (migration from data version 21 to 22): the list should contain `not_allowed`. If "
+       "it is missing, the class default of `invest_method` (unit, connection, node) and any value that was "
+       "`not_allowed` before that date now read `cumulative_limits`, which since FlexTool 4.4 lets those "
+       "entities invest and retire without limit.\n\n"
+       "**How to fix:** check the list (a checklist):\n\n"
+       "1. Make a copy of the database and work on the copy.\n"
+       "2. In the Spine DB editor, open *Parameter value list* and the named list (`invest_methods`). Check that "
+       "it contains `not_allowed` (for another list: check it has every member listed in the parameter reference).\n"
+       "3. If a member is missing, add it to the list.\n"
+       "4. For `invest_methods`, set the default value of `invest_method` of `unit`, `connection` and `node` "
+       "to `not_allowed` (the shipped default).\n"
+       "5. Filter the parameter values by `invest_method` = `cumulative_limits`. For each one, decide whether it "
+       "was meant: compare with a copy from before the migration date, your Excel input or your notes. An "
+       "entity that has no `cumulative_max_capacity` and should not invest should be `not_allowed`.\n"
+       "6. Re-run, and compare the investments and retirements with the previous results.\n\n"
+       "If you copied data from this database into another one, check that one too."),
 )

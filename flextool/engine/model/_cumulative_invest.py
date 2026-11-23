@@ -101,7 +101,9 @@ def _group_flow(b: _Build) -> Expr | None:
                   + v_online[p,d,t]·section[p,d,t]·unitsize[p])   [min_load_efficiency units only]
              − Σ_{(p,s,k,n) ∈ flow_from_n ∩ pss_noEff, (g,p,n) ∈ gpn} v_flow[p,s,k,d,t] · unitsize[p]
              − Σ_{(p,s,n) ∈ twoway1var_arcs, (g,p,n) ∈ gpn} v_flow_back[p,s,n,d,t] · unitsize[p]   [back at sink]
-             + Σ_{(p,n,k) ∈ twoway1var_arcs, (g,p,n) ∈ gpn} v_flow_back[p,n,k,d,t] · unitsize[p]   [back at source]
+             + Σ_{(p,n,k) ∈ twoway1var_arcs, (g,p,n) ∈ gpn} v_flow_back[p,n,k,d,t] · unitsize[p] · σ[p,d,t]
+                                                                                                  [back at source]
+      σ = slope[p,d,t] on an arc of pss_eff, else 1
       gpn = group_process_node;  flow_to_n / flow_from_n carry the sink / source node as n
     The eff-source term is the same fuel measure as ``nodeBalance_eq`` and the CO2/commodity cost
     terms (``_eff_fuel_input``): eff sources carry no ``conversion_flow_coeff``, and a
@@ -109,13 +111,12 @@ def _group_flow(b: _Build) -> Expr | None:
     The v_flow_back terms are the reverse flow of a one-variable two-way arc (``no_losses_no_variable_cost``
     and DC power flow, twoway1var_arcs; signed flow = v_flow − v_flow_back) with the nodeBalance signs
     (``_dc_power_flow.nodeBalance_back_flow_terms``), so such a connection counts by its net flow at the
-    member node, as a two-variable connection does through its reverse arc.  The back term carries no
-    slope while the forward flow's source side goes through ``_eff_fuel_input``, as in nodeBalance_eq.  The
-    arcs are not lossless by construction: a ``no_losses_no_variable_cost`` connection with a user
-    ``efficiency`` ≠ 1 keeps its slope (1/efficiency) on the forward flow only, so its two directions are
-    then asymmetric here, in nodeBalance_eq and in the objective, unlike a two-variable connection
-    (pre-existing; the fix, a warning for efficiency ≠ 1 and ignoring variable_cost, is deferred).  With both
-    ends of the arc in g the terms cancel.
+    member node, as a two-variable connection does through its reverse arc.  The forward flow's source side
+    goes through ``_eff_fuel_input`` (× slope), and so does the back flow's: one signed flow f, f at the sink and
+    f · slope at the source in both directions, as in nodeBalance_eq.  A one-variable connection cannot model
+    losses: its ``efficiency`` ≠ 1 is a unit conversion between nodes in different units (W-0589), else ignored
+    (W-0591), and its ``other_operational_cost`` is ignored (W-0590).  With both ends of the arc in g and slope 1
+    the terms cancel.
     """
     d, v_flow = b.d, b.v_flow
     gpn = d.group_process_node
@@ -141,7 +142,8 @@ def _group_flow(b: _Build) -> Expr | None:
             parts.append(-Sum(Where(v_flow * d.p_unitsize, arcs), over=("p", "source", "sink", "n")))
     if b.v_flow_back is not None and _has_rows(b.twoway1var_arcs):
         back = _dc_power_flow.nodeBalance_back_flow_terms(b.twoway1var_arcs, b.v_flow_back, d.p_unitsize, None,
-                                                          group_nodes=gpn, group_nodes_on=("p", "n"))
+                                                          group_nodes=gpn, group_nodes_on=("p", "n"),
+                                                          p_slope=d.p_slope, slope_arcs=d.process_source_sink_eff)
         for key in ("back_at_sink", "back_at_source"):
             if key in back:
                 parts.append(Sum(back[key], over=("n",)))

@@ -31,7 +31,7 @@ from flextool.engine.input._param_shapes import (
 )
 from flextool.engine.preprocess._provider_io import _provider_key
 from flextool.engine.preprocess.params._cohorts import in_service
-from flextool.engine.model import _balance_terms, _coarse_flows, _extend, _retire_built
+from flextool.engine.model import _balance_terms, _coarse_flows, _dc_power_flow, _extend, _retire_built
 from flextool.engine.model._common import _availability_factor, _has_rows, _indirect_sum_arcs, _var_view
 
 if TYPE_CHECKING:
@@ -1387,7 +1387,7 @@ def _eq_non_sync(b: _Build) -> None:
     # ─── EQ. ─── non_sync_constraint ─────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{(p,s,k) ∈ in_ns(g)} v_flow[p,s,k,d,t] · unitsize[p] · Δt[d,t] · icap[g,d]
-    #   + Σ_{(p,s,k) ∈ back_in_ns(g)} v_flow_back[p,s,k,d,t] · unitsize[p] · Δt[d,t] · icap[g,d]
+    #   + Σ_{(p,s,k) ∈ back_in_ns(g)} v_flow_back[p,s,k,d,t] · unitsize[p] · σ[p,d,t] · Δt[d,t] · icap[g,d]
     #   + Σ_{n ∈ N(g)} positive_inflow[n,d,t] · icap[g,d]
     #   − vq_non_synchronous[g,d,t] · Δt[d,t]
     #   ≤ ns_limit[g,d,t] · icap[g,d] · ( Σ_{(p,s,k) ∈ out_noEff(g)} v_flow[p,s,k,d,t] · unitsize[p] · Δt[d,t]
@@ -1405,6 +1405,7 @@ def _eq_non_sync(b: _Build) -> None:
     #   the solve (a gap is an input error)
     #   in_ns(g)      = arcs (p,s,k), k ∈ N(g), (p,k) ∈ process_sink_nonSync, (p,g) ∉ inside
     #   back_in_ns(g) = twoway1var_arcs (p,s,k), s ∈ N(g), (p,s) ∈ process_sink_nonSync, (p,g) ∉ inside
+    #   σ = slope[p,d,t] on an arc of process_source_sink_eff, else 1 (the reverse flow arrives as in nodeBalance_eq)
     #   out_*(g)      = arcs (p,s,k), s ∈ N(g), (p,g) ∉ inside
     #   back_out(g)   = twoway1var_arcs (p,s,k), k ∈ N(g), (p,g) ∉ inside
     #   process_sink_nonSync = unit arcs with is_non_synchronous ∪ (c,n) for is_DC connections c and their nodes n
@@ -1416,8 +1417,8 @@ def _eq_non_sync(b: _Build) -> None:
     # measured as the energy its nodes deliver to processes, exports and the
     # real demand (an energy margin does not count); the excess is penalised.
     # Flows between nodes of the group are neither (inside).  The reverse flow
-    # of a one-variable / DC arc arrives at the arc's source and leaves its
-    # sink, lossless, as in nodeBalance_eq.  The slack has no icap, which makes
+    # of a one-variable / DC arc arrives at the arc's source (× slope on an arc
+    # of process_source_sink_eff) and leaves its sink, as in nodeBalance_eq.  The slack has no icap, which makes
     # it a fraction of group_capacity_for_scaling.  slope already holds the
     # sink/source coefficient ratio of multi-arc processes.
     # Row rule (coarse steps): a group whose processes are all coarse gets one row per coarse step,
@@ -1434,9 +1435,14 @@ def _eq_non_sync(b: _Build) -> None:
     if back is not None and sink_ns is not None and sink_ns.height > 0:
         back_in = _not_inside(_arcs_at_group(back.join(sink_ns.rename({"sink": "source"}), on=["p", "source"],
                                                        how="inner"), "source", gn_in_gns))
-        if back_in.height > 0:
-            lhs["incoming_nonSync_back"] = Sum(Where(b.v_flow_back, back_in) * p_us * d.p_step_duration * invc,
-                                               over=("p", "source", "sink"))
+        sloped, plain = _dc_power_flow.back_in_split(back_in, d)
+        terms = ([Sum(Where(b.v_flow_back, sloped) * d.p_slope * p_us * d.p_step_duration * invc,
+                      over=("p", "source", "sink"))] if sloped is not None else [])
+        if plain.height > 0:
+            terms.append(Sum(Where(b.v_flow_back, plain) * p_us * d.p_step_duration * invc,
+                             over=("p", "source", "sink")))
+        if terms:
+            lhs["incoming_nonSync_back"] = terms[0] if len(terms) == 1 else terms[0] + terms[1]
     p_pos = d.p_positive_inflow
     if p_pos is not None and gn_in_gns.height > 0:
         exo_in = (gn_in_gns.join(p_pos.frame.rename({"value": "v"}), on="n", how="inner")

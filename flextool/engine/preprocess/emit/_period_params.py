@@ -2180,10 +2180,19 @@ def emit_pdtProcess__source__sink__dt_varCost_pair(
     input_dir: Path, solve_data_dir: Path,
     *, provider,
 ) -> None:
-    """Emit ``pdtProcess__source__sink__dt_varCost_pair`` to the Provider."""
+    """Emit ``pdtProcess__source__sink__dt_varCost_pair`` to the Provider.
+
+    Without the one-variable connections (``method_2way_1var_off``): their cost is ignored (W-0590,
+    ``_direct.drop_one_variable_connection_cost``), so a CSV reload does not charge it again.
+    """
+    from flextool.engine.preprocess.emit._calc_params import _METHOD_2WAY_1VAR, _read_csv
     basic, _always = _derive_varCost_pair_vectorized(
         input_dir, solve_data_dir, provider=provider,
     )
+    pm = _read_csv(input_dir / "process_method.csv", ["process", "method"], provider=provider)
+    one_var = pm.filter(pl.col("method").cast(pl.Utf8).is_in(sorted(_METHOD_2WAY_1VAR))).get_column("process")
+    if one_var.len() > 0:
+        basic = basic.filter(~pl.col("process").cast(pl.Utf8).is_in(one_var.cast(pl.Utf8).to_list()))
     _emit(provider, "solve_data/pdtProcess__source__sink__dt_varCost.csv",
           basic)
 

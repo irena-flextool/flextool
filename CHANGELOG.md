@@ -1,3 +1,32 @@
+## Release 4.6.2 (22.11.2026) — fixes: one-variable connections ignore variable cost and losses (efficiency only converts between units); warning for databases possibly hit by the spinedb_api value-list bug, with a checklist
+
+Patch release: no new data version (input databases stay at 82). Requires `polar-high>=3.16.1`. Results change
+only for models with a `no_losses_no_variable_cost` connection or a line of a `dc_power_flow_with_angles` group
+that has an `efficiency` other than 1 or an `other_operational_cost`.
+
+### Fixes
+
+- **A one-variable connection (`no_losses_no_variable_cost`, and the lines of a `dc_power_flow_with_angles`
+  group) ignores its `other_operational_cost`, and its `efficiency` unless it converts between units.** One
+  signed flow cannot have direction-dependent values. Before, the cost was charged on the forward flow only (and
+  the cost results showed a revenue for the reverse flow), and the efficiency applied to the forward flow only:
+  the reverse flow arrived at the first node without it, so with an efficiency above 1 sending the same amount
+  both ways created energy there. Now the cost is treated as zero (W-0590). The efficiency is ignored (treated as
+  1, W-0591) on a DC power-flow line and when the two nodes have the same `unit_of_measure` or either has none,
+  so an efficiency of e.g. 0.98 no longer gives a loss one way and a gain the other. Only between nodes in
+  different units is it applied, as a conversion that is the same in both directions (e.g. MWh to t; W-0589),
+  as the flow results already showed. For losses, use `transfer_method` *regular* or *exact*; for a variable
+  cost, also *variable_cost_only*. The reserve and non-synchronous rows count the reverse flow with the same
+  conversion. Results of such connections change: their costs are zero, and with an ignored efficiency their
+  flows, losses and the node balances are those of efficiency 1.
+- **A database whose migration history an old spinedb_api bug may have hit is named (W-0490).** spinedb_api
+  0.31 to 0.34 (in use until 2025-07-07) could overwrite the first member of a value list when a migration added
+  one; migration step 22 did that to `invest_methods` on databases migrated from data version 21, so `not_allowed`
+  and every default and value that used it read `cumulative_limits` (invest and retire without limit). FlexTool
+  reads the database's migration dates and warns at every run; when the GUI opens such a database it shows a short
+  "Please check this database" box with a button to the checklist on the warnings page. It changes nothing in
+  the database. A migration step that adds value list members now stops if an existing member changes.
+
 ## Release 4.6.1 (22.11.2026) — fixes: Benders results with a final solve, migration reruns converge, reverse flows of one-variable connections, stochastic CO2 price, two-stage realization; precise HiGHS solver note
 
 Patch release: no new data version (input databases stay at 82). Requires `polar-high>=3.16.1`. Results can change

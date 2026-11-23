@@ -22,7 +22,7 @@ from polar_high.engine import Var
 
 from flextool.engine.input._axis_enums import rename_to_axis, schema_dtype
 from flextool.engine.preprocess._provider_io import _provider_key
-from flextool.engine.model import _coarse_flows, _extend, _retire_built
+from flextool.engine.model import _coarse_flows, _dc_power_flow, _extend, _retire_built
 from flextool.engine.model._common import (
     _connection_procs, _drop_uncapped, _entity_rows, _has_rows, _indirect_input_cap, _utf8_keys, _var_view,
 )
@@ -586,6 +586,23 @@ def _flow_node_view(v_flow: Var, side: str, extra: "dict[str, str] | None" = Non
                frame=v_flow.frame.pipe(rename_to_axis, mapping))
 
 
+def _back_in_terms(b: "_Build", back_view: Var, arcs: pl.DataFrame, us, ratio, *, p_col: str,
+                   over: tuple[str, ...], key: str) -> dict:
+    """Σ over ``arcs`` (``p_col``, n, sink, ...; n the arc's source) of the reverse flow arriving at n, × ``ratio``,
+    MW: ``v_flow_back · unitsize · slope`` on an arc of process_source_sink_eff, as in nodeBalance_eq, else
+    ``v_flow_back · unitsize`` (``_dc_power_flow.back_in_split``).  Keys ``key`` and ``<key>_noEff``."""
+    sloped, plain = _dc_power_flow.back_in_split(arcs, b.d, p_col=p_col, source_col="n")
+    terms: dict = {}
+    if sloped is not None:
+        slope = b.d.p_slope
+        if p_col != "p":
+            slope = Param((p_col, *slope.dims[1:]), slope.frame.pipe(rename_to_axis, {"p": p_col}))
+        terms[key] = Sum(Where(back_view * us * slope * ratio, sloped), over=over)
+    if plain.height > 0:
+        terms[key if sloped is None else f"{key}_noEff"] = Sum(Where(back_view * us * ratio, plain), over=over)
+    return terms
+
+
 def _drawn_terms(b: "_Build", flow_view: Var, arcs: pl.DataFrame, us, ratio, *, p_col: str,
                  over: tuple[str, ...]) -> dict:
     """Σ over ``arcs`` of the flow a process draws from the arc's source node n, × ``ratio``, MW.
@@ -716,7 +733,8 @@ def add_constraints(b: "_Build") -> None:
     #       · ratio[p,r,ud,n]
     #   + Σ_{(p,n,k) ∈ process_source_sink \ eff_out, (p,r,ud,n) ∈ irr_g} v_flow[p,n,k,d,t] · unitsize[p]
     #       · ratio[p,r,ud,n]
-    #   + Σ_{(p,n,k) ∈ twoway1var_arcs, (p,r,ud,n) ∈ irr_g} v_flow_back[p,n,k,d,t] · unitsize[p] · ratio[p,r,ud,n]
+    #   + Σ_{(p,n,k) ∈ twoway1var_arcs, (p,r,ud,n) ∈ irr_g} v_flow_back[p,n,k,d,t] · unitsize[p] · σ[p,d,t]
+    #       · ratio[p,r,ud,n]
     #   + Σ_{(p,s,n) ∈ twoway1var_arcs, (p,r,ud,n) ∈ irr_g} v_flow_back[p,s,n,d,t] · unitsize[p] · ratio[p,r,ud,n]
     #   + group_demand[r,ud,g,d,t]
     #   ∀ (r,ud,g) ∈ reserve_upDown_group_method_dynamic, (d,t) ∈ dt
@@ -725,6 +743,7 @@ def add_constraints(b: "_Build") -> None:
     #             energy margin (p_negative_inflow, the real demand), so group_demand is MW in the step
     #   irr_g   = process_reserve_upDown_node_increase_reserve_ratio with n ∈ group g
     #   ratio   = increase_reserve_ratio;   eff_out = process_source_sink_eff
+    #   σ       = slope[p,d,t] on an arc of eff_out, else 1 (the reverse flow arrives as in nodeBalance_eq)
     #   section term only for min_load_efficiency units with online variables (v_online_linear / _integer)
     #   reserve_sum is replaced by v_reserve_total for (r,ud,g) ∈ rug_total
     # The requirement grows with the flows into and out of the group's nodes
@@ -769,10 +788,8 @@ def add_constraints(b: "_Build") -> None:
                         irr_g, on=["p", "n"], how="inner")
                     back_out = back.pipe(rename_to_axis, {"sink": "n"}).select("p", "source", "n").join(
                         irr_g, on=["p", "n"], how="inner")
-                    if back_in.height > 0:
-                        rhs_terms["dynamic_back_in"] = Sum(Where(
-                            _flow_node_view(b.v_flow_back, "source") * p_unitsize * irr_param, back_in),
-                            over=("p", "n", "sink"))
+                    rhs_terms |= _back_in_terms(b, _flow_node_view(b.v_flow_back, "source"), back_in, p_unitsize,
+                                                irr_param, p_col="p", over=("p", "n", "sink"), key="dynamic_back_in")
                     if back_out.height > 0:
                         rhs_terms["dynamic_back_out"] = Sum(Where(
                             _flow_node_view(b.v_flow_back, "sink") * p_unitsize * irr_param, back_out),
@@ -800,14 +817,15 @@ def add_constraints(b: "_Build") -> None:
     #                                                   · ratio[f,r,ud,n]
     #           + Σ_{(f,n,k) ∈ process_source_sink \ eff_out, (f,r,ud,n) ∈ lfr_g} v_flow[f,n,k,d,t] · unitsize[f]
     #               · ratio[f,r,ud,n]
-    #   + up:   Σ_{(f,n,k) ∈ twoway1var_arcs, (f,r,ud,n) ∈ lfr_g} v_flow_back[f,n,k,d,t] · unitsize[f] · ratio[f,r,ud,n]
+    #   + up:   Σ_{(f,n,k) ∈ twoway1var_arcs, (f,r,ud,n) ∈ lfr_g} v_flow_back[f,n,k,d,t] · unitsize[f] · σ[f,d,t]
+    #               · ratio[f,r,ud,n]
     #     down: Σ_{(f,s,n) ∈ twoway1var_arcs, (f,r,ud,n) ∈ lfr_g} v_flow_back[f,s,n,d,t] · unitsize[f] · ratio[f,r,ud,n]
     #   ∀ (r,ud,g,f) ∈ fail_g, (d,t) ∈ dt
     #   pruna_g = the providers of the reserve_sum above, per group
     #   lfr_g   = process_reserve_upDown_node_large_failure_ratio with n ∈ group g,
     #             (r,ud,g) ∈ reserve_upDown_group_method_n_1 with ud = up / down
     #   fail_g  = (r,ud,g,f): f in lfr_g with a flow (v_flow or v_flow_back) into (up) / out of (down) a node of g
-    #   ratio   = large_failure_ratio;   f is the row dim p_fail;   eff_out, section as in the dynamic row
+    #   ratio   = large_failure_ratio;   f is the row dim p_fail;   eff_out, section, σ as in the dynamic row
     # Reserve covers the loss of each large process f separately (the largest
     # failure binds): upward reserve the loss of its output into the group,
     # downward reserve the loss of its consumption from the group.  The
@@ -842,7 +860,11 @@ def add_constraints(b: "_Build") -> None:
             else:
                 failure_terms = {}
             fail_back = n1[ud_filter]["fail_back_arcs"]
-            if fail_back is not None and b.v_flow_back is not None:
+            if fail_back is not None and b.v_flow_back is not None and other == "source":
+                failure_terms |= _back_in_terms(b, _flow_node_view(b.v_flow_back, other, {"p": "p_fail"}), fail_back,
+                                                us_fail, ratio_fail, p_col="p_fail", over=(side, "n"),
+                                                key="n_1_failure_back")
+            elif fail_back is not None and b.v_flow_back is not None:
                 failure_terms["n_1_failure_back"] = Sum(
                     Where(_flow_node_view(b.v_flow_back, other, {"p": "p_fail"}) * us_fail * ratio_fail, fail_back),
                     over=(side, "n"))
@@ -1613,11 +1635,11 @@ def _flows_at_nodes(d, sol, processes: list[str]) -> pl.DataFrame:
     the other arcs are dropped before any join).
 
     ``kind`` ``into``: what arrives at n, ``v_flow · unitsize`` of the arcs whose sink is n and ``v_flow_back ·
-    unitsize`` of the one-variable / DC arcs whose source is n.  ``kind`` ``drawn``: what leaves n, per arc whose
-    source is n ``v_flow · unitsize · slope`` (plus ``v_online · section · unitsize`` of a min_load_efficiency unit
-    with online variables) on an arc of process_source_sink_eff, else ``v_flow · unitsize``, and ``v_flow_back ·
-    unitsize`` of the one-variable / DC arcs whose sink is n (:func:`_drawn_terms` and the back terms of the
-    dynamic and n-1 rows)."""
+    unitsize`` (· slope on an arc of process_source_sink_eff) of the one-variable / DC arcs whose source is n.
+    ``kind`` ``drawn``: what leaves n, per arc whose source is n ``v_flow · unitsize · slope`` (plus ``v_online ·
+    section · unitsize`` of a min_load_efficiency unit with online variables) on an arc of process_source_sink_eff,
+    else ``v_flow · unitsize``, and ``v_flow_back · unitsize`` of the one-variable / DC arcs whose sink is n
+    (:func:`_drawn_terms`, :func:`_back_in_terms` and the back terms of the dynamic and n-1 rows)."""
     cols = ["p", "n", "kind", "d", "t", "value"]
     parts: list[pl.DataFrame] = []
     us = _frame_u8(d.p_unitsize.frame).select("p", pl.col("value").alias("__us"))
@@ -1659,9 +1681,19 @@ def _flows_at_nodes(d, sol, processes: list[str]) -> pl.DataFrame:
     if vb is not None:
         vb = (vb.join(_frame_u8(back.select("p", "source", "sink")).unique(), on=["p", "source", "sink"], how="semi")
               .join(us, on="p", how="inner").with_columns(__mw=pl.col("value") * pl.col("__us")))
-        for side, kind in (("source", "into"), ("sink", "drawn")):
-            parts.append(vb.select("p", pl.col(side).alias("n"), pl.lit(kind).alias("kind"), "d", "t",
-                                   pl.col("__mw").alias("value")))
+        parts.append(vb.select("p", pl.col("sink").alias("n"), pl.lit("drawn").alias("kind"), "d", "t",
+                               pl.col("__mw").alias("value")))
+        # The reverse flow arrives at the source × slope on an arc of process_source_sink_eff (nodeBalance_eq).
+        sloped, plain = _dc_power_flow.back_in_split(vb, d)
+        slope = _param_on_dt(getattr(d, "p_slope", None), d, ["p", "d", "t"], "__slope")
+        if sloped is not None and slope is not None:
+            parts.append(sloped.join(slope, on=["p", "d", "t"], how="inner").select(
+                "p", pl.col("source").alias("n"), pl.lit("into").alias("kind"), "d", "t",
+                (pl.col("__mw") * pl.col("__slope")).alias("value")))
+        else:
+            plain = vb
+        parts.append(plain.select("p", pl.col("source").alias("n"), pl.lit("into").alias("kind"), "d", "t",
+                                  pl.col("__mw").alias("value")))
     if not parts:
         return pl.DataFrame(schema={**{c: pl.Utf8 for c in cols[:-1]}, "value": pl.Float64})
     # Fixed summation order: the parts in list order, and within a part (two arcs of p at n) the value.

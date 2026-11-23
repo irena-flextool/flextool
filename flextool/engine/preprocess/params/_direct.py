@@ -2225,7 +2225,29 @@ def _varcost_side(param: "Param | None", keys: tuple[str, ...], pss: pl.DataFram
     return df.join(dt, on=["d", "t"], how="semi")
 
 
-def apply_varcost_params(flex_data: object) -> None:
+def drop_one_variable_connection_cost(flex_data: object) -> list[str]:
+    """Drop ``p_pdt_varCost_process`` (``connection.other_operational_cost``) of the one-variable connections.
+
+    A one-variable connection (``process_source_sink_2way_1var``: ``no_losses_no_variable_cost`` without a fork,
+    and the lines of a ``dc_power_flow_with_angles`` group) carries both directions in one signed flow, so a
+    cost on it would be positive one way and negative (a revenue) the other: the cost is treated as zero.
+    Returns the connections whose cost was dropped (sorted; W-0590 names them).
+    """
+    cost = getattr(flex_data, "p_pdt_varCost_process", None)
+    one_var = getattr(flex_data, "process_source_sink_2way_1var", None)
+    if cost is None or one_var is None or one_var.height == 0:
+        return []
+    names = {str(p) for p in one_var.get_column("p").to_list()}
+    frame = cost.frame.collect() if isinstance(cost.frame, pl.LazyFrame) else cost.frame
+    hit = pl.col("p").cast(pl.Utf8).is_in(sorted(names))
+    dropped = sorted({str(p) for p in frame.filter(hit).get_column("p").to_list()})
+    if dropped:
+        keep = frame.filter(~hit)
+        flex_data.p_pdt_varCost_process = Param(cost.dims, keep) if keep.height > 0 else None
+    return dropped
+
+
+def apply_varcost_params(flex_data: object) -> list[str]:
     """The variable-cost index sets and ``p_pssdt_varCost`` from the three per-side cost Params.
 
         src[p, s, d, t]  = p_pdt_varCost_source  on the solve's (d, t)     unit__inputNode.other_operational_cost
@@ -2249,15 +2271,17 @@ def apply_varcost_params(flex_data: object) -> None:
     synthetic sub-solves alike; the loader seeds none of the five, and a reader-less CSV reload calls it on
     the emit seeds of the per-side Params (``_csv_reload._field_seeds``).  Every set is an eager frame
     ``[p, source, sink, d, t]`` sorted by its columns, ``p_pssdt_varCost`` an eager Param sorted the same way;
-    an empty result is None (the objective term is skipped).
+    an empty result is None (the objective term is skipped).  First the cost of the one-variable connections is
+    dropped (:func:`drop_one_variable_connection_cost`); returns those connections.
     """
     for field in ("pssdt_varCost_noEff", "pssdt_varCost_eff_unit_source", "pssdt_varCost_eff_unit_sink",
                   "pssdt_varCost_eff_connection", "p_pssdt_varCost"):
         setattr(flex_data, field, None)
+    dropped = drop_one_variable_connection_cost(flex_data)
     dt = getattr(flex_data, "dt", None)
     pss = getattr(flex_data, "process_source_sink", None)
     if dt is None or dt.height == 0 or pss is None or pss.height == 0:
-        return
+        return dropped
     pss = pss.select(_PSS_KEYS)
     dt = dt.select("d", "t").unique(maintain_order=True)
     sides = (
@@ -2293,13 +2317,13 @@ def apply_varcost_params(flex_data: object) -> None:
             idx = _on(eff, part, on).select(_PSSDT_KEYS).sort(_PSSDT_KEYS)
             setattr(flex_data, field, idx if idx.height > 0 else None)
     if not summed_parts:
-        return
+        return dropped
     summed = (pl.concat(summed_parts)
               .group_by(_PSSDT_KEYS).agg(pl.col("value").sum())
               .filter(pl.col("value") != 0.0)
               .sort(_PSSDT_KEYS))
     if summed.height == 0:
-        return
+        return dropped
     flex_data.p_pssdt_varCost = Param(_PSSDT_KEYS, summed)
     noeff = _keys(getattr(flex_data, "process_source_sink_noEff", None))
     if noeff is not None:
@@ -2307,6 +2331,7 @@ def apply_varcost_params(flex_data: object) -> None:
                .join(noeff, on=list(_PSS_KEYS), how="semi")
                .sort(_PSSDT_KEYS))
         flex_data.pssdt_varCost_noEff = idx if idx.height > 0 else None
+    return dropped
 
 
 # ---------------------------------------------------------------------------
@@ -3131,8 +3156,12 @@ def apply_direct_params_b(source: "InputSource",
         p_pdt_varCost_process_from_source(source, period_filter=dt), dt)
     if v is not None:
         flex_data.p_pdt_varCost_process = v
-    # The four index sets and p_pssdt_varCost the objective's variable-cost terms join on (#74).
-    apply_varcost_params(flex_data)
+    # The four index sets and p_pssdt_varCost the objective's variable-cost terms join on (#74); the cost of a
+    # one-variable connection is ignored (W-0590, once per solve).
+    dropped = apply_varcost_params(flex_data)
+    if dropped:
+        from flextool import run_warnings
+        run_warnings.warn_grouped("W-0590", dropped, solve=active_solve)
 
     # ─── Δ.4b — reserves ─────────────────────────────────────────────────
     # Δ.17c-Tier3 — pdtReserve_upDown_group_reservation routes through

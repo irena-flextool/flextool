@@ -50,7 +50,8 @@ def balance_flow_terms(b: "_Build", *, at_branch: bool = False, nodes: "pl.DataF
                                     v_online[p,d,t] · section[p,d,t] · unitsize[p] · Δt[d,t]
     source_noEff[n,d,t]       = − Σ_{(p,n,k) ∈ flow_from_nodeBalance_noEff} v_flow[p,n,k,d,t] · unitsize[p] · Δt[d,t]
     back_at_sink / back_at_source: the v_flow_back terms of twoway1var_arcs
-                                    (_dc_power_flow.nodeBalance_back_flow_terms)
+                                    (_dc_power_flow.nodeBalance_back_flow_terms; at the source × slope on an
+                                    arc of process_source_sink_eff, as the forward flow draws there)
     startup_su_{lin,int}[n,d,t] = − Σ_{(p,n) ∈ startup_to_balance} v_startup[p,d,t] · startup_energy[p,n,d]
                                     · unitsize[p]   (an event: no Δt; core._startup_draw)
     A unit with an efficiency draws flow · slope from its source node; a min_load_efficiency unit also draws its
@@ -135,7 +136,9 @@ def balance_flow_terms(b: "_Build", *, at_branch: bool = False, nodes: "pl.DataF
                                      on=["p", "source", "sink"], how="anti")
         terms.update(_dc_power_flow.nodeBalance_back_flow_terms(
             back_arcs, var(b.v_flow_back), d.p_unitsize, step_dur, group_nodes=group_nodes,
-            exclude_arcs=exclude_arcs if exclude_arcs is not None and "g" in exclude_arcs.columns else None))
+            exclude_arcs=exclude_arcs if exclude_arcs is not None and "g" in exclude_arcs.columns else None,
+            p_slope=None if d.p_slope is None else at_dt(d.p_slope, ("p", "d", "t")),
+            slope_arcs=d.process_source_sink_eff))
     return terms
 
 
@@ -151,7 +154,8 @@ def balance_flow_values(d, sol, *, group_nodes: pl.DataFrame,
 
         sink_flow = v_flow · unitsize;  source_eff = − v_flow · unitsize · slope;
         source_section = − v_online · section · unitsize;  source_noEff = − v_flow · unitsize;
-        back_at_sink = − v_flow_back · unitsize;  back_at_source = + v_flow_back · unitsize
+        back_at_sink = − v_flow_back · unitsize;  back_at_source = + v_flow_back · unitsize (· slope on an arc of
+        process_source_sink_eff)
 
     The start-up draw (energy per event, not capacity) is not a term of these rows and is not here.
 
@@ -215,9 +219,15 @@ def balance_flow_values(d, sol, *, group_nodes: pl.DataFrame,
         excl = None
         if exclude_arcs is not None and exclude_arcs.height > 0 and "g" in exclude_arcs.columns:
             excl = utf8(exclude_arcs.select("g", "p", "source", "sink").unique())
+        eff = utf8(d.process_source_sink_eff.select("p", "source", "sink")) if (
+            d.p_slope is not None and _has_rows(d.process_source_sink_eff)) else None
         for term, side, sign in (("back_at_sink", "sink", -1.0), ("back_at_source", "source", 1.0)):
             at = back.with_columns(n=pl.col(side)).join(gn, on="n", how="inner")
             if excl is not None:
                 at = at.join(excl, on=["g", "p", "source", "sink"], how="anti")
-            emit(at.select("g", "n", "p", "source", "sink") if at.height > 0 else None, term, sign, "v_flow_back")
+            at = at.select("g", "n", "p", "source", "sink")
+            if side == "source" and eff is not None:
+                emit(at.join(eff, on=["p", "source", "sink"], how="semi"), term, sign, "v_flow_back", d.p_slope)
+                at = at.join(eff, on=["p", "source", "sink"], how="anti")
+            emit(at if at.height > 0 else None, term, sign, "v_flow_back")
     return pl.concat(parts) if parts else empty

@@ -11,8 +11,8 @@ the registry merges them.
   the scaling guard (the solver's accuracy on the LP it gets)
 * W-055x warm start and how the solves are run (in this process or a separate one)
 * W-057x the results of a Benders solve: its final solve (the whole model with the Benders investments fixed)
-* W-058x W-0580..W-0583 storage notes (continued from W-053x); from W-0584 the overflow of the full sub-ranges
-  (W-050x solves, W-051x inputs, W-052x lifetimes: the topic of each code says which)
+* W-058x W-0580..W-0583 storage notes (continued from W-053x); from W-0584 (and W-059x) the overflow of the full
+  sub-ranges (W-050x solves, W-051x inputs, W-052x lifetimes: the topic of each code says which)
 * W-06xx behaviour-change notices (their texts: :mod:`flextool.run_warnings._behaviour_specs`)
 """
 from __future__ import annotations
@@ -1046,6 +1046,55 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "printed once per realization solve.\n\n"
             "**How to fix:** nothing, if that is meant. For a two-stage model in which the day-ahead decisions hold, "
             "give the units that commit a day ahead `startup_method` = *binary*."
+        ),
+    ),
+    WarningSpec(
+        code="W-0589",
+        message="one-variable connection: efficiency converts units, the same both ways",
+        title="Efficiency of a one-variable connection as a unit conversion",
+        topic=_INPUTS,
+        body=(
+            "A one-variable connection (`transfer_method` *no_losses_no_variable_cost*) carries both directions "
+            "in one signed flow. Its two nodes have different `unit_of_measure` values, so its `efficiency` "
+            "(other than 1) is used as a unit conversion (e.g. MWh to t): the flow f arriving at the second node "
+            "takes f / efficiency from the first node, and in the reverse direction the first node gets f / "
+            "efficiency for the f taken from the second. The same conversion holds both ways, so it cannot model "
+            "losses. The debug log gives the efficiency of each connection. The warning is printed once per "
+            "solve.\n\n"
+            "**How to fix:** nothing, if the efficiency is a unit conversion. For losses, use `transfer_method` "
+            "*regular* or *exact*."
+        ),
+    ),
+    WarningSpec(
+        code="W-0590",
+        message="one-variable connection has other_operational_cost; ignored",
+        title="Variable cost of a one-variable connection",
+        topic=_INPUTS,
+        body=(
+            "A one-variable connection (`transfer_method` *no_losses_no_variable_cost*, and the lines of a "
+            "`dc_power_flow_with_angles` group) carries both directions in one signed flow, so a cost on that "
+            "flow would be a cost in one direction and a revenue in the other. Its `other_operational_cost` is "
+            "ignored (treated as zero) in the solve and in the cost results. The warning is printed once per "
+            "solve.\n\n"
+            "**How to fix:** use `transfer_method` *variable_cost_only*, *regular* or *exact* for a connection "
+            "with a variable cost, or remove the cost."
+        ),
+    ),
+    WarningSpec(
+        code="W-0591",
+        message="cannot model losses with one flow variable; efficiency ignored",
+        title="Efficiency of a one-variable connection ignored",
+        topic=_INPUTS,
+        body=(
+            "A one-variable connection (`transfer_method` *no_losses_no_variable_cost*, and the lines of a "
+            "`dc_power_flow_with_angles` group, which use it internally) carries both directions in one signed "
+            "flow, so it cannot model losses: a loss in one direction would be a gain in the other. Its "
+            "`efficiency` is ignored (treated as 1) on a line of a `dc_power_flow_with_angles` group, and on a "
+            "*no_losses_no_variable_cost* connection unless both its nodes have a `unit_of_measure` and the two "
+            "differ (then the efficiency is a unit conversion: W-0589). The debug log gives the efficiency that "
+            "was ignored. The warning is printed once per solve.\n\n"
+            "**How to fix:** for losses, use `transfer_method` *regular* or *exact* (for a DC power-flow line, "
+            "accept a lossless line), or remove the efficiency."
         ),
     ),
 ) + BEHAVIOUR_SPECS

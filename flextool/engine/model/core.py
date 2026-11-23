@@ -748,6 +748,7 @@ def _prepare(b: _Build) -> None:
         b.p_oint_rows = b.p_oint_idx
     if b.has_proc:
         b.twoway1var_arcs = _two_way_one_var_arcs(d)
+        _warn_one_variable_efficiency(b)
         procs = [s.select(pl.col("p").cast(pl.Utf8))
                  for s in (d.pd_invest_set if b.has_invest_p else None,
                            d.pd_divest_set if b.has_divest_p else None,
@@ -1083,6 +1084,40 @@ def _validate_storage_start_end_values(d) -> None:
             message += (f" The database upgrade could not choose for {node} (alternative {alternative}) because "
                         f"scenarios {', '.join(scenarios)} used it differently.")
     raise FlexToolConfigError(message)
+
+
+def _warn_one_variable_efficiency(b: _Build) -> None:
+    """W-0589 (once per solve): the one-variable connections (twoway1var_arcs) with an efficiency ≠ 1 in the solve.
+
+    Their one signed flow takes f · slope at the source and gives f at the sink in both directions
+    (nodeBalance_back_flow_terms), so the efficiency is a conversion (e.g. MWh to t), not a loss.  Only the
+    connections between nodes in different units keep it: the load boundary sets the slope of the others to 1
+    (``_derived.apply_one_variable_efficiency``, W-0591).  Named: the connection, with its efficiency range over
+    the solve's (d, t) in the details.
+    """
+    d = b.d
+    if not _has_rows(b.twoway1var_arcs) or d.p_slope is None or not _has_rows(d.process_source_sink_eff):
+        return
+    arcs = join_aligned(b.twoway1var_arcs.select("p", "source", "sink"),
+                        d.process_source_sink_eff.select("p", "source", "sink"),
+                        on=["p", "source", "sink"], how="semi")
+    if arcs.height == 0:
+        return
+    slope = d.p_slope.frame
+    slope = slope.collect() if isinstance(slope, pl.LazyFrame) else slope
+    if _has_rows(getattr(d, "dt", None)):
+        slope = join_aligned(slope, d.dt.select("d", "t").unique(), on=["d", "t"], how="semi")
+    names = sorted({str(p) for p in arcs.get_column("p").to_list()})
+    hit = (slope.filter(pl.col("p").cast(pl.Utf8).is_in(names) & ((pl.col("value") - 1.0).abs() > 1e-9))
+           .group_by(pl.col("p").cast(pl.Utf8))
+           .agg((1.0 / pl.col("value")).min().alias("lo"), (1.0 / pl.col("value")).max().alias("hi"))
+           .sort("p"))
+    if hit.height == 0:
+        return
+    details = {p: (f"efficiency {lo:g}" if lo == hi else f"efficiency {lo:g} to {hi:g}")
+               for p, lo, hi in hit.iter_rows()}
+    from flextool import run_warnings
+    run_warnings.warn_grouped("W-0589", list(details), solve=b.solve_name, details=details)
 
 
 def _two_way_one_var_arcs(d) -> "pl.DataFrame | None":
