@@ -5794,23 +5794,37 @@ def _v77_storage_inputs(db):
     methods = stored("storage_start_end_method") if _pdef_or_none(db, "node", "storage_start_end_method") else {}
     starts = stored("storage_state_start") if _pdef_or_none(db, "node", "storage_state_start") else {}
     ends = stored("storage_state_end") if _pdef_or_none(db, "node", "storage_state_end") else {}
+    scenarios = _scenario_alternatives(db)
+    inactive = _inactive_in_scenarios(db, "node", {k[0] for k in (*methods, *starts, *ends)}, scenarios)
+    return methods, starts, ends, scenarios, inactive
+
+
+def _scenario_alternatives(db) -> dict[str, list[str]]:
+    """``{scenario: [alternative, ...]}``, lowest rank first (the last one wins).  A database without scenarios is
+    read as one pseudo-scenario of all alternatives (:data:`_V77_NO_SCENARIO`)."""
     scenarios: dict[str, list[str]] = {}
     for scen in db.get_items("scenario"):
         rows = sorted(db.get_items("scenario_alternative", scenario_name=scen["name"]), key=lambda r: r["rank"])
         scenarios[scen["name"]] = [r["alternative_name"] for r in rows]
     if not scenarios:
         scenarios[_V77_NO_SCENARIO] = [a["name"] for a in db.get_items("alternative")]
-    node_class = db.get_item("entity_class", name="node")
-    by_default = bool(node_class["active_by_default"]) if node_class else True
+    return scenarios
+
+
+def _inactive_in_scenarios(db, entity_class: str, entities, scenarios) -> frozenset:
+    """``{(scenario, entity)}``: the *entities* of *entity_class* switched off in a scenario (``entity_alternative``
+    of the highest alternative that has one, else the class's ``active_by_default``)."""
+    klass = db.get_item("entity_class", name=entity_class)
+    by_default = bool(klass["active_by_default"]) if klass else True
     activity = {(ea["entity_byname"][0], ea["alternative_name"]): bool(ea["active"])
-                for ea in db.get_items("entity_alternative", entity_class_name="node")}
+                for ea in db.get_items("entity_alternative", entity_class_name=entity_class)}
     inactive = set()
     for s, alts in scenarios.items():
-        for node in {k[0] for k in (*methods, *starts, *ends)}:
-            winner = _v77_winner(alts, activity, node)
-            if not (activity[(node, winner)] if winner is not None else by_default):
-                inactive.add((s, node))
-    return methods, starts, ends, scenarios, frozenset(inactive)
+        for entity in entities:
+            winner = _v77_winner(alts, activity, entity)
+            if not (activity[(entity, winner)] if winner is not None else by_default):
+                inactive.add((s, entity))
+    return frozenset(inactive)
 
 
 def _v77_set_marker(db, change_id: str, value: str) -> None:
@@ -5859,7 +5873,14 @@ def _v77_record_storage_rewrites(db, records, undecided=None) -> None:
     """Merge *records* ``(node, alternative, old, written)`` into the marker ``storage_fix_method_rewritten``;
     *undecided* replaces its undecided list (None keeps the stored one).  Written when either list is
     non-empty."""
-    name = BEHAVIOUR_CHANGE_MARKER_PREFIX + "storage_fix_method_rewritten"
+    _merge_marker_lists(db, "storage_fix_method_rewritten", 77, "rewrites", records, undecided)
+
+
+def _merge_marker_lists(db, change_id: str, since: int, key: str, records, undecided=None) -> None:
+    """Merge *records* into the list *key* of the marker *change_id* (``{"since": since, key: [...], "undecided":
+    [...]}``); *undecided* replaces its undecided list (None keeps the stored one).  Written when either list is
+    non-empty."""
+    name = BEHAVIOUR_CHANGE_MARKER_PREFIX + change_id
     previous = [md for md in db.get_items("metadata") if md["name"] == name]
     stored: dict = {}
     if previous:
@@ -5869,15 +5890,14 @@ def _v77_record_storage_rewrites(db, records, undecided=None) -> None:
             stored = {}
         if not isinstance(stored, dict):
             stored = {}
-    rewrites = [list(r) for r in stored.get("rewrites", [])]
+    merged = [list(r) for r in stored.get(key, [])]
     for record in records:
-        if list(record) not in rewrites:
-            rewrites.append(list(record))
+        if list(record) not in merged:
+            merged.append(list(record))
     if undecided is None:
         undecided = [list(u) for u in stored.get("undecided", [])]
-    if rewrites or undecided:
-        _v77_set_marker(db, "storage_fix_method_rewritten",
-                        json.dumps({"since": 77, "rewrites": rewrites, "undecided": undecided}))
+    if merged or undecided:
+        _v77_set_marker(db, change_id, json.dumps({"since": since, key: merged, "undecided": undecided}))
 
 
 def _v77_storage_default_explicit(db) -> None:
@@ -12242,6 +12262,234 @@ def _migrate_v82_schema_batch(db) -> None:
     _v82_storage_accounting_markers(db)
     _commit_step(db, "v82: inflation_rate is social_discount_rate, inflation_offset_investment is "
                      "discount_offset_investment, inflation_offset_operations is discount_offset_operations")
+
+
+# --- Version 83 part 1: minimum_time_method (C rev 3 §6) --------------------------------------------------------
+
+#: ``startup_method`` values that give a unit online variables, in both vocabularies (part 2 renames ``binary``; a
+#: rerun of part 1 after a kill sees the new names).
+_V83_ONLINE = frozenset(("linear", "binary", "linear_fix_in_uc", "integer", "integer_fix_in_uc"))
+#: The methods that enable each time.
+_V83_ENABLES = {"min_uptime": frozenset(("min_uptime", "both")), "min_downtime": frozenset(("min_downtime", "both"))}
+#: The members of ``minimum_time_methods``, in the order part 1 appends the missing ones.
+_V83_MIN_TIME_METHODS = ("min_uptime", "min_downtime", "both", "none")
+#: The unit parameters whose parsed values decide a unit's online variables and min up/down rows.
+_V83_READ = ("startup_method", "conversion_method", "piecewise_linear_efficiency", "minimum_time_method",
+             "min_uptime", "min_downtime")
+#: The behaviour-change marker of part 1 (W-0634).
+V83_MIN_TIME_MARKER = "minimum_time_method_written"
+_V83_MEMBER_MESSAGE = ("A version 83 upgrade step changed an existing member of the value list {list} ({members}); "
+                       "the upgrade stops so that no default or value changes with it. The file was restored from "
+                       "the backup. Please report this.")
+
+
+@dataclass(frozen=True)
+class MinTimePlan:
+    """What part 1 of v83 writes.  ``writes``: ``(unit, alternative, method)``; ``undecided``: ``(unit, reason,
+    candidate scenarios, method it would have written)`` (nothing is written for such a unit)."""
+    writes: tuple = ()
+    undecided: tuple = ()
+
+
+def _append_list_members(db, name: str, members) -> None:
+    """Append the *members* missing (by parsed value) from the existing value list *name*, in the given order, at
+    1 + the largest stored index.  A stored member is never reordered or rewritten.  (The v81 step keeps its own
+    copy of this loop: ``value_list_history``'s step scan follows calls only three levels deep.)"""
+    items = db.get_items("list_value", parameter_value_list_name=name)
+    have = {x["parsed_value"] for x in items}
+    index = max((x["index"] for x in items), default=-1)
+    for member in members:
+        if member in have:
+            continue
+        index += 1
+        val, typ = to_database(member)
+        db.add_list_value(parameter_value_list_name=name, value=val, type=typ, index=index)
+        have.add(member)
+
+
+def _v83_check_members(db, name: str, before: dict, removed=frozenset()) -> None:
+    """The v83 member guard: every member of the value list *name* in *before* (:func:`_list_members`, taken before
+    the part) that the part does not remove on purpose (*removed*: database ids) is still there with the same
+    ``(list, value, type)``, and every id of *removed* is gone.  Raises :class:`FlexToolMigrationError` (before the
+    step's commit) otherwise."""
+    after = _list_members(db, [name])
+    changed = sorted(f"{lst}: {from_database(v, t)!r}" for i, (lst, v, t) in before.items()
+                     if (i in after if i in removed else after.get(i) != (lst, v, t)))
+    if changed:
+        raise FlexToolMigrationError(_V83_MEMBER_MESSAGE.format(list=name, members=", ".join(changed)))
+
+
+def _v83_is_time(value) -> bool:
+    """The engine's test for a min up/down time: ``float(v) > 0``, of any leaf of a non-scalar value."""
+    leaves = getattr(value, "values", None)
+    if leaves is not None:
+        return any(_v83_is_time(v) for v in leaves)
+    try:
+        return float(value) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _v83_method(unit: str, alternatives, table, default) -> tuple:
+    """``(resolves, method, alternative)`` of *unit*'s ``minimum_time_method`` in a scenario of *alternatives*:
+    the winning value of *table* ``{(unit, alternative): method}`` (``alternative`` where it wins), else the
+    definition *default*, which resolves only as a member other than ``none``."""
+    where = _v77_winner(alternatives, table, unit)
+    method = table[(unit, where)] if where is not None else default
+    return where is not None or method not in (None, "none"), method, where
+
+
+def _v83_unit_state(unit: str, alternatives, values, defaults) -> tuple:
+    """``(online, need, resolves, method, alternative)`` of *unit* in a scenario of *alternatives* (lowest rank
+    first) as the engine reads it before data version 83 (C rev 3 §6.2).  ``online``: it has online variables
+    (``startup_method``, else ``minimum_time_method`` promoting ``no_startup``, else a ``piecewise_linear`` curve
+    with ``auto_startup``); ``need``: the kinds with a time when online (their rows are built); ``resolves``: a
+    ``minimum_time_method`` value wins, or the default is a member other than ``none``; ``method``: the method that
+    reads; ``alternative``: where its value wins (None for the default)."""
+    def read(name):
+        winner = _v77_winner(alternatives, values.get(name, {}), unit)
+        return (values[name][(unit, winner)], winner) if winner is not None else (defaults.get(name), None)
+
+    startup = read("startup_method")[0] or "no_startup"
+    resolves, method, where = _v83_method(unit, alternatives, values.get("minimum_time_method", {}),
+                                          defaults.get("minimum_time_method"))
+    online = startup in _V83_ONLINE or startup == "no_startup" and (
+        method in ("min_uptime", "min_downtime", "both")
+        or (read("conversion_method")[0] or "constant_efficiency") == "piecewise_linear"
+        and bool(read("piecewise_linear_efficiency")[0]))
+    need = frozenset(k for k in _V83_ENABLES if online and _v83_is_time(read(k)[0]))
+    return online, need, resolves, method, where
+
+
+def _v83_unit_writes(unit, method, candidates, before, values, held, scenarios, defaults) -> tuple[dict, str | None]:
+    """C rev 3 §6.3 steps 3-5 for one unit: ``({alternative: method}, None)``, or ``({}, reason)`` when it stays
+    undecided.  *held*: the ``(unit, alternative)`` holding any value of the unit."""
+    planned: dict[str, str] = {}
+    for s in candidates:
+        target = _v77_winner(scenarios[s], values.get("startup_method", {}), unit)
+        if target is None:
+            target = _v77_winner(scenarios[s], held, unit)
+        if target is None:
+            return {}, f"no alternative of scenario {s} holds a value of the unit"
+        planned[target] = method
+    own = values.get("minimum_time_method", {})
+    for s, (online, *_rest) in before.items():
+        table = {**own, **{(unit, a): m for a, m in planned.items()}}
+        winner = _v77_winner(scenarios[s], table, unit)
+        if not online and winner in planned and planned[winner] != "none":
+            top = scenarios[s][-1]
+            if top in planned:
+                return {}, f"a value in alternative {top} would give the unit online variables in scenario {s}"
+            planned[top] = "none"
+    table = {**own, **{(unit, a): m for a, m in planned.items()}}
+    for s, (online, need, resolves, old, where) in before.items():
+        new_resolves, new, winner = _v83_method(unit, scenarios[s], table, defaults.get("minimum_time_method"))
+        new = new if new_resolves else None
+        if resolves and new != old:
+            return {}, (f"a value in alternative {winner} would replace your minimum_time_method in alternative "
+                        f"{where} in scenario {s}")
+        if s in candidates and not all(new in _V83_ENABLES[k] for k in need):
+            return {}, f"the values written would not enable its {' and '.join(sorted(need))} in scenario {s}"
+        if not online and new in ("min_uptime", "min_downtime", "both"):
+            return {}, f"a value in alternative {winner} would give the unit online variables in scenario {s}"
+    return planned, None
+
+
+def plan_minimum_time_method(units, values, scenarios, defaults, inactive=frozenset()) -> MinTimePlan:
+    """Where part 1 of v83 writes ``minimum_time_method`` so that every unit keeps its min up/down rows once the
+    engine reads the method (C rev 3 §6.3).  Pure: no database.
+
+    *units*: the unit names; *values* ``{parameter: {(unit, alternative): parsed value}}`` with every stored unit
+    parameter (those outside :data:`_V83_READ` only mark the alternatives that hold a value of the unit), the value
+    of ``piecewise_linear_efficiency`` being ``auto_startup`` of its curves; *scenarios* ``{scenario: [alternative,
+    ...]}`` lowest rank first; *defaults* ``{parameter: parsed definition default}``; *inactive* ``{(scenario,
+    unit)}`` (left out of that scenario).
+
+    A unit's candidate scenarios are those where it has rows today and no method resolves.  It gets ``both`` when
+    they need both times, else the one time, written into each candidate scenario's ``startup_method`` winner (else
+    its highest alternative holding any value of the unit), plus ``none`` into the highest alternative of a scenario
+    where the written method would win while the unit has no online variables today.  Then every scenario is
+    checked: a method that resolved is unchanged, every needed time is enabled, a unit without online variables gets
+    no enabling method.  A unit that fails any of these gets no write (undecided, the reason of the first failing
+    scenario by name)."""
+    writes, undecided = [], []
+    held: dict[str, set] = {}
+    for table in values.values():
+        for key in table:
+            held.setdefault(key[0], set()).add(key)
+    for unit in sorted(units):
+        before = {s: _v83_unit_state(unit, scenarios[s], values, defaults)
+                  for s in sorted(scenarios) if (s, unit) not in inactive}
+        candidates = [s for s, (_on, need, resolves, *_r) in before.items() if need and not resolves]
+        if not candidates:
+            continue
+        kinds = frozenset().union(*(before[s][1] for s in candidates))
+        method = "both" if len(kinds) == 2 else next(iter(kinds))
+        planned, reason = _v83_unit_writes(unit, method, candidates, before, values, held.get(unit, set()),
+                                           scenarios, defaults)
+        if reason is None:
+            writes.extend((unit, alternative, m) for alternative, m in sorted(planned.items()))
+        else:
+            undecided.append((unit, reason, tuple(candidates), method))
+    return MinTimePlan(writes=tuple(writes), undecided=tuple(undecided))
+
+
+def _v83_unit_inputs(db) -> tuple:
+    """:func:`plan_minimum_time_method` arguments read from *db* (parsed values only, C rev 3 §6.1)."""
+    from flextool.engine.input._piecewise_curve import piecewise_unit_flags
+    from flextool.input_derivation._piecewise import curves_of_value
+
+    units = sorted(e["name"] for e in db.get_items("entity", entity_class_name="unit"))
+    values: dict[str, dict] = {}
+    for pv in db.find_parameter_values(entity_class_name="unit"):
+        name = pv["parameter_definition_name"]
+        value = pv["parsed_value"] if name in _V83_READ else True
+        if name == "piecewise_linear_efficiency" and value is not None:
+            curves, problems = curves_of_value(value)
+            value = not problems and piecewise_unit_flags(points for _p, points in curves).auto_startup
+        values.setdefault(name, {})[(pv["entity_byname"][0], pv["alternative_name"])] = value
+    defaults = {}
+    for name in _V83_READ:
+        pdef = _pdef_or_none(db, "unit", name)
+        if name != "piecewise_linear_efficiency" and pdef is not None and pdef["default_value"] is not None:
+            defaults[name] = from_database(pdef["default_value"], pdef["default_type"])
+    scenarios = _scenario_alternatives(db)
+    return units, values, scenarios, defaults, _inactive_in_scenarios(db, "unit", units, scenarios)
+
+
+def _v83_minimum_time_method(db) -> None:
+    """Part 1 of v83: the engine now builds a unit's min up/down rows only when ``minimum_time_method`` enables the
+    time.  Appends the missing members of ``minimum_time_methods``, then writes the method where a unit relied on a
+    time alone (:func:`plan_minimum_time_method`, results unchanged), and records the writes and the undecided units
+    in the marker ``minimum_time_method_written`` (``{"since": 83, "writes": [[unit, alternative, method], ...],
+    "undecided": [[unit, reason, [scenario, ...]], ...]}``; writes merged, undecided replaced).  Skips a database
+    without the class, the definition or the list.  Idempotent; no commit."""
+    if (not db.get_item("entity_class", name="unit") or _pdef_or_none(db, "unit", "minimum_time_method") is None
+            or not db.get_item("parameter_value_list", name="minimum_time_methods")):
+        return
+    before = _list_members(db, ["minimum_time_methods"])
+    _append_list_members(db, "minimum_time_methods", _V83_MIN_TIME_METHODS)
+    _v83_check_members(db, "minimum_time_methods", before)  # the writes below touch no member
+    marked = any(md["name"] == BEHAVIOUR_CHANGE_MARKER_PREFIX + V83_MIN_TIME_MARKER for md in db.get_items("metadata"))
+    plan = plan_minimum_time_method(*_v83_unit_inputs(db))
+    for unit, alternative, method in plan.writes:
+        val, typ = to_database(method)
+        db.add_parameter_value(entity_class_name="unit", entity_byname=(unit,),
+                               parameter_definition_name="minimum_time_method", alternative_name=alternative,
+                               value=val, type=typ)
+    if marked and not plan.writes:
+        _already_applied(83, "minimum_time_method: already written")
+    if plan.writes:
+        print("v83: minimum_time_method written so that min_uptime / min_downtime keep applying (results unchanged):")
+        for unit, alternative, method in plan.writes:
+            print(f"  unit {unit} [{alternative}]: {method}")
+    for unit, reason, candidates, method in plan.undecided:
+        times = "min_uptime and min_downtime no longer apply" if method == "both" else f"{method} no longer applies"
+        print(f"v83: minimum_time_method not written for unit {unit}: {reason}. In scenarios "
+              f"{', '.join(candidates)} its {times} (results change). Set minimum_time_method yourself (both, "
+              "min_uptime or min_downtime) where it should apply.")
+    _merge_marker_lists(db, V83_MIN_TIME_MARKER, 83, "writes", plan.writes,
+                        [[unit, reason, list(candidates)] for unit, reason, candidates, _m in plan.undecided])
 
 
 #: The schema step of the current data version.  The template sync reruns it on the master template, so that schema
