@@ -3279,16 +3279,6 @@ class MainWindow(tk.Tk):
                 else "They stay outside the project and were not upgraded.",
                 kind="error", docs=_DOCS_MIGRATION,
             )
-        # W-0490 (TODO(v5.0.0): remove): a warning about the database, in its own box, never in the
-        # "database upgrade failed" one, whose cause it is not.
-        flagged = self.input_source_mgr.take_check_findings()
-        if flagged:
-            from flextool.gui.dialogs.database_check_dialog import show_database_check
-            from flextool.run_warnings import docs_url
-            from flextool.update_flextool.value_list_history import CODE, gui_dialog_text
-
-            show_database_check(self, gui_dialog_text(flagged), docs_url(CODE))
-
         sources = self.input_source_mgr.refresh()
 
         # Clear input sources tree

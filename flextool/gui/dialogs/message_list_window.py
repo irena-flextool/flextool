@@ -27,6 +27,7 @@ from pathlib import Path
 from tkinter import ttk
 
 from flextool.gui.dialogs._modal_base import ModalBase
+from flextool.gui.hover_tooltip import attach_tooltip
 from flextool.gui.messages import (
     STORE_NAME, GuiMessage, MessageCenter, MessageSource, Trigger, database_key, message_docs_url,
 )
@@ -113,6 +114,7 @@ class MessageListWindow(ModalBase):
         self.docs_button.grid(row=0, column=0, padx=(0, self.cw))
         self.action_button = ttk.Button(row, name="action", command=self._run_action)
         self.action_button.grid(row=0, column=1)
+        self.action_tooltip = attach_tooltip(self.action_button, "")
         self.dismiss_button = ttk.Button(row, name="dismiss", text="Dismiss", command=self.dismiss_current)
         self.dismiss_button.grid(row=0, column=3, padx=(0, self.cw))
         self.close_button = ttk.Button(row, name="close", text="Close for now", command=self.cancel)
@@ -185,6 +187,7 @@ class MessageListWindow(ModalBase):
         self.docs_button.grid()
         if msg.action is not None:
             self.action_button.configure(text=msg.action.label)
+            self.action_tooltip.text = msg.action.tooltip
             self.action_button.grid()
         else:
             self.action_button.grid_remove()
@@ -299,8 +302,6 @@ class MessageListController:
         self._waiting_since = 0.0
         if button is not None:
             button.configure(text=indicator_text(0), command=self.open_from_indicator)
-            from flextool.gui.hover_tooltip import attach_tooltip
-
             attach_tooltip(button, INDICATOR_TOOLTIP)
 
     def store_path(self) -> Path:

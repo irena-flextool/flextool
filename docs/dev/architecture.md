@@ -908,6 +908,7 @@ dialogs/_modal_base.py           ModalBase + ModalGrab: the shared modal base (d
 dialogs/message_box.py           The one FlexTool box: tell / ask / name_list (no native messagebox).
 dialogs/message_list_window.py   Non-modal message list window + MessageListController (indicator, auto-show).
 messages.py                      Tk-free message list core: specs, per-user store, MessageCenter.
+message_sources.py               The list's sources (W-0490, upgraded, unreadable, solver settings, update).
 ```
 
 ### `flextool/update_flextool/` — migration and updates

@@ -1,4 +1,4 @@
-"""The repair record ends W-0490 and the GUI's "Please check this database" box (package P7).
+"""The repair record ends W-0490 and the GUI's "Please check this database" message (package P7).
 
 Every database is a made-up copy of the schema database (``_value_list_cases.make_hit``: a defaults-only hit, the
 unit / connection / node ``invest_method`` defaults read ``cumulative_limits``, ``not_allowed`` is missing from
@@ -126,8 +126,8 @@ def test_a_record_imported_into_a_sibling_copy_does_not_end_the_warning(tmp_path
 
 
 def test_gui_check_flags_the_original_only(tmp_path, schema_db_url) -> None:
-    """The 4.6.2 GUI box reads the same filtered findings: a project with the original and its repaired copy flags
-    the original only."""
+    """The GUI's W-0490 message reads the same filtered findings: a project with the original and its repaired copy
+    flags the original only."""
     from flextool.gui.data_models import ProjectSettings
     from flextool.gui.input_sources import InputSourceManager
 
@@ -137,8 +137,7 @@ def test_gui_check_flags_the_original_only(tmp_path, schema_db_url) -> None:
     shutil.copy2(case.path, sources / "model.sqlite")
     shutil.copy2(output, sources / "model_repaired.sqlite")
     mgr = InputSourceManager(tmp_path / "project", ProjectSettings())
-    mgr.plan_db_migrations()
-    assert [(name, f) for name, f in mgr.take_check_findings()] == [("model.sqlite", HIT)]
+    assert mgr.value_list_findings() == [(sources / "model.sqlite", [HIT])]
 
 
 @pytest.mark.parametrize("text", [pytest.param(lambda: WARNINGS["W-0490"].body, id="w0490_body"),

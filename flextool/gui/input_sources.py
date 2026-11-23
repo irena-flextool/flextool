@@ -91,10 +91,9 @@ class InputSourceManager:
         # Frozen sources the user chose not to migrate this session: not asked
         # again, shown as "frozen, older version" and not runnable.
         self._frozen_declined: set[Path] = set()
-        # The sources whose W-0490 text was shown since the project was opened (TODO(v5.0.0): remove).
-        self._value_list_checked: set[Path] = set()
-        # Their W-0490 findings, shown in their own box, not with the migration messages (take_check_findings).
-        self._check_findings: list[tuple[str, Finding]] = []
+        # W-0490 findings by path, kept while the file's (size, mtime_ns) is unchanged (value_list_findings;
+        # TODO(v5.0.0): remove with W-0490).
+        self._value_list_cache: dict[Path, tuple[tuple[int, int], list[Finding]]] = {}
         # The notes of the latest plan_db_migrations (replaced at each plan; the message list reads them).
         self.planning_notes: list[PlanningNote] = []
         # SHA-256 of frozen files by (path, size, mtime), for the migrated-copy check.
@@ -594,10 +593,28 @@ class InputSourceManager:
                 )
         return result
 
-    def take_check_findings(self) -> list[tuple[str, Finding]]:
-        """The W-0490 ``(file name, finding)`` of the sources :meth:`plan_db_migrations` checked since the last
-        call (then cleared).  TODO(v5.0.0): remove with W-0490."""
-        out, self._check_findings = self._check_findings, []
+    def value_list_findings(self) -> list[tuple[Path, list[Finding]]]:
+        """W-0490: ``(path, findings)`` of every registered ``.sqlite`` source (internal and external) that
+        :func:`~flextool.update_flextool.value_list_history.possible_value_list_overwrite_ro` flags, in source
+        order.  That check is already filtered by the repair record, so a repaired file has no entry.  The result
+        of each file is cached by ``(size, mtime_ns)``: an unchanged file is not read again, a changed or swapped
+        one is.  A file that cannot be read or checked has no entry.  TODO(v5.0.0): remove with W-0490."""
+        from flextool.update_flextool import value_list_history
+
+        out: list[tuple[Path, list[Finding]]] = []
+        for path in self._registered_sqlite_paths():
+            try:  # a check of the history never stops a refresh
+                stat = path.stat()
+                stamp = (stat.st_size, stat.st_mtime_ns)
+                cached = self._value_list_cache.get(path)
+                if cached is None or cached[0] != stamp:
+                    cached = (stamp, list(value_list_history.possible_value_list_overwrite_ro(path)))
+                    self._value_list_cache[path] = cached
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("value list history of %s not checked: %s", path, exc)
+                continue
+            if cached[1]:
+                out.append((path, cached[1]))
         return out
 
     def plan_db_migrations(
@@ -650,16 +667,7 @@ class InputSourceManager:
                 continue
             candidates.append((ext_name, abs_path, True))
 
-        from flextool.update_flextool import value_list_history
-
         for name, path, external in candidates:
-            if path.resolve() not in self._value_list_checked:
-                self._value_list_checked.add(path.resolve())
-                try:  # a check of the history never stops the migration planning
-                    self._check_findings.extend(
-                        (path.name, f) for f in value_list_history.possible_value_list_overwrite_ro(path))
-                except Exception as exc:  # noqa: BLE001
-                    logger.debug("value list history of %s not checked: %s", path, exc)
             try:
                 frozen = self._frozen_needing_migration(path, target_version)
             except FrozenCheckError as exc:

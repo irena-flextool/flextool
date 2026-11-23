@@ -738,3 +738,109 @@ def test_two_databases_one_version_back_give_two_upgraded_messages(schema_db_url
     assert sorted(msg.subject_label for msg in center.messages) == ["one.sqlite", "two.sqlite"]
     for msg in center.messages:
         assert f"from data version {old} to {FLEXTOOL_DB_VERSION}" in msg.paragraphs[0]
+
+
+# -- W-0490 (M3b) ----------------------------------------------------------------------------------------------------
+def _w0490_project(tmp_path: Path, schema_db_url: str):
+    """A project with the hit file ``model.sqlite`` (``make_hit``: the session 21 → 22 of 2024-09-19) and its
+    repaired copy ``model_repaired.sqlite`` (P5's writer: every suspect answered ``set:not_allowed``, so it holds a
+    valid record), as ``test_value_list_repair_warning._repaired`` builds them."""
+    import shutil
+
+    from flextool.gui.data_models import ProjectSettings
+    from flextool.gui.input_sources import InputSourceManager
+    from flextool.update_flextool import value_list_answers as va
+    from flextool.update_flextool import value_list_repair as vr
+    from flextool.update_flextool import value_list_write as vw
+    from tests.update_flextool._value_list_cases import make_hit
+
+    case = make_hit(tmp_path, schema_db_url)
+    output = tmp_path / "out" / "hit_repaired.sqlite"
+    output.parent.mkdir()
+    a = vr.analyse(vr.snapshot(case.path, output.parent, name=output.name))
+    found = vr.all_suspects(a)
+    plan = va.make_plan(a, found, {s.item: va.Answer(va.SET, "not_allowed") for s in found})
+    assert vw.write_copy(a, plan, output, source=case.path).part_a_record
+    sources = tmp_path / "P" / "input_sources"
+    sources.mkdir(parents=True)
+    shutil.copy2(case.path, sources / "model.sqlite")
+    shutil.copy2(output, sources / "model_repaired.sqlite")
+    return InputSourceManager(tmp_path / "P", ProjectSettings()), sources
+
+
+def test_w0490_message_for_the_original_only(schema_db_url, tmp_path):
+    """The hit file gives one non-dismissable W-0490 message, upgraded on 19.9.2024 (``HIT_DATE``); its repaired
+    copy, which holds a valid record, gives none.  The button copies exactly ``repair_command(path)``."""
+    from flextool.cli.cmd_repair_value_list import repair_command
+
+    mgr, sources = _w0490_project(tmp_path, schema_db_url)
+    copied: list[str] = []
+    center = _center(tmp_path / "s.json", ms.value_list_source(mgr.value_list_findings, copied.append))
+    assert center.recompute("project_open") is not None, "an attention message opens the list"
+    (msg,) = center.messages
+    assert (msg.spec, msg.subject_key, msg.subject_label) == (W0490, database_key(sources / "model.sqlite"),
+                                                              "model.sqlite")
+    assert msg.title == "Please check this database"
+    assert "upgraded on 19.9.2024," in msg.paragraphs[0]
+    _check_style(msg)
+    with pytest.raises(ValueError):
+        center.dismiss(msg)
+    assert msg.action is not None and msg.action.label == "Copy repair command"
+    assert msg.action.run() == "Copied"
+    assert copied == [repair_command(sources / "model.sqlite")]
+    assert msg.action.tooltip == ms.repair_tooltip()
+    assert (ms.repair_tooltip("nt"), ms.repair_tooltip("posix")) == ("Paste into Command Prompt",
+                                                                    "Paste into a terminal")
+
+
+def test_w0490_check_is_cached_by_size_and_mtime(schema_db_url, tmp_path, monkeypatch):
+    """An unchanged file is read once; a touched file is read again; the repaired copy swapped into the original's
+    place ends the message at the next recompute (not only at the next project open)."""
+    import shutil
+
+    from flextool.update_flextool import value_list_history as vlh
+
+    mgr, sources = _w0490_project(tmp_path, schema_db_url)
+    real, reads = vlh.possible_value_list_overwrite_ro, []
+
+    def counting(path):
+        reads.append(Path(path).name)
+        return real(path)
+
+    monkeypatch.setattr(vlh, "possible_value_list_overwrite_ro", counting)
+    center = _center(tmp_path / "s.json", ms.value_list_source(mgr.value_list_findings, lambda _t: None))
+    center.recompute("project_open")
+    center.recompute("refresh")
+    assert sorted(reads) == ["model.sqlite", "model_repaired.sqlite"], "the second recompute reads nothing"
+    original = sources / "model.sqlite"
+    stat = original.stat()
+    os.utime(original, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+    center.recompute("refresh")
+    assert sorted(reads) == ["model.sqlite", "model.sqlite", "model_repaired.sqlite"]
+    assert len(center.messages) == 1
+    shutil.copyfile(sources / "model_repaired.sqlite", original)
+    center.recompute("refresh")
+    assert center.messages == ()
+
+
+def test_w0490_unreadable_file_gives_no_message(tmp_path, monkeypatch):
+    """A damaged file and a check that raises: no crash and no message (the 4.6.2 behaviour)."""
+    from flextool.gui.data_models import ProjectSettings
+    from flextool.gui.input_sources import InputSourceManager
+    from flextool.update_flextool import value_list_history as vlh
+
+    sources = tmp_path / "P" / "input_sources"
+    sources.mkdir(parents=True)
+    (sources / "broken.sqlite").write_bytes(b"not a database")
+    mgr = InputSourceManager(tmp_path / "P", ProjectSettings())
+    center = _center(tmp_path / "s.json", ms.value_list_source(mgr.value_list_findings, lambda _t: None))
+    center.recompute("project_open")
+    assert center.messages == ()
+
+    def boom(path):
+        raise OverflowError("implausible data")
+
+    monkeypatch.setattr(vlh, "possible_value_list_overwrite_ro", boom)
+    (sources / "broken.sqlite").write_bytes(b"still not a database")
+    center.recompute("refresh")
+    assert center.messages == ()

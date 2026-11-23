@@ -14,6 +14,10 @@
   message is waiting. **Close for now** brings the messages back the next time the project is opened; **Dismiss**
   removes a message for good. A message that only reports something opens the list by itself at most twice. The
   list shows:
+  - "Please check this database" for each database that W-0490 names (this replaces the 4.6.2 box). It opens the
+    list at every project open, has no Dismiss, and ends only when a repaired copy is in its place. Its **Copy
+    repair command** button copies the `flextool-repair-value-list` command for that database, to paste into a
+    terminal;
   - one "This database was upgraded" message for each database FlexTool upgraded (this replaces the "Database
     upgrades" box), with the data versions before and after;
   - "FlexTool cannot read this database file" while an external database's version or a database's frozen marker
@@ -32,7 +36,7 @@
   unaffected database keeps fixed it asks, with no recommended answer, whether to fix the start. Answers can be
   given at the prompt or in a CSV file (`--dry-run --write-answers`, then `--answers`); an older copy of the
   database can serve as evidence (`--archive`). When every item has an answer, the copy records the repair, and
-  W-0490 and the GUI's "Please check this database" box end for it. See "Repairing a value list (W-0490)" in
+  W-0490 and the GUI's "Please check this database" message end for it. See "Repairing a value list (W-0490)" in
   the terminal workflow documentation.
 
 ### Fixes

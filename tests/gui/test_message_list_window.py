@@ -247,13 +247,14 @@ def test_action_runs_shows_its_note_and_is_hidden_without_one(host, tmp_path, mo
         runs.append(1)
         return "Copied"
     a, b = _db(tmp_path, "a.sqlite"), _db(tmp_path, "b.sqlite")
-    center = MessageCenter(tmp_path / "s.json", [lambda _s: [_check(a, action=MessageAction("Copy repair command",
-                                                                                           run)), _check(b, "b")]])
+    action = MessageAction("Copy repair command", run, tooltip="Paste into a terminal")
+    center = MessageCenter(tmp_path / "s.json", [lambda _s: [_check(a, action=action), _check(b, "b")]])
     center.recompute("project_open")
     window = MessageListWindow(host, center)
     try:
         pump(window, lambda: bool(window.winfo_viewable()))
         assert _text(window, "buttons.action") == "Copy repair command"
+        assert window.action_tooltip.text == "Paste into a terminal"
         _w(window, "buttons.action").invoke()
         assert runs == [1] and _text(window, "buttons.action") == "Copied" and not window.closed
         pump(window, lambda: _text(window, "buttons.action") == "Copy repair command", timeout=2)

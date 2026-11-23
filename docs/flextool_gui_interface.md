@@ -44,6 +44,28 @@ Each project lives in `projects/<name>/` and owns its own input sources, executi
 
 F2 or double-click on the drop-down renames the current project. The most recently used project is reopened on the next launch.
 
+## Messages
+
+The **Messages** button at the top right opens the list of FlexTool's notices about the open project, its databases and this installation. The button shows how many messages there are, and it is highlighted while a message needs your attention or is new. The list shows one message at a time: **Previous** and **Next** page through them, and **Open documentation** opens the page that explains the message.
+
+When you open a project or press **Refresh**, the list opens by itself if a message is waiting that you have not seen yet. It also opens by itself when a database that needs checking is added. Otherwise only the button changes, so the list never pops up over a run.
+
+- **Close for now** (or Escape) closes the list. The messages come back the next time you open the project or start FlexTool.
+- **Dismiss** removes a message for good. Only messages that report something have it, such as "This database was upgraded" or "A newer FlexTool is available".
+- A message without **Dismiss** stays as long as its cause does, and says in its text what ends it.
+
+A message that only reports something opens the list by itself at the first two project opens; after that it waits in the list until you dismiss it. A message that needs your attention ("Please check this database", "FlexTool cannot read this database file") opens the list at every project open.
+
+The list can show:
+
+- **Please check this database**: the database may have been changed by a library bug when it was upgraded ([W-0490](reference/warnings.md#w-0490)). It has no **Dismiss**: it ends only when a repaired copy is in the database's place. **Copy repair command** copies the command that repairs this database; paste it into a terminal (Command Prompt on Windows) and follow [Repairing a value list (W-0490)](terminal_workflow.md#repairing-a-value-list-w-0490). The repair tool writes a repaired copy and never changes the database itself. On Linux, paste the command before you close FlexTool: the copied text is lost when FlexTool exits.
+- **FlexTool cannot read this database file**: the data version or the frozen marker of a database could not be read. It goes away once FlexTool can read the file.
+- **This database was upgraded** (one per database): FlexTool upgraded it to the current data version (see [Migration and frozen databases](#migration-and-frozen-databases)).
+- **This project's solver settings were updated**: see [Solver options → On this computer](#solver-options-on-this-computer).
+- **A newer FlexTool is available**: see [Update notifications](install_gui.md#update-notifications).
+
+Dismissals are kept per user in `gui_messages.json` in FlexTool's user settings folder (`~/.config/flextool/` on Linux, `%LOCALAPPDATA%\flextool\` on Windows, `~/Library/Application Support/flextool/` on macOS), never in a database. A database is known by its full path, so a copy of a database starts with no dismissals. To bring back every dismissed message, close FlexTool and delete that file.
+
 ## Input sources
 
 The **Input sources** panel lists every `.sqlite` and `.xlsx` file in the project's `input_sources/` directory plus any registered external references. Each input source contributes one or more scenarios.
@@ -62,7 +84,7 @@ Right-click a row for the same actions as the buttons. Column headers sort the l
 
 ### Migration and frozen databases
 
-When the list is refreshed, a `.sqlite` source older than this FlexTool (or at the current version but with an older SpineDB schema, e.g. after a `spinedb_api` update) is migrated to the current version: a source in `input_sources/` without asking (a safety copy, `<source>.premigration.bak`, is kept until the migration has finished and put back if it fails, so the source is either migrated or as it was; see [Migrate database schema](terminal_workflow.md#migrate-database-schema)), an external reference after asking whether to migrate it in place or copy it into the project first. Checking the version reads the file read-only, so nothing in the file changes before you agree. Adding scenarios to the execution list, or opening **Calibrate investments**, checks their sources again and migrates any that changed since the last refresh; FlexTool does not run a database that is not at the current version.
+When the list is refreshed, a `.sqlite` source older than this FlexTool (or at the current version but with an older SpineDB schema, e.g. after a `spinedb_api` update) is migrated to the current version: a source in `input_sources/` without asking (a safety copy, `<source>.premigration.bak`, is kept until the migration has finished and put back if it fails, so the source is either migrated or as it was; see [Migrate database schema](terminal_workflow.md#migrate-database-schema)), an external reference after asking whether to migrate it in place or copy it into the project first. Checking the version reads the file read-only, so nothing in the file changes before you agree. Adding scenarios to the execution list, or opening **Calibrate investments**, checks their sources again and migrates any that changed since the last refresh; FlexTool does not run a database that is not at the current version. After an upgrade, the [message list](#messages) has a "This database was upgraded" message for each upgraded database, with its data versions before and after; an upgrade that failed gets a box at once.
 
 A released model can be **frozen** so that it is never migrated in place without asking: right-click a `.sqlite` source → **Freeze database…** and give a label, e.g. `Reference case 1.0` (at most 170 characters). Only a database at the current version can be frozen. A frozen source shows ❄ in the status column; the tooltip shows the label, the version and the date it was frozen. **Unfreeze database** removes the marker. The same can be done in a terminal with `flextool-freeze` (see [Freeze a released database](terminal_workflow.md#freeze-a-released-database)).
 

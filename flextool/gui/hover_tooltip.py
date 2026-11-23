@@ -28,8 +28,21 @@ class HoverTooltip:
         widget.bind("<Enter>", self._on_enter, add="+")
         widget.bind("<Leave>", self._on_leave, add="+")
 
+    @property
+    def text(self) -> str:
+        return self._text
+
+    @text.setter
+    def text(self, value: str) -> None:
+        """Change the text (shown from the next hover on); an empty text shows no tooltip."""
+        self._text = value
+        self._cancel()
+        self._hide()
+
     def _on_enter(self, event: tk.Event) -> None:  # type: ignore[type-arg]
         self._cancel()
+        if not self._text:
+            return
         self._after_id = self._widget.after(self._DELAY_MS, self._show)
 
     def _on_leave(self, event: tk.Event) -> None:  # type: ignore[type-arg]

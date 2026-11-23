@@ -3,6 +3,10 @@
 Each source is a ``source(store) -> list[GuiMessage]`` (:data:`flextool.gui.messages.MessageSource`) that builds
 its messages, texts included, from current facts at every recompute.  No Tk here.
 
+- ``value_list_check`` (W-0490, package M3b): one message per input-source database that
+  ``possible_value_list_overwrite_ro`` flags (:meth:`~flextool.gui.input_sources.InputSourceManager.value_list_findings`),
+  with a "Copy repair command" button.  Not dismissable: a valid repair record (the repair tool) ends the finding,
+  and with it the message.  TODO(v5.0.0): remove with W-0490.
 - ``database_upgraded``: one message per database with a pending upgrade event (posted by :func:`post_upgrades`
   after a migration run), for the databases that are input sources of the open project.
 - ``database_unreadable``: one message per :class:`~flextool.gui.input_sources.PlanningNote` of the latest
@@ -19,10 +23,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from flextool.cli.cmd_repair_value_list import repair_command
 from flextool.gui.messages import (
     MESSAGE_SPECS,
     USER_KEY,
     GuiMessage,
+    MessageAction,
     MessageCenter,
     MessageSource,
     MessageStore,
@@ -32,7 +38,9 @@ from flextool.gui.messages import (
 
 if TYPE_CHECKING:
     from flextool.gui.input_sources import PlanningNote
+    from flextool.update_flextool.value_list_history import Finding
 
+_VALUE_LIST = MESSAGE_SPECS["value_list_check"]
 _UPGRADED = MESSAGE_SPECS["database_upgraded"]
 _UNREADABLE = MESSAGE_SPECS["database_unreadable"]
 _SOLVER = MESSAGE_SPECS["solver_defaults_updated"]
@@ -128,6 +136,15 @@ def unreadable_text(note: PlanningNote) -> tuple[str, tuple[str, ...]]:
         _GONE_WHEN_READABLE)
 
 
+REPAIR_LABEL = "Copy repair command"
+REPAIR_COPIED = "Copied"
+
+
+def repair_tooltip(os_name: str = os.name) -> str:
+    """Where to paste the copied repair command: cmd quoting on Windows (``repair_command``'s default)."""
+    return "Paste into Command Prompt" if os_name == "nt" else "Paste into a terminal"
+
+
 SOLVER_DEFAULTS_TITLE = "This project's solver settings were updated"
 
 
@@ -139,6 +156,31 @@ def update_text(offered: str, installed: str) -> tuple[str, tuple[str, ...]]:
 
 
 # -- sources ---------------------------------------------------------------------------------------------------------
+def copy_repair_action(path: Path, clipboard: Callable[[str], None]) -> MessageAction:
+    """The "Copy repair command" button: puts ``repair_command(path)`` (the repair tool's one command builder,
+    default shell) on the clipboard; the button then reads "Copied" for a moment.  The GUI never runs the tool."""
+    def run() -> str:
+        clipboard(repair_command(path))
+        return REPAIR_COPIED
+    return MessageAction(REPAIR_LABEL, run, tooltip=repair_tooltip())
+
+
+def value_list_source(findings: Callable[[], Iterable[tuple[Path, list[Finding]]]],
+                      clipboard: Callable[[str], None]) -> MessageSource:
+    """``value_list_check`` (W-0490) messages, one per database in *findings()* (``value_list_findings``: the
+    flagged input sources of the open project).  TODO(v5.0.0): remove with W-0490."""
+    def source(_store: MessageStore) -> list[GuiMessage]:
+        from flextool.update_flextool.value_list_history import gui_message
+
+        out = []
+        for path, found in findings():
+            title, paragraphs = gui_message(found)
+            out.append(GuiMessage(_VALUE_LIST, database_key(path), Path(path).name, title, paragraphs,
+                                  action=copy_repair_action(path, clipboard)))
+        return out
+    return source
+
+
 def upgraded_source(database_keys: Callable[[], Iterable[str]]) -> MessageSource:
     """``database_upgraded`` messages of the pending events of the databases in *database_keys()* (the input
     sources of the open project)."""
@@ -218,7 +260,16 @@ def project_sources(main: Any, project_dir: Path, project_name: str) -> list[Mes
         m = mgr()
         return list(getattr(m, "planning_notes", [])) if m is not None else []
 
+    def value_list_findings() -> list[tuple[Path, list[Finding]]]:
+        m = mgr()
+        return m.value_list_findings() if m is not None else []
+
+    def clipboard(text: str) -> None:
+        main.clipboard_clear()
+        main.clipboard_append(text)
+
     return [
+        value_list_source(value_list_findings, clipboard),
         unreadable_source(notes),
         upgraded_source(database_keys),
         solver_defaults_source(project_dir, project_name),

@@ -82,9 +82,11 @@ class MessageSpec:
 
 @dataclass(frozen=True)
 class MessageAction:
-    """One extra button of a message; the window calls ``run`` and stays open."""
+    """One extra button of a message; the window calls ``run`` and stays open.  A text that ``run`` returns
+    ("Copied") shows on the button for 2 s; *tooltip* is the button's hover text ("" for none)."""
     label: str
-    run: Callable[[], None]
+    run: Callable[[], str | None]
+    tooltip: str = ""
 
 
 @dataclass(frozen=True)

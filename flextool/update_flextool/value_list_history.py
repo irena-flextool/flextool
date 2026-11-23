@@ -14,8 +14,8 @@ a database and never looks at the values (design: ``specs/two_stage_fix_D_invest
 Only SQLite files are checked: a database on a server (not a ``sqlite:///`` URL) is never checked.
 
 TODO(v5.0.0): remove this module, W-0490 (``run_warnings/_input_specs.py``), its call sites
-(``engine/solve/_orchestration.py``, ``gui/input_sources.py``, ``gui/main_window.py``,
-``gui/dialogs/database_check_dialog.py``), the repair tool ``flextool-repair-value-list``
+(``engine/solve/_orchestration.py``, ``gui/input_sources.py`` ``value_list_findings``, the
+``value_list_check`` message in ``gui/messages.py`` and ``gui/message_sources.py``), the repair tool ``flextool-repair-value-list``
 (``update_flextool/value_list_repair.py``, ``value_list_suspects.py``, ``value_list_archive.py``,
 ``value_list_answers.py``, ``value_list_write.py``,
 ``cli/cmd_repair_value_list.py``) and
@@ -120,9 +120,9 @@ def _version_commits(path: Path) -> tuple[list[tuple[int, str, int, int]], list[
 
 
 def possible_value_list_overwrite_ro(path: str | Path) -> list[Finding]:
-    """The findings of W-0490 and of the GUI's "Please check this database" box: :func:`session_findings_ro` without
-    the findings a valid repair record ends (:func:`record_ends`; any error while reading the record keeps the
-    finding)."""
+    """The findings of W-0490 and of the GUI's "Please check this database" message: :func:`session_findings_ro`
+    without the findings a valid repair record ends (:func:`record_ends`; any error while reading the record keeps
+    the finding)."""
     findings = session_findings_ro(path)
     kept = []
     for f in findings:
@@ -183,39 +183,28 @@ def _dmy(date: str) -> str:
     return f"{int(day)}.{int(month)}.{year}"
 
 
-def gui_dialog_text(flagged: list[tuple[str, Finding]]) -> str:
-    """The text of the GUI's W-0490 box (one box for every flagged file): short and plain; the technical detail is
-    on the registry page (``docs_url(CODE)``), which the box's "Open checklist" button opens.
+#: The title of the GUI's W-0490 message (the message list, ``gui/message_sources.py``).
+GUI_TITLE = "Please check this database"
 
-    *flagged* is ``(file name, finding)``, as :meth:`InputSourceManager.take_check_findings` gives it."""
-    invest: dict[str, list[str]] = {}
-    other: dict[str, list[str]] = {}
-    for name, f in flagged:
-        target = invest if "invest_methods" in f.lists else other
-        dates = target.setdefault(name, [])
+
+def gui_message(findings: list[Finding]) -> tuple[str, tuple[str, ...]]:
+    """Title and paragraphs of the GUI's W-0490 message for one database (*findings*: its findings, as
+    :func:`possible_value_list_overwrite_ro` gives them).  Short and plain; the technical detail is on the registry
+    page (``docs_url(CODE)``), which the message's "Open documentation" button opens.  Only step 22
+    (``invest_methods``) can be flagged, so the text names that list's effect.  The subject line of the message
+    names the file."""
+    dates: list[str] = []
+    for f in findings:
         if _dmy(f.date) not in dates:
             dates.append(_dmy(f.date))
-
-    def section(files: dict[str, list[str]], what: str, effect: str) -> list[str]:
-        if not files:
-            return []
-        if len(files) == 1:
-            (name, dates), = files.items()
-            return [f"{name} may contain wrong {what}.",
-                    f"When it was upgraded on {' and '.join(dates)}, a bug in a library FlexTool uses {effect}"]
-        lines = "\n".join(f"  {name} (upgraded on {' and '.join(dates)})" for name, dates in files.items())
-        return [f"These databases may contain wrong {what}:\n{lines}",
-                f"When they were upgraded, a bug in a library FlexTool uses {effect}"]
-
-    paragraphs = section(invest, "investment settings",
-                         "may have changed 'not_allowed' into 'cumulative_limits'. Units, connections or nodes that "
-                         "should not invest could then invest without limit.")
-    lists = sorted({name for _, f in flagged if "invest_methods" not in f.lists for name in f.lists})
-    paragraphs += section(other, "settings in the value list " + ", ".join(f"'{n}'" for n in lists),
-                          "may have replaced the first choice in that list with another one.")
-    paragraphs.append("The documentation has a short checklist for fixing this with FlexTool's repair tool, "
-                      "which writes a repaired copy and leaves this file as it is.")
-    return "\n\n".join(paragraphs)
+    return GUI_TITLE, (
+        f"When this database was upgraded on {' and '.join(dates)}, a bug in a library that FlexTool uses may have "
+        "changed 'not_allowed' into 'cumulative_limits'. Units, connections or nodes that should not invest could "
+        "then invest without limit.",
+        "FlexTool's repair tool writes a repaired copy and leaves this file as it is: the Copy repair command "
+        "button copies the command to paste into a terminal, and the documentation shows how to swap the copy in.",
+        "This message stays until a repaired file is in its place.",
+    )
 
 
 @dataclass(frozen=True)
