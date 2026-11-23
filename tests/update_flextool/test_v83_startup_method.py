@@ -30,15 +30,15 @@ NEW = {
         "[choice] Whether the unit has online variables. linear: any share of the capacity can be online. integer: "
         "whole units only (a MIP, slower to solve); several units of one entity are counted as whole units. "
         "linear_fix_in_uc and integer_fix_in_uc: the same, and in a separate realization solve (a rolling "
-        "separate_dispatch solve, or a single solve with a realized: yes branch) the units online over the jump are "
-        "kept at what the stochastic (unit commitment) solve chose; without _fix_in_uc the realization decides them "
+        "separate_dispatch solve, or a single solve with a realized: yes branch) the units online over the jump (the "
+        "realized periods) are kept at what the stochastic (unit commitment) solve chose; without _fix_in_uc the realization decides them "
         "again with the realized data. Elsewhere, including a rolling within_solve solve, a member and its "
         "_fix_in_uc variant are the same. Online status links to the previous time step; that link stops at a gap "
         "in the timeline.",
     ("connection", "startup_method"):
         "[choice] Gives the connection online capacity in both directions (linear: any share; integer: whole units, "
         "a MIP; linear_fix_in_uc and integer_fix_in_uc: the same, and in a separate realization solve the online "
-        "capacity over the jump is kept at what the stochastic solve chose). Flows and reserves are limited by the "
+        "capacity over the jump (the realized periods) is kept at what the stochastic solve chose). Flows and reserves are limited by the "
         "online capacity, and startup_cost is paid per MW brought online. No minimum load or minimum up/down time. "
         "Not allowed for dc_power_flow_with_angles lines.",
     ("unit", "constraint_online_coeff"):
@@ -174,7 +174,7 @@ def test_binary_values_and_members(schema_db_url: str, tmp_path: Path, capsys: p
         assert _values(db) == AFTER
         assert (_default(db, "unit"), _default(db, "connection")) == ("no_startup", "no_startup")
     printed = capsys.readouterr().out
-    assert "v83: startup_method binary is now integer_fix_in_uc" in printed
+    assert "v83: the startup_methods member binary is now integer_fix_in_uc" in printed
     # one line per binary value: u1 base, u1 alt, u3 alt, u4 alt (plain string), c base, u2 my_method alt
     assert len([line for line in printed.splitlines() if line.endswith("= binary (startup_method)")
                 or line.endswith("= binary (my_method)")]) == 6
@@ -281,3 +281,37 @@ def test_binary_removal_passes_the_guard(schema_db_url: str, tmp_path: Path,
         m._v83_startup_method(db)
         assert _members(db) == MEMBERS
     assert calls == [set(), {b'"binary"'}]
+
+
+def _binary_default(url: str) -> None:
+    with DatabaseMapping(url) as db:
+        pdef = db.get_item("parameter_definition", entity_class_name="unit", name="startup_method")
+        raw, typ = to_database("binary")
+        db.update_item("parameter_definition", id=pdef["id"], default_value=raw, default_type=typ)
+        db.commit_session("binary default")
+
+
+def test_leftover_default_reference_stops_the_removal(schema_db_url: str, tmp_path: Path,
+                                                      monkeypatch: pytest.MonkeyPatch) -> None:
+    """A binary default left in place (the detach skipped) would read as linear_fix_in_uc after the commit, which
+    takes the freed id: the part raises before the removal instead."""
+    url = _copy(schema_db_url, tmp_path)
+    _binary_default(url)
+    monkeypatch.setattr(m, "_detach_list_defaults", lambda db, name, renames: [])
+    with DatabaseMapping(url) as db:
+        with pytest.raises(m.FlexToolMigrationError,
+                           match=r"remove the member\(s\) 'binary' of the value list startup_methods while still "
+                                 r"in use \(unit\.startup_method default\)"):
+            m._v83_startup_method(db)
+        assert "binary" in _members(db)
+
+
+def test_leftover_value_reference_stops_the_removal(schema_db_url: str, tmp_path: Path) -> None:
+    """A binary value the rewrite missed (the write skipped) stops the part before the removal."""
+    url = _copy(schema_db_url, tmp_path)
+    _seed(url)
+    with DatabaseMapping(url) as db:
+        db.update_parameter_value = lambda **kwargs: None
+        with pytest.raises(m.FlexToolMigrationError, match=r"unit u1 \[base\] = binary \(startup_method\)"):
+            m._v83_startup_method(db)
+        assert "binary" in _members(db)

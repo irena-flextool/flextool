@@ -12590,19 +12590,19 @@ def _v83_startup_texts() -> dict[tuple[str, str], tuple[str, str]]:
             "integer: whole units only (a MIP, slower to solve); several units of one entity are counted as whole "
             "units. linear_fix_in_uc and integer_fix_in_uc: the same, and in a separate realization solve (a "
             "rolling separate_dispatch solve, or a single solve with a realized: yes branch) the units online over "
-            "the jump are kept at what the stochastic (unit commitment) solve chose; without _fix_in_uc the "
-            "realization decides them again with the realized data. Elsewhere, including a rolling within_solve "
-            "solve, a member and its _fix_in_uc variant are the same. Online status links to the previous time "
-            "step; that link stops at a gap in the timeline."),
+            "the jump (the realized periods) are kept at what the stochastic (unit commitment) solve chose; without "
+            "_fix_in_uc the realization decides them again with the realized data. Elsewhere, including a rolling "
+            "within_solve solve, a member and its _fix_in_uc variant are the same. Online status links to the "
+            "previous time step; that link stops at a gap in the timeline."),
         ("connection", "startup_method"): (
             "[choice] Gives the connection online capacity in both directions. Flows and reserves are limited by the "
             "online capacity, and startup_cost is paid per MW brought online. No minimum load or minimum up/down "
             "time. Not allowed for dc_power_flow_with_angles lines.",
             "[choice] Gives the connection online capacity in both directions (linear: any share; integer: whole "
             "units, a MIP; linear_fix_in_uc and integer_fix_in_uc: the same, and in a separate realization solve "
-            "the online capacity over the jump is kept at what the stochastic solve chose). Flows and reserves are "
-            "limited by the online capacity, and startup_cost is paid per MW brought online. No minimum load or "
-            "minimum up/down time. Not allowed for dc_power_flow_with_angles lines."),
+            "the online capacity over the jump (the realized periods) is kept at what the stochastic solve chose). "
+            "Flows and reserves are limited by the online capacity, and startup_cost is paid per MW brought online. "
+            "No minimum load or minimum up/down time. Not allowed for dc_power_flow_with_angles lines."),
         ("unit__inputNode", "startup_input_method"): (startup_input, startup_input.replace(*_V83_ONLINE_NEED)),
         ("solve", "reduce_unit_detail_method"): (reduce_detail, reduce_detail.replace(
             "integers: binary startup_method is solved as continuous",
@@ -12630,16 +12630,44 @@ def _replace_text_pairs(db, texts: dict[tuple[str, str], tuple[str, str]]) -> No
                               {k: new for k, (_old, new) in texts.items()})
 
 
+def _v83_check_no_references(db, list_name: str, removing: dict) -> None:
+    """Before members of the value list *list_name* are removed (*removing*: ``{mapped id: parsed value}``), check that
+    nothing still refers to them: no default of any definition and no value of a definition on the list holds a
+    reference to one, or (a plain string) its value.  At the commit a removed member's id is reused by a member added
+    in the same session, so a reference left to it would silently read as that member.  Raises
+    :class:`FlexToolMigrationError` (before the step's commit) otherwise."""
+    names = set(removing.values())
+    left = []
+    for pdef in db.get_items("parameter_definition"):
+        on_list = pdef["parameter_value_list_name"] == list_name
+        if pdef["list_value_id"] in removing or (on_list and pdef["parsed_value"] in names):
+            left.append(f"{pdef['entity_class_name']}.{pdef['name']} default")
+        if not on_list:
+            continue
+        for pv in db.find_parameter_values(entity_class_name=pdef["entity_class_name"],
+                                           parameter_definition_name=pdef["name"]):
+            if pv["list_value_id"] in removing or (isinstance(pv["parsed_value"], str) and pv["parsed_value"] in names):
+                left.append(f"{_describe_pv(pv)} ({pdef['name']})")
+    if left:
+        raise FlexToolMigrationError(
+            f"A version 83 upgrade step would remove the member(s) {', '.join(sorted(map(repr, names)))} of the value "
+            f"list {list_name} while still in use ({'; '.join(left)}); the upgrade stops so that no default or value "
+            "changes with it. The file was restored from the backup. Please report this.")
+
+
 def _v83_startup_method(db) -> None:
     """Part 2 of v83: ``startup_methods`` becomes no_startup, linear, linear_fix_in_uc, integer, integer_fix_in_uc.
 
     Appends the missing new members, rewrites every value ``binary`` of every definition on the list (every class
     and alternative; a list reference or a plain string) and a ``binary`` default to ``integer_fix_in_uc`` (the
-    same model), then removes the ``binary`` member (after the rewrites: a removed member leaves a reference that
-    reads as nothing), and replaces the six descriptions that name the members (:func:`_v83_startup_texts`, by text
-    alone).  ``linear`` is untouched.  Skips a database without the list.  Idempotent; no commit."""
+    same model), then removes the ``binary`` member (after the rewrites, checked by
+    :func:`_v83_check_no_references`: at the commit a removed member's id is reused by a member added in the same
+    session, so a reference left to it would read as that member), and replaces the six descriptions that name the
+    members (:func:`_v83_startup_texts`, by text alone).  ``linear`` is untouched.  Without the list, only the
+    descriptions are replaced.  Idempotent; no commit."""
     if db.get_item("parameter_value_list", name="startup_methods"):
         before = _list_members(db, ["startup_methods"])
+        planned = {i for i, (_lst, v, t) in before.items() if from_database(v, t) in _V83_STARTUP_RENAMES}
         _append_list_members(db, "startup_methods", _V83_STARTUP_METHODS)
         _v83_check_members(db, "startup_methods", before)  # a changed member would fail the by-value writes first
         rewritten = []
@@ -12654,17 +12682,18 @@ def _v83_startup_method(db) -> None:
                     val, typ = to_database(new)
                     db.update_parameter_value(id=pv["id"], value=val, type=typ)
         if rewritten:
-            print("v83: startup_method binary is now integer_fix_in_uc (the same model) for:")
+            print("v83: the startup_methods member binary is now integer_fix_in_uc (the same model) for:")
             for line in rewritten:
                 print("  " + line)
         pending = _detach_list_defaults(db, "startup_methods", _V83_STARTUP_RENAMES)
-        removed = set()
-        for lv in db.get_items("list_value", parameter_value_list_name="startup_methods"):
-            if lv["parsed_value"] in _V83_STARTUP_RENAMES:
-                removed.add(getattr(lv["id"], "db_id", lv["id"]))
-                db.remove_item("list_value", lv["id"])
+        removing = {lv["id"]: lv["parsed_value"]
+                    for lv in db.get_items("list_value", parameter_value_list_name="startup_methods")
+                    if getattr(lv["id"], "db_id", lv["id"]) in planned}
+        _v83_check_no_references(db, "startup_methods", removing)
+        for lv_id in removing:
+            db.remove_item("list_value", lv_id)
         _attach_list_defaults(db, pending)
-        _v83_check_members(db, "startup_methods", before, removed=removed)
+        _v83_check_members(db, "startup_methods", before, removed=planned)
     _replace_text_pairs(db, _v83_startup_texts())
 
 
