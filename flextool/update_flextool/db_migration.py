@@ -12620,6 +12620,123 @@ def _v83_startup_method(db) -> None:
                               {k: new for k, (_old, new) in texts.items()})
 
 
+#: Part 5 of v83: the member appended to ``dispatch_realization_methods`` (the new shipped default) and the method
+#: written on the stochastic solves that relied on the default.
+_V83_DETERMINISTIC = "deterministic"
+_V83_WITHIN_SOLVE = "within_solve"
+
+
+def _v83_dispatch_realization_texts() -> dict[tuple[str, str], tuple[str, str]]:
+    """``{(class, name): (old, new)}``: the ``dispatch_realization_method`` description as every database at 82 has
+    it unless the user edited it, and its v83 text (part 5 of v83, :func:`_replace_superseded_texts`)."""
+    return {("solve", "dispatch_realization_method"): (
+        "[choice] How the committed part of a stochastic solve is realized. within_solve (default): a realized: yes "
+        "branch gets a realization solve automatically. separate_dispatch: always runs a separate realized dispatch "
+        "solve; needs a realized: yes branch (error otherwise).",
+        "[choice] How a solve with stochastic_branches is solved. deterministic (default): the forecasts are ignored "
+        "and the solve uses the data of the realized: yes branch, with a warning (an error without that branch). "
+        "within_solve: the forecasts are solved together; a rolling solve realizes each jump with the realized: yes "
+        "branch and looks ahead with the forecasts made at the end of the jump; a single solve with a realized: yes "
+        "branch gets a separate realization solve. separate_dispatch: a first, stochastic solve fixes the units "
+        "online of _fix_in_uc units; a realization solve then dispatches the realized: yes branch over the jump (a "
+        "single solve: its realized periods) and looks ahead with the forecasts made at their end; needs a "
+        "realized: yes branch. Without stochastic_branches the three are the same.")}
+
+
+def plan_dispatch_realization_method(branches, methods, scenarios) -> tuple[tuple, tuple]:
+    """Where part 5 of v83 writes ``dispatch_realization_method`` ``within_solve`` so that every stochastic solve
+    keeps running within_solve once an absent method means ``deterministic`` (plan §2a step 2).  Pure: no database.
+
+    *branches* ``{(solve, alternative): the stochastic_branches value is non-empty}``; *methods* ``{(solve,
+    alternative): method}``; *scenarios* ``{scenario: [alternative, ...]}`` lowest rank first.  A scenario is a
+    candidate for a solve when its winning ``stochastic_branches`` is non-empty and no method resolves; the target is
+    the alternative of that winning value.  With the writes in place every scenario where a method resolved must
+    read the same method, else the solve gets no write at all.  Returns ``(writes, undecided)``: ``((solve,
+    alternative), ...)`` and ``((solve, reason, candidate scenarios), ...)``."""
+    writes, undecided = [], []
+    for solve in sorted({key[0] for key in branches}):
+        before = {s: _v77_winner(alts, methods, solve) for s, alts in sorted(scenarios.items())}
+        candidates, targets = [], set()
+        for s, alts in sorted(scenarios.items()):
+            where = _v77_winner(alts, branches, solve)
+            if where is not None and branches[(solve, where)] and before[s] is None:
+                candidates.append(s)
+                targets.add(where)
+        if not candidates:
+            continue
+        table = {**methods, **{(solve, a): _V83_WITHIN_SOLVE for a in targets}}
+        reason = None
+        for s, own in before.items():
+            winner = _v77_winner(scenarios[s], table, solve)
+            if own is not None and table[(solve, winner)] != methods[(solve, own)]:
+                reason = (f"a value in alternative {winner} would replace your dispatch_realization_method in "
+                          f"alternative {own} in scenario {s}")
+                break
+        if reason is None:
+            writes.extend((solve, a) for a in sorted(targets))
+        else:
+            undecided.append((solve, reason, tuple(candidates)))
+    return tuple(writes), tuple(undecided)
+
+
+def _v83_solve_inputs(db) -> tuple:
+    """:func:`plan_dispatch_realization_method` arguments read from *db* (parsed values only; a value read as
+    nothing is no method, an empty map has no branch)."""
+    branches, methods = {}, {}
+    for pv in db.find_parameter_values(entity_class_name="solve", parameter_definition_name="stochastic_branches"):
+        value = pv["parsed_value"]
+        branches[(pv["entity_byname"][0], pv["alternative_name"])] = value is not None and not (
+            isinstance(value, Map) and len(value) == 0)
+    for pv in db.find_parameter_values(entity_class_name="solve",
+                                       parameter_definition_name="dispatch_realization_method"):
+        if pv["parsed_value"] is not None:
+            methods[(pv["entity_byname"][0], pv["alternative_name"])] = pv["parsed_value"]
+    return branches, methods, _scenario_alternatives(db)
+
+
+def _v83_dispatch_realization_method(db) -> None:
+    """Part 5 of v83: ``dispatch_realization_methods`` gets ``deterministic``, the new shipped default.
+
+    Appends the member, writes ``within_solve`` where a stochastic solve relied on the default (the engine reads no
+    solve definition default: an absent method ran within_solve; :func:`plan_dispatch_realization_method`, results
+    unchanged), sets a ``within_solve`` definition default to ``deterministic`` (a ``NULL`` or another member stays)
+    and replaces the description by text alone.  Skips the member, writes and default without the class, the
+    definition or the list.  Idempotent; no commit, no marker."""
+    name = "dispatch_realization_methods"
+    if (db.get_item("entity_class", name="solve") and db.get_item("parameter_value_list", name=name)
+            and _pdef_or_none(db, "solve", "dispatch_realization_method") is not None):
+        before = _list_members(db, [name])
+        rerun = any(x["parsed_value"] == _V83_DETERMINISTIC
+                    for x in db.get_items("list_value", parameter_value_list_name=name))
+        _append_list_members(db, name, (_V83_DETERMINISTIC,))
+        _v83_check_members(db, name, before)  # a changed member would fail the by-value writes first
+        writes, undecided = plan_dispatch_realization_method(*_v83_solve_inputs(db))
+        val, typ = to_database(_V83_WITHIN_SOLVE)
+        for solve, alternative in writes:
+            db.add_parameter_value(entity_class_name="solve", entity_byname=(solve,),
+                                   parameter_definition_name="dispatch_realization_method",
+                                   alternative_name=alternative, value=val, type=typ)
+        if rerun:
+            _already_applied(83, "dispatch_realization_method: already written")
+        if writes:
+            print("v83: dispatch_realization_method within_solve written on the stochastic solves that relied on "
+                  "the default (results unchanged):")
+            for solve, alternative in writes:
+                print(f"  solve {solve} [{alternative}]")
+        for solve, reason, candidates in undecided:
+            print(f"v83: dispatch_realization_method not written for solve {solve}: {reason}. In scenarios "
+                  f"{', '.join(candidates)} it now runs deterministic: the forecasts are ignored (results change), "
+                  "or the run stops when there is no realized: yes branch. Set dispatch_realization_method "
+                  "within_solve yourself where it should apply.")
+        pdef = _pdef_or_none(db, "solve", "dispatch_realization_method")
+        if from_database(pdef["default_value"], pdef["default_type"]) == _V83_WITHIN_SOLVE:
+            val, typ = to_database(_V83_DETERMINISTIC)
+            db.update_parameter_definition(id=pdef["id"], default_value=val, default_type=typ)
+    texts = _v83_dispatch_realization_texts()
+    _replace_superseded_texts(db, {k: old for k, (old, _new) in texts.items()},
+                              {k: new for k, (_old, new) in texts.items()})
+
+
 #: The schema step of the current data version.  The template sync reruns it on the master template, so that schema
 #: entries appended to its tables after the version was first stamped reach the shipped schema (a database at the
 #: current version is otherwise not migrated again).
