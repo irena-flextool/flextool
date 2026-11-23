@@ -324,7 +324,7 @@ def test_repair_command_quotes_shell_characters(tmp_path) -> None:
     folder = tmp_path / "Sales & R&D"
     db = folder / "Juha\u2019s \u2018model\u2019 \u201bx\u201a.sqlite"
     py = "/opt/Py 3/python"
-    exe = str(Path(py))  # Windows writes it with backslashes
+    exe = py  # used as given (fc8dacc1): no Path(), which would turn / into \ on Windows
     assert cli.repair_command(db, python=py, shell="cmd") == f'"{exe}" "-P" "-m" "{m}" "{db}"'
     ps_name = "Juha\u2019\u2019s \u2018\u2018model\u2019\u2019 \u201b\u201bx\u201a\u201a.sqlite"
     assert cli.repair_command(db, python=py, shell="powershell") == \
@@ -332,7 +332,7 @@ def test_repair_command_quotes_shell_characters(tmp_path) -> None:
     assert cli.repair_command(db, python=py, shell="posix") == f"'{exe}' -P -m {m} '{db}'"
     plain = tmp_path / "R&D" / "db.sqlite"
     win_py = r"C:\Py\python.exe"
-    assert cli.repair_command(plain, python=win_py, shell="cmd") == f'"{Path(win_py)}" "-P" "-m" "{m}" "{plain}"'
+    assert cli.repair_command(plain, python=win_py, shell="cmd") == f'"{win_py}" "-P" "-m" "{m}" "{plain}"'
     assert cli.repair_command(tmp_path / "it's.sqlite", python=py, shell="posix") == \
         f"'{exe}' -P -m {m} '{tmp_path}{os.sep}it'\"'\"'s.sqlite'"
 
