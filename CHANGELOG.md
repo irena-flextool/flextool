@@ -41,6 +41,15 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
   variables there); a database imported earlier keeps them through the upgrade. With `use online` 0 in the
   base, a unit's min up and down times are written with `minimum_time_method none`, so they stay off without a
   warning at each run.
+- **An outage ends an obligation carried in from an earlier solve, instead of making the solve infeasible.** A
+  rolling solve carries the minimum up-time of the units the previous roll started, and a realization solve pins
+  the units online to its stochastic solve's commitment. Where such a unit cannot run (its availability, times its
+  `capacity_max_coeff`, is below its `min_load`), that solve stopped as infeasible when the earlier solve could not
+  see the outage (beyond its horizon, or only in the realized data). Now the carried minimum up-time ends at the
+  first such step and does not resume after it; a pinned unit is decided again in the realization solve (all its
+  pins are dropped, the other units keep theirs); and the carried ramp-down limit of a unit without online
+  variables asks at most what the unit can produce there. Note W-0592 names the units, once per run. A solve that
+  sees the outage coming still keeps the minimum up-time. Only solves that were infeasible before change.
 
 ## Release 4.6.3 (23.11.2026) — fixes: list-valued defaults kept when migrating FlexTool 3.x databases, Benders between regions, FlexTool 2.0 conversion in the GUI; repair tool for W-0490 databases; GUI message list
 

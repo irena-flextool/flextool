@@ -3055,6 +3055,9 @@ def _eq_ramp(b: _Build) -> None:
     #   [d′,t′] → its carried duration; for units with online variables F[d′,t′] → 0 (no shutdown term on the
     #   up row) and SD′ → max(1, f̂[p,s,k,d,t] / (c[p,s,k,d,t] · ĉ[p])) (1 where the carried online count
     #   ĉ = p_roll_continue_online is 0 — no stoppers then; exact and always feasible, unlike a fixed κ/c).
+    #   On the carried down row of a unit without online variables f̂ → min(f̂, c · existing_count[p,d] ·
+    #   (availability[p,d,t] + ρ̄)) (fine steps): a carried ramp-down yields to an outage the previous solve did not
+    #   see — the row then asks at most the unit's output ceiling availability · c · existing_count (W-0592).
     # A coarse process (processCoarse, _coarse_flows.ramp_rows) ramps between its coarse steps: t = b (named by its
     #   first fine step), (d′,t′) = b⁻, the coarse step that holds the fine predecessor of b's first step, and
     #   step_duration → Δ_b = Σ_{t∈b} Δt, so ρ̄ = speed · 60 · (Δ_b⁻ + Δ_b)/2 (no row inside a coarse step; with
@@ -3249,8 +3252,10 @@ def _ramp_family(b: _Build, name: str, rows: pl.DataFrame, idx_set: pl.DataFrame
                                                 v_online_k, v_startup_k, v_shutdown_k, keys).items():
             rhs[f"{term_name}_{kind}"] = term
     if carried.height > 0:
-        rhs["roll_continue_flow"] = Param(("p", "source", "sink", "d", "t"),
-                                          carried.select(*keys, "d", "t", value=pl.col("__f_hat")))
+        f_hat = carried.select(*keys, "d", "t", value=pl.col("__f_hat"))
+        if not up and built_rows.height > 0:
+            f_hat = _carried_ramp_down_yields(b, idx_set, side, built_rows, f_hat, keys)
+        rhs["roll_continue_flow"] = Param(("p", "source", "sink", "d", "t"), f_hat)
     m.add_cstr(
         name,
         over      = over,
@@ -3258,6 +3263,51 @@ def _ramp_family(b: _Build, name: str, rows: pl.DataFrame, idx_set: pl.DataFrame
         lhs_terms = lhs,
         rhs_terms = rhs,
     )
+
+
+def _carried_ramp_down_yields(b: _Build, idx_set: pl.DataFrame, side: str, built_rows: pl.DataFrame,
+                              f_hat: pl.DataFrame, keys: list) -> pl.DataFrame:
+    """*f_hat* ``(p, source, sink, d, t, value)`` of the carried down-ramp rows with f̂ ≤ c · ex · (availability +
+    ρ̄) on the fine carried rows of units without online variables (*built_rows*), ex = existing_count[p,d]: the row
+    then asks flow ≥ availability · c · ex at most, the unit's output ceiling.  A higher f̂ (an outage the
+    previous solve did not see) would make the row infeasible; the carried ramp-down ends there instead (W-0592).
+    Every other row keeps its f̂."""
+    d = b.d
+    rows = built_rows.filter(pl.col("__kind") == "carry")
+    if b.has_coarse_proc and rows.height > 0:
+        rows = _coarse_flows.split_arcs(b, rows)[0]
+    ex = b.cap.existing_count_p
+    if rows.height == 0 or ex is None or not _has_rows(d.process_unit):
+        return f_hat
+    rows = _utf8_keys(rows.lazy(), ["p"]).join(
+        _utf8_keys(d.process_unit.lazy().select("p"), ["p"]).select("_p").unique(), on="_p", how="semi"
+    ).select(rows.columns).collect()
+    if rows.height == 0:
+        return f_hat
+    rows = _c_values(rows, _c_param_plain(d, idx_set, side), keys)
+    all_keys = [*keys, "d", "t"]
+    av = (_availability_factor(d, rows.select("p").unique()).frame if d.p_process_availability is not None
+          else rows.select("p", "d", "t").with_columns(value=pl.lit(1.0)))
+    cap = (_utf8_keys(rows.lazy(), all_keys)
+           .join(_utf8_keys(av.lazy(), ["p", "d", "t"]).select("_p", "_d", "_t", pl.col("value").alias("__av")),
+                 on=["_p", "_d", "_t"], how="left")
+           .join(_utf8_keys(ex.frame.lazy(), ["p", "d"]).select("_p", "_d", pl.col("value").alias("__ex")),
+                 on=["_p", "_d"], how="inner")
+           .select(*(f"_{k}" for k in all_keys), (pl.col("__c") * pl.col("__ex")
+                                                  * (pl.col("__av").fill_null(1.0) + pl.col("__room"))).alias("__cap"),
+                   pl.col("__f_hat"))
+           .filter(pl.col("__f_hat") > pl.col("__cap"))
+           .collect())
+    if cap.height == 0:
+        return f_hat
+    from flextool.engine.preprocess.params._mintime import note_carried_obligation_cut
+    note_carried_obligation_cut({r["_p"]: f"solve {b.solve_name}: the carried ramp-down ends at step "
+                                          f"({r['_d']}, {r['_t']})" for r in cap.iter_rows(named=True)})
+    return (_utf8_keys(f_hat.lazy(), all_keys)
+            .join(cap.lazy().select(*(f"_{k}" for k in all_keys), "__cap"), on=[f"_{k}" for k in all_keys],
+                  how="left", maintain_order="left")
+            .select(*all_keys, pl.min_horizontal("value", pl.col("__cap").fill_null(pl.col("value"))).alias("value"))
+            .collect())
 
 
 def _ramp_flow_change(b: _Build, rows: pl.DataFrame, keys: list) -> dict:

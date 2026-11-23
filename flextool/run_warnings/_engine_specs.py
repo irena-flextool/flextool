@@ -1097,4 +1097,25 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "accept a lossless line), or remove the efficiency."
         ),
     ),
+    WarningSpec(
+        code="W-0592",
+        message="an outage ended an obligation carried over from an earlier solve",
+        title="Outage ends a carried obligation",
+        topic=_SOLVES,
+        severity=NOTE,
+        body=(
+            "An earlier solve started these units, or left them ramping down. Their minimum up-time, or "
+            "ramp-down limit, would have kept them running into time steps where they cannot run: their "
+            "availability is below their `min_load` there (for the ramp-down limit, below the output the limit "
+            "asks for). That solve could not see the outage, because it lay beyond its horizon or only the "
+            "realized data have it. FlexTool ends the carried obligation at the first such step: the unit stops "
+            "there, and the rest of its minimum up-time is dropped. A realization solve decides a unit again "
+            "when its stochastic solve committed it through such an outage. A solve that sees an outage coming "
+            "still keeps the minimum up-time: it does not start a unit it cannot keep. The debug log gives the "
+            "solve and the step of each unit. The note is printed once per unit and run.\n\n"
+            "**How to fix:** nothing, if the outage could not be foreseen. If it was planned, make sure the "
+            "solve that starts the unit sees it: give it in the stochastic solve's forecasts, or lengthen "
+            "`rolling_solve_horizon`."
+        ),
+    ),
 ) + BEHAVIOUR_SPECS

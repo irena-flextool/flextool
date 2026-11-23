@@ -558,7 +558,11 @@ def add_constraints(b: "_Build") -> None:
         #   branch that starts the solve); no cyclic wrap.
         # carry_up[p,d,t] = Σ_{h ∈ online_history} startup[p,h] over the root r ∈ dt_ramp_carry that is (d,t) or an
         #   ancestor of it along dt_ramp_link, with elapsed(r → d,t) + hours_to_end[h] < min_uptime[p]
-        #   (d.uptime_carry, 0-filled; absent where no step continues the previous solve's last realized step).
+        #   (d.uptime_carry, 0-filled; absent where no step continues the previous solve's last realized step),
+        #   and 0 at and after the first step it reaches in B = {min_load[p,d,t] > 0, availability[p,d,t] ·
+        #   Σ_{A_p} capacity_max_coeff < min_load[p,d,t]} (_mintime.online_blocked_cells: the unit cannot be online
+        #   there): a carried obligation yields to an outage the solve that started the unit did not see (W-0592).
+        #   A start-up within this solve keeps its full minimum up-time (the solve sees the outage).
         # A coarse process: rows and look-back only at the first fine steps of its coarse steps (its only start-ups),
         #   so elapsed(b′ → b) = Σ of the coarse durations from b′ up to b: a start-up counts while the steps since
         #   its start last less than min_uptime, i.e. min_uptime in whole coarse steps, rounded up.  A row whose
@@ -643,6 +647,8 @@ def add_constraints(b: "_Build") -> None:
     # a period that does not continue the previous one) its units online are free like the parent's; a free start
     # relaxes any predecessor the parent had, so the pinned commitment stays feasible.  A later roll carries the
     # previous realization's units online in both stages (the stochastic roll k and realization roll k).
+    # A unit pinned > 0 at a step of B (minimum_uptime; an outage only the realized data have) loses all its pins
+    #   and is decided again under its own rows (flex_data._pins_yield_to_outages, W-0592).
     # Only declared v_online cells are pinned.  p_fix_online is Utf8-keyed: it is joined to
     # the native-typed index through Utf8 copies of (p, d, t).
     if d.p_fix_online is not None and d.p_fix_online.frame.height > 0:

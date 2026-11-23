@@ -3571,6 +3571,33 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
     )
 
 
+def _pins_yield_to_outages(flex_data: "FlexData", workdir: Path, provider: "object | None") -> None:
+    """Drop every realization pin (``p_fix_online``) of a unit pinned online (> 0) at a step where it cannot be
+    online (``params._mintime.online_blocked_cells``: its availability, the realized data, is below its min_load
+    there), and note it (W-0592).  The stochastic solve committed the unit without seeing that outage; the
+    realization decides it again under its own rows over the whole solve, so its minimum down time after the
+    outage holds too.  The other units keep their pins.  Only an LP that the pin makes infeasible changes."""
+    pin = flex_data.p_fix_online
+    if pin is None or pin.frame.height == 0:
+        return
+    from flextool.engine.preprocess.params._derived import _read_active_solve
+    from flextool.engine.preprocess.params._mintime import note_carried_obligation_cut, online_blocked_cells
+    blocked = online_blocked_cells(flex_data)
+    if blocked is None:
+        return
+    keys = ("p", "d", "t")
+    hit = (pin.frame.filter(pl.col("value") > 0.0).select(*(pl.col(k).cast(pl.Utf8) for k in keys))
+           .join(blocked, on=list(keys), how="semi").sort(*keys))
+    if hit.height == 0:
+        return
+    first = hit.group_by("p", maintain_order=True).first()
+    keep = pin.frame.filter(~pl.col("p").cast(pl.Utf8).is_in(first["p"].to_list()))
+    flex_data.p_fix_online = Param(pin.dims, keep) if keep.height > 0 else None
+    solve = _read_active_solve(workdir, provider=provider) if provider is not None else None
+    note_carried_obligation_cut({p: f"solve {solve}: the units online pinned to the stochastic solve are decided "
+                                    f"again; they cannot run at step ({d}, {t})" for p, d, t in first.rows()})
+
+
 def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                    nb: pl.DataFrame,
                    nbp: pl.DataFrame | None,
@@ -5660,6 +5687,9 @@ def load_flextool(source: "Path | str | FlexInputSource",
         if db_reader is not None:
             from flextool.engine.preprocess.params._derived import process_minload_from_p_min_load
             flex_data.process_minload = process_minload_from_p_min_load(flex_data.p_min_load)
+            # A realization pin yields to an outage the stochastic solve did not see (before the coarse frames,
+            # which read the pins).
+            _pins_yield_to_outages(flex_data, sd.parent, provider)
 
         # Units / connections whose every balance node is coarse: their coarse steps.  After every set the
         # rule reads (process_minload above included).

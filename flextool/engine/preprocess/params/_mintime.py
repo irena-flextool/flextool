@@ -221,7 +221,8 @@ def check_history_continues_carried_step(history: pl.DataFrame, carried: "tuple[
 def mintime_roll_carry(dt: "pl.DataFrame | None", step_duration: "object | None", link: "pl.DataFrame | None",
                        carry: "pl.DataFrame | None", history: "pl.DataFrame | None",
                        procs: "list[tuple[str, float]]", metric: str,
-                       period_branch: "pl.DataFrame | None" = None) -> "pl.DataFrame | None":
+                       period_branch: "pl.DataFrame | None" = None, blocked: "pl.DataFrame | None" = None,
+                       cut: "list[tuple[str, str, str]] | None" = None) -> "pl.DataFrame | None":
     """``(p, d, t, value)`` Utf8: the realized *metric* (``startup`` / ``shutdown``) of the previous solve that the
     minimum time ``L`` of *procs* ``[(p, L)]`` still covers at the steps of this solve.
 
@@ -233,7 +234,13 @@ def mintime_roll_carry(dt: "pl.DataFrame | None", step_duration: "object | None"
     to, not including, ``(d, t)``) carries ``Σ_h metric[p, h]`` over ``elapsed + hours_to_end[h] < L``.  ``None``
     when nothing is carried (no roots: first roll, single solve, a carried step that is not adjacent).  Raises
     ``ValueError`` when the history does not end at the carried step
-    (:func:`check_history_continues_carried_step`)."""
+    (:func:`check_history_continues_carried_step`).
+
+    ``blocked`` ``(p, d, t)`` (:func:`online_blocked_cells`; for the up-time carry): the carry of a process ends at
+    the first blocked step it reaches and does not resume after it — every step reached from a blocked step that
+    carries (the step itself included) loses the carry.  The carry does not grow along the chain, so a cut changes
+    only a carry that met a step where the unit cannot be online.  ``cut`` (a list) gets the ``(p, d, t)`` of those
+    first blocked steps."""
     procs = [(str(p), float(L)) for p, L in procs if float(L) > 0]
     if (dt is None or dt.height == 0 or carry is None or carry.height == 0 or history is None
             or history.height == 0 or not procs):
@@ -260,11 +267,83 @@ def mintime_roll_carry(dt: "pl.DataFrame | None", step_duration: "object | None"
     out = (reach.select("i", "elapsed").join(hist, how="cross")
            .filter(pl.col("elapsed") + pl.col("hours_to_end") < pl.col("L"))
            .group_by("p", "i").agg(pl.col("value").sum())
-           .filter(pl.col("value").abs() > 1e-12)
+           .filter(pl.col("value").abs() > 1e-12))
+    if blocked is not None and blocked.height > 0 and out.height > 0:
+        out = _cut_at_blocked(out, blocked, steps, edges, lmap["L"].max(), cut)
+    out = (out
            .join(steps.select("i", "d", "t"), on="i", how="inner")
            .select("p", "d", "t", "value")
            .sort("p", "d", "t"))
     return out if out.height > 0 else None
+
+
+def online_blocked_cells(d: object) -> "pl.DataFrame | None":
+    """``(p, d, t)`` Utf8: the steps where a unit cannot be online, B = {min_load[p,d,t] > 0 and
+    availability[p,d,t] · κ[p] < min_load[p,d,t]}, κ[p] = Σ capacity_max_coeff over its output measure A_p
+    (``model._unit_floors.unit_measured_arcs``; 1 by default).  There ``minFlow_minload`` (≥ min_load · v_online)
+    and ``maxFlow_online`` (≤ κ · availability · v_online on each arc of A_p) leave only v_online = 0, so an
+    obligation carried in from an earlier solve that keeps the unit online there makes the LP infeasible.
+    Availability 0 without min_load is no block (online at zero output is feasible).  ``None`` when no step is
+    blocked.  Reads the solve's shaped ``p_min_load`` / ``p_process_availability`` / ``p_arc_max_cap_coef``."""
+    from flextool.engine.input._param_shapes import promote_param_to_dt
+    from flextool.engine.model._common import _availability_factor, _coef_factor
+    from flextool.engine.model._unit_floors import unit_measured_arcs
+
+    ml, dt = getattr(d, "p_min_load", None), getattr(d, "dt", None)
+    if ml is None or ml.frame.height == 0 or dt is None or dt.height == 0:
+        return None
+    arcs = unit_measured_arcs(d)
+    if arcs is None:
+        return None
+    keys = ["p", "source", "sink"]
+    coef = getattr(d, "p_arc_max_cap_coef", None)
+    kappa = (_coef_factor(arcs, coef, keys).frame if coef is not None
+             else arcs.select(keys).unique().with_columns(value=pl.lit(1.0)))
+    kappa = kappa.group_by(pl.col("p").cast(pl.Utf8)).agg(pl.col("value").sum().alias("kappa"))
+    cells = (promote_param_to_dt(ml, dt)
+             .select(pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8),
+                     pl.col("value").cast(pl.Float64).alias("ml"))
+             .filter(pl.col("ml") > 0.0).collect()
+             .join(kappa, on="p", how="inner"))
+    if cells.height == 0:
+        return None
+    if getattr(d, "p_process_availability", None) is not None:
+        av = _availability_factor(d, arcs.select("p").unique()).frame.select(
+            pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8),
+            pl.col("value").alias("av"))
+        cells = cells.join(av, on=["p", "d", "t"], how="left").with_columns(pl.col("av").fill_null(1.0))
+    else:
+        cells = cells.with_columns(av=pl.lit(1.0))
+    out = cells.filter(pl.col("av") * pl.col("kappa") < pl.col("ml")).select("p", "d", "t").sort("p", "d", "t")
+    return out if out.height > 0 else None
+
+
+def note_carried_obligation_cut(cases: "dict[str, str]") -> None:
+    """Note W-0592 (once per unit and run) for the units whose obligation carried in from an earlier solve met a
+    step where they cannot run; *cases* ``{unit: detail}`` (solve and step) go to the debug log."""
+    if cases:
+        from flextool import run_warnings
+        run_warnings.note("W-0592", sorted(cases), details=cases, per_run=True)
+
+
+def _cut_at_blocked(out: pl.DataFrame, blocked: pl.DataFrame, steps: pl.DataFrame, edges: pl.DataFrame,
+                    l_max: float, cut: "list | None") -> pl.DataFrame:
+    """*out* ``(p, i, value)`` without the cells at or after a blocked cell of *out* along *edges* (forward, within
+    *l_max* hours: no carry reaches further); the first blocked cells (no other one before them) go to *cut* as
+    ``(p, d, t)``."""
+    hit = (blocked.select(pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+           .join(steps.select("i", "d", "t"), on=["d", "t"], how="inner")
+           .join(out.select("p", "i"), on=["p", "i"], how="semi"))
+    if hit.height == 0:
+        return out
+    procs = hit.select("p").unique().sort("p").with_row_index("back")
+    start = (hit.join(procs, on="p", how="inner")
+             .select("i", "back", pl.lit(0.0, dtype=pl.Float64).alias("elapsed")))
+    reached = _walk(start, edges, l_max, steps.height, forward=True).join(procs, on="back", how="inner")
+    if cut is not None:
+        later = reached.filter(pl.col("elapsed") > 0.0).select("p", "i")
+        cut.extend(hit.join(later, on=["p", "i"], how="anti").sort("p", "d", "t").select("p", "d", "t").rows())
+    return out.join(reached.select("p", "i").unique(), on=["p", "i"], how="anti")
 
 
 def cut_short_lookback_warnings(min_times: "dict[str, list[tuple[str, float]]]",

@@ -5045,7 +5045,7 @@ def apply_mintime_lookbacks(flex_data: object, source: "InputSource",
         flex_data.pdt_downtime_set = pdt_downtime_set_from_lookback(dlb)
     if ulb is None and dlb is None:
         return
-    flex_data.uptime_carry = (online_mintime_carry_from_source(source, flex_data, "min_uptime")
+    flex_data.uptime_carry = (online_mintime_carry_from_source(source, flex_data, "min_uptime", solve_name)
                               if ulb is not None else None)
     flex_data.downtime_carry = (online_mintime_carry_from_source(source, flex_data, "min_downtime")
                                 if dlb is not None else None)
@@ -5076,8 +5076,8 @@ def pdt_downtime_set_from_lookback(downtime_lookback: pl.DataFrame | None
               .collect())
 
 
-def online_mintime_carry_from_source(source: "InputSource", flex_data: object, parameter_name: str
-                                     ) -> pl.DataFrame | None:
+def online_mintime_carry_from_source(source: "InputSource", flex_data: object, parameter_name: str,
+                                     solve_name: "str | None" = None) -> pl.DataFrame | None:
     """The roll carry of the minimum up / down time ``(p, d, t, value)`` (Utf8) of *flex_data*.
 
     ``parameter_name`` ``"min_uptime"`` carries the realized ``v_startup`` (``uptime_carry``, on the
@@ -5087,16 +5087,27 @@ def online_mintime_carry_from_source(source: "InputSource", flex_data: object, p
     (``params._mintime.mintime_roll_carry``): the first steps that continue from the previous solve's last realized
     step on the timeline — a period that continues the previous one and the forecast branches that start with such a
     step included, a period that does not continue it (``jump != 1``) and a step after a gap excluded.  ``L`` is the
-    authored parameter.  ``None`` when nothing is carried."""
-    from flextool.engine.preprocess.params._mintime import mintime_roll_carry
+    authored parameter.  ``None`` when nothing is carried.
+
+    The up-time carry ends at the first step where the unit cannot be online (``_mintime.online_blocked_cells``)
+    and does not resume (W-0592 names the unit): the solve that started it did not see that step.  The down-time
+    carry never conflicts with an outage (offline is always possible)."""
+    from flextool.engine.preprocess.params._mintime import (
+        mintime_roll_carry, note_carried_obligation_cut, online_blocked_cells)
     history = getattr(flex_data, "online_startup_history", None)
     if history is None or history.height == 0:
         return None
-    return mintime_roll_carry(getattr(flex_data, "dt", None), getattr(flex_data, "p_step_duration", None),
-                              getattr(flex_data, "dt_ramp_link", None), getattr(flex_data, "dt_ramp_carry", None),
-                              history, _process_min_time(source, parameter_name),
-                              "startup" if parameter_name == "min_uptime" else "shutdown",
-                              getattr(flex_data, "period_branch_full", None))
+    up = parameter_name == "min_uptime"
+    cut: list = []
+    carry = mintime_roll_carry(getattr(flex_data, "dt", None), getattr(flex_data, "p_step_duration", None),
+                               getattr(flex_data, "dt_ramp_link", None), getattr(flex_data, "dt_ramp_carry", None),
+                               history, _process_min_time(source, parameter_name),
+                               "startup" if up else "shutdown",
+                               getattr(flex_data, "period_branch_full", None),
+                               blocked=online_blocked_cells(flex_data) if up else None, cut=cut)
+    note_carried_obligation_cut({p: f"solve {solve_name}: the carried minimum up-time ends at step ({d}, {t})"
+                                 for p, d, t in reversed(cut)})
+    return carry
 
 
 # ---------------------------------------------------------------------------
