@@ -136,7 +136,7 @@ def analyse(snapshot_path: str | Path) -> Analysis:
         versions, _ = vlh._version_commits(path)
     except sqlite3.Error as exc:
         raise RepairError(f"The history of {path} could not be read: {exc}") from exc
-    findings = vlh.possible_value_list_overwrite_ro(path)
+    findings = vlh.session_findings_ro(path)
     if not versions:
         return Analysis(state=NO_HISTORY, **base)
     if not findings:

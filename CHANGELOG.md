@@ -7,12 +7,26 @@
   keeps `fix_start`, as in an unaffected database (FlexTool 4.6.2 left its start free); the migration notice
   (W-0601) names it.
 
+### New features
+
+- **`flextool-repair-value-list` repairs a database that W-0490 names, and restores list-valued defaults that an
+  upgrade before 4.6.3 left empty.** It never changes the database: it writes a repaired copy
+  (`<name>_repaired.sqlite`) with a report. It puts the lost `not_allowed` member back into `invest_methods` and
+  asks about each class default and value that may have been changed into `cumulative_limits` (the shipped
+  default is recommended for class defaults; values saved before the upgrade are marked when they are certain).
+  It offers the shipped default for each empty list-valued default, and for storage nodes whose start an
+  unaffected database keeps fixed it asks, with no recommended answer, whether to fix the start. Answers can be
+  given at the prompt or in a CSV file (`--dry-run --write-answers`, then `--answers`); an older copy of the
+  database can serve as evidence (`--archive`). When every item has an answer, the copy records the repair, and
+  W-0490 and the GUI's "Please check this database" box end for it. See "Repairing a value list (W-0490)" in
+  the terminal workflow documentation.
+
 ### Fixes
 
 - **Migrating a database last saved by FlexTool 3.x (data version 22–25, August 2024 onwards) no longer empties
   its list-valued defaults (such as `conversion_method`, `invest_method`, `solve_mode`).** An older Spine library
   had stored them as text, so the database editor showed them empty and the migration then cleared them. A
-  database already migrated keeps the empty defaults.
+  database already migrated keeps the empty defaults; `flextool-repair-value-list` restores them.
 
 ## Release 4.6.2 (22.11.2026) — fixes: one-variable connections ignore variable cost and losses (efficiency only converts between units); warning for databases possibly hit by the spinedb_api value-list bug, with a checklist
 

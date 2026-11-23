@@ -112,7 +112,7 @@ def test_apply_hit_record_and_rerun(tmp_path, schema_db_url) -> None:
     assert len(members) == 14 and members[0] == (case.r_id, 0, b'"cumulative_limits"')
     assert members[-1][1:] == (13, b'"not_allowed"')
     assert _commits(output) == (n_commits + 1, vlh.REPAIR_COMMIT)
-    (finding,) = vlh.possible_value_list_overwrite_ro(output)
+    (finding,) = vlh.session_findings_ro(output)
     assert vlh.record_ends(finding, output) and not vlh.record_ends(finding, case.path)
     assert vlh.read_record(output).value == {"v": 1, "step": 22, "end_commit": case.end_commit,
                                              "end_date": "2024-09-19", "set": 5, "kept": 1}
@@ -150,7 +150,7 @@ def test_skip_keep_not_hit_and_legacy(tmp_path, schema_db_url) -> None:
     a, found = _prepare(case.path, out)
     w = vw.write_copy(a, va.make_plan(a, found, {s.item: KEEP for s in found}), out, source=case.path)
     assert w.part_a_record and len(_invest_members(out)) == 14
-    assert vlh.record_ends(vlh.possible_value_list_overwrite_ro(out)[0], out)
+    assert vlh.record_ends(vlh.session_findings_ro(out)[0], out)
     for name, kwargs in (("nothit", {"overwrite": False}), ("legacy", {"legacy": True})):
         folder = tmp_path / name
         folder.mkdir()
@@ -162,7 +162,7 @@ def test_skip_keep_not_hit_and_legacy(tmp_path, schema_db_url) -> None:
         w = vw.write_copy(a, va.make_plan(a, found, {}), out, source=other.path)
         assert w.part_a_record and _metadata(out) == sorted(meta + [vlh.RECORD_KEY])
         assert _commits(out) == (n + 1, vlh.REPAIR_COMMIT)
-        assert vlh.record_ends(vlh.possible_value_list_overwrite_ro(out)[0], out)
+        assert vlh.record_ends(vlh.session_findings_ro(out)[0], out)
 
 
 @pytest.mark.parametrize("re_added", [False, True])
@@ -183,7 +183,7 @@ def test_renamed_back(tmp_path, schema_db_url, re_added) -> None:
     after = _invest_members(out)
     assert after[:len(before)] == before and w.part_a_record
     assert [m[1:] for m in after[len(before):]] == ([] if re_added else [(13, b'"cumulative_limits"')])
-    assert vlh.record_ends(vlh.possible_value_list_overwrite_ro(out)[0], out)
+    assert vlh.record_ends(vlh.session_findings_ro(out)[0], out)
 
 
 def test_frozen_source_and_old_spinedb_revision(tmp_path, schema_db_url) -> None:
@@ -288,7 +288,7 @@ def test_record_parsers(tmp_path, schema_db_url) -> None:
     """Part A: valid → ends the finding; bad JSON, ``v`` 2, another ``end_commit``, an import's commit comment → not;
     several rows → the newest decides.  Part B: the same rules for ``parse_part_b_record``."""
     case = make_hit(tmp_path, schema_db_url, overwrite=False)
-    (finding,) = vlh.possible_value_list_overwrite_ro(case.path)
+    (finding,) = vlh.session_findings_ro(case.path)
     ok = vlh.record_value(finding, 0, 0)
     good_b = ldr.part_b_record_value(TODAY, 1, 2, 0, "abc")
 

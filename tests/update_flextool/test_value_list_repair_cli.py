@@ -118,7 +118,7 @@ def test_accept_certain_without_terminal(tmp_path, schema_db_url, capsys) -> Non
     restored = _restored(tmp_path, schema_db_url)
     assert cli.main([str(restored.path), "--accept-certain"]) == 0
     out = vw.default_output(restored.path)
-    assert vlh.record_ends(vlh.possible_value_list_overwrite_ro(out)[0], out)
+    assert vlh.record_ends(vlh.session_findings_ro(out)[0], out)
     assert vlh.read_record(out).value["set"] == 1 and vlh.read_record(out).value["kept"] == 0
 
 

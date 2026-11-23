@@ -120,8 +120,26 @@ def _version_commits(path: Path) -> tuple[list[tuple[int, str, int, int]], list[
 
 
 def possible_value_list_overwrite_ro(path: str | Path) -> list[Finding]:
-    """The migration sessions of *path* that may have overwritten a value list member; ``[]`` when none, or when the
-    file cannot be read (a check that cannot read the history does not warn).
+    """The findings of W-0490 and of the GUI's "Please check this database" box: :func:`session_findings_ro` without
+    the findings a valid repair record ends (:func:`record_ends`; any error while reading the record keeps the
+    finding)."""
+    findings = session_findings_ro(path)
+    kept = []
+    for f in findings:
+        try:
+            ended = record_ends(f, path)
+        except Exception as exc:  # noqa: BLE001  (a record that cannot be read never hides the warning)
+            logger.debug("repair record of %s not checked: %s", path, exc)
+            ended = False
+        if not ended:
+            kept.append(f)
+    return kept
+
+
+def session_findings_ro(path: str | Path) -> list[Finding]:
+    """The migration sessions of *path* that may have overwritten a value list member, repaired or not (the repair
+    tool reads these); ``[]`` when none, or when the file cannot be read (a check that cannot read the history does
+    not warn).
 
     A session is dated by its earliest value-list step commit, else by its closing version commit: a migration that
     failed after such a step (before the all-or-nothing backup) and was retried after the window kept the step's
@@ -195,7 +213,8 @@ def gui_dialog_text(flagged: list[tuple[str, Finding]]) -> str:
     lists = sorted({name for _, f in flagged if "invest_methods" not in f.lists for name in f.lists})
     paragraphs += section(other, "settings in the value list " + ", ".join(f"'{n}'" for n in lists),
                           "may have replaced the first choice in that list with another one.")
-    paragraphs.append("The documentation has a short checklist for finding and fixing this.")
+    paragraphs.append("The documentation has a short checklist for fixing this with FlexTool's repair tool, "
+                      "which writes a repaired copy and leaves this file as it is.")
     return "\n\n".join(paragraphs)
 
 

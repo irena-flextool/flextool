@@ -193,7 +193,7 @@ def test_newer_data_version_is_refused(tmp_path, schema_db_url) -> None:
 
 def test_a_finding_for_another_step_is_refused(tmp_path, schema_db_url, monkeypatch) -> None:
     case = make_hit(tmp_path, schema_db_url)
-    monkeypatch.setattr(vlh, "possible_value_list_overwrite_ro",
+    monkeypatch.setattr(vlh, "session_findings_ro",
                         lambda path: [vlh.Finding(27, ("minimum_time_methods",), 26, 27, "2024-09-19")])
     with pytest.raises(vr.RepairError, match="step 27"):
         _analyse(case.path, tmp_path)

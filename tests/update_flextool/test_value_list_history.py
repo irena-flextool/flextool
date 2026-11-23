@@ -168,7 +168,8 @@ def test_gui_text_for_one_file() -> None:
         "When it was upgraded on 19.9.2024, a bug in a library FlexTool uses may have changed 'not_allowed' into "
         "'cumulative_limits'. Units, connections or nodes that should not invest could then invest without "
         "limit.\n\n"
-        "The documentation has a short checklist for finding and fixing this.")
+        "The documentation has a short checklist for fixing this with FlexTool's repair tool, which writes a "
+        "repaired copy and leaves this file as it is.")
 
 
 def test_gui_text_lists_every_flagged_file_once() -> None:
@@ -185,7 +186,8 @@ def test_gui_text_lists_every_flagged_file_once() -> None:
     assert paragraphs[1].startswith("When they were upgraded, a bug in a library FlexTool uses may have changed")
     assert paragraphs[2] == "c.sqlite may contain wrong settings in the value list 'minimum_time_methods'."
     assert paragraphs[3].startswith("When it was upgraded on 1.3.2025, a bug")
-    assert paragraphs[-1] == "The documentation has a short checklist for finding and fixing this."
+    assert paragraphs[-1] == ("The documentation has a short checklist for fixing this with FlexTool's repair "
+                             "tool, which writes a repaired copy and leaves this file as it is.")
     assert text.count("checklist") == 1
 
 
