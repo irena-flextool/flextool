@@ -1,37 +1,23 @@
 from __future__ import annotations
 
 import logging
-import tkinter.messagebox as messagebox
+import tkinter as tk
 from functools import wraps
 from typing import Any, Callable
 
+from flextool.gui.dialogs import message_box
+
 logger = logging.getLogger(__name__)
 
-
-def show_error(parent: Any, title: str, message: str) -> None:
-    """Show error dialog."""
-    messagebox.showerror(title, message, parent=parent)
-
-
-def show_warning(parent: Any, title: str, message: str) -> None:
-    """Show warning dialog."""
-    messagebox.showwarning(title, message, parent=parent)
-
-
-def show_info(parent: Any, title: str, message: str) -> None:
-    """Show info dialog."""
-    messagebox.showinfo(title, message, parent=parent)
-
-
-def confirm(parent: Any, title: str, message: str) -> bool:
-    """Show yes/no confirmation dialog. Returns True if user clicked Yes."""
-    return messagebox.askyesno(title, message, parent=parent)
+SOMETHING_WENT_WRONG = "Something went wrong"
+SEE_THE_LOG = "The full error is in the FlexTool log. If it happens again, please report it."
 
 
 def safe_callback(func: Callable) -> Callable:
     """Decorator that wraps a tkinter callback to catch and display exceptions.
 
-    Prevents the GUI from crashing silently on errors.
+    Prevents the GUI from crashing silently on errors: the error goes to the log and to a FlexTool message box over
+    the first window among the arguments (the main window for its methods).
     """
     @wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -39,12 +25,9 @@ def safe_callback(func: Callable) -> Callable:
             return func(*args, **kwargs)
         except Exception as e:
             logger.exception(f"Error in {func.__name__}")
+            parent = next((arg for arg in args if isinstance(arg, tk.Misc)), None)
             try:
-                # Try to show error in a dialog
-                messagebox.showerror(
-                    "Error",
-                    f"An error occurred:\n\n{e}\n\nSee log for details.",
-                )
+                message_box.tell(parent, SOMETHING_WENT_WRONG, str(e), SEE_THE_LOG, kind="error")
             except Exception:
                 pass  # Can't show dialog, just log
     return wrapper

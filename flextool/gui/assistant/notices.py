@@ -13,20 +13,17 @@ modal dialog of the assistant shares.
 * :class:`RenameChatDialog` — one entry for the chat's name (§4.3); empty goes back to the number.
 * :class:`ConfirmDialog` — one question with an action and Cancel (closing an unsaved chat, deleting a chat).
 
-The dialogs are callback-based (never ``wait_window``), centred on their parent, closed by Escape and the window
-button as Cancel, and modal through :class:`ModalGrab`, which takes the grab once the dialog is mapped (retrying for
-at most 5 s), and gives a grab another dialog held back when it closes — also when it is destroyed with its parent.
-A dialog being destroyed retires its Tk variables on the Tk thread (:func:`retire_variable`), so the garbage
-collector never needs the Tk thread for them on a worker thread.
-:func:`install_shield` keeps the main window's application-wide shortcuts from firing while the user types in an
-assistant window.
+The dialogs are callback-based (never ``wait_window``) and built on FlexTool's shared modal base
+(:class:`~flextool.gui.dialogs._modal_base.ModalBase`, in the chat's fonts): centred on their parent, closed by
+Escape and the window button as Cancel, modal through :class:`ModalGrab` (the grab once the dialog is viewable), and
+their Tk variables retired on the Tk thread when they are destroyed.  :func:`install_shield` keeps the main window's
+application-wide shortcuts from firing while the user types in an assistant window.
 """
 from __future__ import annotations
 
 import logging
 import sys
 import threading
-import time
 import tkinter as tk
 import tkinter.font as tkfont
 from collections.abc import Callable
@@ -36,25 +33,27 @@ from typing import NamedTuple
 
 from flextool.gui.assistant import strings
 
+# The shared modal base and its helpers moved to ``gui/dialogs/_modal_base.py``; imported back under the same names
+# for the assistant's modules and tests.
+from flextool.gui.dialogs._modal_base import (  # noqa: F401
+    GRAB_RETRY_S,
+    GRAB_STEP_MS,
+    SHIELDED_KEYS,
+    ModalBase,
+    ModalGrab,
+    _tk_variables,
+    centre_on,
+    install_shield,
+    raise_parent,
+    retire_variable,
+)
+
 logger = logging.getLogger(__name__)
 
-#: The main window's ``bind_all`` shortcuts (``main_window.py``) that must not fire from an assistant window.
-SHIELDED_KEYS = ("<F9>", "<Alt-Key-c>", "<Key-e>", "<Key-E>", "<Key-v>", "<Key-x>", "<Key-a>", "<Key-A>",
-                 "<Control-Key-a>", "<Control-Key-A>")
-#: How long the deferred grab is retried, and the step between tries.
-GRAB_RETRY_S = 5.0
-GRAB_STEP_MS = 20
 #: The data notice ignores its accept button for this long after it is mapped.
 ACCEPT_GUARD_MS = 500
 #: The longest chat name.
 NAME_MAX = 60
-
-
-def install_shield(toplevel: tk.Misc) -> None:
-    """Stop the main window's application-wide shortcuts in *toplevel* and everything in it: its path is in every
-    descendant's binding tags after the widget's own and its class's, so typing still works."""
-    for sequence in SHIELDED_KEYS:
-        toplevel.bind(sequence, lambda _e: "break")
 
 
 def is_aqua(widget: tk.Misc) -> bool:
@@ -84,219 +83,19 @@ def question_symbols(widget: tk.Misc) -> tuple[str, str]:
     return strings.ASK_AGAIN_SYMBOL, strings.EDIT_SYMBOL
 
 
-def centre_on(dialog: tk.Toplevel, parent: tk.Misc) -> None:
-    """Place *dialog* in the middle of *parent* (``main_window.py``'s dialogs do the same)."""
-    try:
-        dialog.update_idletasks()
-        px, py = parent.winfo_rootx(), parent.winfo_rooty()
-        pw, ph = parent.winfo_width(), parent.winfo_height()
-        dw, dh = dialog.winfo_reqwidth(), dialog.winfo_reqheight()
-        dialog.geometry(f"+{max(0, px + (pw - dw) // 2)}+{max(0, py + (ph - dh) // 2)}")
-    except tk.TclError:
-        pass
-
-
-def raise_parent(parent: tk.Misc) -> None:
-    """Show *parent* again when it is minimised, and raise it, before a dialog of it opens."""
-    try:
-        top = parent.winfo_toplevel()
-        if top.state() == "iconic":
-            top.deiconify()
-        top.lift()
-    except tk.TclError:
-        pass
-
-
-class ModalGrab:
-    """The modal grab of *dialog*: taken when the dialog is mapped, the grab it replaced given back on release.
-
-    :meth:`start` remembers the window that holds the grab now (another dialog), then tries ``grab_set`` every
-    20 ms until it works or 5 s have passed (a minimised parent never maps the dialog: a log line, no grab).
-    :meth:`release` drops the grab and gives the remembered one back when that window still exists; the dialog's
-    ``<Destroy>`` does the same, so a dialog destroyed with its parent leaves no grab behind.
-    """
-
-    def __init__(self, dialog: tk.Toplevel, *, focus: Callable[[], tk.Misc | None] | None = None) -> None:
-        self.dialog = dialog
-        self._focus = focus
-        self._previous: tk.Misc | None = None
-        self._started = 0.0
-        self._released = False
-        self.held = False
-        dialog.bind("<Destroy>", self._on_destroy, add="+")
-
-    def start(self) -> None:
-        if self.dialog is None:
-            return
-        try:
-            current = self.dialog.grab_current()
-        except (tk.TclError, KeyError):
-            current = None
-        self._previous = current if current is not None and current is not self.dialog else None
-        self._started = time.monotonic()
-        self._try()
-
-    def _try(self) -> None:
-        dialog = self.dialog
-        if self._released or dialog is None or not self._exists(dialog):
-            return
-        try:
-            dialog.grab_set()
-        except tk.TclError:
-            if time.monotonic() - self._started < GRAB_RETRY_S:
-                dialog.after(GRAB_STEP_MS, self._try)
-            else:
-                logger.info("The %s dialog never became visible, so it is not modal.", dialog.title())
-            return
-        self.held = True
-        target = self._focus() if self._focus is not None else None
-        if target is not None:
-            try:
-                target.focus_set()
-            except tk.TclError:
-                pass
-
-    @staticmethod
-    def _exists(widget: tk.Misc | None) -> bool:
-        try:
-            return widget is not None and bool(widget.winfo_exists())
-        except tk.TclError:
-            return False
-
-    def release(self) -> None:
-        if self._released:
-            return
-        self._released = True
-        if self.held and self.dialog is not None:
-            try:
-                self.dialog.grab_release()
-            except tk.TclError:
-                pass
-        self.held = False
-        previous = self._previous
-        self._previous = None
-        # The dialog no longer needs its grab: dropping the references keeps a closed dialog from being held by it.
-        self.dialog = None
-        self._focus = None
-        if previous is not None and self._exists(previous):
-            try:
-                previous.grab_set()
-            except tk.TclError:
-                pass
-
-    def _on_destroy(self, event: tk.Event) -> None:  # type: ignore[type-arg]
-        if self.dialog is not None and event.widget is self.dialog:
-            self.release()
-
-
-class _AssistantDialog(tk.Toplevel):
-    """What the assistant's modal dialogs share: transient, shielded, centred, Escape and the window button as
-    Cancel, the deferred grab."""
+class _AssistantDialog(ModalBase):
+    """What the assistant's modal dialogs share (:class:`ModalBase` in the chat's fonts): transient, shielded,
+    centred, Escape and the window button as Cancel, the deferred grab.  Return keeps each dialog's own meaning
+    (the base's "Return invokes the focused button" is off: the data notice must not accept on Return)."""
 
     def __init__(self, parent: tk.Misc, title: str) -> None:
-        raise_parent(parent)
-        super().__init__(parent)
-        self.withdraw()
-        self.title(title)
-        try:
-            top = parent.winfo_toplevel()
-            # A transient window follows its master's state: over a withdrawn master it would never be shown.
-            if top.winfo_viewable():
-                self.transient(top)
-        except tk.TclError:
-            pass
-        self.resizable(False, False)
-        install_shield(self)
-        from flextool.gui.ui_metrics import get_metrics
-
         from flextool.gui.assistant.fonts import sync_fonts
 
-        metrics = get_metrics(self)
-        self.cw = metrics.cw
-        self.lh = metrics.lh
         #: The text of every assistant dialog is in the chat's fonts (:mod:`flextool.gui.assistant.fonts`):
         #: paragraphs and the entry in the base font, headings bold at its size; the buttons keep the theme's.
-        self.chat_fonts = sync_fonts(self)
-        self.wrap = self.chat_fonts["base"].measure("0") * 60
-        self.body = ttk.Frame(self, padding=(metrics.cw * 2, metrics.lh))
-        self.body.pack(fill="both", expand=True)
-        self.bind("<Escape>", lambda _e: self.cancel())
-        self.protocol("WM_DELETE_WINDOW", self.cancel)
-        self.grab = ModalGrab(self, focus=self.initial_focus)
-        self._parent = parent
-        self.bind("<Destroy>", self._retire, add="+")
-
-    def _retire(self, event: tk.Event) -> None:  # type: ignore[type-arg]
-        """The dialog is being destroyed (closed, or with its parent): on the Tk thread, give the grab back and
-        retire its Tk variables (review G18, C7-m5).  A closed dialog lives on in reference cycles (its widgets
-        name it as their master) until the cyclic garbage collector runs, on whichever thread allocates then — a
-        worker's.  A variable's ``__del__`` there would call Tcl, which waits for the Tk thread, which may itself
-        be waiting for that worker.  A retired variable is unset and its trace commands deleted here, and its
-        ``_tk`` is ``None``, so its later ``__del__`` returns at once (tkinter's own guard)."""
-        if event.widget is not self:
-            return
-        self.grab.release()
-        for var in _tk_variables(vars(self).values()):
-            retire_variable(var)
-
-    def initial_focus(self) -> tk.Misc | None:
-        return None
-
-    def show(self) -> None:
-        """Centre, map and take the grab (callers build the content first)."""
-        centre_on(self, self._parent)
-        self.deiconify()
-        self.lift()
-        self.grab.start()
-
-    def cancel(self) -> None:
-        raise NotImplementedError
-
-    def close(self) -> None:
-        self.grab.release()
-        try:
-            self.destroy()
-        except tk.TclError:
-            pass
-
-    def heading(self, parent: tk.Misc, text: str, *, pady: tuple[int, int] = (0, 0)) -> ttk.Label:
-        label = ttk.Label(parent, text=text, font=self.chat_fonts["bold"], wraplength=self.wrap, justify="left")
-        label.pack(anchor="w", pady=pady)
-        return label
-
-    def paragraph(self, parent: tk.Misc, text: str, *, pady: tuple[int, int] = (0, 0)) -> ttk.Label:
-        label = ttk.Label(parent, text=text, font=self.chat_fonts["base"], wraplength=self.wrap, justify="left")
-        label.pack(anchor="w", fill="x", pady=pady)
-        return label
-
-    def buttons(self) -> ttk.Frame:
-        row = ttk.Frame(self.body)
-        row.pack(fill="x", pady=(self.lh, 0))
-        return row
-
-
-def _tk_variables(values: object) -> list[tk.Variable]:
-    """The Tk variables among *values* and one level into the dicts, lists and tuples among them."""
-    found: list[tk.Variable] = []
-    for value in values:  # type: ignore[attr-defined]
-        if isinstance(value, tk.Variable):
-            found.append(value)
-        elif isinstance(value, dict):
-            found += [v for v in value.values() if isinstance(v, tk.Variable)]
-        elif isinstance(value, (list, tuple)):
-            found += [v for v in value if isinstance(v, tk.Variable)]
-    return found
-
-
-def retire_variable(var: tk.Variable) -> None:
-    """Unset *var* in Tcl and delete its trace commands now (Tk thread), so its ``__del__`` needs no Tcl later."""
-    if getattr(var, "_tk", None) is None:
-        return
-    try:
-        var.__del__()
-    except tk.TclError:
-        pass
-    var._tk = None
+        chat_fonts = sync_fonts(parent)
+        super().__init__(parent, title, fonts=chat_fonts, return_invokes=False)
+        self.chat_fonts = chat_fonts
 
 
 class WelcomeDialog(_AssistantDialog):

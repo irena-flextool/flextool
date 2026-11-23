@@ -904,6 +904,8 @@ network_graph.py                 Network-topology figure builder.
 check_tree.py                    CheckTreeController.
 hover_tooltip.py / tree_reorder.py / downsampling.py / cli_format.py / scenario_key.py / config_parser.py
 dialogs/                         Add / project / plot / file-picker dialogs.
+dialogs/_modal_base.py           ModalBase + ModalGrab: the shared modal base (deferred grab, shield).
+dialogs/message_box.py           The one FlexTool box: tell / ask / name_list (no native messagebox).
 ```
 
 ### `flextool/update_flextool/` — migration and updates
