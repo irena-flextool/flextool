@@ -1,7 +1,7 @@
 """Part 1 of v83: ``minimum_time_method`` written where a unit relied on a min up/down time alone (C rev 3 §6).
 
 M1 (C rev 3 §10.3): every row on the pure planner :func:`plan_minimum_time_method`; the DB rows also with part 1
-called directly on a database made from the v82 schema (``schema_db_url``, copied into ``tmp_path``).  M3: the
+called directly on a database made from the v82 schema (``v82_schema_db_url``, copied into ``tmp_path``).  M3: the
 planner's model of today's engine (``online``, ``need``) equals the engine's classification on the same database.
 
 Rules the expectations are derived from (C rev 3 §6.2-§6.3; scenarios lowest rank first, the last wins; no
@@ -178,9 +178,9 @@ def test_m1_planner(name: str) -> None:
 # --- databases ---------------------------------------------------------------------------------------------------
 
 
-def _schema_copy(schema_db_url: str, folder: Path) -> str:
+def _schema_copy(v82_schema_db_url: str, folder: Path) -> str:
     path = folder / "db.sqlite"
-    shutil.copy2(schema_db_url.removeprefix("sqlite:///"), path)
+    shutil.copy2(v82_schema_db_url.removeprefix("sqlite:///"), path)
     return f"sqlite:///{path.resolve().as_posix()}"
 
 
@@ -247,9 +247,9 @@ def _marker(db) -> dict | None:
 
 
 @pytest.mark.parametrize("name", DB_ROWS)
-def test_m1_part_on_a_v82_database(name: str, schema_db_url: str, tmp_path: Path) -> None:
+def test_m1_part_on_a_v82_database(name: str, v82_schema_db_url: str, tmp_path: Path) -> None:
     values, scenarios, defaults, writes, undecided, _db = CASES[name]
-    with DatabaseMapping(_schema_copy(schema_db_url, tmp_path)) as db:
+    with DatabaseMapping(_schema_copy(v82_schema_db_url, tmp_path)) as db:
         _fill(db, {"u": values}, scenarios, defaults)
         own = _methods(db)
         m._v83_minimum_time_method(db)
@@ -261,14 +261,14 @@ def test_m1_part_on_a_v82_database(name: str, schema_db_url: str, tmp_path: Path
 
 
 @pytest.mark.parametrize("name", DB_ROWS)
-def test_m3_planner_model_matches_the_engine(name: str, schema_db_url: str, tmp_path: Path) -> None:
+def test_m3_planner_model_matches_the_engine(name: str, v82_schema_db_url: str, tmp_path: Path) -> None:
     """``online`` / ``need`` of the planner equal the engine's ``_classify_process_method`` (startup ≠ no_startup)
     and the ungated time reading (``_try_param``, ``float(v) > 0``) in every scenario of the row."""
     from flextool.engine.input._spinedb_reader import SpineDbReader
     from flextool.engine.preprocess.params import _derived as drv
 
     values, scenarios, defaults, *_rest = CASES[name]
-    url = _schema_copy(schema_db_url, tmp_path)
+    url = _schema_copy(v82_schema_db_url, tmp_path)
     with DatabaseMapping(url) as db:
         _fill(db, {"u": values}, scenarios, defaults)
         db.commit_session("M3")
@@ -293,17 +293,17 @@ PLAIN = CASES["plain"][0]
 FT2_OFF = CASES["ft2_off"][0]
 
 
-def test_a_both_default_writes_nothing(schema_db_url: str, tmp_path: Path) -> None:
-    with DatabaseMapping(_schema_copy(schema_db_url, tmp_path)) as db:
+def test_a_both_default_writes_nothing(v82_schema_db_url: str, tmp_path: Path) -> None:
+    with DatabaseMapping(_schema_copy(v82_schema_db_url, tmp_path)) as db:
         _fill(db, {"u": PLAIN, "f": FT2_OFF}, {"S1": ["base"], "S2": ["base", "off"]}, {"minimum_time_method": "both"})
         m._v83_minimum_time_method(db)
         assert _methods(db) == {}
         assert _marker(db) is None
 
 
-def test_a_raw_null_default_is_no_default(schema_db_url: str, tmp_path: Path) -> None:
+def test_a_raw_null_default_is_no_default(v82_schema_db_url: str, tmp_path: Path) -> None:
     """The v3.x shape: ``default_value = b'null'``, ``default_type NULL`` (not NULL as a raw column)."""
-    url = _schema_copy(schema_db_url, tmp_path)
+    url = _schema_copy(v82_schema_db_url, tmp_path)
     with DatabaseMapping(url) as db:
         _fill(db, {"u": PLAIN}, {"S": ["base"]}, {})
         db.commit_session("plain")
@@ -328,9 +328,9 @@ def _raw(url: str, sql: str, *args) -> None:
         con.close()
 
 
-def test_a_list_without_none_gets_it_and_off_reads_none(schema_db_url: str, tmp_path: Path) -> None:
+def test_a_list_without_none_gets_it_and_off_reads_none(v82_schema_db_url: str, tmp_path: Path) -> None:
     """The v3.33.0 shape: [min_uptime, min_downtime, both]."""
-    url = _schema_copy(schema_db_url, tmp_path)
+    url = _schema_copy(v82_schema_db_url, tmp_path)
     _raw(url, "DELETE FROM list_value WHERE value = ? AND parameter_value_list_id = (SELECT id FROM "
               "parameter_value_list WHERE name = 'minimum_time_methods')", b'"none"')
     with DatabaseMapping(url) as db:
@@ -344,10 +344,10 @@ def test_a_list_without_none_gets_it_and_off_reads_none(schema_db_url: str, tmp_
         assert _methods(db) == {("u", "base"): "min_downtime", ("u", "off"): "none"}
 
 
-def test_a_corrupted_list_gets_min_uptime_back(schema_db_url: str, tmp_path: Path) -> None:
+def test_a_corrupted_list_gets_min_uptime_back(v82_schema_db_url: str, tmp_path: Path) -> None:
     """Item D: the first member overwritten with none, [none, min_downtime, both].  A value that was min_uptime now
     reads none and stays (explicit); min_uptime is appended and the plain unit gets it."""
-    url = _schema_copy(schema_db_url, tmp_path)
+    url = _schema_copy(v82_schema_db_url, tmp_path)
     with DatabaseMapping(url) as db:
         _fill(db, {"u": PLAIN, "old": PLAIN | {"minimum_time_method": {"base": "min_uptime"}}}, {"S": ["base"]}, {})
         db.commit_session("before the corruption")
@@ -363,25 +363,25 @@ def test_a_corrupted_list_gets_min_uptime_back(schema_db_url: str, tmp_path: Pat
         assert _methods(db) == {("old", "base"): "none", ("u", "base"): "min_uptime"}
 
 
-def test_a_scenario_where_the_unit_is_inactive_is_ignored(schema_db_url: str, tmp_path: Path) -> None:
+def test_a_scenario_where_the_unit_is_inactive_is_ignored(v82_schema_db_url: str, tmp_path: Path) -> None:
     """In S2 [base, dead] u is switched off; counted, its no_startup in dead would get a none."""
-    with DatabaseMapping(_schema_copy(schema_db_url, tmp_path)) as db:
+    with DatabaseMapping(_schema_copy(v82_schema_db_url, tmp_path)) as db:
         _fill(db, {"u": {"min_downtime": {"base": 2.0}, "startup_method": {"base": "linear", "dead": "no_startup"}}},
               {"S1": ["base"], "S2": ["base", "dead"]}, {}, inactive={"u": {"dead"}})
         m._v83_minimum_time_method(db)
         assert _methods(db) == {("u", "base"): "min_downtime"}
 
 
-def test_no_scenario_reads_all_alternatives_as_one(schema_db_url: str, tmp_path: Path) -> None:
-    with DatabaseMapping(_schema_copy(schema_db_url, tmp_path)) as db:
+def test_no_scenario_reads_all_alternatives_as_one(v82_schema_db_url: str, tmp_path: Path) -> None:
+    with DatabaseMapping(_schema_copy(v82_schema_db_url, tmp_path)) as db:
         _fill(db, {"u": PLAIN}, {}, {})
         m._v83_minimum_time_method(db)
         assert _methods(db) == {("u", "base"): "min_uptime"}
 
 
-def test_marker_merges_writes_and_replaces_undecided(schema_db_url: str, tmp_path: Path) -> None:
+def test_marker_merges_writes_and_replaces_undecided(v82_schema_db_url: str, tmp_path: Path) -> None:
     masking = CASES["masking_conflict"][0]
-    with DatabaseMapping(_schema_copy(schema_db_url, tmp_path)) as db:
+    with DatabaseMapping(_schema_copy(v82_schema_db_url, tmp_path)) as db:
         _fill(db, {"u": PLAIN, "mc": masking}, {"S1": ["E", "base"], "S2": ["base"]}, {})
         m._v77_set_marker(db, m.V83_MIN_TIME_MARKER, json.dumps(
             {"since": 83, "writes": [["x", "A", "both"]], "undecided": [["y", "gone", ["S9"]]]}))
@@ -393,10 +393,10 @@ def test_marker_merges_writes_and_replaces_undecided(schema_db_url: str, tmp_pat
                                  "E in scenario S1", ["S2"]]]}
 
 
-def test_rerun_writes_nothing_and_logs_already_applied(schema_db_url: str, tmp_path: Path,
+def test_rerun_writes_nothing_and_logs_already_applied(v82_schema_db_url: str, tmp_path: Path,
                                                        caplog: pytest.LogCaptureFixture) -> None:
     """In the session (a rerun of the part) and after the commit (a kill after the v83 commit, then a rerun)."""
-    url = _schema_copy(schema_db_url, tmp_path)
+    url = _schema_copy(v82_schema_db_url, tmp_path)
     with DatabaseMapping(url) as db:
         _fill(db, {"u": FT2_OFF, "mc": CASES["masking_conflict"][0]},
               {"S1": ["base"], "S2": ["base", "off"], "S3": ["E", "base"]}, {})
@@ -423,9 +423,9 @@ def test_rerun_writes_nothing_and_logs_already_applied(schema_db_url: str, tmp_p
     assert [r.getMessage() for r in applied] == [f"{m.ALREADY_APPLIED_PREFIX} v83 minimum_time_method: already written"]
 
 
-def test_guard_stops_on_a_changed_member_without_a_commit(schema_db_url: str, tmp_path: Path,
+def test_guard_stops_on_a_changed_member_without_a_commit(v82_schema_db_url: str, tmp_path: Path,
                                                           monkeypatch: pytest.MonkeyPatch) -> None:
-    url = _schema_copy(schema_db_url, tmp_path)
+    url = _schema_copy(v82_schema_db_url, tmp_path)
     with DatabaseMapping(url) as db:
         _fill(db, {"u": PLAIN}, {"S": ["base"]}, {})
         db.commit_session("plain")
@@ -447,9 +447,9 @@ def test_guard_stops_on_a_changed_member_without_a_commit(schema_db_url: str, tm
         assert _marker(db) is None
 
 
-def test_guard_removal_form(schema_db_url: str, tmp_path: Path) -> None:
+def test_guard_removal_form(v82_schema_db_url: str, tmp_path: Path) -> None:
     """A planned removal passes; a planned removal that did not happen stops."""
-    with DatabaseMapping(_schema_copy(schema_db_url, tmp_path)) as db:
+    with DatabaseMapping(_schema_copy(v82_schema_db_url, tmp_path)) as db:
         before = m._list_members(db, ["minimum_time_methods"])
         none_id = next(i for i, (_l, v, _t) in before.items() if v == b'"none"')
         with pytest.raises(m.FlexToolMigrationError, match=r"\('none' \(its planned removal did not happen\)\)"):
@@ -462,8 +462,8 @@ def test_guard_removal_form(schema_db_url: str, tmp_path: Path) -> None:
             m._v83_check_members(db, "minimum_time_methods", before)
 
 
-def test_undecided_unit_is_printed(schema_db_url: str, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
-    with DatabaseMapping(_schema_copy(schema_db_url, tmp_path)) as db:
+def test_undecided_unit_is_printed(v82_schema_db_url: str, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    with DatabaseMapping(_schema_copy(v82_schema_db_url, tmp_path)) as db:
         _fill(db, {"mc": CASES["masking_conflict"][0]}, {"S1": ["E", "base"], "S2": ["base"]}, {})
         m._v83_minimum_time_method(db)
     assert ("v83: minimum_time_method not written for unit mc: a value in alternative base would replace your "

@@ -75,7 +75,7 @@ def _base_values(demand: float = 100.0) -> list:
             ["node", "fuel", "node_type", _s("commodity")], ["commodity", "fuelc", "price", _f(20.0)],
             ["unit", "g1", "conversion_method", _s("min_load_efficiency")], ["unit", "g1", "efficiency", _f(0.5)],
             ["unit", "g1", "efficiency_at_min_load", _f(0.4)], ["unit", "g1", "min_load", _f(0.5)],
-            ["unit", "g1", "existing", _f(100.0)], ["unit", "g1", "startup_method", _s("binary")]]
+            ["unit", "g1", "existing", _f(100.0)], ["unit", "g1", "startup_method", _s("integer_fix_in_uc")]]
 
 
 def _full_entities() -> list:

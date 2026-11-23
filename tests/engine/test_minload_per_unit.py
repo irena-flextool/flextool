@@ -110,7 +110,7 @@ def test_extraction_chp_pure_heat_mode(tmp_path_factory) -> None:
 
 # ── row structure ───────────────────────────────────────────────────────
 @pytest.mark.parametrize("method,kind", [("linear", "linear"),
-                                         ("binary", "integer")])
+                                         ("integer_fix_in_uc", "integer")])
 def test_one_minload_row_per_unit_and_timestep(tmp_path_factory, method,
                                                kind) -> None:
     """Exactly one ``minFlow_minload_<kind>`` row per ``(p, d, t)`` of the

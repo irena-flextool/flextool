@@ -78,5 +78,6 @@ def test_migration_markers_are_registered() -> None:
                                                               "nested_storage_fix_cumulative",
                                                               "rp_storage_chain_pinned",
                                                               "storage_end_matches_start",
-                                                              "storage_reference_start"}
+                                                              "storage_reference_start",
+                                                              "minimum_time_method_written"}
     assert written <= set(BEHAVIOUR_CHANGES)

@@ -64,7 +64,7 @@ ROLLING = [["solve", SOLVE, "solve_mode", b64("rolling_window", "str")],
 
 
 def _first_step_case(tmp_path_factory, startup_cost: float, mode: str):
-    values = uc(PLANT, 0.2, "binary") + _steps_of(3) + _demand([250.0, 250.0, 0.0]) + [
+    values = uc(PLANT, 0.2, "integer_fix_in_uc") + _steps_of(3) + _demand([250.0, 250.0, 0.0]) + [
         ["unit", PLANT, "startup_cost", b64(startup_cost, "float")]] + (ROLLING if mode == "rolling" else [])
     url, scen = make_db(tmp_path_factory, alt=f"free1_{mode}_{int(startup_cost)}", values=values,
                         base_chain=PLANT_CHAIN)
@@ -103,7 +103,7 @@ def test_min_uptime_owes_nothing_for_the_first_step(tmp_path_factory) -> None:
     and no surplus.  Before, t1 wrapped to the offline t4: a start-up at t1, and minimum_uptime then held the unit
     online at t2-t3 with 100 MW of surplus each (the phantom start-up of the two-stage infeasibility, in its
     smallest form)."""
-    values = uc(PLANT, 0.2, "binary") + _steps_of(4) + _demand([250.0, 0.0, 0.0, 0.0]) + [
+    values = uc(PLANT, 0.2, "integer_fix_in_uc") + _steps_of(4) + _demand([250.0, 0.0, 0.0, 0.0]) + [
         ["unit", PLANT, "startup_cost", b64(10.0, "float")],
         ["unit", PLANT, "minimum_time_method", b64("min_uptime", "str")],
         ["unit", PLANT, "min_uptime", b64(3.0, "float")]]
@@ -223,7 +223,7 @@ def _at(step, var: str, d: str, t: str) -> dict[str, float]:
     return {p: x for p, x in zip(v["p"], v["value"])}
 
 
-@pytest.mark.parametrize("startup", ["linear", "binary"])
+@pytest.mark.parametrize("startup", ["linear", "integer_fix_in_uc"])
 def test_two_stage_rolling_with_min_up_down_times_solves(tmp_path_factory, startup) -> None:
     """The reported case: a rolling two-stage solve (one forecast + realized, 24-h jump, 48-h horizon) whose units
     have 10-h minimum up and down times.  With linear units the first realization roll was infeasible: its first
@@ -241,7 +241,7 @@ def test_two_stage_rolling_with_min_up_down_times_solves(tmp_path_factory, start
         for ev in ("v_startup", "v_shutdown"):
             at = _at(step, ev + var[len("v_online"):], d, "t0001")
             assert set(at) == {"coal_plant", "gas_plant"} and all(v == 0.0 for v in at.values()), (d, ev, at)
-    if startup == "binary":     # the realization keeps the binary units online of the stochastic roll's tied steps
+    if startup == "integer_fix_in_uc":     # the realization keeps the binary units online of the stochastic roll's tied steps
         assert _at(rz, var, "period1", "t0001") == pytest.approx(_at(da, var, "period1_mid", "t0001"), abs=1e-9)
 
 

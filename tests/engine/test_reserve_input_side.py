@@ -265,7 +265,7 @@ def test_indirect_input_arc_headroom_integer(tmp_path_factory) -> None:
     step = solve(tmp_path_factory, alt="in_side_int", base_chain=BASE[:3] + ["coal_chp", "heat"], entities=e2,
                  values=v2 + [["constraint", "coal_chp_fix", "is_enabled", b64("no", "str")],
                               ["node", "west", "inflow", b64(-250.0, "float")],
-                              ["unit", CHP, "startup_method", b64("binary", "str")],
+                              ["unit", CHP, "startup_method", b64("integer_fix_in_uc", "str")],
                               ["unit", CHP, "min_load", b64(0.4, "float")]])
     rows = _row_terms(build(step.flex_data), "maxInputFlow_online_integer", f"{CHP},{COAL},{CHP},")
     assert len(rows) == step.flex_data.dt.height

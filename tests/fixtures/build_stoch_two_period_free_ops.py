@@ -241,6 +241,8 @@ def build() -> dict:
          "stoch"],
         ["solve", "stoch_2p_free", "stochastic_branches",
          _pack(stochastic_branches, "map"), "stoch"],
+        ["solve", "stoch_2p_free", "dispatch_realization_method",
+         _pack("within_solve", "str"), "stoch"],
         ["solve", "stoch_2p_free", "stochastic_invest_method",
          _pack("none", "str"), "stoch"],
         ["node", "resv", "node_type", _pack("storage", "str"), "stoch"],

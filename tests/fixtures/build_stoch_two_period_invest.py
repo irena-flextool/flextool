@@ -209,6 +209,8 @@ def build() -> dict:
          "stoch"],
         ["solve", "stoch_2p_inv", "stochastic_branches",
          _pack(stochastic_branches, "map"), "stoch"],
+        ["solve", "stoch_2p_inv", "dispatch_realization_method",
+         _pack("within_solve", "str"), "stoch"],
         ["profile", "wprof", "profile", _pack(profile_stoch, "map"),
          "stoch"],
         # ---- recourse: opt-in flag -------------------------------------

@@ -79,7 +79,7 @@ def _offline_case(tpf, alt: str, method: str):
                      demand("west", 20.0)])
 
 
-@pytest.mark.parametrize("method,kind", [("linear", "linear"), ("binary", "integer")])
+@pytest.mark.parametrize("method,kind", [("linear", "linear"), ("integer_fix_in_uc", "integer")])
 def test_offline_unit_holds_no_up_reserve(tmp_path_factory, method, kind) -> None:
     """An offline unit offers no upward reserve; the reserve requirement drives commitment.
 

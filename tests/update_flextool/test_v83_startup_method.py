@@ -2,7 +2,7 @@
 and default becomes ``integer_fix_in_uc`` (the same model as 4.6.1 ``binary``), ``binary`` leaves the list, and the
 six descriptions that name the members get their v83 text by text alone (plan §2, §0).
 
-The part is called directly on a database made from the v82 schema (``schema_db_url``, copied into ``tmp_path``),
+The part is called directly on a database made from the v82 schema (``v82_schema_db_url``, copied into ``tmp_path``),
 whose ``startup_methods`` is [no_startup, linear, binary] with the shipped default no_startup on unit and connection.
 Expected values follow from the plan's rules alone: members are appended at the end in the order linear_fix_in_uc,
 integer, integer_fix_in_uc and binary is removed, so the list reads no_startup, linear, linear_fix_in_uc, integer,
@@ -70,9 +70,9 @@ REDUCE_OLD, REDUCE_NEW = ("integers: binary startup_method is solved as continuo
                           "integers: startup_method integer and integer_fix_in_uc are solved as continuous")
 
 
-def _copy(schema_db_url: str, folder: Path) -> str:
+def _copy(v82_schema_db_url: str, folder: Path) -> str:
     path = folder / "db.sqlite"
-    shutil.copy2(schema_db_url.removeprefix("sqlite:///"), path)
+    shutil.copy2(v82_schema_db_url.removeprefix("sqlite:///"), path)
     return f"sqlite:///{path.resolve().as_posix()}"
 
 
@@ -159,8 +159,8 @@ AFTER = {
 }
 
 
-def test_binary_values_and_members(schema_db_url: str, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
-    url = _copy(schema_db_url, tmp_path)
+def test_binary_values_and_members(v82_schema_db_url: str, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    url = _copy(v82_schema_db_url, tmp_path)
     _seed(url)
     with DatabaseMapping(url) as db:
         assert _members(db) == ["no_startup", "linear", "binary"]
@@ -180,8 +180,8 @@ def test_binary_values_and_members(schema_db_url: str, tmp_path: Path, capsys: p
                 or line.endswith("= binary (my_method)")]) == 6
 
 
-def test_binary_default_is_rewritten(schema_db_url: str, tmp_path: Path) -> None:
-    url = _copy(schema_db_url, tmp_path)
+def test_binary_default_is_rewritten(v82_schema_db_url: str, tmp_path: Path) -> None:
+    url = _copy(v82_schema_db_url, tmp_path)
     with DatabaseMapping(url) as db:
         pdef = db.get_item("parameter_definition", entity_class_name="unit", name="startup_method")
         raw, typ = to_database("binary")
@@ -197,8 +197,8 @@ def test_binary_default_is_rewritten(schema_db_url: str, tmp_path: Path) -> None
         assert _description(db, "unit", "startup_method") == NEW[("unit", "startup_method")]
 
 
-def test_null_default_gets_the_new_text(schema_db_url: str, tmp_path: Path) -> None:
-    url = _copy(schema_db_url, tmp_path)
+def test_null_default_gets_the_new_text(v82_schema_db_url: str, tmp_path: Path) -> None:
+    url = _copy(v82_schema_db_url, tmp_path)
     _raw(url, "UPDATE parameter_definition SET default_value = NULL, default_type = NULL WHERE name = "
               "'startup_method' AND entity_class_id = (SELECT id FROM entity_class WHERE name = 'unit')")
     with DatabaseMapping(url) as db:
@@ -209,8 +209,8 @@ def test_null_default_gets_the_new_text(schema_db_url: str, tmp_path: Path) -> N
         assert _description(db, "unit", "startup_method") == NEW[("unit", "startup_method")]
 
 
-def test_each_old_text_is_replaced(schema_db_url: str, tmp_path: Path) -> None:
-    with DatabaseMapping(_copy(schema_db_url, tmp_path)) as db:
+def test_each_old_text_is_replaced(v82_schema_db_url: str, tmp_path: Path) -> None:
+    with DatabaseMapping(_copy(v82_schema_db_url, tmp_path)) as db:
         reduce_old = _description(db, "solve", "reduce_unit_detail_method")
         assert REDUCE_OLD in reduce_old
         assert not any(_description(db, *key) == text for key, text in NEW.items())
@@ -220,8 +220,8 @@ def test_each_old_text_is_replaced(schema_db_url: str, tmp_path: Path) -> None:
         assert _description(db, "solve", "reduce_unit_detail_method") == reduce_old.replace(REDUCE_OLD, REDUCE_NEW)
 
 
-def test_edited_description_is_kept(schema_db_url: str, tmp_path: Path) -> None:
-    with DatabaseMapping(_copy(schema_db_url, tmp_path)) as db:
+def test_edited_description_is_kept(v82_schema_db_url: str, tmp_path: Path) -> None:
+    with DatabaseMapping(_copy(v82_schema_db_url, tmp_path)) as db:
         pdef = db.get_item("parameter_definition", entity_class_name="unit", name="startup_method")
         db.update_item("parameter_definition", id=pdef["id"], description=OLD_UNIT_STARTUP + " My note.")
         m._v83_startup_method(db)
@@ -229,9 +229,9 @@ def test_edited_description_is_kept(schema_db_url: str, tmp_path: Path) -> None:
         assert _description(db, "connection", "startup_method") == NEW[("connection", "startup_method")]
 
 
-def test_rerun_writes_nothing(schema_db_url: str, tmp_path: Path) -> None:
+def test_rerun_writes_nothing(v82_schema_db_url: str, tmp_path: Path) -> None:
     """In the session (a rerun of the part) and after the commit (a kill after the v83 commit, then a rerun)."""
-    url = _copy(schema_db_url, tmp_path)
+    url = _copy(v82_schema_db_url, tmp_path)
     _seed(url)
     with DatabaseMapping(url) as db:
         m._v83_startup_method(db)
@@ -245,9 +245,9 @@ def test_rerun_writes_nothing(schema_db_url: str, tmp_path: Path) -> None:
             db.commit_session("rerun")
 
 
-def test_guard_stops_on_a_changed_member_without_a_commit(schema_db_url: str, tmp_path: Path,
+def test_guard_stops_on_a_changed_member_without_a_commit(v82_schema_db_url: str, tmp_path: Path,
                                                           monkeypatch: pytest.MonkeyPatch) -> None:
-    url = _copy(schema_db_url, tmp_path)
+    url = _copy(v82_schema_db_url, tmp_path)
     _seed(url)
 
     def overwrite_first(db, name, members):
@@ -266,7 +266,7 @@ def test_guard_stops_on_a_changed_member_without_a_commit(schema_db_url: str, tm
         assert _values(db)[("unit", "u1", "startup_method", "base")] == "binary"
 
 
-def test_binary_removal_passes_the_guard(schema_db_url: str, tmp_path: Path,
+def test_binary_removal_passes_the_guard(v82_schema_db_url: str, tmp_path: Path,
                                          monkeypatch: pytest.MonkeyPatch) -> None:
     """The last guard call is the removal form with exactly the id of binary."""
     calls = []
@@ -277,7 +277,7 @@ def test_binary_removal_passes_the_guard(schema_db_url: str, tmp_path: Path,
         check(db, name, before, removed)
 
     monkeypatch.setattr(m, "_v83_check_members", recording)
-    with DatabaseMapping(_copy(schema_db_url, tmp_path)) as db:
+    with DatabaseMapping(_copy(v82_schema_db_url, tmp_path)) as db:
         m._v83_startup_method(db)
         assert _members(db) == MEMBERS
     assert calls == [set(), {b'"binary"'}]
@@ -291,11 +291,11 @@ def _binary_default(url: str) -> None:
         db.commit_session("binary default")
 
 
-def test_leftover_default_reference_stops_the_removal(schema_db_url: str, tmp_path: Path,
+def test_leftover_default_reference_stops_the_removal(v82_schema_db_url: str, tmp_path: Path,
                                                       monkeypatch: pytest.MonkeyPatch) -> None:
     """A binary default left in place (the detach skipped) would read as linear_fix_in_uc after the commit, which
     takes the freed id: the part raises before the removal instead."""
-    url = _copy(schema_db_url, tmp_path)
+    url = _copy(v82_schema_db_url, tmp_path)
     _binary_default(url)
     monkeypatch.setattr(m, "_detach_list_defaults", lambda db, name, renames: [])
     with DatabaseMapping(url) as db:
@@ -306,9 +306,9 @@ def test_leftover_default_reference_stops_the_removal(schema_db_url: str, tmp_pa
         assert "binary" in _members(db)
 
 
-def test_leftover_value_reference_stops_the_removal(schema_db_url: str, tmp_path: Path) -> None:
+def test_leftover_value_reference_stops_the_removal(v82_schema_db_url: str, tmp_path: Path) -> None:
     """A binary value the rewrite missed (the write skipped) stops the part before the removal."""
-    url = _copy(schema_db_url, tmp_path)
+    url = _copy(v82_schema_db_url, tmp_path)
     _seed(url)
     with DatabaseMapping(url) as db:
         db.update_parameter_value = lambda **kwargs: None

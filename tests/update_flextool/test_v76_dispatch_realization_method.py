@@ -77,9 +77,10 @@ def _db_version(url: str) -> int:
 
 
 def test_dispatch_realization_method_definition_present(tmp_path: Path) -> None:
-    """``solve.dispatch_realization_method`` exists, defaults to
-    ``"within_solve"``, is bound to ``dispatch_realization_methods`` and
-    grouped ``solve_advanced``."""
+    """``solve.dispatch_realization_method`` exists, is bound to
+    ``dispatch_realization_methods`` and grouped ``solve_advanced``.  v76
+    gave it the default ``"within_solve"``; v83 (part 5) changes a
+    ``within_solve`` default to ``"deterministic"``."""
     db = _migrated_db(tmp_path)
     try:
         pdef = db.get_parameter_definition_item(
@@ -88,7 +89,7 @@ def test_dispatch_realization_method_definition_present(tmp_path: Path) -> None:
         )
         assert pdef, "dispatch_realization_method not added by migration"
         default = from_database(pdef["default_value"], pdef["default_type"])
-        assert default == "within_solve"
+        assert default == "deterministic"
         assert (
             pdef["parameter_value_list_name"]
             == "dispatch_realization_methods"
@@ -185,7 +186,8 @@ def test_stochastic_branches_description_corrected(tmp_path: Path) -> None:
 
 
 def test_dispatch_realization_methods_value_list(tmp_path: Path) -> None:
-    """``dispatch_realization_methods`` == {within_solve, separate_dispatch}."""
+    """``dispatch_realization_methods`` == {within_solve, separate_dispatch}
+    from v76, and ``deterministic`` from v83 (part 5)."""
     db = _migrated_db(tmp_path)
     try:
         values = {
@@ -194,7 +196,7 @@ def test_dispatch_realization_methods_value_list(tmp_path: Path) -> None:
             if v["parameter_value_list_name"]
             == "dispatch_realization_methods"
         }
-        assert values == {"within_solve", "separate_dispatch"}
+        assert values == {"within_solve", "separate_dispatch", "deterministic"}
     finally:
         db.close()
 

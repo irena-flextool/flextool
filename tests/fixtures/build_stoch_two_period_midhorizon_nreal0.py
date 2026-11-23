@@ -235,6 +235,8 @@ def build() -> dict:
          _pack("none", "str"), "stoch"],
         ["solve", "stoch_2p_mid", "stochastic_branches",
          _pack(stochastic_branches, "map"), "stoch"],
+        ["solve", "stoch_2p_mid", "dispatch_realization_method",
+         _pack("within_solve", "str"), "stoch"],
         # ---- stoch_profile: stochastic profile, no realized branch -----
         ["profile", "wprof", "profile", _pack(profile_stoch, "map"),
          "stoch_profile"],
@@ -243,6 +245,8 @@ def build() -> dict:
          "realized"],
         ["solve", "stoch_2p_mid", "stochastic_branches",
          _pack(stochastic_branches_realized, "map"), "realized"],
+        ["solve", "stoch_2p_mid", "dispatch_realization_method",
+         _pack("within_solve", "str"), "realized"],
     ]
     return spec
 

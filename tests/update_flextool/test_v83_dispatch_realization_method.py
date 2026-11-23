@@ -9,7 +9,7 @@ a method won before must read the same method, else nothing is written for the s
 no type) that wins reads as absent, as the engine reads it (within_solve today); when it ranks above the branches'
 alternative, the write goes into it (the row is overwritten), so the candidate reads within_solve.
 
-Pure planner rows first, then the part called directly on a database made from the v82 schema (``schema_db_url``,
+Pure planner rows first, then the part called directly on a database made from the v82 schema (``v82_schema_db_url``,
 copied into ``tmp_path``): ``dispatch_realization_methods`` is [within_solve, separate_dispatch] with the shipped
 default within_solve and the one alternative ``base``.
 """
@@ -129,9 +129,9 @@ def test_scenarios_text() -> None:
 
 
 # --- on a database --------------------------------------------------------------------------------------------
-def _copy(schema_db_url: str, folder: Path) -> str:
+def _copy(v82_schema_db_url: str, folder: Path) -> str:
     path = folder / "db.sqlite"
-    shutil.copy2(schema_db_url.removeprefix("sqlite:///"), path)
+    shutil.copy2(v82_schema_db_url.removeprefix("sqlite:///"), path)
     return f"sqlite:///{path.resolve().as_posix()}"
 
 
@@ -196,11 +196,11 @@ def _set_default(db, value) -> None:
     db.update_item("parameter_definition", id=_pdef(db)["id"], default_value=raw, default_type=typ)
 
 
-def test_no_scenario_writes_into_the_branches_alternative(schema_db_url: str, tmp_path: Path,
+def test_no_scenario_writes_into_the_branches_alternative(v82_schema_db_url: str, tmp_path: Path,
                                                           capsys: pytest.CaptureFixture) -> None:
     """No scenario: the pseudo-scenario of all alternatives.  st has branches and no method → within_solve in base;
     det has none → nothing; sd has separate_dispatch → kept."""
-    url = _copy(schema_db_url, tmp_path)
+    url = _copy(v82_schema_db_url, tmp_path)
     _seed(url, {}, branches=[("st", "base"), ("sd", "base")], methods=[("sd", "base", "separate_dispatch")])
     with DatabaseMapping(url) as db:
         db.add_item("entity", entity_class_name="solve", name="det")
@@ -216,11 +216,11 @@ def test_no_scenario_writes_into_the_branches_alternative(schema_db_url: str, tm
     assert "v83: dispatch_realization_method within_solve written" in capsys.readouterr().out
 
 
-def test_scenarios(schema_db_url: str, tmp_path: Path) -> None:
+def test_scenarios(v82_schema_db_url: str, tmp_path: Path) -> None:
     """a: method in E above the target in S1, S2 without E → written into base, E kept.  b: branches in a1 (S1) and
     a2 (S2) → one write per target.  c: branches only in a1 → written into a1 only.  d: the method only in U, which
     no scenario uses → written into base."""
-    url = _copy(schema_db_url, tmp_path)
+    url = _copy(v82_schema_db_url, tmp_path)
     _seed(url, {"S1": ["base", "E", "a1"], "S2": ["base", "a2"]},
           branches=[("a", "base"), ("b", "a1"), ("b", "a2"), ("c", "a1"), ("d", "base")],
           methods=[("a", "E", "separate_dispatch"), ("d", "U", "separate_dispatch")])
@@ -234,10 +234,10 @@ def test_scenarios(schema_db_url: str, tmp_path: Path) -> None:
                                 ("d", "U"): "separate_dispatch", ("d", "base"): "within_solve"}
 
 
-def test_undecided_writes_nothing_and_prints(schema_db_url: str, tmp_path: Path,
+def test_undecided_writes_nothing_and_prints(v82_schema_db_url: str, tmp_path: Path,
                                              capsys: pytest.CaptureFixture) -> None:
     """S1 = [E, base]: a write into base (for S2 = [base]) would rank above E's separate_dispatch → undecided."""
-    url = _copy(schema_db_url, tmp_path)
+    url = _copy(v82_schema_db_url, tmp_path)
     _seed(url, {"S1": ["E", "base"], "S2": ["base"]}, branches=[("v", "base")],
           methods=[("v", "E", "separate_dispatch")])
     with DatabaseMapping(url) as db:
@@ -248,10 +248,10 @@ def test_undecided_writes_nothing_and_prints(schema_db_url: str, tmp_path: Path,
 
 
 @pytest.mark.parametrize("default", [None, "separate_dispatch"])
-def test_null_and_user_default_are_kept(schema_db_url: str, tmp_path: Path, default) -> None:
+def test_null_and_user_default_are_kept(v82_schema_db_url: str, tmp_path: Path, default) -> None:
     """The engine never reads the default: a NULL or user-set default stays, the writes are as with the shipped one,
     and the description is replaced whatever the default."""
-    url = _copy(schema_db_url, tmp_path)
+    url = _copy(v82_schema_db_url, tmp_path)
     _seed(url, {"S1": ["base"]}, branches=[("v", "base")])
     if default is None:
         _raw(url, "UPDATE parameter_definition SET default_value = NULL, default_type = NULL WHERE name = "
@@ -271,10 +271,10 @@ def test_null_and_user_default_are_kept(schema_db_url: str, tmp_path: Path, defa
         assert _members(db) == MEMBERS
 
 
-def test_a_null_row_in_the_target_is_overwritten(schema_db_url: str, tmp_path: Path) -> None:
+def test_a_null_row_in_the_target_is_overwritten(v82_schema_db_url: str, tmp_path: Path) -> None:
     """A null method row (b'null', no type) in the branches' alternative: the engine reads it as absent (within_solve
     today) → candidate, and the row itself gets within_solve (no second row in base)."""
-    url = _copy(schema_db_url, tmp_path)
+    url = _copy(v82_schema_db_url, tmp_path)
     _seed(url, {"S1": ["base"]}, branches=[("v", "base")], methods=[("v", "base", None)])
     with DatabaseMapping(url) as db:
         assert _methods(db) == {("v", "base"): None}
@@ -284,10 +284,10 @@ def test_a_null_row_in_the_target_is_overwritten(schema_db_url: str, tmp_path: P
         assert _methods(db) == {("v", "base"): "within_solve"}
 
 
-def test_a_null_row_above_a_method_is_overwritten(schema_db_url: str, tmp_path: Path) -> None:
+def test_a_null_row_above_a_method_is_overwritten(v82_schema_db_url: str, tmp_path: Path) -> None:
     """S1 = [base, L, H]: branches in base, separate_dispatch in L, a null row in H.  The engine reads H's null as
     absent (within_solve today), so S1 is a candidate; H ranks above base → H gets within_solve, L is kept."""
-    url = _copy(schema_db_url, tmp_path)
+    url = _copy(v82_schema_db_url, tmp_path)
     _seed(url, {"S1": ["base", "L", "H"]}, branches=[("v", "base")],
           methods=[("v", "L", "separate_dispatch"), ("v", "H", None)])
     with DatabaseMapping(url) as db:
@@ -297,18 +297,18 @@ def test_a_null_row_above_a_method_is_overwritten(schema_db_url: str, tmp_path: 
         assert _methods(db) == {("v", "L"): "separate_dispatch", ("v", "H"): "within_solve"}
 
 
-def test_edited_description_is_kept(schema_db_url: str, tmp_path: Path) -> None:
-    with DatabaseMapping(_copy(schema_db_url, tmp_path)) as db:
+def test_edited_description_is_kept(v82_schema_db_url: str, tmp_path: Path) -> None:
+    with DatabaseMapping(_copy(v82_schema_db_url, tmp_path)) as db:
         db.update_item("parameter_definition", id=_pdef(db)["id"], description=OLD_TEXT + " My note.")
         m._v83_dispatch_realization_method(db)
         assert _pdef(db)["description"] == OLD_TEXT + " My note."
         assert _pdef(db)["parsed_value"] == "deterministic"
 
 
-def test_rerun_writes_nothing(schema_db_url: str, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_rerun_writes_nothing(v82_schema_db_url: str, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """In the session (a rerun of the part) and after the commit: no write, one already-applied log per rerun and
     none on the first run."""
-    url = _copy(schema_db_url, tmp_path)
+    url = _copy(v82_schema_db_url, tmp_path)
     _seed(url, {"S1": ["base"]}, branches=[("v", "base")])
     after = {("v", "base"): "within_solve"}
     caplog.set_level(logging.INFO)
@@ -331,9 +331,9 @@ def test_rerun_writes_nothing(schema_db_url: str, tmp_path: Path, caplog: pytest
             db.commit_session("rerun")
 
 
-def test_guard_stops_on_a_changed_member(schema_db_url: str, tmp_path: Path,
+def test_guard_stops_on_a_changed_member(v82_schema_db_url: str, tmp_path: Path,
                                          monkeypatch: pytest.MonkeyPatch) -> None:
-    url = _copy(schema_db_url, tmp_path)
+    url = _copy(v82_schema_db_url, tmp_path)
     _seed(url, {"S1": ["base"]}, branches=[("v", "base")])
 
     def overwrite_first(db, name, members):

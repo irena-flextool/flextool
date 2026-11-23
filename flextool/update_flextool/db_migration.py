@@ -250,9 +250,9 @@ def _current_version_ro(path, up_to: int | None) -> int | None:
     :func:`~flextool.update_flextool.list_default_repair.repair_list_defaults` repairs (checked first: the later
     probes parse defaults), a current SpineDB schema revision, no superseded unit-count description
     (:func:`_refresh_unit_count_texts` would rewrite one), every definition and list member the current version's
-    schema step adds and no superseded shipped default and description pair (:func:`_refresh_head_schema` would add
-    or replace one).  Anything that cannot be read gives ``None``: it is
-    decided under the lock.
+    schema step adds and no superseded shipped default and description pair or description
+    (:func:`_head_defaults_stale_ro`; :func:`_refresh_head_schema` would add or replace one).  Anything that cannot
+    be read gives ``None``: it is decided under the lock.
     """
     from flextool.update_flextool.frozen import read_db_version_ro, schema_outdated_ro
     from flextool.update_flextool.list_default_repair import list_defaults_repairable_ro
@@ -2047,6 +2047,8 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
                 _migrate_v81_schema_batch(db)
             elif next_version == 82:
                 _migrate_v82_schema_batch(db)
+            elif next_version == 83:
+                _migrate_v83_schema_batch(db)
             else:
                 print("Version invalid")
             _stage_version(db, next_version)
@@ -12817,23 +12819,77 @@ def _v83_dispatch_realization_method(db) -> None:
     _replace_text_pairs(db, _v83_dispatch_realization_texts())
 
 
+# --- Version 83: the batch ---------------------------------------------------------------------------------------
+
+#: The members v83 adds to each value list (parts 1, 2 and 5): what a database at 83 has on the lists it has.
+_V83_NEW_MEMBERS: dict[str, tuple[str, ...]] = {"minimum_time_methods": _V83_MIN_TIME_METHODS,
+                                                "startup_methods": _V83_STARTUP_METHODS,
+                                                "dispatch_realization_methods": (_V83_DETERMINISTIC,)}
+
+
+def _v82_superseded_texts() -> dict[tuple[str, str], tuple[str, str]]:
+    """``{(class, name): (old, new)}``: the descriptions of :func:`_v82_superseded` (a development build of v82
+    shipped them; the default stays) and their current text (:func:`_v82_texts`), replaced by text alone."""
+    texts = _v82_texts()
+    return {key: (old, texts[key]) for key, (_default, old) in _v82_superseded().items()}
+
+
+def _v83_superseded_texts() -> dict[tuple[str, str], tuple[str, str]]:
+    """``{(class, name): (old, new)}``: the descriptions the parts of v83 replace by text alone."""
+    return {**_v83_startup_texts(), **_v83_dispatch_realization_texts()}
+
+
+def _v83_carry_over(db) -> None:
+    """Part 0 of v83: a database migrated to 82 by a development build of v82 gets the v82 definitions it lacks
+    (an existing definition keeps its fields) and the current description in place of a superseded shipped one
+    (:func:`_v82_superseded_texts`, by text alone).  After a full v82 it changes nothing.  Idempotent."""
+    _v82_definitions_part(db, update=False)
+    _replace_text_pairs(db, _v82_superseded_texts())
+
+
+def _migrate_v83_schema_batch(db) -> None:
+    """All schema changes of database version 83 (v82 -> v83), in one step.  The parts are numbered by name and
+    run in the order below; each is idempotent, and the step commits once at the end.
+
+    0. The v82 carry-over (:func:`_v83_carry_over`).
+    1. ``minimum_time_method`` now decides whether a unit's min up/down times apply: the method is written where a
+       unit relied on a time alone (results unchanged), with the marker ``minimum_time_method_written``
+       (:func:`_v83_minimum_time_method`).
+    2. ``startup_methods`` gets ``linear_fix_in_uc``, ``integer`` and ``integer_fix_in_uc``; every ``binary`` becomes
+       ``integer_fix_in_uc`` (the same model) and the ``binary`` member is removed (:func:`_v83_startup_method`).
+    5. ``dispatch_realization_methods`` gets ``deterministic``, the new shipped default; ``within_solve`` is written
+       on the stochastic solves that relied on the default (results unchanged;
+       :func:`_v83_dispatch_realization_method`).
+
+    On a non-local URL the list defaults are not repaired before the step (item 279): a default still stored as its
+    member's text reads as nothing, and a description written on its definition stores it as ``NULL``; it read as
+    nothing before too.
+    """
+    _v83_carry_over(db)
+    _v83_minimum_time_method(db)
+    _v83_startup_method(db)
+    _v83_dispatch_realization_method(db)
+    _commit_step(db, "v83: minimum_time_method decides the min up/down times, startup_method binary is "
+                     "integer_fix_in_uc, dispatch_realization_method deterministic is the default")
+
+
 #: The schema step of the current data version.  The template sync reruns it on the master template, so that schema
 #: entries appended to its tables after the version was first stamped reach the shipped schema (a database at the
 #: current version is otherwise not migrated again).
-RERUNNABLE_HEAD_STEP: dict[int, Callable] = {82: _migrate_v82_schema_batch}
+RERUNNABLE_HEAD_STEP: dict[int, Callable] = {83: _migrate_v83_schema_batch}
 
 
 def _head_schema_additions() -> tuple[set[tuple[str, str]], dict[str, tuple[str, ...]]]:
     """``(definitions, list members)`` the schema step of the current data version adds: what a database at that
     version must have (on the classes it has)."""
-    if FLEXTOOL_DB_VERSION != 82:
+    if FLEXTOOL_DB_VERSION != 83:
         return set(), {}
-    return set(_v81_definitions()) | set(_v82_definitions()), dict(V81_NEW_VALUE_LISTS)
+    return set(_v82_definitions()), dict(_V83_NEW_MEMBERS)
 
 
 def _head_schema_missing_ro(path) -> bool:
-    """Whether the database *path* (read read-only) lacks a definition or a list member that the schema step of the
-    current data version adds (``True`` when it cannot be read)."""
+    """Whether the database *path* (read read-only) lacks a definition (on a class it has) or a list member (of a
+    list it has) that the schema step of the current data version adds (``True`` when it cannot be read)."""
     import sqlite3
 
     from flextool.update_flextool.frozen import _connect_ro
@@ -12850,7 +12906,7 @@ def _head_schema_missing_ro(path) -> bool:
         have = set(con.execute(
             "SELECT ec.name, pd.name FROM parameter_definition pd "
             "JOIN entity_class ec ON pd.entity_class_id = ec.id").fetchall())
-        members: dict[str, set] = {}
+        members: dict[str, set] = {r[0]: set() for r in con.execute("SELECT name FROM parameter_value_list")}
         for name, value, typ in con.execute(
                 "SELECT pvl.name, lv.value, lv.type FROM list_value lv "
                 "JOIN parameter_value_list pvl ON lv.parameter_value_list_id = pvl.id").fetchall():
@@ -12861,21 +12917,23 @@ def _head_schema_missing_ro(path) -> bool:
         con.close()
     if any(cls in classes and (cls, name) not in have for cls, name in definitions):
         return True
-    return any(not set(wanted) <= members.get(name, set()) for name, wanted in lists.items())
+    return any(name in members and not set(wanted) <= members[name] for name, wanted in lists.items())
 
 
 def _head_superseded() -> dict[tuple[str, str], list[tuple[str | None, str]]]:
-    """The superseded shipped ``(default, description)`` pairs that the refresh of the current data version replaces
-    (:func:`_v81_superseded` through :func:`_v81_refresh`, and :func:`_v82_superseded`), per definition: a
-    definition can have one of each (e.g. ``end_of_life_method``: the ``next_seam`` default of an early v81 build,
-    and the v81 text that v82 rewrote)."""
-    if FLEXTOOL_DB_VERSION != 82:
+    """The superseded shipped ``(default, description)`` pairs that the refresh of the current data version replaces,
+    per definition.  None at 83: every database at 82 passed the v81 refresh inside step 82, and the v82 entries are
+    description-only (:func:`_head_superseded_texts`)."""
+    return {}
+
+
+def _head_superseded_texts() -> dict[tuple[str, str], tuple[str, str]]:
+    """``{(class, name): (old, new)}``: the superseded shipped descriptions that the refresh of the current data
+    version replaces by text alone, whatever the default (:func:`_v82_superseded_texts` and
+    :func:`_v83_superseded_texts`)."""
+    if FLEXTOOL_DB_VERSION != 83:
         return {}
-    out: dict[tuple[str, str], list[tuple[str | None, str]]] = {}
-    for superseded in (_v81_superseded(), _v82_superseded()):
-        for key, pair in superseded.items():
-            out.setdefault(key, []).append(pair)
-    return out
+    return {**_v82_superseded_texts(), **_v83_superseded_texts()}
 
 
 def _is_superseded_pair(cls: str, name: str, default, description: str | None) -> bool:
@@ -12892,15 +12950,17 @@ def _pair_is(old: tuple[object, str] | None, default, description: str | None) -
 
 def _head_defaults_stale_ro(path) -> bool:
     """Whether the database *path* (read read-only) has a definition with a superseded shipped default and
-    description (:func:`_is_superseded_pair`; ``True`` when it cannot be read)."""
+    description (:func:`_is_superseded_pair`) or a superseded shipped description (:func:`_head_superseded_texts`,
+    by text alone; ``True`` when it cannot be read)."""
     import sqlite3
 
     from flextool.update_flextool.frozen import _connect_ro
 
     superseded = _head_superseded()
-    if not superseded:
+    texts = {key: old for key, (old, _new) in _head_superseded_texts().items()}
+    if not superseded and not texts:
         return False
-    names = sorted({name for _cls, name in superseded})
+    names = sorted({name for _cls, name in (*superseded, *texts)})
     try:
         con = _connect_ro(path)
     except sqlite3.Error:
@@ -12927,7 +12987,8 @@ def _head_defaults_stale_ro(path) -> bool:
             return from_database(*member) if member is not None else None
         return from_database(value, typ)
 
-    return any(_is_superseded_pair(cls, name, parsed(value, typ), desc) for cls, name, value, typ, desc in rows)
+    return any(texts.get((cls, name)) == (desc or "") or _is_superseded_pair(cls, name, parsed(value, typ), desc)
+               for cls, name, value, typ, desc in rows)
 
 
 def _v81_refresh(db, texts: dict[tuple[str, str], str]) -> None:
@@ -12965,16 +13026,18 @@ def _replace_superseded_pairs(db, superseded: dict[tuple[str, str], tuple[str | 
 
 
 def _refresh_head_schema(db) -> None:
-    """Bring a database at the current data version to the schema of its schema step: the v81 refresh with the
-    current descriptions (:func:`_v81_refresh`: missing v81 definitions and list members, superseded shipped pairs),
-    the v82 definitions it lacks (:func:`_v82_definitions_part`; an existing definition keeps its fields) and the
-    current description in place of a superseded shipped v82 pair (:func:`_v82_superseded`).  A description the
-    user edited, a default the user set and every value are kept; otherwise a description is never rewritten.
-    Idempotent."""
-    if FLEXTOOL_DB_VERSION == 82:
-        _v81_refresh(db, _v82_texts())
+    """Bring a database at the current data version to the schema of its schema step: the v82 definitions it lacks
+    (:func:`_v82_definitions_part`; an existing definition keeps its fields), the members v83 adds to the lists it
+    has (:data:`_V83_NEW_MEMBERS`; no value is written, no member removed, no default changed: a database at 83 has
+    had step 83) and the current description in place of a superseded shipped one (:func:`_head_superseded_texts`,
+    by text alone).  A description the user edited, a default the user set and every value are kept; otherwise a
+    description is never rewritten.  Idempotent."""
+    if FLEXTOOL_DB_VERSION == 83:
         _v82_definitions_part(db, update=False)
-        _replace_superseded_pairs(db, _v82_superseded(), {}, _v82_texts())
+        for name, members in _V83_NEW_MEMBERS.items():
+            if db.get_item("parameter_value_list", name=name):
+                _append_list_members(db, name, members)
+        _replace_text_pairs(db, _head_superseded_texts())
 
 
 if __name__ == '__main__':

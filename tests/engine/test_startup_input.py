@@ -250,7 +250,7 @@ def test_results_database_has_the_start_up_energy(tmp_path_factory) -> None:
 
 def test_binary_start_up_takes_whole_units(tmp_path_factory) -> None:
     """With binary start-up one whole unit starts: 200 MWh of oil at t0002 (unit_startup_energy_dt_ee)."""
-    values = _values(startup="binary")
+    values = _values(startup="integer_fix_in_uc")
     step = _step(tmp_path_factory, "su_oil_bin", values, _entities())
     assert float(step.obj) == pytest.approx((3000.0 + 10000.0) * ANNUAL, rel=1e-9)
     energy = _table(tmp_path_factory, "su_oil_bin", values, _entities(), "unit_startup_energy_dt_ee")
@@ -484,7 +484,7 @@ def test_integers_keeps_the_online_variables_of_a_draw(tmp_path_factory) -> None
     (relaxed) instead of leaving them out as unused."""
     from flextool.engine.preprocess._reduce_detail import apply_reduce_detail, online_uses
 
-    fd = _step(tmp_path_factory, "su_oil_bin_free", _values(startup="binary", min_load=None), _entities()).flex_data
+    fd = _step(tmp_path_factory, "su_oil_bin_free", _values(startup="integer_fix_in_uc", min_load=None), _entities()).flex_data
     assert online_uses(fd) == {"startup_energy": {"cp"}}
     reduced, report = apply_reduce_detail(fd, "integers")
     assert "online_unused" not in report.removed

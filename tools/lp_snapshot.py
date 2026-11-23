@@ -555,7 +555,7 @@ def _patch_chp_floor_linear(data: dict) -> dict:
 
 def _patch_chp_floor_integer(data: dict) -> dict:
     """As chp_floor_linear with integer (binary) online variables."""
-    return _chp_floor(data, "chp_floor_integer", "binary")
+    return _chp_floor(data, "chp_floor_integer", "integer_fix_in_uc")
 
 
 def _patch_reserve_dynamic_n1_down(data: dict) -> dict:
@@ -1184,7 +1184,7 @@ def _patch_ramp_chp_integer(data: dict) -> dict:
     """chp_floor_integer with ramp limits on coal_chp's fuel input and its
     electricity output: integer startup / shutdown capacity reduction on an
     output arc and on an indirect unit's input arc."""
-    data = _chp_floor(data, "ramp_chp_integer", "binary")
+    data = _chp_floor(data, "ramp_chp_integer", "integer_fix_in_uc")
     vals = (_ramp_on("unit__inputNode", ["coal_chp", "coal_market"], 0.002)
             + _ramp_on("unit__outputNode", ["coal_chp", "west"], 0.002))
     for cls, ent, param, val in vals:
@@ -1651,7 +1651,7 @@ def _patch_conn_online_regular(data: dict) -> dict:
 def _patch_conn_online_regular_mip(data: dict) -> dict:
     """Two-way (regular) west_east with binary online variables."""
     return _overlay(data, name="conn_online_regular_mip", base=_NET,
-                    values=_conn_startup("west_east", "binary"))
+                    values=_conn_startup("west_east", "integer_fix_in_uc"))
 
 
 def _patch_conn_online_1var(data: dict) -> dict:
@@ -1805,7 +1805,7 @@ def _patch_conn_online_stoch(data: dict) -> dict:
             ["connection", "dn_north", "existing", 100.0], ["connection", "dn_north", "efficiency", 0.95],
             ["connection", "dn_north2", "transfer_method", "regular"],
             ["connection", "dn_north2", "existing", 100.0], ["connection", "dn_north2", "efficiency", 0.9]]
-    vals += _conn_startup("dn_north", "linear") + _conn_startup("dn_north2", "binary", 5.0)
+    vals += _conn_startup("dn_north", "linear") + _conn_startup("dn_north2", "integer_fix_in_uc", 5.0)
     return _overlay(data, name="conn_online_stoch", base="2_day_stochastic_dispatch", entities=ents,
                     values=vals)
 
@@ -1823,7 +1823,7 @@ def _patch_conn_online_1var_mip(data: dict) -> dict:
     eu, vu = _reserve("ru", "up", "electricity", [("connection", "west_east", "west")], reservation=100.0)
     ed, vd = _reserve("rd", "down", "electricity", [("connection", "west_east", "west")], reservation=100.0)
     return _overlay(data, name="conn_online_1var_mip", base=_NET, entities=eu + ed,
-                    values=vu + vd + _conn_startup("west_east", "binary") + [
+                    values=vu + vd + _conn_startup("west_east", "integer_fix_in_uc") + [
                         ["connection", "west_east", "transfer_method", "no_losses_no_variable_cost"]])
 
 

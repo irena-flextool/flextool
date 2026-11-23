@@ -68,12 +68,14 @@ def _values(db) -> dict:
 
 
 def _shipped() -> tuple[dict, dict[str, list[str]]]:
+    """``({(class, name): description}, lists)`` of the shipped schema; a description v83 replaced is its old text."""
     with open(package_data_path("schemas/spinedb_schema.json"), encoding="utf-8") as f:
         schema = json.load(f)
     lists: dict[str, list[str]] = {}
     for name, value in schema["parameter_value_lists"]:
         lists.setdefault(name, []).append(value)
-    return {(r[0], r[1]): r[4] for r in schema["parameter_definitions"]}, lists
+    v83_back = {key: old for key, (old, _new) in m._v83_superseded_texts().items()}
+    return {(r[0], r[1]): v83_back.get((r[0], r[1]), r[4]) for r in schema["parameter_definitions"]}, lists
 
 
 @pytest.fixture(scope="module")

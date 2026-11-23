@@ -79,7 +79,7 @@ def _values(levels: dict[str, tuple[str, str]], *, periods: dict[str, str] = PER
             ["node", "fuel", "node_type", _s("commodity")], ["commodity", "fuelc", "price", _f(20.0)],
             ["unit", "g1", "conversion_method", _s("min_load_efficiency")], ["unit", "g1", "efficiency", _f(0.5)],
             ["unit", "g1", "efficiency_at_min_load", _f(0.4)], ["unit", "g1", "min_load", _f(0.5)],
-            ["unit", "g1", "existing", _f(100.0)], ["unit", "g1", "startup_method", _s("binary")],
+            ["unit", "g1", "existing", _f(100.0)], ["unit", "g1", "startup_method", _s("integer_fix_in_uc")],
             [out, ["g1", "elec"], "ramp_method", _s("ramp_limit")], [out, ["g1", "elec"], "ramp_speed_up", _f(0.01)],
             [out, ["g1", "elec"], "ramp_speed_down", _f(0.01)],
             ["reserve__upDown__group", grp, "reserve_method", _s("timeseries_only")],
@@ -101,7 +101,7 @@ def _values(levels: dict[str, tuple[str, str]], *, periods: dict[str, str] = PER
                  ["group", "ac", "transfer_method", _s("dc_power_flow_with_angles")],
                  ["connection", "c", "existing", _f(100.0)], ["connection", "c", "reactance", _f(0.1)],
                  ["node", "elec3", "node_type", _s("balance")], ["node", "elec3", "inflow", _f(-5.0)],
-                 ["connection", "c2", "existing", _f(100.0)], ["connection", "c2", "startup_method", _s("binary")]]
+                 ["connection", "c2", "existing", _f(100.0)], ["connection", "c2", "startup_method", _s("integer_fix_in_uc")]]
     for solve, ts in (timesets or {"sA": "tsA", "sB": "tsB"}).items():
         vals += [["solve", solve, "period_timeset", _period_map(ts, periods[solve])],
                  ["solve", solve, "realized_periods", b64({"value_type": "str", "data": [periods[solve]]}, "array")],
@@ -309,7 +309,7 @@ def test_separate_dispatch_sibling_takes_the_parents_integers(tmp_path_factory) 
     from flextool.engine import run_chain_from_db
     from tests.engine._unit_db import build
 
-    vals = [["unit", "peaker", "startup_method", _s("binary")],
+    vals = [["unit", "peaker", "startup_method", _s("integer_fix_in_uc")],
             ["solve", "stoch_rd", "reduce_unit_detail_method", _s("integers")]]
     url, scen = make_db(tmp_path_factory, alt="rdc_sibling", values=vals, base_chain=["init", "base", "stoch"],
                         fixture_json=SEPARATE)

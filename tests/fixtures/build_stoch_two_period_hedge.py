@@ -312,10 +312,14 @@ def build() -> dict:
         # ---- rp: mid-horizon reveal at p2040 ---------------------------
         ["solve", "stoch_2p_hedge", "stochastic_branches",
          _pack(stochastic_branches_rp, "map"), "rp"],
+        ["solve", "stoch_2p_hedge", "dispatch_realization_method",
+         _pack("within_solve", "str"), "rp"],
         ["profile", "wprof", "profile", _pack(profile_rp, "map"), "rp"],
         # ---- ws: wait-and-see reveal at p2035 --------------------------
         ["solve", "stoch_2p_hedge", "stochastic_branches",
          _pack(stochastic_branches_ws, "map"), "ws"],
+        ["solve", "stoch_2p_hedge", "dispatch_realization_method",
+         _pack("within_solve", "str"), "ws"],
         # ---- na_window: invest-NA window main mode (v72) ---------------
         # Layered on ``ws`` (fan-at-t0 recourse): tie v_invest/v_divest at
         # p2035 across branches (shared first stage) while p2040 invests

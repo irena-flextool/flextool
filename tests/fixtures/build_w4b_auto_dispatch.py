@@ -55,7 +55,8 @@ def build() -> dict:
         if pv[0] == "model" and pv[2] == "solves":
             pv[3] = [_enc({"value_type": "str", "data": [PARENT]}), "array"]
 
-    # 2. drop the author-declared dispatch solve entity + its params.
+    # 2. drop the author-declared dispatch solve entity + its params, and the
+    #    parent's within_solve (its method is authored in step 3).
     spec["entities"] = [
         e for e in spec["entities"]
         if not (e[0] == "solve" and e[1] == AUTHOR_DISPATCH)
@@ -63,6 +64,7 @@ def build() -> dict:
     spec["parameter_values"] = [
         pv for pv in spec["parameter_values"]
         if not (pv[0] == "solve" and pv[1] == AUTHOR_DISPATCH)
+        and not (pv[1] == PARENT and pv[2] == "dispatch_realization_method")
     ]
 
     # 3. author separate_dispatch on the surviving single top-level solve,

@@ -285,13 +285,13 @@ def test_empty_old_definition_back_at_82_is_removed(tmp_path_factory, renamed) -
 
 
 def test_head_refresh_writes_the_v82_text_for_a_superseded_pair(tmp_path_factory) -> None:
-    """A database at 82 whose ``payback_time`` still has the superseded v81 description (which names the old rate)
-    gets the v82 description, not the v81 one."""
+    """A database at the current version whose ``payback_time`` still has the description a development build of
+    v82 shipped gets the v82 description (at 83 by text alone, :func:`db_migration._head_superseded_texts`)."""
     url = _seed(tmp_path_factory, "v82_head_superseded", FLEXTOOL_DB_VERSION)
     with DatabaseMapping(url) as db:
         for cls in ("unit", "connection", "node"):
             pdef = db.get_item("parameter_definition", entity_class_name=cls, name="payback_time")
-            db.update_parameter_definition(id=pdef["id"], description=m._v81_superseded()[(cls, "payback_time")][1])
+            db.update_parameter_definition(id=pdef["id"], description=m._v82_superseded()[(cls, "payback_time")][1])
         db.commit_session("a superseded payback_time text")
     path = Path(url.removeprefix("sqlite:///"))
     assert m._head_defaults_stale_ro(path)

@@ -139,7 +139,7 @@ def _to_integer_online(d: dict) -> None:
         return [base64.b64encode(json.dumps(x).encode()).decode(), "str"]
     for r in d["parameter_values"]:
         if r[1] == "peaker" and r[2] == "startup_method":
-            r[3] = _encs("binary")
+            r[3] = _encs("integer_fix_in_uc")
         if r[1] == "wprof" and r[2] == "profile":
             m = json.loads(base64.b64decode(r[3][0]).decode())
             for branch in m["data"]:

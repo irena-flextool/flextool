@@ -259,6 +259,8 @@ def build() -> dict:
          "stoch"],
         ["solve", "stoch_rd", "stochastic_branches",
          _pack(stochastic_branches, "map"), "stoch"],
+        ["solve", "stoch_rd", "dispatch_realization_method",
+         _pack("within_solve", "str"), "stoch"],
     ]
     return spec
 

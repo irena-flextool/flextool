@@ -324,7 +324,7 @@ def test_classifier_methods_and_automatic_startups(tmp_path, schema_db_url, capl
     units = [_unit("G"), _unit("R", curve=RISING), _unit("F", curve=FLAT), _unit("E", curve=ELECTROLYSER),
              _unit("B"), _unit("P", curve=o4)]
     url = _db(tmp_path, schema_db_url, [e for u in units for e in u[0]],
-              [v for u in units for v in u[1]] + [("unit", ("B",), "startup_method", "binary")])
+              [v for u in units for v in u[1]] + [("unit", ("B",), "startup_method", "integer_fix_in_uc")])
     methods, infos, provider = _classify(url, caplog)
     assert {u: methods[u] for u in "GRFEBP"} == {
         "G": "method_1way_nvar_LP", "R": "method_1way_1var_LP", "F": "method_1way_1var_off",

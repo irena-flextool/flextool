@@ -1,3 +1,18 @@
+## Unreleased (4.7.0)
+
+Input databases move to data version 83. The FlexTool window, the Spine Toolbox workflow and `flextool-run
+--migrate` migrate them.
+
+### Behaviour changes — read before upgrading
+
+- **`startup_method` members.** The members are now `no_startup`, `linear`, `linear_fix_in_uc`, `integer` and
+  `integer_fix_in_uc`; `binary` is gone. The upgrade rewrites every `binary` value and default, in every
+  alternative, to `integer_fix_in_uc`, which is the same model, so the rewrite alone changes no result. Tools and
+  scripts that write `startup_method` `binary` must write `integer_fix_in_uc`: a database at data version 83
+  refuses `binary`. An Excel workbook of an earlier version is migrated when the GUI imports it; with
+  `flextool-read-tabular-input` without `--migration-follows`, a `binary` cell is refused, as for every earlier
+  member rename.
+
 ## Release 4.6.3 (23.11.2026) — fixes: list-valued defaults kept when migrating FlexTool 3.x databases, Benders between regions, FlexTool 2.0 conversion in the GUI; repair tool for W-0490 databases; GUI message list
 
 Patch release: no new data version (input databases stay at 82). Requires `polar-high>=3.16.1`. Results change

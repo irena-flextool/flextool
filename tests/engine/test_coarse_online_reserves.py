@@ -207,7 +207,7 @@ _ROLLING = [["solve", "lh2_week", "solve_mode", _s("rolling_window")],
             ["solve", "lh2_week", "rolling_solve_horizon", _f(72.0)],
             ["solve", "lh2_week", "rolling_solve_jump", _f(48.0)]]
 # Integer units online (startup_method binary in the fixture's schema version; migrated to integer).
-_INTEGER = [["unit", "liquefier_A", "startup_method", _s("binary")],
+_INTEGER = [["unit", "liquefier_A", "startup_method", _s("integer_fix_in_uc")],
             ["solve", "lh2_week", "solver_mip_gap", _f(1e-9)]]
 # min_load_efficiency: the section input (units online × section) in the conversion and the balance.
 _SECTION = [["unit", "liquefier_A", "conversion_method", _s("min_load_efficiency")],
@@ -522,7 +522,7 @@ def test_realization_solve_pins_coarse_units_online_once_per_day(tmp_path_factor
     equal the committed ones."""
     values = [v for v in _top_values(24.0) if not (v[1] == "top_turbine" and v[2] == "startup_method")]
     url, scen = make_db(tmp_path_factory, alt="co_pin",
-                        values=values + [["unit", "top_turbine", "startup_method", _s("binary")],
+                        values=values + [["unit", "top_turbine", "startup_method", _s("integer_fix_in_uc")],
                                          ["solve", "2day_dispatch", "stochastic_branches", _realized_branches()]],
                         base_chain=_chain(STOCH, "2_day_stochastic_dispatch"), entities=_TOP_ENTITIES,
                         fixture_json=STOCH)

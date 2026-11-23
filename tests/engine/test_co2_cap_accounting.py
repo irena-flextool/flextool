@@ -106,7 +106,7 @@ def _assert_section_coefficients(step, terms: dict[str, float], kind: str, d: st
     assert seen > 0
 
 
-@pytest.mark.parametrize("method,kind", [("linear", "linear"), ("binary", "integer")])
+@pytest.mark.parametrize("method,kind", [("linear", "linear"), ("integer_fix_in_uc", "integer")])
 def test_co2_max_period_counts_minload_section(tmp_path_factory, method, kind) -> None:
     """The period cap carries the section fuel of the units online, and the solved emissions (section fuel
     included) stay within the cap.  Before, ``v_online`` was absent from the row and the emissions exceeded

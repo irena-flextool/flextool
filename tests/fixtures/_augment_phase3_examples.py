@@ -181,7 +181,7 @@ def _must_run_data() -> dict[str, list]:
         ]
         for alt in ("must_run_fleet_two_online", "must_run_min_load_only"):
             values += [
-                ["unit", unit, "startup_method", "binary", alt],
+                ["unit", unit, "startup_method", "integer_fix_in_uc", alt],
                 ["unit", unit, "min_load", 0.5, alt],
             ]
 

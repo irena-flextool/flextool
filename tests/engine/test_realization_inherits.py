@@ -67,7 +67,7 @@ def test_binary_units_online_stay_pinned_and_no_note(tmp_path_factory) -> None:
     """Binary units: every realization roll pins both units at each of its 24 steps to the stochastic roll's
     commitment (online_fix_eq_integer, 48 rows), and neither note is given."""
     with capture_coded() as got:
-        steps = _run_rolling(tmp_path_factory.mktemp("inherits_binary"), _reporter("binary"))
+        steps = _run_rolling(tmp_path_factory.mktemp("inherits_binary"), _reporter("integer_fix_in_uc"))
     assert all(s.solution.optimal for s in steps.values())
     for k, step in enumerate(_realization_rolls(steps)):
         assert len(row_terms(build(step.flex_data), "online_fix_eq_integer")) == 48, k

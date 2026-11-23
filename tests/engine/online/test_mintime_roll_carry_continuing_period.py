@@ -31,7 +31,7 @@ def _values(rolling: bool) -> list:
     # the single solve has the same unique optimum as the rolled one, which cannot see the demand ahead.
     demand = {t: (-HIGH if t in TIMESTEPS[20:24] else 0.0) for t in TIMESTEPS}
     efficiency = {t: (0.2 if t in TIMESTEPS[:20] else 0.4) for t in TIMESTEPS}
-    vals = uc(PLANT, 0.4, "binary") + [
+    vals = uc(PLANT, 0.4, "integer_fix_in_uc") + [
         ["unit", PLANT, "efficiency", time_map(efficiency, 0.4)],
         ["unit", PLANT, "startup_cost", b64(50.0, "float")],
         ["unit", PLANT, "min_uptime", b64(L_UP, "float")],

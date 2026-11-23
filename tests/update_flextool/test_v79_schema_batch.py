@@ -142,9 +142,11 @@ def _shipped() -> dict:
     capacity-margin renames are mapped back, a description v80 replaced as a whole is the v79 text, and the
     piecewise_linear sentences of v80 part 4 are taken off (its new definition is left in: no v79 test reads it).
     What v81 changed is undone where a v79 test reads it: ``lifetime_technical`` is ``lifetime`` with its v79 text,
-    and the ``discount_rate`` and ``node.unit_of_measure`` texts are the v79 ones."""
+    and the ``discount_rate`` and ``node.unit_of_measure`` texts are the v79 ones.  What v83 replaced is its old
+    text."""
     with open(package_data_path("schemas/spinedb_schema.json"), encoding="utf-8") as f:
         schema = json.load(f)
+    v83_back = {key: old for key, (old, _new) in m._v83_superseded_texts().items()}
     later = {key: "".join(sentences)
              for key, sentences in {**m._v80_suffixes(), **m._v80_piecewise_sentences()}.items()}
     old_names = {("group", new): ("group", old) for old, new in m.V80_CAPACITY_MARGIN_RENAMES.items()}
@@ -159,7 +161,7 @@ def _shipped() -> dict:
     out = {}
     for r in schema["parameter_definitions"]:
         key = (r[0], r[1])
-        text, suffix = r[4], later.get(key)
+        text, suffix = v83_back.get(key, r[4]), later.get(key)
         key = old_names.get(key, key)
         if key in v81_back:
             assert key in m._v81_texts() or (key[0], "lifetime_technical") in m._v81_texts(), key

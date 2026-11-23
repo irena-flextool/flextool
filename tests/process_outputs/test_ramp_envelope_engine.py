@@ -224,7 +224,7 @@ def _case7() -> tuple[list, list]:
     vals = [["node", "n", "node_type", _str("balance")], ["node", "n", "inflow", _series([-33, -70, -70, -40])],
             ["node", "h", "node_type", _str("balance")], ["node", "h", "inflow", _series([-20, -40, -30, -20])],
             ["unit", "G", "virtual_unitsize", _float(50.0)], ["unit", "G", "existing", _float(150.0)],
-            ["unit", "G", "conversion_method", _str("none")], ["unit", "G", "startup_method", _str("binary")],
+            ["unit", "G", "conversion_method", _str("none")], ["unit", "G", "startup_method", _str("integer_fix_in_uc")],
             ["unit", "G", "min_load", _float(0.8)], ["unit", "G", "startup_cost", _float(1.0)],
             ["unit__outputNode", ["G", "n"], "other_operational_cost", _float(20.0)],
             ["unit__outputNode", ["G", "n"], "ramp_method", _str("ramp_limit")],

@@ -142,7 +142,7 @@ def designated(tmp_path_factory):
 def _binary_peaker(data: dict) -> None:
     for r in data["parameter_values"]:
         if r[1] == "peaker" and r[2] == "startup_method":
-            r[3] = [base64.b64encode(json.dumps("binary").encode()).decode(), "str"]
+            r[3] = [base64.b64encode(json.dumps("integer_fix_in_uc").encode()).decode(), "str"]
 
 
 @pytest.fixture(scope="module")
@@ -335,7 +335,7 @@ def test_realization_reserve_needs_commitment(tmp_path_factory) -> None:
     from energy to reserve would save 5,000 € of reserve shortfall and cost 10,000 € of balance slack, so the unique
     optimum is a flow 90, a reserve 10, b nothing, reserve shortfall 20 MW, slack 0.  Pinning a's stochastic
     reserve (30..50 MW) would cap a at 70 MW and leave >= 20 MWh of slack per step."""
-    binary = {"startup_method": "binary"}
+    binary = {"startup_method": "integer_fix_in_uc"}
     steps, mps = _run_reserve(tmp_path_factory, "realization_reserve_commit", _reserve_variant(
         100.0, {"rlz": 0.1, "high": 0.5, "low": 0.5},
         [("a", 10.0, binary, True), ("b", 50.0, {**binary, "min_load": 0.5}, True)]))
