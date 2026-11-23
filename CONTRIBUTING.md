@@ -130,6 +130,12 @@ When the FlexTool database schema needs to change (new parameters, renamed entit
 
    While a version is unreleased, schema entries (definitions, value lists and members, descriptions) may be appended to the tables of its step instead of a new version: `sync_master_json_template` reruns the step of the current version (`RERUNNABLE_HEAD_STEP`), and a database already at that version gets the missing definitions and list members when it is next opened for migration (`_refresh_head_schema`; `materialize` rebuilds such a canonical file). A value move or a list-member rename never reaches a database already at that version, so it needs a new version.
 
+   **Unreleased versions never touch real databases.** While a data version is being implemented, only copies made in
+   a temporary folder are migrated with branch code: never open a real database with a development build (use a
+   separate environment with the released FlexTool for that). The repository's databases (fixtures, canonical JSONs,
+   seeds) are regenerated with the finished step before the release, so a database stamped with a half-done version
+   never exists outside the developer's machine, and no release needs code that repairs one.
+
 2. **Regenerate the master template** — this ensures `schemas/spinedb_schema.json` matches the latest schema:
    ```bash
    python -m flextool.update_flextool.sync_master_json_template
