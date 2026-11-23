@@ -15,8 +15,8 @@ Rules the expectations are derived from (C rev 3 §6.2-§6.3; scenarios lowest r
 * ``none`` where u is not online but M(u) would win: into the alternative whose value keeps u off there (its
   ``startup_method``, else ``conversion_method``, else curve winner), else, when that one ranks below the write
   (or there is none), into the scenario's highest alternative;
-* a null value that wins reads as unset: the definition default applies (not a lower alternative's value), and the
-  null row still hides a write below it;
+* a null value that wins reads as unset: the definition default applies (not a lower alternative's value); a null
+  ``minimum_time_method`` row that wins above the write target would hide the write, so M(u) goes into that row;
 * then every scenario is checked (a resolving method unchanged, the needed times enabled, no enabling method where
   u is not online); a failure leaves u undecided with no write.
 """
@@ -127,11 +127,12 @@ CASES = {
     "shared_top": ({"min_uptime": {"base": 2.0}, "startup_method": {"base": "linear", "off": "no_startup"}},
                    {"S1": ["base", "cfg"], "S2": ["base", "off", "cfg"]}, N0,
                    {"base": "min_uptime", "off": "none"}, None, True),
-    # top's null method wins and reads the default (none): S is a candidate (down) → base, but the null row hides
-    # base's write → R2 fails in S.
+    # top's null method wins and reads the default (none): S is a candidate (down); the startup winner is base, but
+    # the null row ranks above it (it would hide base's write) → min_downtime into top's null row (updated); S then
+    # reads top's min_downtime: down enabled, unit already online, no other scenario → written.
     "null_method_above_target": ({"min_downtime": {"base": 2.0}, "startup_method": {"base": "linear"},
-                                  "minimum_time_method": {"top": None}}, {"S": ["base", "top"]}, N0, {},
-                                 ("the values written would not enable its min_downtime in scenario S", ("S",)), True),
+                                  "minimum_time_method": {"top": None}}, {"S": ["base", "top"]}, N0,
+                                 {"top": "min_downtime"}, None, True),
     # base's own null method row reads the default: candidate (down) → base, the null row is updated.
     "null_method_in_target": ({"min_downtime": {"base": 2.0}, "startup_method": {"base": "linear"},
                                "minimum_time_method": {"base": None}}, {"S": ["base"]}, N0,

@@ -12410,6 +12410,9 @@ def _v83_unit_writes(unit, method, candidates, before, values, held, scenarios, 
         target = _v77_winner(scenarios[s], values.get("startup_method", {}), unit)
         if target is None:
             target = _v77_winner(scenarios[s], held, unit)
+        null_row = before[s].where  # a winning null method row (a candidate resolves no method), None without one
+        if null_row is not None and (target is None or scenarios[s].index(null_row) > scenarios[s].index(target)):
+            target = null_row  # it reads as not set and would hide a write below it: the write goes into it
         if target is None:
             return {}, f"no alternative of scenario {s} holds a value of the unit"
         planned[target] = method
@@ -12450,7 +12453,8 @@ def plan_minimum_time_method(units, values, scenarios, defaults, inactive=frozen
 
     A unit's candidate scenarios are those where it has rows today and no method resolves.  It gets ``both`` when
     they need both times, else the one time, written into each candidate scenario's ``startup_method`` winner (else
-    its highest alternative holding any value of the unit), plus ``none`` where the written method would win in a
+    its highest alternative holding any value of the unit), or into the winning null ``minimum_time_method`` row
+    when that one ranks higher (it reads as not set; its row is updated), plus ``none`` where the written method would win in a
     scenario where the unit has no online variables today: into the alternative whose value keeps it off there
     (``startup_method``, else ``conversion_method``, else the curve), else, when that one ranks too low to win, into
     the scenario's highest alternative.  Then every scenario is checked: a method that resolved is unchanged, every
