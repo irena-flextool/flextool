@@ -120,9 +120,9 @@ def test_current_database_rows_are_repaired_in_their_own_list(schema_db_url: str
     _break_default(path, "solve", "solve_mode", b'"single_shot"')  # renamed away: not in its list
     _sql(path, "UPDATE parameter_value SET value = ? WHERE type = 'list_value_ref'", (b'"commodity"',))
     node_type = _def_id(path, "node", "node_type")
-    # R2: the probe reads the text payloads without a ValueError.  At 83 it compares descriptions only (no superseded
-    # default pairs, plan §0), so it never parses a default.
-    assert m._head_superseded() == {}
+    # R2: the probe reads the text payloads without a ValueError.  It parses the default of every definition named in
+    # the superseded texts whose description is not the old text, so this definition must stay one of them.
+    assert ("unit", "lifetime_method") in m._head_superseded_texts()
     assert not m._head_defaults_stale_ro(path)
     assert list_defaults_repairable_ro(path)
 

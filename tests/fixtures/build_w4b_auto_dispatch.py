@@ -64,7 +64,7 @@ def build() -> dict:
     spec["parameter_values"] = [
         pv for pv in spec["parameter_values"]
         if not (pv[0] == "solve" and pv[1] == AUTHOR_DISPATCH)
-        and not (pv[1] == PARENT and pv[2] == "dispatch_realization_method")
+        and not (pv[0] == "solve" and pv[1] == PARENT and pv[2] == "dispatch_realization_method")
     ]
 
     # 3. author separate_dispatch on the surviving single top-level solve,

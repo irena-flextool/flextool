@@ -13,8 +13,8 @@ history and the ``invest_methods`` list of a database that step 22 hit (as the d
 The siblings keep the schema's commit (2, older than the session).  No ``tests.db_utils`` import, so the polars
 string cache stays on.  TODO(v5.0.0): remove with W-0490 (except :func:`make_lost_defaults`, part B).
 
-:func:`make_lost_defaults` gives a version 82 copy of the schema database whose named list defaults are ``NULL``,
-as after an upgrade before 4.6.3 (part B of the tool, the run note W-0491).
+:func:`make_lost_defaults` gives a copy of the schema database (its history ending in a version commit →82) whose
+named list defaults are ``NULL``, as after an upgrade before 4.6.3 (part B of the tool, the run note W-0491).
 """
 from __future__ import annotations
 
@@ -147,8 +147,8 @@ def clear_defaults(path: Path, names, commit: int | None) -> None:
 
 def make_lost_defaults(tmp_path: Path, names, fingerprint: bool = True, v77: bool = True, *, schema_db=None,
                        name: str = "lost.sqlite", before=(), after=(), scenarios=None) -> LostCase:
-    """A version 82 copy of the schema database (*schema_db*, built here when ``None``) whose ``class.parameter``
-    defaults *names* are ``NULL``.  History by raw ``sqlite3``: *before* values (:func:`write_items`, with
+    """A copy of the schema database (*schema_db*, built here when ``None``; the current version) whose
+    ``class.parameter`` defaults *names* are ``NULL``.  History by raw ``sqlite3``: *before* values (:func:`write_items`, with
     *scenarios*), the FlexTool 3.x v22 step commit (the fingerprint, dated 2024-08-28) and the version commit
     →22 when *fingerprint*, the v77 step commit when *v77*, the v78 step commit (the emptied definitions'
     commit, as on real files) and the version commit →82; then *after* values."""

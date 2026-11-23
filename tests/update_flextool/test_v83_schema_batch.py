@@ -22,6 +22,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 from spinedb_api import DatabaseMapping, import_data, to_database
+from spinedb_api.exception import NothingToCommit
 
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool import db_migration as m
@@ -83,6 +84,43 @@ def _members(db, name: str) -> list:
 
 def _definition(db, cls: str, name: str) -> dict:
     return db.get_item("parameter_definition", entity_class_name=cls, name=name)
+
+
+def _add_values(db) -> None:
+    """A unit and a solve with values on the three lists v83 changes (none names a member a test removes)."""
+    for cls, name, param, member in (("unit", "u1", "startup_method", "linear"),
+                                     ("unit", "u1", "minimum_time_method", "min_uptime"),
+                                     ("solve", "s1", "dispatch_realization_method", "separate_dispatch")):
+        if not db.get_item("entity", entity_class_name=cls, name=name):
+            db.add_entity(entity_class_name=cls, name=name)
+        raw, typ = to_database(member)
+        db.add_parameter_value(entity_class_name=cls, entity_byname=(name,), parameter_definition_name=param,
+                               alternative_name="base", value=raw, type=typ)
+
+
+def _values(db) -> dict:
+    return {(x["entity_class_name"], x["entity_byname"], x["parameter_definition_name"], x["alternative_name"]):
+            x["parsed_value"] for x in db.get_items("parameter_value")}
+
+
+def _commit_count(url: str) -> int:
+    con = sqlite3.connect(_path(url))
+    try:
+        return con.execute("SELECT COUNT(*) FROM \"commit\"").fetchone()[0]
+    finally:
+        con.close()
+
+
+def _assert_second_refresh_commits_nothing(url: str, values_before: dict) -> None:
+    """The values are unchanged, a direct second refresh has nothing to commit, and a second open adds no commit."""
+    with DatabaseMapping(url) as db:
+        assert _values(db) == values_before
+        with pytest.raises(NothingToCommit):
+            m._refresh_head_schema(db)
+            db.commit_session("rerun")
+    commits = _commit_count(url)
+    assert "already up-to-date at version 83" in _migrate(url)
+    assert _commit_count(url) == commits
 
 
 # ─── v25 → 83 ────────────────────────────────────────────────────────────
@@ -152,14 +190,17 @@ def test_v75_seed_to_83_writes_within_solve(tmp_path: Path) -> None:
 def test_old_texts_at_83_are_refreshed_once(schema_db_url: str, tmp_path: Path, monkeypatch) -> None:
     """A database at 83 carrying an old v83 text (``unit.startup_method``, with a ``NULL`` default) and a superseded
     v82 text (``model.discount_offset_operations``) is not current; one open replaces both texts (the default stays
-    ``NULL``, an edited text is kept), and a second open is current and takes no lock (S5)."""
+    ``NULL``, an edited text is kept, the values are unchanged), and a second open is current, takes no lock and
+    commits nothing (S5)."""
     url = _copy(schema_db_url, tmp_path)
     with DatabaseMapping(url) as db:
         for (cls, name), text in ((("unit", "startup_method"), OLD_UNIT_STARTUP),
                                   (("model", "discount_offset_operations"), DEV_V82_OPERATIONS_TEXT),
                                   (("connection", "startup_method"), "my own text")):
             db.update_parameter_definition(id=_definition(db, cls, name)["id"], description=text)
+        _add_values(db)
         db.commit_session("old texts")
+        values_before = _values(db)
     _raw(url, "UPDATE parameter_definition SET default_value = NULL, default_type = NULL WHERE name = "
               "'startup_method' AND entity_class_id = (SELECT id FROM entity_class WHERE name = 'unit')")
     path = _path(url)
@@ -182,14 +223,15 @@ def test_old_texts_at_83_are_refreshed_once(schema_db_url: str, tmp_path: Path, 
     # The package re-exports a function of the module's name: patch the module itself.
     monkeypatch.setattr(importlib.import_module("flextool.update_flextool.migrate_before_run"), "migration_lock",
                         no_lock)
-    assert "already up-to-date at version 83" in _migrate(url)
+    _assert_second_refresh_commits_nothing(url, values_before)
 
 
 @pytest.mark.parametrize("name, member", [("startup_methods", "integer"), ("minimum_time_methods", "both"),
                                           ("dispatch_realization_methods", "deterministic")])
 def test_missing_member_at_83_is_not_current(schema_db_url: str, tmp_path: Path, name: str, member: str) -> None:
     """A database stamped 83 without a member v83 adds is not current (N3); the refresh appends it (no value or
-    default is written: a ``within_solve`` default stays), and a second refresh commits nothing."""
+    default is written: a ``within_solve`` default stays, the values are unchanged), and a second refresh commits
+    nothing."""
     url = _copy(schema_db_url, tmp_path)
     with DatabaseMapping(url) as db:
         if name == "dispatch_realization_methods":
@@ -199,7 +241,9 @@ def test_missing_member_at_83_is_not_current(schema_db_url: str, tmp_path: Path,
         before = _members(db, name)
         (item,) = [x for x in db.get_items("list_value", parameter_value_list_name=name) if x["parsed_value"] == member]
         db.remove_item("list_value", item["id"])
+        _add_values(db)
         db.commit_session(f"no {member}")
+        values_before = _values(db)
     path = _path(url)
     assert m._head_schema_missing_ro(path)
     assert m._current_version_ro(path, None) is None
@@ -210,6 +254,7 @@ def test_missing_member_at_83_is_not_current(schema_db_url: str, tmp_path: Path,
             assert _definition(db, "solve", "dispatch_realization_method")["parsed_value"] == "within_solve"
     assert not m._head_schema_missing_ro(path)
     assert m._current_version_ro(path, None) == FLEXTOOL_DB_VERSION
+    _assert_second_refresh_commits_nothing(url, values_before)
 
 
 def test_missing_v82_definition_at_83_is_added(schema_db_url: str, tmp_path: Path) -> None:
