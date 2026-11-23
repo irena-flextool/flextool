@@ -5087,16 +5087,35 @@ def online_mintime_carry_from_source(source: "InputSource", flex_data: object, p
     (``params._mintime.mintime_roll_carry``): the first steps that continue from the previous solve's last realized
     step on the timeline — a period that continues the previous one and the forecast branches that start with such a
     step included, a period that does not continue it (``jump != 1``) and a step after a gap excluded.  ``L`` is the
-    authored parameter.  ``None`` when nothing is carried."""
+    authored parameter.  ``None`` when nothing is carried.
+
+    The up-time carry of a process is capped by its units online carried in (``p_roll_continue_online``, ĉ[p]:
+    the previous solve's realized v_online at the carried step): carry_up ≤ ĉ.  Start-ups still within the minimum
+    up-time cannot oblige more units online than were online at the carried step.  Without an outage the earlier
+    solve's own ``minimum_uptime`` row at that step already holds ĉ ≥ the start-ups it covers (a superset of those
+    any later step covers), so the cap binds only after an outage cut the obligation in an earlier solve
+    (``flex_data.carried_obligations_yield_to_outages``, W-0592): the outage forced the units offline, ĉ counts only
+    the start-ups after it, and the start-ups before it stop counting — the obligation does not resume.  The
+    down-time carry is not capped (an outage never conflicts with it: offline is always possible)."""
     from flextool.engine.preprocess.params._mintime import mintime_roll_carry
     history = getattr(flex_data, "online_startup_history", None)
     if history is None or history.height == 0:
         return None
-    return mintime_roll_carry(getattr(flex_data, "dt", None), getattr(flex_data, "p_step_duration", None),
-                              getattr(flex_data, "dt_ramp_link", None), getattr(flex_data, "dt_ramp_carry", None),
-                              history, _process_min_time(source, parameter_name),
-                              "startup" if parameter_name == "min_uptime" else "shutdown",
-                              getattr(flex_data, "period_branch_full", None))
+    carry = mintime_roll_carry(getattr(flex_data, "dt", None), getattr(flex_data, "p_step_duration", None),
+                               getattr(flex_data, "dt_ramp_link", None), getattr(flex_data, "dt_ramp_carry", None),
+                               history, _process_min_time(source, parameter_name),
+                               "startup" if parameter_name == "min_uptime" else "shutdown",
+                               getattr(flex_data, "period_branch_full", None))
+    rco = getattr(flex_data, "p_roll_continue_online", None)
+    if carry is None or parameter_name != "min_uptime" or rco is None:
+        return carry
+    online_in = rco.frame.select(pl.col("p").cast(pl.Utf8), pl.col("value").cast(pl.Float64).alias("__c"))
+    carry = (carry.join(online_in, on="p", how="left", maintain_order="left")
+             .with_columns(pl.when(pl.col("__c") < pl.col("value")).then(pl.col("__c"))
+                           .otherwise(pl.col("value")).alias("value"))
+             .filter(pl.col("value").abs() > 1e-12)
+             .select(carry.columns))
+    return carry if carry.height > 0 else None
 
 
 # ---------------------------------------------------------------------------

@@ -509,3 +509,59 @@ def test_t_a2r_min_limits_level_keeps_the_pins(tmp_path) -> None:
     df = utf8(steps[SIBLING].solution.value("v_online_integer")).filter(pl.col("p") == "peaker").sort("t")
     assert [round(v, 9) + 0.0 for v in df["value"]] == [1.0, 1.0, 1.0]
     assert got.names("W-0592") == []
+
+
+# ─── T-a1r: a carried up-time cut by an outage does not come back in the next roll ──
+
+
+@pytest.mark.solver
+def test_t_a1r_cut_uptime_does_not_resume_after_the_outage(tmp_path_factory) -> None:
+    """coal_chp, availability 0 at t0021-24 only, min_uptime 100 h, horizon = jump = 4 h.  Roll 5 (t21-24): the
+    carry is cut at t0021, the unit is offline there, so roll 6 carries ĉ = 0 units online in.  Roll 6 (t25-28)
+    rebuilds the carry from the history: the start-ups before t0021 lie within 100 h, so uncapped it would ask
+    online ≥ 1 at t0025 with online(t0024) = 0 and no shut-down below 0 (infeasible).  Capped by ĉ = 0 it is 0:
+    no carried row for coal_chp, and the online of t0025 is a start-up of roll 6 (online = start-up from 0)."""
+    unit = [["unit", CHP, "min_load", b64(0.5, "float")], ["unit", CHP, "startup_method", b64("linear", "str")],
+            ["unit", CHP, "startup_cost", b64(10.0, "float")], ["unit", CHP, "min_uptime", b64(100.0, "float")],
+            ["unit", CHP, "minimum_time_method", b64("min_uptime", "str")]]
+    rolls, got = _rolls(tmp_path_factory, "chp_gap", unit + _roll_values(4.0, 4.0, 28.0, OUT_A, 0.0, CHP),
+                        ["init", "west", "coal_chp", "heat", "coal_chp_extraction", "fullYear", ROLL])
+    assert len(rolls) == 7
+    on5 = utf8(rolls[5].solution.value("v_online_linear")).filter(pl.col("p") == CHP)
+    assert on5["value"].abs().max() < 1e-9
+    r6 = rolls[6].flex_data
+    rco = utf8(r6.p_roll_continue_online.frame).filter(pl.col("p") == CHP)
+    assert rco["value"].to_list() == pytest.approx([0.0], abs=1e-9)
+    assert r6.uptime_carry is None or utf8(r6.uptime_carry).filter(pl.col("p") == CHP).height == 0
+    # The history still holds the start-ups before the outage (what the uncapped carry was built from).
+    hist = r6.online_startup_history.filter(pl.col("p").cast(pl.Utf8) == CHP)
+    assert hist["startup"].cast(pl.Float64).sum() > 0.0
+    on6 = utf8(rolls[6].solution.value("v_online_linear")).filter((pl.col("p") == CHP) & (pl.col("t") == "t0025"))
+    su6 = utf8(rolls[6].solution.value("v_startup_linear")).filter((pl.col("p") == CHP) & (pl.col("t") == "t0025"))
+    assert on6["value"].to_list() == pytest.approx(su6["value"].to_list(), abs=1e-9)
+    assert got.names("W-0592") == [CHP]
+
+
+@pytest.mark.solver
+def test_t_a1r_cap_does_not_bind_without_an_outage(tmp_path_factory) -> None:
+    """The same unit without an outage: every roll's minimum_uptime row at the carried step held ĉ ≥ the start-ups
+    it covered, so the capped carry equals the uncapped one exactly (``mintime_roll_carry`` on the roll's own
+    frames): the LP is unchanged."""
+    from flextool.engine.preprocess.params._mintime import mintime_roll_carry
+
+    unit = [["unit", CHP, "min_load", b64(0.5, "float")], ["unit", CHP, "startup_method", b64("linear", "str")],
+            ["unit", CHP, "startup_cost", b64(10.0, "float")], ["unit", CHP, "min_uptime", b64(100.0, "float")],
+            ["unit", CHP, "minimum_time_method", b64("min_uptime", "str")]]
+    rolls, _ = _rolls(tmp_path_factory, "chp_no_gap", unit + _roll_values(4.0, 4.0, 28.0, [], 0.0, CHP),
+                      ["init", "west", "coal_chp", "heat", "coal_chp_extraction", "fullYear", ROLL])
+    carried = 0
+    for roll in rolls[1:]:
+        fd = roll.flex_data
+        raw = mintime_roll_carry(fd.dt, fd.p_step_duration, fd.dt_ramp_link, fd.dt_ramp_carry,
+                                 fd.online_startup_history, [(CHP, 100.0)], "startup", fd.period_branch_full)
+        if raw is None:
+            assert fd.uptime_carry is None or fd.uptime_carry.filter(pl.col("p") == CHP).height == 0
+            continue
+        carried += 1
+        assert fd.uptime_carry.filter(pl.col("p") == CHP).equals(raw.filter(pl.col("p") == CHP))
+    assert carried > 0

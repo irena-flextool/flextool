@@ -47,7 +47,8 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
   `capacity_max_coeff`, is below its `min_load`; for a unit with coarse time steps, the averages over its coarse
   step), that solve stopped as infeasible when the earlier solve could not see the outage (beyond its horizon, or
   only in the realized data). Now the carried minimum up-time ends at the first such step and does not resume
-  after it; a pinned unit keeps its pins up to the outage and is decided again in the realization solve from the
+  after it, also not in the following rolls (a carried minimum up-time never asks more units online than the
+  previous roll ended with); a pinned unit keeps its pins up to the outage and is decided again in the realization solve from the
   outage on (the minimum up-time of a start it was pinned to ends at the outage; the other units keep their pins);
   and the carried ramp-down limit of a unit without online variables asks at most the flow its capacity
   allows there. Under a `reduce_unit_detail_method` that leaves out min limits nothing changes. Note W-0592 names

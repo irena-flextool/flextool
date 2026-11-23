@@ -564,6 +564,10 @@ def add_constraints(b: "_Build") -> None:
         #   (_mintime.online_blocked_cells: the unit cannot be online there; a coarse process at the first fine step
         #   b of each coarse step on ā_b, m̄l_b, as its rows): a carried obligation yields to an outage the solve
         #   that started the unit did not see (W-0592; not under a reduce_unit_detail_method with min_limits).
+        #   Then capped: carry_up[p,d,t] ≤ ĉ[p] = p_roll_continue_online[p] (the units online carried in), so an
+        #   obligation cut in an earlier solve does not come back in a later one (the outage forced ĉ to count only
+        #   the start-ups after it).  Without such a cut the earlier solve's minimum_uptime row at the carried step
+        #   already gives carry_up ≤ ĉ.
         #   A start-up within this solve keeps its full minimum up-time (the solve sees the outage), except a start-up
         #   at a realization pin kept before the unit's first blocked pinned step: uptime_lookback holds no term of it
         #   at and after that step (its up-time ends at the outage, as the pinned commitment did not see it).
