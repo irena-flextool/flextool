@@ -287,6 +287,37 @@ def test_m3_planner_model_matches_the_engine(name: str, v82_schema_db_url: str, 
         assert (online, set(need)) == (engine_online, engine_need), s
 
 
+@pytest.mark.parametrize("name", DB_ROWS)
+def test_m3_gated_rows_after_part_1_keep_the_needed_times(name: str, v82_schema_db_url: str, tmp_path: Path) -> None:
+    """M3 after the engine gate (C rev 3 §10.3): on the database part 1 migrated, the gated ``_process_min_time``
+    of ``u`` in each scenario equals the times the engine built before (the planner's ``need`` on the v82
+    database), outside C §10.1: where a method of the user's resolves (§10.1 (1)) or in an undecided unit's
+    candidate scenarios (§10.1 (2)) the gate may only drop times, never add one."""
+    from flextool.engine.input._spinedb_reader import SpineDbReader
+    from flextool.engine.preprocess.params import _derived as drv
+
+    values, scenarios, defaults, *_rest = CASES[name]
+    url = _schema_copy(v82_schema_db_url, tmp_path)
+    with DatabaseMapping(url) as db:
+        _fill(db, {"u": values}, scenarios, defaults)
+        db.commit_session("M3")
+        _units, vals, scen, dflt, _inactive = m._v83_unit_inputs(db)
+        before = {s: m._v83_unit_state("u", scen[s], vals, dflt) for s in scenarios}
+        m._v83_minimum_time_method(db)
+        undecided = {s for row in (_marker(db) or {}).get("undecided", []) for s in row[2]}
+        try:
+            db.commit_session("v83 part 1")
+        except NothingToCommit:  # a row part 1 writes nothing for
+            pass
+    for s, state in before.items():
+        reader = SpineDbReader(url, s)
+        gated = {k for k in ("min_uptime", "min_downtime") if any(p == "u" for p, _v in drv._process_min_time(reader, k))}
+        if state.resolves or s in undecided:
+            assert gated <= set(state.need), s
+        else:
+            assert gated == set(state.need), s
+
+
 # --- further DB checks -------------------------------------------------------------------------------------------
 
 PLAIN = CASES["plain"][0]

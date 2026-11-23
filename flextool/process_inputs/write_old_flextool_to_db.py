@@ -548,6 +548,36 @@ def _unit_has_online(data: OldFlexToolData, unit: UnitInstance) -> bool:
     ) or bool(_unit_flag(unit, "use min online"))
 
 
+def _has_min_load_efficiency(data: OldFlexToolData, unit: UnitInstance) -> bool:
+    """The unit is imported with ``conversion_method min_load_efficiency`` (a min load with its own efficiency)."""
+    min_load = _get_unit_type_param(data, unit, "min load")
+    eff = _get_unit_type_param(data, unit, "efficiency")
+    eff_at_min = _get_unit_type_param(data, unit, "eff at min load")
+    return (min_load is not None and min_load > 0 and eff is not None and eff_at_min is not None
+            and eff_at_min != eff)
+
+
+def _min_time_method(data: OldFlexToolData, unit: UnitInstance) -> str | None:
+    """The ``minimum_time_method`` that enables the unit's FT2 min up / down times (``both``, ``min_uptime`` or
+    ``min_downtime`` by which are above 0); None without a time."""
+    up = (_get_unit_type_param(data, unit, "min uptime (h)") or 0) > 0
+    down = (_get_unit_type_param(data, unit, "min downtime (h)") or 0) > 0
+    return "both" if up and down else "min_uptime" if up else "min_downtime" if down else None
+
+
+def _write_min_time_method(db: DatabaseMapping, data: OldFlexToolData, unit: UnitInstance, name: str,
+                           alt_name: str, counters: _Counters, startup_written: bool) -> None:
+    """FT2 gives a unit with online variables (:func:`_unit_has_online`) its min up / down times; FlexTool applies
+    a time only when ``minimum_time_method`` includes it, so the unit gets that method and, unless already
+    written, ``startup_method linear``."""
+    method = _min_time_method(data, unit)
+    if method is None or not _unit_has_online(data, unit):
+        return
+    if not startup_written:
+        _add_param(db, "unit", (name,), "startup_method", "linear", alt_name, counters)
+    _add_param(db, "unit", (name,), "minimum_time_method", method, alt_name, counters)
+
+
 #: The generation-limit columns on a conversion unit (input from a node):
 #: FT2 bounds v_convert, the INPUT flow, there, and its capacity is on the
 #: input side; ``fix_unit_generation`` is not defined for conversion units.
@@ -1280,12 +1310,7 @@ def _write_storage_units(
         eff_val = _get_unit_type_param(data, unit, "efficiency")
         eff_at_min = _get_unit_type_param(data, unit, "eff at min load")
         min_load_val = _get_unit_type_param(data, unit, "min load")
-        has_min_load = (
-            min_load_val is not None and min_load_val > 0
-            and eff_at_min is not None
-            and eff_val is not None
-            and eff_at_min != eff_val
-        )
+        has_min_load = _has_min_load_efficiency(data, unit)
         if has_min_load:
             _add_param(db, "unit", (discharger_name,), "conversion_method",
                        "min_load_efficiency", alt_name, counters)
@@ -1304,11 +1329,14 @@ def _write_storage_units(
 
         # Discharger startup (only on discharger)
         startup_cost = _get_unit_type_param(data, unit, "startup cost")
-        if use_online and startup_cost is not None and startup_cost > 0:
+        has_startup_cost = use_online and startup_cost is not None and startup_cost > 0
+        if has_startup_cost:
             _add_param(db, "unit", (discharger_name,), "startup_cost",
                        startup_cost, alt_name, counters)
             _add_param(db, "unit", (discharger_name,), "startup_method",
                        "linear", alt_name, counters)
+        _write_min_time_method(db, data, unit, discharger_name, alt_name, counters,
+                               startup_written=has_min_load or has_startup_cost)
 
         min_uptime = _get_unit_type_param(data, unit, "min uptime (h)")
         _add_param_if_set(db, "unit", (discharger_name,), "min_uptime",
@@ -1478,12 +1506,7 @@ def _write_units(
         min_load_val = ut.params.get("min load") if ut else None
         eff_val = ut.params.get("efficiency") if ut else None
         eff_at_min = ut.params.get("eff at min load") if ut else None
-        has_min_load = (
-            min_load_val is not None and min_load_val > 0
-            and eff_at_min is not None
-            and eff_val is not None
-            and eff_at_min != eff_val
-        )
+        has_min_load = _has_min_load_efficiency(data, unit)
 
         if has_cf:
             conversion_method = "none"
@@ -1539,6 +1562,7 @@ def _write_units(
                            alt_name, counters)
             _add_param(db, "unit", (unit_name,), "startup_method", "linear",
                        alt_name, counters)
+        _write_min_time_method(db, data, unit, unit_name, alt_name, counters, startup_written=needs_startup)
 
         # -- min_uptime / min_downtime --
         min_uptime = _get_unit_type_param(data, unit, "min uptime (h)")
@@ -2859,24 +2883,32 @@ def _apply_master_override(
                                    "no", alt_name, counters)
 
     elif "use online" in param or "use_online" in ov.param_name.lower():
-        # Affects startup_method on units with startup costs
+        # Online variables of the units (and storage dischargers) with a start-up cost or a min up / down time.
+        # Disabled, a time needs minimum_time_method none too: a method would promote no_startup back to linear.
         enabled = float(value) == 1 if isinstance(value, (int, float)) else False
         for unit in data.units:
             if unit.output_node is None:
                 continue
-            ut = _get_unit_type(data, unit)
-            startup_cost = ut.params.get("startup cost") if ut else None
-            if startup_cost is not None and startup_cost > 0:
-                unit_name = _get_unit_name(unit)
-                if _entity_exists(existing_entities, "unit", (unit_name,)):
-                    if enabled:
-                        _add_param(db, "unit", (unit_name,), "startup_method",
-                                   "linear", alt_name, counters)
-                        _add_param(db, "unit", (unit_name,), "startup_cost",
-                                   startup_cost, alt_name, counters)
-                    else:
-                        _add_param(db, "unit", (unit_name,), "startup_method",
-                                   "no_startup", alt_name, counters)
+            startup_cost = _get_unit_type_param(data, unit, "startup cost")
+            has_startup_cost = startup_cost is not None and startup_cost > 0
+            method = _min_time_method(data, unit)
+            if not has_startup_cost and method is None:
+                continue
+            unit_name = _get_unit_name(unit)
+            if _needs_charger_discharger(unit, data):
+                unit_name = f"{unit_name}_discharger"
+            if not _entity_exists(existing_entities, "unit", (unit_name,)):
+                continue
+            if enabled:
+                _add_param(db, "unit", (unit_name,), "startup_method", "linear", alt_name, counters)
+                if has_startup_cost:
+                    _add_param(db, "unit", (unit_name,), "startup_cost", startup_cost, alt_name, counters)
+            elif not _has_min_load_efficiency(data, unit):
+                # A min_load_efficiency unit keeps the linear start-ups it needs, as under use online 0 in the base.
+                _add_param(db, "unit", (unit_name,), "startup_method", "no_startup", alt_name, counters)
+            if method is not None:
+                _add_param(db, "unit", (unit_name,), "minimum_time_method", method if enabled else "none",
+                           alt_name, counters)
 
     elif "use ramps" in param or "use_ramps" in ov.param_name.lower():
         enabled = float(value) == 1 if isinstance(value, (int, float)) else False

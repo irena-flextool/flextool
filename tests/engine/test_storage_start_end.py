@@ -566,6 +566,8 @@ def test_nested_dispatch_rolls_continue_commitment_ramps_and_totals(tmp_path_fac
     vals = [["unit", "coal_plant", "startup_method", _s("linear")],
             ["unit", "coal_plant", "min_load", _f(0.4)],
             ["unit", "coal_plant", "min_uptime", _f(8.0)],
+            # the min up time applies only with its minimum_time_method
+            ["unit", "coal_plant", "minimum_time_method", _s("min_uptime")],
             ["unit__outputNode", ["coal_plant", "west"], "ramp_method", _s("ramp_limit")],
             ["unit__outputNode", ["coal_plant", "west"], "ramp_speed_up", _f(0.002)],
             ["unit__outputNode", ["coal_plant", "west"], "ramp_speed_down", _f(0.002)],

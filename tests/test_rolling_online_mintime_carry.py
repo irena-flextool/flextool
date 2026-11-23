@@ -432,7 +432,9 @@ def nested_coarse_run(tmp_path_factory):
               v("node", "battery", "storage_nested_fix_method", "fix_nothing"),
               v("unit", "coal_plant", "startup_method", "linear"),
               v("unit", "coal_plant", "min_load", 0.4),
-              v("unit", "coal_plant", "min_uptime", 8.0)]
+              v("unit", "coal_plant", "min_uptime", 8.0),
+              # the min up time applies only with its minimum_time_method
+              v("unit", "coal_plant", "minimum_time_method", "min_uptime")]
     url, scen = make_db(tmp_path_factory, alt="nested_coarse_continues_fine", values=values, base_chain=chain)
     out = io.StringIO()
     with contextlib.redirect_stdout(out):

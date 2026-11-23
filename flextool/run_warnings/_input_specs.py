@@ -281,6 +281,16 @@ INPUT_SPECS: tuple[WarningSpec, ...] = (
        "`startup_method: linear`. The debug log gives the points.\n\n"
        "**How to fix:** nothing; set `startup_method` yourself to choose `linear` or `binary`.",
        severity=NOTE),
+    _w("W-0231", "min_uptime / min_downtime not in minimum_time_method; ignored",
+       "Minimum time without its minimum_time_method", _UNITS,
+       "The unit has a `min_uptime` or `min_downtime` above 0, but its `minimum_time_method` (`none` when not "
+       "set) does not include that time, so the time is not applied: there is no minimum up or down time "
+       "constraint for it. A unit without online variables gets none either way. An explicit "
+       "`minimum_time_method: none` switches the times off on purpose and gives no warning. The debug log and "
+       "the run log give the time and the method of each unit. When the database upgrade could not decide the "
+       "method of a unit, they also give the reason. When the value list `minimum_time_methods` has no "
+       "`min_uptime`, an old database upgrade overwrote it, and values that were `min_uptime` now read `none`.\n\n"
+       "**How to fix:** set `minimum_time_method` to `both`, `min_uptime` or `min_downtime`, or remove the time."),
 
     # -- nodes, profiles, time and period keys (W-03xx) -------------------------------------------------------
     _w("W-0300", "node has no units or connections; only slack can meet its inflow",

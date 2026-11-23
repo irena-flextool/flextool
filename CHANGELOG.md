@@ -12,6 +12,31 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
   refuses `binary`. An Excel workbook of an earlier version is migrated when the GUI imports it; with
   `flextool-read-tabular-input` without `--migration-follows`, a `binary` cell is refused, as for every earlier
   member rename.
+- **`min_uptime` / `min_downtime` apply only with their `minimum_time_method`.** A unit's minimum up time
+  constraints are built only when its `minimum_time_method` is `min_uptime` or `both`, its minimum down time
+  constraints only with `min_downtime` or `both`; without a method (the default, `none`) neither applies, as the
+  documentation always said. Before, a time above 0 applied whenever the unit had online variables, whatever the
+  method (also an explicit `none`), in every solve and roll. The upgrade to data version 83 writes the method where
+  a unit relied on a time alone, so such units keep their results; note W-0634 names what it wrote. Results change:
+  where a method of your own leaves a time out (an explicit `none`, a `min_uptime` method next to a
+  `min_downtime`, or such a definition default); for units the upgrade could not decide (it prints why, and warning
+  W-0231 names them at each run); for values that an old upgrade turned from `min_uptime` into `none` (W-0231
+  names the damaged value list); and for data written after the upgrade without the method. Warning W-0231 names
+  every unit whose time its method leaves out, except under an explicit `none`.
+- **A `minimum_time_method` definition default other than `none` is read everywhere.** The input checks read only
+  explicit values, while the model read the default too: with a default `both`, a unit without `startup_method`
+  got online variables in the model only, and the run stopped with an internal error ("feature 'online' is active
+  but data fields are not populated"). Both now read the explicit value, else the definition default, else `none`
+  (and the minimum times with their definition default), so such a unit runs with linear start-ups and its times.
+- **FlexTool 2 import.** A unit or storage discharger with online variables in FlexTool 2 (`use online` with a min
+  up or down time) now gets `startup_method linear` and the matching `minimum_time_method`, so its times apply (a
+  unit without a start-up cost had no online variables before). The `use online` sensitivity now also covers the
+  units with only a min up or down time and the dischargers: switched off, they get `no_startup` and
+  `minimum_time_method none`; a discharger with a start-up cost now loses its online variables there, as in
+  FlexTool 2. A `min_load_efficiency` unit keeps its linear start-ups under the switched-off sensitivity, as it
+  does with `use online` 0 in the base (before, a start-up cost gave it `no_startup` there and the run stopped
+  with an error), and its times no longer apply in new imports under `use online` 0 (FlexTool 2 has no online
+  variables there); a database imported earlier keeps them through the upgrade.
 
 ## Release 4.6.3 (23.11.2026) — fixes: list-valued defaults kept when migrating FlexTool 3.x databases, Benders between regions, FlexTool 2.0 conversion in the GUI; repair tool for W-0490 databases; GUI message list
 

@@ -1055,3 +1055,79 @@ def test_workbook_without_time_in_use_refused(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="no time step in use: column 'in_use'"):
         import_old_flextool_xlsm(str(xlsm), f"sqlite:///{target}")
     assert not target.exists()
+
+
+def _min_time_sheets() -> dict[str, list[list]]:
+    """C rev 3 §10.3 T5: one 100 MW gas unit ``steam`` (efficiency 0.5, min downtime 2 h, no start-up cost, no min
+    load) on nodeA, a 50 MW ``coal`` unit with a min load efficiency and a start-up cost of 50, demand 170 MW
+    except 0 at t0001; the battery (10 MW) gets a start-up cost of 5 (its discharger); no other units, no heat
+    demand, dispatch only."""
+    sheets = ft2_sheets()
+    for row in sheets["master"]:
+        if row[0] == "mode_invest":
+            row[1] = 0
+    sheets["unit_type"] = [UNIT_TYPE_HEADER,
+                           _unit_type("steam", **{"efficiency": 0.5, "availability": 1, "min downtime (h)": 2}),
+                           _unit_type("coal", **{"efficiency": 0.4, "min load": 0.3, "eff at min load": 0.35,
+                                                 "availability": 1, "startup cost": 50}),
+                           _unit_type("battery", **{"efficiency": 0.9, "eff charge": 0.9, "availability": 1,
+                                                    "startup cost": 5})]
+    sheets["units"] = [UNITS_HEADER,
+                       _unit(**{"unit type": "steam", "fuel": "gas", "output grid": "elec", "output node": "nodeA",
+                                "capacity (MW)": 100}),
+                       _unit(**{"unit type": "coal", "fuel": "coal", "output grid": "elec", "output node": "nodeA",
+                                "capacity (MW)": 50}),
+                       _unit(**{"unit type": "battery", "output grid": "elec", "output node": "nodeA",
+                                "capacity (MW)": 10, "storage (MWh)": 20, "storage start": 0.5})]
+    sheets["ts_unit"] = [[None, "grid"], [None, "node"], [None, "unit"], [None, "unit_ts_param"], ["Time"]]
+    sheets["ts_energy"] = sheets["ts_energy"][:3] + [[t, None, 0 if i == 1 else 170, 0] for i, t in enumerate(STEPS)]
+    return sheets
+
+
+@pytest.mark.solver
+def test_min_time_unit_gets_its_method_and_use_online_off_switches_it_off(
+    test_solver_config_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FT2 gives ``steam`` online variables (``use online`` 1 and a min downtime), so its min downtime applies: the
+    import writes ``startup_method linear`` and ``minimum_time_method min_downtime`` in ``base``.  Demand 170 MW is
+    more than steam, coal and battery together, so steam is wholly online (v_online 1: flow at most v_online × 100 MW,
+    unmet demand 10 000 per MWh against 40 for gas).  Going off at t0001 (no demand) by a share x would keep x off
+    at t0002 (100 · x MW more unmet), so it stays online there too: v_online 1 at every step.  Without the
+    method it could go off at t0001.  The ``use_online`` 0 sensitivity writes ``no_startup`` and ``none`` (without the none the method
+    would make it linear again): no online variables.  The battery discharger with a start-up cost gets
+    ``no_startup`` there too; the ``min_load_efficiency`` coal keeps the linear start-ups it needs (no value there,
+    as with ``use online`` 0 in the base; ``no_startup`` stopped the run with an error)."""
+    import polars as pl
+
+    from flextool.engine import run_chain_from_db
+
+    xlsm = write_workbook(tmp_path / "model.xlsx", _min_time_sheets())
+    master = write_workbook(tmp_path / "flexTool.xlsx", {"Sensitivity definitions": [
+        ["Scenario definitions master:", "Sheet", "use_online"], ["NoOnline", "master", 0], []]})
+    url = f"sqlite:///{tmp_path / 'model.sqlite'}"
+    report = import_old_flextool_xlsm(str(xlsm), url, master=str(master), strict=True)
+    assert not report.failed
+    startup = _values(url, "unit", "startup_method")
+    method = _values(url, "unit", "minimum_time_method")
+    assert startup[(("steam_nodeA",), "base")] == "linear"
+    assert method == {(("steam_nodeA",), "base"): "min_downtime", (("steam_nodeA",), "NoOnline"): "none"}
+    assert startup[(("steam_nodeA",), "NoOnline")] == "no_startup"
+    assert startup[(("battery_nodeA_discharger",), "NoOnline")] == "no_startup"
+    assert (("coal_nodeA",), "NoOnline") not in startup
+
+    monkeypatch.setenv("FLEXTOOL_AUTOSCALE_STRICT", "1")
+    monkeypatch.chdir(tmp_path)
+    for scenario, online in (("base", [1.0] * 24), ("NoOnline", None)):
+        work = tmp_path / scenario
+        work.mkdir()
+        steps = run_chain_from_db(url, scenario, work_folder=work, solver_config_dir=test_solver_config_dir,
+                                  keep_solutions=True)
+        (step,) = steps.values()
+        assert step.solution.optimal
+        frame = step.solution.value("v_online_linear") if "v_online_linear" in step.solution._vars else None
+        rows = (None if frame is None else
+                frame.with_columns(pl.col("p").cast(pl.Utf8)).filter(pl.col("p") == "steam_nodeA").sort("t"))
+        if online is None:
+            assert rows is None or rows.height == 0
+        else:
+            assert [round(x, 9) + 0.0 for x in rows["value"]] == online

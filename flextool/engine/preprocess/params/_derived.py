@@ -80,7 +80,7 @@ from flextool.engine.preprocess.params._per_solve_sets import (
 )
 from flextool.engine.input._solve_state import CommissioningLagError, FlexToolConfigError
 from flextool.engine.input._solve_step_aggregation import aggregate_if_active
-from flextool.input_derivation._method_constants import STARTUP_CLASSES
+from flextool.input_derivation._method_constants import MIN_TIME_ENABLES, STARTUP_CLASSES
 from flextool.engine.input._param_shapes import (
     broadcast_to_period_time,
     parameter_has_values,
@@ -456,6 +456,17 @@ def _try_param(source: "InputSource", entity_class: str,
     if df.height == 0:
         return None
     return df
+
+
+def _min_time_methods(source: "InputSource") -> dict[str, str]:
+    """``{unit: minimum_time_method}``: the explicit value, else the definition default (``source.parameter``
+    broadcasts a non-null default).  A unit absent from the result reads ``none``; a ``none`` default reads the same
+    as no default.  The one reading rule of the ``startup_method`` promotion (Step 5 of
+    :func:`_classify_process_method`) and the min up / down gate (:func:`_process_min_time`)."""
+    df = _try_param(source, "unit", "minimum_time_method")
+    if df is None:
+        return {}
+    return {str(n): str(v) for n, v in df.select("name", "value").iter_rows() if v is not None}
 
 
 def _try_param_explicit(source: "InputSource", entity_class: str,
@@ -1963,11 +1974,8 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
         ))
     sm_lazy = pl.concat(sm_parts) if sm_parts else None
 
-    mtm = _try_param(source, "unit", "minimum_time_method")
-    mtm_lazy = (mtm.lazy().select(
-        alias_to_axis("name", "p"),
-        pl.col("value").alias("mtm"),
-    )) if mtm is not None else None
+    enabling = sorted(u for u, m in _min_time_methods(source).items()
+                      if m in MIN_TIME_ENABLES["min_uptime"] | MIN_TIME_ENABLES["min_downtime"])
 
     # Only units are delayed: a connection ``delay`` is not implemented
     # and is ignored (input_derivation warns about it), so it must not
@@ -2033,15 +2041,14 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
                                      return_dtype=pl.Boolean).fill_null(False),
     ).drop("startup_raw")
     # Step 5 — minimum_time_method overrides startup → linear when active.
-    if mtm_lazy is not None:
-        lf = lf.join(mtm_lazy, on="p", how="left")
+    if enabling:
         lf = lf.with_columns(
             startup=pl.when(
                 (pl.col("startup") == "no_startup")
-                & pl.col("mtm").is_in(["min_uptime", "min_downtime", "both"])
+                & (pl.col("klass") == "unit") & pl.col("p").cast(pl.Utf8).is_in(enabling)
             ).then(pl.lit("linear"))
              .otherwise(pl.col("startup"))
-        ).drop("mtm")
+        )
     # Step 5b — piecewise_linear: auto linear start-ups and the forced fork of multi-line curves.
     pw_flags = _piecewise_flags(source) if cm_unit is not None and (
         cm_unit.get_column("value").cast(pl.Utf8) == "piecewise_linear").any() else None
@@ -4960,22 +4967,24 @@ def p_indirect_input_cap_from_source(source: "InputSource",
 
 def _process_min_time(source: "InputSource",
                         parameter_name: str) -> list[tuple[str, float]]:
-    """Pull (entity, value) for ``unit.<parameter_name>`` (and connection
-    when applicable) — value > 0 only.  Returns a list of (proc, min_time)
-    pairs.
-    """
+    """``[(unit, min_time)]`` of ``unit.<parameter_name>`` (``min_uptime`` / ``min_downtime``, with its definition
+    default): value > 0 and enabled by ``minimum_time_method`` (:data:`MIN_TIME_ENABLES`, read by
+    :func:`_min_time_methods`; unset is ``none``, which enables neither), in source row order.  Every consumer of
+    the minimum times goes through it: the look-backs and their rows, the roll carry, the cut-short warning and the
+    history trim."""
+    df = _try_param(source, "unit", parameter_name)
+    if df is None:
+        return []
+    methods = _min_time_methods(source)
+    enables = MIN_TIME_ENABLES[parameter_name]
     out: dict[str, float] = {}
-    for ec in ("unit", "connection"):
-        df = _try_param(source, ec, parameter_name)
-        if df is None:
+    for r in df.iter_rows(named=True):
+        try:
+            v = float(r["value"])
+        except (TypeError, ValueError):
             continue
-        for r in df.iter_rows(named=True):
-            try:
-                v = float(r["value"])
-            except (TypeError, ValueError):
-                continue
-            if v > 0:
-                out[r["name"]] = v
+        if v > 0 and methods.get(str(r["name"])) in enables:
+            out[r["name"]] = v
     return list(out.items())
 
 
@@ -5000,6 +5009,20 @@ def downtime_lookback_from_source(source: "InputSource",
     return mintime_lookback(dt, p_step_duration, link, _process_min_time(source, "min_downtime"))
 
 
+def _min_time_written_notice(source: "InputSource") -> None:
+    """W-0634 (``minimum_time_method_written``): the units of this solve on which the database upgrade wrote
+    ``minimum_time_method``, one line per write ``U (alternative A: method)`` (each unit once per run)."""
+    from flextool.engine import _behaviour_changes as bc
+    writes = bc.marker_json("minimum_time_method_written").get("writes") or []
+    if not writes:
+        return
+    units = source.entities("unit")
+    in_solve = set() if units.height == 0 else {str(u) for u in units.get_column(units.columns[0]).to_list()}
+    lines = [f"{u} (alternative {alt}: {method})" for u, alt, method in writes if u in in_solve]
+    if lines:
+        bc.notice("minimum_time_method_written", "units", lines)
+
+
 def apply_mintime_lookbacks(flex_data: object, source: "InputSource",
                             first_step_link: pl.DataFrame | None, solve_name: str) -> None:
     """Set ``uptime_lookback`` / ``downtime_lookback`` and the projected ``pdt_*_set`` of ``flex_data`` from its
@@ -5008,6 +5031,7 @@ def apply_mintime_lookbacks(flex_data: object, source: "InputSource",
     solve boundary cuts short (``params._mintime.cut_short_lookback_warnings``; ``first_step_link`` is the
     complete solve's ``step_previous`` of this solve's period first steps, ``None`` when not written)."""
     from flextool.engine.preprocess.params._mintime import report_cut_short_lookback
+    _min_time_written_notice(source)
     dt = getattr(flex_data, "dt", None)
     sd = getattr(flex_data, "p_step_duration", None)
     link = getattr(flex_data, "dt_ramp_link", None)

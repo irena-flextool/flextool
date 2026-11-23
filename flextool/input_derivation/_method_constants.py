@@ -94,3 +94,12 @@ def startup_class(raw: str) -> tuple[str, bool]:
     """``(startup class, fix_in_uc)`` of the ``startup_method`` value *raw* (:data:`STARTUP_CLASSES`); an unknown
     value is its own class, without ``fix_in_uc``."""
     return STARTUP_CLASSES.get(raw, (raw, False))
+
+
+#: The minimum times each ``minimum_time_method`` enables (``docs/reference/units.md``); ``none`` (and an unset
+#: method) enables neither.  Read by the engine gate (``params/_derived._process_min_time``) and the input
+#: derivation (``_process_method``).
+MIN_TIME_ENABLES: dict[str, frozenset[str]] = {
+    "min_uptime": frozenset({"min_uptime", "both"}),
+    "min_downtime": frozenset({"min_downtime", "both"}),
+}

@@ -323,7 +323,11 @@ def test_migrated_min_downtime_unit_keeps_its_result(v82_schema_db_url: str, tmp
         (step,) = steps.values()
         return [round(x, 6) + 0.0 for x in flow(step, "coal_plant", "coal_market", "west").to_list()]
 
-    base_steps = run(tmp_path_factory, url, base)
+    from tests._support.coded_warnings import capture_coded
+    with capture_coded() as got:
+        base_steps = run(tmp_path_factory, url, base)
+    # W-0634 names what the upgrade wrote on the units of the solve.
+    assert got.names("W-0634") == ["coal_plant (alternative m2: min_downtime)", "coal_plant (alternative off: none)"]
     online = utf8(next(iter(base_steps.values())).solution.value("v_online_linear"))
     assert [round(x, 6) for x in online.filter(pl.col("p") == "coal_plant").sort("t")["value"]] == [1.0, 1.0, 1.0]
     assert flows(base_steps) == [500.0, 250.0, 500.0]

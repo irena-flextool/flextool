@@ -549,6 +549,8 @@ def add_constraints(b: "_Build") -> None:
         # v_online[p,d,t]  ≥  Σ_{(p,d′,t′,d,t) ∈ uptime_lookback} v_startup[p,d′,t′] + carry_up[p,d,t]
         #   ∀ (p,d,t) ∈ pdt_uptime_set ∩ this class ∩ online_rows
         # A unit started within the minimum uptime stays online.
+        # pdt_uptime_set = the steps of the units with minimum_time_method ∈ {min_uptime, both} and min_uptime > 0
+        #   (_derived._process_min_time; an unset method is none, which builds no row).
         # uptime_lookback = {(p,d′,t′,d,t) : (d′,t′) = (d,t), or (d′,t′) an ancestor of (d,t) along dt_ramp_link
         #   with elapsed(d′,t′ → d,t) = Σ step_duration over the chain from (d′,t′) up to, not including, (d,t)
         #   < min_uptime[p]} — the chain stops at a step without a ramp predecessor (solve start, a period that
@@ -594,6 +596,8 @@ def add_constraints(b: "_Build") -> None:
         # A unit shut down within the minimum downtime stays offline: existing − v_online ≥
         # Σ v_shutdown, with the invest/divest terms of maxOnline (without them an invest-only
         # unit with existing = 0 could never be online).
+        # pdt_downtime_set = the steps of the units with minimum_time_method ∈ {min_downtime, both} and
+        #   min_downtime > 0 (_derived._process_min_time).
         # downtime_lookback: as uptime_lookback with min_downtime[p] (a coarse process as in minimum_uptime; a row
         #   whose look-back holds only its own step and no carry is implied by maxShutdown / online_change).
         # carry_dn: as carry_up with shutdown[p,h] and min_downtime[p] (d.downtime_carry, 0-filled).

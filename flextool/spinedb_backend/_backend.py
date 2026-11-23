@@ -372,6 +372,18 @@ class SpineDBBackend:
             parameter_definition_name=parameter_definition_name,
         )
 
+    def find_parameter_definitions(self, **kwargs: Any) -> list:
+        """The parameter definitions matching *kwargs* (a passthrough, as :meth:`find_parameter_values`)."""
+        if self._db is None:
+            raise RuntimeError("SpineDBBackend is closed")
+        return self._db.find_parameter_definitions(**kwargs)
+
+    def find_list_values(self, **kwargs: Any) -> list:
+        """The value-list members matching *kwargs* (a passthrough, as :meth:`find_parameter_values`)."""
+        if self._db is None:
+            raise RuntimeError("SpineDBBackend is closed")
+        return self._db.find_list_values(**kwargs)
+
     def parameter_value_items(
         self,
         entity_class_name: str,

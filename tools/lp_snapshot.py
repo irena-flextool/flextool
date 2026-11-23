@@ -1518,7 +1518,9 @@ def _patch_nested_rolling_storage_uc(data: dict) -> dict:
                         ["node", "battery", "storage_nested_fix_method", "fix_nothing"],
                         ["unit", "coal_plant", "startup_method", "linear"],
                         ["unit", "coal_plant", "min_load", 0.4],
-                        ["unit", "coal_plant", "min_uptime", 8.0]])
+                        ["unit", "coal_plant", "min_uptime", 8.0],
+                        # the min up time applies only with its minimum_time_method
+                        ["unit", "coal_plant", "minimum_time_method", "min_uptime"]])
 
 
 def _patch_storage_sequence_start_end(data: dict) -> dict:
@@ -1860,6 +1862,17 @@ def _patch_online_mintime_lin(data: dict) -> dict:
                     values=[["unit", "coal_chp", "startup_method", "linear"]])
 
 
+def _patch_min_time_default_both(data: dict) -> dict:
+    """``minimum_time_method`` definition default ``both`` and coal_plant with min up / down times 5 h but no
+    ``startup_method`` or method of its own: online only through the default's promotion, with its min up / down
+    rows (the input derivation and the model read the default alike; C rev 3 §5.3)."""
+    for d in data["parameter_definitions"]:
+        if d[0] == "unit" and d[1] == "minimum_time_method":
+            d[2] = _pack("both")
+    return _overlay(data, name="min_time_default_both", base=["init", "west", "coal"],
+                    values=[["unit", "coal_plant", "min_uptime", 5.0], ["unit", "coal_plant", "min_downtime", 5.0]])
+
+
 # Silent-label inputs: a Map with Toolbox's default index name ``x`` whose keys are periods of other solves only
 # (p2030 on a p2020 solve).  Each fixture has an unambiguous twin in tests/engine/test_silent_label_params.py
 # (items 167-169 of specs/github_issues.md).
@@ -2098,6 +2111,7 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "conn_group_override_exact": _patch_conn_group_override_exact,
     "online_bin_lin": _patch_online_bin_lin,
     "online_mintime_lin": _patch_online_mintime_lin,
+    "min_time_default_both": _patch_min_time_default_both,
     "conn_reserve_exact": _patch_conn_reserve_exact,
     "conn_online_1var_mip": _patch_conn_online_1var_mip,
     "agg_blocks_storage": _patch_agg_blocks_storage,
@@ -2317,6 +2331,7 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("conn_group_override_exact", _T),
     ("online_bin_lin", _T),
     ("online_mintime_lin", _T),
+    ("min_time_default_both", _T),
     ("conn_reserve_exact", _T),
     ("conn_online_1var_mip", _T),
     ("agg_blocks_storage", _T),
