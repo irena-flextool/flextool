@@ -178,10 +178,10 @@ def ro_uri(path: str | Path | PurePath) -> str:
     return "file://" + quote(posix, safe="/:") + "?mode=ro"
 
 
-def _connect_ro(path: Path, timeout: float = _BUSY_TIMEOUT_S) -> sqlite3.Connection:
+def _connect_ro(path: Path, timeout: float | None = None) -> sqlite3.Connection:
     """A read-only connection: never creates the file, never writes, never upgrades (*timeout*: seconds to wait
-    for a writer's lock)."""
-    return sqlite3.connect(ro_uri(path), uri=True, timeout=timeout)
+    for a writer's lock; ``None`` reads :data:`_BUSY_TIMEOUT_S` at call time, so the module setting applies)."""
+    return sqlite3.connect(ro_uri(path), uri=True, timeout=_BUSY_TIMEOUT_S if timeout is None else timeout)
 
 
 def _is_missing_table(exc: sqlite3.Error) -> bool:
