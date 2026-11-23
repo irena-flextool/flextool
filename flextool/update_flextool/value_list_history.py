@@ -119,11 +119,12 @@ def _version_commits(path: Path) -> tuple[list[tuple[int, str, int, int]], list[
     return out, steps
 
 
-def possible_value_list_overwrite_ro(path: str | Path) -> list[Finding]:
+def possible_value_list_overwrite_ro(path: str | Path, *, strict: bool = False) -> list[Finding]:
     """The findings of W-0490 and of the GUI's "Please check this database" message: :func:`session_findings_ro`
     without the findings a valid repair record ends (:func:`record_ends`; any error while reading the record keeps
-    the finding)."""
-    findings = session_findings_ro(path)
+    the finding).  *strict*: a history that cannot be read raises (the GUI then shows a generic message and reads
+    again at the next refresh) instead of giving ``[]``."""
+    findings = session_findings_ro(path, strict=strict)
     kept = []
     for f in findings:
         try:
@@ -136,10 +137,10 @@ def possible_value_list_overwrite_ro(path: str | Path) -> list[Finding]:
     return kept
 
 
-def session_findings_ro(path: str | Path) -> list[Finding]:
+def session_findings_ro(path: str | Path, *, strict: bool = False) -> list[Finding]:
     """The migration sessions of *path* that may have overwritten a value list member, repaired or not (the repair
     tool reads these); ``[]`` when none, or when the file cannot be read (a check that cannot read the history does
-    not warn).
+    not warn; with *strict* the read error is raised instead).
 
     A session is dated by its earliest value-list step commit, else by its closing version commit: a migration that
     failed after such a step (before the all-or-nothing backup) and was retried after the window kept the step's
@@ -148,6 +149,8 @@ def session_findings_ro(path: str | Path) -> list[Finding]:
         commits, list_steps = _version_commits(Path(path))
     except (sqlite3.Error, OSError) as exc:
         logger.debug("value list history of %s not read: %s", path, exc)
+        if strict:
+            raise
         return []
     findings = []
     # The first version commit has no known start: the database came from a template or a JSON import.

@@ -200,6 +200,15 @@ W0490_FALLBACK = ("Please check this database", (
     "This message stays until a repaired file is in its place."))
 
 
+#: The W-0490 message when the database's upgrade history cannot be read (no finding can be ruled out).
+W0490_UNREADABLE = ("Please check this database", (
+    "FlexTool could not read this database's upgrade history, so it cannot tell whether a bug in a library that "
+    "FlexTool uses changed it when it was upgraded. Open the documentation to see what to check.",
+    "FlexTool's repair tool checks the file and writes a repaired copy if one is needed: the Copy repair command "
+    "button copies the command to paste into a terminal.",
+    "FlexTool reads the file again at the next refresh."))
+
+
 # -- sources ---------------------------------------------------------------------------------------------------------
 def copy_repair_action(path: Path, clipboard: Callable[[str], None]) -> MessageAction:
     """The "Copy repair command" button: puts ``repair_command(path, shell=repair_shell())`` (the repair tool's one
@@ -210,17 +219,18 @@ def copy_repair_action(path: Path, clipboard: Callable[[str], None]) -> MessageA
     return MessageAction(REPAIR_LABEL, run, tooltip=repair_tooltip())
 
 
-def value_list_source(findings: Callable[[], Iterable[tuple[Path, list[Finding]]]],
+def value_list_source(findings: Callable[[], Iterable[tuple[Path, list[Finding] | None]]],
                       clipboard: Callable[[str], None]) -> MessageSource:
     """``value_list_check`` (W-0490) messages, one per database in *findings()* (``value_list_findings``: the
-    flagged input sources of the open project).  TODO(v5.0.0): remove with W-0490."""
+    flagged input sources of the open project; findings ``None``: its history could not be read, the generic
+    :data:`W0490_UNREADABLE` text).  TODO(v5.0.0): remove with W-0490."""
     def source(_store: MessageStore) -> list[GuiMessage]:
         from flextool.update_flextool.value_list_history import gui_message
 
         out = []
         for path, found in findings():
             try:        # one database's text failing must not hide W-0490 for the others, nor for itself
-                title, paragraphs = gui_message(found)
+                title, paragraphs = W0490_UNREADABLE if found is None else gui_message(found)
             except Exception:
                 _logger.exception("Message list: the W-0490 text of %s failed", path)
                 title, paragraphs = W0490_FALLBACK
@@ -327,7 +337,7 @@ def project_sources(main: Any, project_dir: Path, project_name: str) -> list[Mes
         m = mgr()
         return list(getattr(m, "planning_notes", [])) if m is not None else []
 
-    def value_list_findings() -> list[tuple[Path, list[Finding]]]:
+    def value_list_findings() -> list[tuple[Path, list[Finding] | None]]:
         m = mgr()
         return m.value_list_findings() if m is not None else []
 

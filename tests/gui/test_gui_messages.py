@@ -12,6 +12,7 @@ import ntpath
 import os
 import posixpath
 import re
+import sqlite3
 import subprocess
 import sys
 import unicodedata
@@ -895,9 +896,9 @@ def test_w0490_check_is_cached_by_size_and_mtime(schema_db_url, tmp_path, monkey
     mgr, sources = _w0490_project(tmp_path, schema_db_url)
     real, reads = vlh.possible_value_list_overwrite_ro, []
 
-    def counting(path):
+    def counting(path, **kw):
         reads.append(Path(path).name)
-        return real(path)
+        return real(path, **kw)
 
     monkeypatch.setattr(vlh, "possible_value_list_overwrite_ro", counting)
     center = _center(tmp_path / "s.json", ms.value_list_source(mgr.value_list_findings, lambda _t: None))
@@ -915,27 +916,47 @@ def test_w0490_check_is_cached_by_size_and_mtime(schema_db_url, tmp_path, monkey
     assert center.messages == ()
 
 
-def test_w0490_unreadable_file_gives_no_message(tmp_path, monkeypatch):
-    """A damaged file and a check that raises: no crash and no message (the 4.6.2 behaviour)."""
-    from flextool.gui.data_models import ProjectSettings
-    from flextool.gui.input_sources import InputSourceManager
+def test_w0490_unreadable_file_gives_the_generic_message_and_is_read_again(schema_db_url, tmp_path, monkeypatch):
+    """Only a repair record ends W-0490, so a history that cannot be read is never "no finding": a damaged file
+    and a check that raises give the generic W-0490 message (with the button), and a failed read is not cached:
+    the next refresh reads the unchanged file again.  A failed read of a file whose finding was showing keeps
+    that message."""
     from flextool.update_flextool import value_list_history as vlh
 
-    sources = tmp_path / "P" / "input_sources"
-    sources.mkdir(parents=True)
+    mgr, sources = _w0490_project(tmp_path, schema_db_url)
     (sources / "broken.sqlite").write_bytes(b"not a database")
-    mgr = InputSourceManager(tmp_path / "P", ProjectSettings())
     center = _center(tmp_path / "s.json", ms.value_list_source(mgr.value_list_findings, lambda _t: None))
     center.recompute("project_open")
-    assert center.messages == ()
+    by_label = {m.subject_label: m for m in center.messages}
+    assert sorted(by_label) == ["broken.sqlite", "model.sqlite"]
+    broken = by_label["broken.sqlite"]
+    assert (broken.spec, broken.title, broken.paragraphs) == (W0490, *ms.W0490_UNREADABLE)
+    assert broken.action is not None and broken.action.label == "Copy repair command"
+    _check_style(broken)
 
-    def boom(path):
-        raise OverflowError("implausible data")
+    real, reads, fail = vlh.possible_value_list_overwrite_ro, [], {"on": True}
 
-    monkeypatch.setattr(vlh, "possible_value_list_overwrite_ro", boom)
-    (sources / "broken.sqlite").write_bytes(b"still not a database")
+    def flaky(path, **kw):
+        reads.append(Path(path).name)
+        if fail["on"]:
+            raise OverflowError("implausible data")
+        return real(path, **kw)
+
+    monkeypatch.setattr(vlh, "possible_value_list_overwrite_ro", flaky)
+    original = sources / "model.sqlite"
+    stat = original.stat()
+    os.utime(original, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
     center.recompute("refresh")
-    assert center.messages == ()
+    # broken.sqlite is read again although unchanged; model.sqlite (touched) fails but keeps its own finding text;
+    # model_repaired.sqlite (unchanged, cached as repaired) is not read.
+    assert sorted(reads) == ["broken.sqlite", "model.sqlite"]
+    by_label = {m.subject_label: m for m in center.messages}
+    assert sorted(by_label) == ["broken.sqlite", "model.sqlite"]
+    assert "upgraded on 19.9.2024," in by_label["model.sqlite"].paragraphs[0]
+    fail["on"] = False
+    center.recompute("refresh")
+    assert sorted(reads) == ["broken.sqlite", "broken.sqlite", "model.sqlite", "model.sqlite"], \
+        "the failed reads were not cached"
 
 
 # -- W-0491 (P7b) ----------------------------------------------------------------------------------------------------
@@ -1015,3 +1036,36 @@ def test_w0491_text_without_the_storage_default(schema_db_url, tmp_path):
     assert msg.subject_label == "model.sqlite"
     assert "Results do not change." in msg.paragraphs[0] and "storage" not in msg.paragraphs[0]
     _check_style(msg)
+
+
+def test_w0491_failed_read_is_not_cached_and_keeps_a_showing_note(schema_db_url, tmp_path, monkeypatch):
+    """A W-0491 read that fails gives no note by design, but it is never cached: a note that was showing stays
+    while the read fails (a lock or a transient error never hides it for good), and an unchanged file whose read
+    failed is read again at the next refresh."""
+    from flextool.update_flextool import list_default_restore as ldr
+
+    mgr, sources = _w0491_project(tmp_path, schema_db_url)
+    center = _center(tmp_path / "s.json", ms.list_defaults_source(mgr.list_defaults_findings, lambda _t: None))
+    center.recompute("project_open")
+    (shown,) = center.messages
+    real, reads, fail = ldr.list_defaults_lost_ro, [], {"on": True}
+
+    def flaky(path, **kw):
+        reads.append(Path(path).name)
+        if fail["on"]:
+            raise sqlite3.OperationalError("database is locked")
+        return real(path, **kw)
+
+    monkeypatch.setattr(ldr, "list_defaults_lost_ro", flaky)
+    for name in ("model.sqlite", "model_repaired.sqlite"):
+        stat = (sources / name).stat()
+        os.utime(sources / name, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+    center.recompute("refresh")
+    center.recompute("refresh")
+    assert sorted(reads) == ["model.sqlite"] * 2 + ["model_repaired.sqlite"] * 2, "failed reads are not cached"
+    assert [m.key for m in center.messages] == [shown.key], "the showing note stays; the repaired copy has none"
+    fail["on"] = False
+    center.recompute("refresh")
+    center.recompute("refresh")
+    assert sorted(reads) == ["model.sqlite"] * 3 + ["model_repaired.sqlite"] * 3, "read once more, then cached"
+    assert [m.key for m in center.messages] == [shown.key]

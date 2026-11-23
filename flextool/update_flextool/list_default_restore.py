@@ -185,11 +185,12 @@ def _data_version(con: sqlite3.Connection) -> int | None:
         return None
 
 
-def list_defaults_lost_ro(path: str | Path) -> LostDefaults | None:
+def list_defaults_lost_ro(path: str | Path, *, strict: bool = False) -> LostDefaults | None:
     """W-0491's check, cheap and read-only (one ``sqlite3`` connection, :data:`NOTE_TIMEOUT_S`): the empty
     bug-reachable defaults of a database at the current data version that has the fingerprint, unless a valid part
     B record (:func:`parse_part_b_record`) carries the hash of the full empty set.  ``None`` when there is nothing
-    to say, and on any read error (a locked or unreadable file gives no note)."""
+    to say, and on any read error (a locked or unreadable file gives no note; with *strict* the error is raised,
+    so that the GUI does not keep it as "nothing to say")."""
     from flextool.update_flextool import FLEXTOOL_DB_VERSION
     from flextool.update_flextool.frozen import _connect_ro
 
@@ -208,6 +209,8 @@ def list_defaults_lost_ro(path: str | Path) -> LostDefaults | None:
             return None if record is not None and record.empty == digest else LostDefaults(names, digest)
     except (sqlite3.Error, OSError) as exc:
         logger.debug("list defaults of %s not checked: %s", path, exc)
+        if strict:
+            raise
         return None
 
 

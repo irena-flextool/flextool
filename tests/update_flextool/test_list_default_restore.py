@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -252,6 +253,8 @@ def test_note_is_off_without_the_sign_of_the_bug_or_when_unreadable(tmp_path, sc
     broken.write_bytes(b"not a database")
     assert ldr.list_defaults_lost_ro(broken) is None
     assert ldr.list_defaults_lost_ro(tmp_path / "missing.sqlite") is None
+    with pytest.raises(sqlite3.Error):   # the GUI's check: a failed read is not cached as "nothing to say"
+        ldr.list_defaults_lost_ro(broken, strict=True)
 
 
 def test_note_record_hash_covers_the_full_empty_set(tmp_path, schema_db_url) -> None:

@@ -76,6 +76,8 @@ def test_an_unreadable_file_gives_no_finding(tmp_path: Path) -> None:
     bad.write_bytes(b"not a database")
     assert vlh.possible_value_list_overwrite_ro(bad) == []
     assert vlh.possible_value_list_overwrite_ro(tmp_path / "missing.sqlite") == []
+    with pytest.raises(sqlite3.Error):   # the GUI's check: a failed read is not "no finding"
+        vlh.possible_value_list_overwrite_ro(bad, strict=True)
 
 
 def _step_blocks() -> dict[int, str]:
@@ -179,20 +181,20 @@ def test_gui_message_names_each_upgrade_date_once() -> None:
 
 def test_gui_planning_survives_an_unexpected_history_error(make, tmp_path: Path, monkeypatch) -> None:
     """An unexpected error of the check (implausible data) is logged: the migration planning goes on, and the file
-    has no message."""
+    is listed as unreadable (findings ``None``: the generic W-0490 message), never as "no finding"."""
     from flextool.gui.data_models import ProjectSettings
     from flextool.gui.input_sources import InputSourceManager
 
     project = tmp_path / "project"
     make(CYPRUS, "cyprus.sqlite", project / "input_sources")
 
-    def boom(path):
+    def boom(path, **_kw):
         raise OverflowError("cannot convert float infinity to integer")
 
     monkeypatch.setattr(vlh, "possible_value_list_overwrite_ro", boom)
     mgr = InputSourceManager(project, ProjectSettings())
     assert len(mgr.plan_db_migrations()) == 4
-    assert mgr.value_list_findings() == []
+    assert mgr.value_list_findings() == [(project / "input_sources" / "cyprus.sqlite", None)]
 
 
 def test_guard_stops_an_import_that_rewrites_a_member(schema_db_url: str, tmp_path: Path, monkeypatch) -> None:

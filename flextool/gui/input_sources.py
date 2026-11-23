@@ -595,35 +595,49 @@ class InputSourceManager:
                 )
         return result
 
-    def _cached_checks(self, kind: str, check: Callable[[Path], Any]) -> list[tuple[Path, Any]]:
+    def _cached_checks(self, kind: str, check: Callable[[Path], Any], *,
+                       unreadable: bool = False) -> list[tuple[Path, Any]]:
         """``(path, check(path))`` of every registered ``.sqlite`` source whose result is truthy, in source order;
         each result is cached by ``(size, mtime_ns)`` (an unchanged file is not read again, a changed or swapped
-        one is).  A file that cannot be stat'ed or checked (any exception) has no entry."""
+        one is).  A file that cannot be stat'ed has no entry.  A check that fails (any exception) is never cached:
+        the file is read again at the next refresh, and meanwhile its last truthy result stays (a failed read never
+        hides a message that was showing); without one, *unreadable* gives ``(path, None)``, else no entry."""
         out: list[tuple[Path, Any]] = []
         for path in self._registered_sqlite_paths():
             try:  # a check never stops a refresh
                 stat = path.stat()
-                stamp = (stat.st_size, stat.st_mtime_ns)
-                cached = self._check_cache.get((kind, path))
-                if cached is None or cached[0] != stamp:
-                    cached = (stamp, check(path))
-                    self._check_cache[(kind, path)] = cached
-            except Exception as exc:  # noqa: BLE001
+            except OSError as exc:
                 logger.debug("%s of %s not checked: %s", kind, path, exc)
                 continue
+            stamp = (stat.st_size, stat.st_mtime_ns)
+            cached = self._check_cache.get((kind, path))
+            if cached is None or cached[0] != stamp:
+                try:
+                    result = check(path)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("%s of %s not checked: %s", kind, path, exc)
+                    if cached is not None and cached[1]:
+                        out.append((path, cached[1]))
+                    elif unreadable:
+                        out.append((path, None))
+                    continue
+                cached = (stamp, result)
+                self._check_cache[(kind, path)] = cached
             if cached[1]:
                 out.append((path, cached[1]))
         return out
 
-    def value_list_findings(self) -> list[tuple[Path, list[Finding]]]:
+    def value_list_findings(self) -> list[tuple[Path, list[Finding] | None]]:
         """W-0490: ``(path, findings)`` of every registered ``.sqlite`` source (internal and external) that
         :func:`~flextool.update_flextool.value_list_history.possible_value_list_overwrite_ro` flags, in source
         order.  That check is already filtered by the repair record, so a repaired file has no entry.  Cached as
-        :meth:`_cached_checks`.  TODO(v5.0.0): remove with W-0490."""
+        :meth:`_cached_checks`; findings ``None``: the history could not be read (only a repair record may end
+        W-0490, so an unreadable file is not "no finding").  TODO(v5.0.0): remove with W-0490."""
         from flextool.update_flextool import value_list_history
 
         return self._cached_checks(
-            "value list history", lambda p: list(value_list_history.possible_value_list_overwrite_ro(p)))
+            "value list history",
+            lambda p: list(value_list_history.possible_value_list_overwrite_ro(p, strict=True)), unreadable=True)
 
     def list_defaults_findings(self) -> list[tuple[Path, LostDefaults]]:
         """W-0491: ``(path, lost)`` of every registered ``.sqlite`` source for which
@@ -632,7 +646,8 @@ class InputSourceManager:
         TODO(v5.0.0): remove with W-0491."""
         from flextool.update_flextool import list_default_restore
 
-        return self._cached_checks("list defaults", list_default_restore.list_defaults_lost_ro)
+        return self._cached_checks("list defaults",
+                                   lambda p: list_default_restore.list_defaults_lost_ro(p, strict=True))
 
     def plan_db_migrations(
         self,

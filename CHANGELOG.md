@@ -30,7 +30,8 @@
   - "Please check this database" for each database that W-0490 names (this replaces the 4.6.2 box). It opens the
     list at every project open, has no Dismiss, and ends only when a repaired copy is in its place. Its **Copy
     repair command** button copies the `flextool-repair-value-list` command for that database, to paste into a
-    terminal;
+    terminal. A database whose upgrade history cannot be read gets it too, with a general text, until a read
+    succeeds;
   - "Shipped defaults lost in an old upgrade" for each database whose list-valued defaults an upgrade before
     4.6.3 left empty (note W-0491). It has no Dismiss and the same button, opens the list by itself at most twice,
     and ends only when the database holds the repair tool's record;
