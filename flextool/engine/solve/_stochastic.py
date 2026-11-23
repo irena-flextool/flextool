@@ -62,6 +62,7 @@ from typing import Any, TYPE_CHECKING
 
 from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.input._timeline import make_step_jump
+from flextool.engine.solve._realization_tail import plan_branch_rows
 from flextool.engine.preprocess.params._branch import fan_period_labels
 
 if TYPE_CHECKING:
@@ -838,7 +839,10 @@ class StochasticSolver:
             new_fix_storage_time_list: dict = dict()
             new_active_time_list: dict = dict()
 
-            info = stochastic_branches[complete_solves[solve]]
+            # A realization roll reads its own rows (``_realization_tail.roll_branch_rows``); otherwise the
+            # complete solve's.
+            planned = plan_branch_rows(getattr(self.state, "solve", None), solve)
+            info = planned if planned is not None else stochastic_branches[complete_solves[solve]]
             active_time_list = active_time_lists[solve]
             realized_time_list = realized_time_lists[solve]
             fix_storage_time_list = fix_storage_time_lists[solve]

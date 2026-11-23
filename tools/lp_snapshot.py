@@ -1504,6 +1504,23 @@ def _patch_rp_stoch_first_period(data: dict) -> dict:
     return _rp_stoch(data, "rp_stoch_first_period", "y2030", "t0001")
 
 
+def _patch_rsd_storage_reserve(data: dict) -> dict:
+    """Rolling ``separate_dispatch`` with a storage node in the stochastic group (``hydro_reservoir`` made a
+    storage), an upward reserve on ``demand_node`` offered by the hydro, coal and gas units, and a linear-online unit
+    (``gas_plant``): the ties of each roll's stochastic solve (storage use, first state, reserve, linear units online)
+    and the realization rolls after them."""
+    ents, vals = _reserve("rr", "up", "res_g",
+                          [("unit", "hydro_plant", "demand_node"),
+                           ("unit", "coal_plant", "demand_node"),
+                           ("unit", "gas_plant", "demand_node")],
+                          reservation=200.0)
+    return _overlay(
+        data, name="rsd_storage_reserve", base="rolling_separate_dispatch",
+        entities=[["group", "res_g"], ["group__node", ["res_g", "demand_node"]]] + ents,
+        values=vals + [["node", "hydro_reservoir", "node_type", "storage"],
+                       ["unit", "gas_plant", "startup_method", "linear"]])
+
+
 def _patch_nested_rolling_storage_uc(data: dict) -> dict:
     """Nested invest -> rolling storage (48 h / 24 h, 6-h steps) -> rolling dispatch (24 h / 12 h) with the battery
     bind_forward_only + fix_start (no nested fix) and coal unit commitment (linear, min_load 0.4, min_uptime 8 h, ramp
@@ -2138,6 +2155,7 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "rolling_intraperiod_blocks": _patch_rolling_intraperiod_blocks,
     "rp_stoch_midhorizon": _patch_rp_stoch_midhorizon,
     "rp_stoch_first_period": _patch_rp_stoch_first_period,
+    "rsd_storage_reserve": _patch_rsd_storage_reserve,
     "nested_rolling_storage_uc": _patch_nested_rolling_storage_uc,
     "storage_sequence_start_end": _patch_storage_sequence_start_end,
     "nested_fix_quantity_reference": _patch_nested_fix_quantity_reference,
@@ -2379,6 +2397,7 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("stoch_rank3_profile_anchor", _F + "stochastics.json"),
     ("rp_stoch_midhorizon", _F + "lh2_three_region_rp_invest.json"),
     ("rp_stoch_first_period", _F + "lh2_three_region_rp_invest.json"),
+    ("rsd_storage_reserve", _F + "rolling_separate_dispatch.json"),
 )
 
 FIXTURES: tuple[Fixture, ...] = (

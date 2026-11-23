@@ -2251,7 +2251,7 @@ def _spawn_realized_dispatch_siblings(
         except Exception:  # noqa: BLE001
             reader_solves = set()
 
-    from flextool.engine.solve import _realization
+    from flextool.engine.solve import _realization, _realization_tail
 
     # Spawn list: every separate_dispatch solve (authored), then every
     # designated solve (a ``realized: yes`` branch) without a configured realization solve.  Each
@@ -2263,6 +2263,11 @@ def _spawn_realized_dispatch_siblings(
             # dispatch_realization_method deterministic: the solve reads its realized branch itself, no
             # realization solve (SolveConfig.apply_deterministic_realization).
             continue
+        roll_method = _realization_tail.realization_roll_method(solve_cfg, p)
+        if roll_method is not None and logger is not None:
+            # A solve with realization rolls (the gate the roll plans read): its realization solve is added as
+            # before, while the realization roll is not wired (``_run_model._roll_tail_plans``).
+            logger.debug("solve '%s' has realization rolls (dispatch_realization_method %s)", p, roll_method)
         if solve_cfg.dispatch_realization_method_for(p) == "separate_dispatch":
             if not (getattr(solve_cfg, "realized_periods", None) or {}).get(p):
                 # Nothing to realize (an invest-only solve): no realization solve.

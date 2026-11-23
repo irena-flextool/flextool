@@ -85,6 +85,7 @@ from flextool.engine.solve._recursive_solve import (
 from flextool.engine.solve._stochastic import StochasticSolver, realized_analysis_times
 from flextool.engine.solve import _carry_routing
 from flextool.engine.solve import _realization
+from flextool.engine.solve import _realization_tail
 from flextool.engine.input._timeline import (
     _new_step_of_base_steps,
     get_active_time,
@@ -108,6 +109,13 @@ _RP_METHOD_DOWNGRADE: dict[str, str] = {
     "bind_within_period_blended_weights": "bind_within_period",
     "bind_forward_only_blended_weights":  "bind_forward_only",
 }
+
+
+def _roll_tail_plans(solve_cfg, rolls: dict) -> dict:
+    """``{sub-solve: RollTail}``: the realization-roll plans of the run (``_realization_tail.roll_tail_plan`` of
+    each gated solve's rolls *rolls*).  Not wired yet: returns ``{}``, so every reader takes the complete solve's
+    ``stochastic_branches`` rows as before.  Tests replace it to run a realization roll end to end."""
+    return {}
 
 
 def _roll_period_whole(active_time_list: dict, complete_active_time_list: dict,
@@ -1662,6 +1670,16 @@ def native_run_model(state, solver) -> int:
         _behaviour_changes.notice("chained_solve_costs_from_run_start", "solves", state.solve.real_solves)
 
     # ------------------------------------------------------------------
+    # 2.9 Realization-roll plans (``_realization_tail``): per roll of a gated solve, from the authored rows (never
+    # changed), before the expansion reads them.  The seam returns {} until the realization roll is wired.
+    # ------------------------------------------------------------------
+    _tail_rolls = _realization_tail.realization_rolls(
+        state.solve, all_solves, complete_solve, active_time_lists, realized_time_lists)
+    state.solve.roll_tail_plan = _roll_tail_plans(state.solve, _tail_rolls)
+    state.solve.roll_branch_rows = _realization_tail.roll_branch_rows(
+        state.solve, _tail_rolls, state.solve.roll_tail_plan)
+
+    # ------------------------------------------------------------------
     # 3. Stochastic branching expansion.
     # ------------------------------------------------------------------
     stochastic_solver = StochasticSolver(state)
@@ -2421,7 +2439,7 @@ def native_run_model(state, solver) -> int:
             str(wf / "solve_data/period__branch.csv"),
             provider=sub_solve_provider,
         )
-        solve_writers.emit_branch_weights_and_map(
+        _branch_weights = solve_writers.emit_branch_weights_and_map(
             complete_solve[solve],
             active_time_lists[solve],
             solve_branch__time_branch_lists[solve],
@@ -2429,7 +2447,13 @@ def native_run_model(state, solver) -> int:
             period__branch_lists[solve],
             state.solve.stochastic_branches,
             provider=sub_solve_provider,
+            branch_rows=_realization_tail.plan_branch_rows(state.solve, solve),
         )
+        _tail = state.solve.roll_tail_plan.get(solve)
+        if _tail is not None:
+            # G2b: every forecast of a realization roll has its own branch weight.
+            _realization_tail.check_tail_weights(
+                solve, _tail, solve_branch__time_branch_lists[solve], _branch_weights)
         # Every period from the fan onwards reads the forecast made at the
         # fan's analysis time, in a single solve and in a roll alike, never a
         # forecast made later (``_pdt_lookup`` "Which forecast a branch

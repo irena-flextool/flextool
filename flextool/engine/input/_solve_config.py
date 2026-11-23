@@ -292,6 +292,8 @@ OTHER_DICT_FIELDS: dict[str, str] = {
     "map2d_period_parents": "period parameter (the solves split by a 2-D map of it)",
     "map2d_duplicate_of": "solve of a 2-D period map (set per copy: its database solve and outer key)",
     "realized_dispatch_parent": "realization solve (set per copy: its parent)",
+    "roll_tail_plan": "sub-solve (a realization roll; set per run by native_run_model)",
+    "roll_branch_rows": "sub-solve (a realization roll; set per run by native_run_model)",
     "derived_solves": "solve made from another solve (its parent and the fields it does not copy)",
     "_split_records": "database solve with a 2-D period map (read, not yet split)",
 }
@@ -549,6 +551,13 @@ class SolveConfig:
         # no stochastic solve has a realization solve (the consumers then
         # no-op, preserving byte-parity on deterministic fixtures).
         self.realized_dispatch_parent: dict[str, str] = {}
+
+        # The realization roll R_k of each roll of a rolling within_solve / separate_dispatch solve
+        # (``solve._realization_tail``), keyed by sub-solve: its plan (``RollTail``) and the ``stochastic_branches``
+        # rows it reads (a list in database order).  Set by ``native_run_model`` before the stochastic expansion;
+        # empty without realization rolls (the readers then take the complete solve's rows).
+        self.roll_tail_plan: dict[str, Any] = {}
+        self.roll_branch_rows: dict[str, list] = {}
 
         # User constraints with constraint_period_method period_total (load_from_db); the rolls that leave their
         # rows out and the solves that write them (RecursiveSolveBuilder._check_period_total_rolls).

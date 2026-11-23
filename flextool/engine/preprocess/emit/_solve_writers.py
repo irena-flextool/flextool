@@ -687,13 +687,18 @@ def derive_solve_branch_weight(
     branch_start_time: tuple[str, str] | None,
     period__branch_lists: list[tuple[str, str]],
     stochastic_branches: dict[str, list[Any]],
+    branch_rows: list[Any] | None = None,
 ) -> pl.DataFrame:
     """Build the ``solve_branch_weight`` frame
     (branch, p_branch_weight_input).
+
+    The weights are read from *branch_rows* when given (the rows of a realization roll,
+    ``SolveConfig.roll_branch_rows``), else from ``stochastic_branches[complete_solve]``.
     """
     time_branch_weight: dict[str, Any] = defaultdict()
     if branch_start_time is not None:
-        for row in stochastic_branches.get(complete_solve, []):
+        rows_in = branch_rows if branch_rows is not None else stochastic_branches.get(complete_solve, [])
+        for row in rows_in:
             if (
                 branch_start_time[0] == row[0]
                 and branch_start_time[1] == row[2]
@@ -736,19 +741,22 @@ def emit_branch_weights_and_map(
     period__branch_lists: list[tuple[str, str]],
     stochastic_branches: dict[str, list[Any]],
     *, provider,
-) -> None:
-    """Emit ``branch_weights_and_map`` to the Provider."""
-    _emit(
-        provider, "solve_data/solve_branch_weight.csv",
-        derive_solve_branch_weight(
-            complete_solve, active_time_list, solve_branch__time_branch_list,
-            branch_start_time, period__branch_lists, stochastic_branches,
-        ),
+    branch_rows: list[Any] | None = None,
+) -> pl.DataFrame:
+    """Emit ``branch_weights_and_map`` to the Provider; returns the ``solve_branch_weight`` frame.
+
+    *branch_rows*: see :func:`derive_solve_branch_weight`.
+    """
+    weights = derive_solve_branch_weight(
+        complete_solve, active_time_list, solve_branch__time_branch_list,
+        branch_start_time, period__branch_lists, stochastic_branches, branch_rows,
     )
+    _emit(provider, "solve_data/solve_branch_weight.csv", weights)
     _emit(
         provider, "solve_data/solve_branch__time_branch.csv",
         derive_solve_branch__time_branch(solve_branch__time_branch_list),
     )
+    return weights
 
 
 def branch_time_start_rows(
