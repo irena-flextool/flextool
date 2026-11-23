@@ -63,8 +63,9 @@ Benders models with units or DC lines between regions are now refused with an er
   - "This project's solver settings were updated", the notice that was a box until now;
   - "A newer FlexTool is available", for a FlexTool installed from PyPI with the start-up update check on.
 
-  Dismissals are kept in `gui_messages.json` in FlexTool's user settings folder, never in a database. A failed
-  upgrade, and an external database that could not be copied into the project, still get a box.
+  A red row in the input-source list whose database has a message says so in its tooltip; double-clicking it (or
+  pressing Enter on it) opens the list at that message. Dismissals are kept in `gui_messages.json` in FlexTool's
+  user settings folder, never in a database. A failed upgrade, and an external database that could not be copied into the project, still get a box.
 - **Every box of the FlexTool GUI has one style.** The title says what happened or what to do, the buttons are
   named by their action ("Delete", "Upgrade a copy") instead of Yes / No, a question that deletes or changes files
   starts on Cancel, an **Open documentation** button opens the section that explains the subject (where there is

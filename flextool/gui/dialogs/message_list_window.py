@@ -392,18 +392,41 @@ class MessageListController:
         self.window = MessageListWindow(self.main, self.center, project=self.project, opened_by=opened_by,
                                         start_key=key, on_change=self._window_changed)
 
+    def _raise(self) -> None:
+        try:
+            self.window.deiconify()     # type: ignore[union-attr]
+            self.window.lift()          # type: ignore[union-attr]
+            self.window.focus_set()     # type: ignore[union-attr]
+        except tk.TclError:
+            pass
+
     def open_from_indicator(self) -> None:
         """The indicator: raise the open window, else open it at the first message."""
         if self.window is not None:
-            try:
-                self.window.deiconify()
-                self.window.lift()
-                self.window.focus_set()
-            except tk.TclError:
-                pass
+            self._raise()
             return
         self._cancel_pending()
         self._open(None, None)
+
+    def message_about(self, subject_key: str) -> str | None:
+        """The key of the first listed message about *subject_key* (e.g. a :func:`database_key`), else ``None``."""
+        if self.center is None:
+            return None
+        return next((m.key for m in self.center.messages if m.subject_key == subject_key), None)
+
+    def open_about(self, subject_key: str) -> bool:
+        """Open the list (or show the open one) at the first message about *subject_key*, as the indicator
+        would (``opened_by=None``).  ``False``, and nothing opens, when no message concerns it."""
+        key = self.message_about(subject_key)
+        if key is None:
+            return False
+        if self.window is not None:
+            self.window.render(key)
+            self._raise()
+            return True
+        self._cancel_pending()
+        self._open(None, key)
+        return True
 
     def _window_changed(self) -> None:
         if self.window is not None and self.window.closed:

@@ -122,6 +122,8 @@ CHECK_ON = "\u25a0"   # ■
 CHECK_OFF = "\u25a1"  # □
 STATUS_OK = "\u2713"      # ✓
 STATUS_ERR = "\u2717"     # ✗
+# The tooltip of a red row whose database has a message in the message list.
+ERROR_ROW_TIP = "FlexTool cannot use this file. Double-click for what to do."
 STATUS_EMPTY = "\u25cb"   # (no scenarios; Geometric Shapes circle — was U+2300 diameter sign)
 STATUS_EDITING = "\u25b6" # open in editor (Geometric Shapes; was U+23F3)
 STATUS_RETIRED = "\u2298" # ghost row: input file gone, only results remain
@@ -648,6 +650,7 @@ class MainWindow(tk.Tk):
             can_check=lambda iid: not _is_ghost_iid(iid),
         )
         self.input_sources_tree.bind("<Double-1>", self._on_input_source_dblclick)
+        self.input_sources_tree.bind("<Return>", self._on_input_source_return)
         self.input_sources_tree.bind("<B1-Motion>", self._on_tree_drag_select)
         self.input_sources_tree.bind("<<TreeviewSelect>>", lambda _e: self._update_input_button_states())
         self.input_sources_tree.bind("<Button-3>", self._on_input_source_right_click)
@@ -2561,12 +2564,37 @@ class MainWindow(tk.Tk):
         self._save_checked_input_sources()
 
     def _on_input_source_dblclick(self, event: tk.Event) -> None:  # type: ignore[type-arg]
-        """Double-click on an input source row opens it for editing."""
+        """Double-click on an input source row opens it for editing; a red row with a message opens that message."""
         item = self.input_sources_tree.identify_row(event.y)
         if item and not _is_ghost_iid(item):
             # Select the item so _on_edit_source sees it as selected
             self.input_sources_tree.selection_set(item)
+            if self._open_row_message(item):
+                return
             self._on_edit_source()
+
+    def _on_input_source_return(self, _event: tk.Event) -> str | None:  # type: ignore[type-arg]
+        """Enter on a red row with a message opens that message (other rows: nothing, as before)."""
+        item = self.input_sources_tree.focus()
+        return "break" if item and self._open_row_message(item) else None
+
+    def _row_message_subject(self, item: str) -> str | None:
+        """The database key of the red ("error") row *item*, else ``None``."""
+        mgr = self.input_source_mgr
+        if mgr is None or _is_ghost_iid(item) or not self.input_sources_tree.tag_has("error", item):
+            return None
+        name = _source_name_from_iid(item)
+        source = next((s for s in mgr._sources if s.name == name), None)
+        if source is None:
+            return None
+        from flextool.gui.messages import database_key
+        return database_key(mgr.resolve_path(source))
+
+    def _open_row_message(self, item: str) -> bool:
+        """Open the message list at the first message about the red row *item*; ``False`` when there is none."""
+        messages = getattr(self, "_messages", None)
+        subject = self._row_message_subject(item)
+        return messages is not None and subject is not None and messages.open_about(subject)
 
     def _on_available_toggled(self, _changed: list[str]) -> None:
         """CheckTreeController callback for available_tree."""
@@ -2941,7 +2969,12 @@ class MainWindow(tk.Tk):
         elif status_char == STATUS_EMPTY:
             tip_lines.append("No scenarios found in this file.")
         elif status_char == STATUS_ERR:
-            tip_lines.append("Could not read scenarios (invalid or missing file).")
+            messages = getattr(self, "_messages", None)
+            subject = self._row_message_subject(item)
+            if messages is not None and subject is not None and messages.message_about(subject) is not None:
+                tip_lines.append(ERROR_ROW_TIP)
+            else:
+                tip_lines.append("Could not read scenarios (invalid or missing file).")
         elif status_char == STATUS_EDITING:
             tip_lines.append("File is currently open for editing.")
         if not _is_ghost_iid(item) and self.input_source_mgr is not None:

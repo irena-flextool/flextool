@@ -65,6 +65,8 @@ The list can show:
 - **This project's solver settings were updated**: see [Solver options → On this computer](#solver-options-on-this-computer).
 - **A newer FlexTool is available**: see [Update notifications](install_gui.md#update-notifications).
 
+A red row in the **Input sources** list is a file FlexTool cannot use. When the list has a message about that database, the row's tooltip says so, and double-clicking the row (or pressing Enter on it) opens the list at that message.
+
 Dismissals are kept per user in `gui_messages.json` in FlexTool's user settings folder (`~/.config/flextool/` on Linux, `%LOCALAPPDATA%\flextool\` on Windows, `~/Library/Application Support/flextool/` on macOS), never in a database. A database is known by its full path, so a copy of a database starts with no dismissals. To bring back every dismissed message, close FlexTool and delete that file.
 
 ## Input sources
