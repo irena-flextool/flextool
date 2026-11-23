@@ -12,7 +12,11 @@ Rules the expectations are derived from (C rev 3 §6.2-§6.3; scenarios lowest r
 * candidate scenario: need non-empty and no method resolves (an explicit value wins, or a default other than none);
 * M(u): ``both`` if the candidates need both times, else the one; written into the ``startup_method`` winner of each
   candidate scenario, else into its highest alternative holding any value of u;
-* ``none`` into the highest alternative of a scenario where u is not online but M(u) would win;
+* ``none`` where u is not online but M(u) would win: into the alternative whose value keeps u off there (its
+  ``startup_method``, else ``conversion_method``, else curve winner), else, when that one ranks below the write
+  (or there is none), into the scenario's highest alternative;
+* a null value that wins reads as unset: the definition default applies (not a lower alternative's value), and the
+  null row still hides a write below it;
 * then every scenario is checked (a resolving method unchanged, the needed times enabled, no enabling method where
   u is not online); a failure leaves u undecided with no write.
 """
@@ -32,6 +36,10 @@ from flextool.update_flextool import db_migration as m
 
 MARKER = m.BEHAVIOUR_CHANGE_MARKER_PREFIX + m.V83_MIN_TIME_MARKER
 RISING = Map([0.4, 0.7, 1.0], [0.30, 0.40, 0.42])  # fuel 1.33, 1.75, 2.38: two lines, rising efficiency
+FLAT = Map([0.5, 1.0], [0.4, 0.4])  # fuel 1.25, 2.5: one line through 0, no fuel at zero output → no auto_startup
+BAD = Map([0.5, 0.9], [0.4, 0.4])  # ends at 0.9, not 1.0: a curve with a problem counts as no curve
+#: The auto_startup of each curve, derived above.
+AUTO = ((RISING, True), (FLAT, False), (BAD, False))
 N0 = {"startup_method": "no_startup"}
 D_ON = {"startup_method": "linear", "min_uptime": 3.0}
 #: name -> (unit values {param: {alternative: value}}, scenarios, defaults, writes {alternative: method},
@@ -80,13 +88,17 @@ CASES = {
                      "piecewise_linear_efficiency": {"base": RISING}, "min_uptime": {"base": 2.0},
                      "min_downtime": {"base": 2.0}, "startup_method": {"top": "no_startup"}},
                     {"S": ["base", "top"]}, N0, {"top": "both"}, None, True),
-    # S1 curve-online (up) → base (held); S2: C's constant_efficiency → not online, base would win → none into C.
+    # S1 curve-online (up) → base (held); S2: C's constant_efficiency keeps it off (C ranks above base) → none
+    # into C.
     "pw_mixed": ({"conversion_method": {"base": "piecewise_linear", "C": "constant_efficiency"},
                   "piecewise_linear_efficiency": {"base": RISING}, "min_uptime": {"base": 2.0}},
-                 {"S1": ["base"], "S2": ["base", "C"]}, N0, {"base": "min_uptime", "C": "none"}, None, False),
-    # a curve without auto_startup (the reader passes False): not online.
-    "pw_falling": ({"conversion_method": {"base": "piecewise_linear"}, "piecewise_linear_efficiency": {"base": False},
-                    "min_uptime": {"base": 2.0}}, {"S": ["base"]}, N0, {}, None, False),
+                 {"S1": ["base"], "S2": ["base", "C"]}, N0, {"base": "min_uptime", "C": "none"}, None, True),
+    # FLAT burns no fuel at zero output (no auto_startup), no startup: not online, nothing.
+    "pw_flat": ({"conversion_method": {"base": "piecewise_linear"}, "piecewise_linear_efficiency": {"base": FLAT},
+                 "min_uptime": {"base": 2.0}}, {"S": ["base"]}, N0, {}, None, True),
+    # BAD has a problem: no curve, so not online, nothing.
+    "pw_bad_curve": ({"conversion_method": {"base": "piecewise_linear"}, "piecewise_linear_efficiency": {"base": BAD},
+                      "min_uptime": {"base": 2.0}}, {"S": ["base"]}, N0, {}, None, True),
     # the time comes from the min_uptime default 3 → candidate → base (startup winner).
     "default_time": ({"startup_method": {"base": "linear"}}, {"S": ["base"]}, {**N0, "min_uptime": 3.0},
                      {"base": "min_uptime"}, None, True),
@@ -110,6 +122,29 @@ CASES = {
     # a min_uptime default resolves everywhere: the user's method, no candidate.
     "single_default": ({"min_downtime": {"base": 2.0}, "startup_method": {"base": "linear"}}, {"S": ["base"]},
                        {**N0, "minimum_time_method": "min_uptime"}, {}, None, False),
+    # S1 [base, cfg] candidate (up) → base; S2 [base, off, cfg]: off's no_startup keeps it off and ranks above base
+    # → none into off, not into the shared top cfg (which would hide base's write in S1).
+    "shared_top": ({"min_uptime": {"base": 2.0}, "startup_method": {"base": "linear", "off": "no_startup"}},
+                   {"S1": ["base", "cfg"], "S2": ["base", "off", "cfg"]}, N0,
+                   {"base": "min_uptime", "off": "none"}, None, True),
+    # top's null method wins and reads the default (none): S is a candidate (down) → base, but the null row hides
+    # base's write → R2 fails in S.
+    "null_method_above_target": ({"min_downtime": {"base": 2.0}, "startup_method": {"base": "linear"},
+                                  "minimum_time_method": {"top": None}}, {"S": ["base", "top"]}, N0, {},
+                                 ("the values written would not enable its min_downtime in scenario S", ("S",)), True),
+    # base's own null method row reads the default: candidate (down) → base, the null row is updated.
+    "null_method_in_target": ({"min_downtime": {"base": 2.0}, "startup_method": {"base": "linear"},
+                               "minimum_time_method": {"base": None}}, {"S": ["base"]}, N0,
+                              {"base": "min_downtime"}, None, True),
+    # top's null min_uptime reads the default 3 (not base's 2, either way a time): candidate (up) → base.
+    "null_time_reads_default": ({"min_uptime": {"base": 2.0, "top": None}, "startup_method": {"base": "linear"}},
+                                {"S": ["base", "top"]}, {**N0, "min_uptime": 3.0}, {"base": "min_uptime"}, None,
+                                True),
+    # top's null startup_method reads D = linear (not no_startup): online, base's time → candidate (up); the
+    # startup winner is top (its null row) → top.
+    "null_startup_reads_default": ({"min_uptime": {"base": 2.0}, "startup_method": {"top": None}},
+                                   {"S": ["base", "top"]}, {"startup_method": "linear"}, {"top": "min_uptime"},
+                                   None, True),
     # "2" is a time for the engine (float("2") > 0).
     "str_time": ({"min_uptime": {"base": "2"}, "startup_method": {"base": "linear"}}, {"S": ["base"]}, N0,
                  {"base": "min_uptime"}, None, False),
@@ -125,7 +160,7 @@ def _planner_values(units: dict[str, dict]) -> dict:
         for param, by_alt in params.items():
             for alt, value in by_alt.items():
                 if isinstance(value, Map):
-                    value = True  # RISING: two lines, efficiency rising from the first point
+                    value = next(auto for curve, auto in AUTO if curve is value)
                 out.setdefault(param, {})[(unit, alt)] = value
     return out
 
@@ -136,7 +171,7 @@ def test_m1_planner(name: str) -> None:
     plan = m.plan_minimum_time_method(["u"], _planner_values({"u": values}), scenarios, defaults)
     assert {a: method for _u, a, method in plan.writes} == writes
     expected = () if undecided is None else (("u", undecided[0], undecided[1]),)
-    assert tuple((u, r, c) for u, r, c, _m in plan.undecided) == expected
+    assert tuple((u, r, c) for u, r, c, _n in plan.undecided) == expected
 
 
 # --- databases ---------------------------------------------------------------------------------------------------
@@ -154,6 +189,12 @@ def _set_default(db, name: str, value) -> None:
     db.update_item("parameter_definition", id=pdef["id"], default_value=raw, default_type=typ)
 
 
+def _add(db, item_type: str, **fields) -> None:
+    """``db.add_item`` that fails on a refused item (it returns its error instead of raising)."""
+    _item, error = db.add_item(item_type, **fields)
+    assert error is None, (item_type, fields, error)
+
+
 def _fill(db, units: dict[str, dict], scenarios: dict[str, list[str]], defaults: dict, *,
           inactive: dict[str, set[str]] | None = None) -> None:
     """*units* ``{unit: {param: {alternative: value}}}``, each active in every alternative (except *inactive*
@@ -161,25 +202,25 @@ def _fill(db, units: dict[str, dict], scenarios: dict[str, list[str]], defaults:
     alts = {a for alist in scenarios.values() for a in alist}
     alts |= {a for params in units.values() for by_alt in params.values() for a in by_alt}
     for alt in sorted(alts - {"base"}):
-        db.add_item("alternative", name=alt)
+        _add(db, "alternative", name=alt)
     for scen, alist in scenarios.items():
-        db.add_item("scenario", name=scen)
+        _add(db, "scenario", name=scen)
         for rank, alt in enumerate(alist, start=1):
-            db.add_item("scenario_alternative", scenario_name=scen, alternative_name=alt, rank=rank)
-    db.add_item("entity", entity_class_name="node", name="elec")
+            _add(db, "scenario_alternative", scenario_name=scen, alternative_name=alt, rank=rank)
+    _add(db, "entity", entity_class_name="node", name="elec")
     for alt in sorted(alts):
-        db.add_item("entity_alternative", entity_class_name="node", entity_byname=("elec",), alternative_name=alt,
+        _add(db, "entity_alternative", entity_class_name="node", entity_byname=("elec",), alternative_name=alt,
                     active=True)
     for unit, params in units.items():
-        db.add_item("entity", entity_class_name="unit", name=unit)
-        db.add_item("entity", entity_class_name="unit__outputNode", entity_byname=(unit, "elec"))
+        _add(db, "entity", entity_class_name="unit", name=unit)
+        _add(db, "entity", entity_class_name="unit__outputNode", entity_byname=(unit, "elec"))
         for alt in sorted(alts):
-            db.add_item("entity_alternative", entity_class_name="unit", entity_byname=(unit,), alternative_name=alt,
+            _add(db, "entity_alternative", entity_class_name="unit", entity_byname=(unit,), alternative_name=alt,
                         active=alt not in (inactive or {}).get(unit, set()))
         for param, by_alt in params.items():
             for alt, value in by_alt.items():
                 raw, typ = to_database(value)
-                db.add_item("parameter_value", entity_class_name="unit", entity_byname=(unit,),
+                _add(db, "parameter_value", entity_class_name="unit", entity_byname=(unit,),
                             parameter_definition_name=param, alternative_name=alt, value=raw, type=typ)
     for name, value in defaults.items():
         if name != "startup_method" or value != "no_startup":  # the shipped default
@@ -363,8 +404,12 @@ def test_rerun_writes_nothing_and_logs_already_applied(schema_db_url: str, tmp_p
         assert not [r for r in caplog.records if r.getMessage().startswith(m.ALREADY_APPLIED_PREFIX)]
         methods, marker = _methods(db), _marker(db)
         assert methods[("u", "base")] == "min_downtime" and marker["undecided"]
-        m._v83_minimum_time_method(db)
+        caplog.clear()
+        with caplog.at_level(logging.INFO):
+            m._v83_minimum_time_method(db)
         assert (_methods(db), _marker(db)) == (methods, marker)
+        assert [r.getMessage() for r in caplog.records if r.getMessage().startswith(m.ALREADY_APPLIED_PREFIX)] == [
+            f"{m.ALREADY_APPLIED_PREFIX} v83 minimum_time_method: already written"]
         db.commit_session("v83")
     caplog.clear()
     with DatabaseMapping(url) as db:
@@ -393,7 +438,7 @@ def test_guard_stops_on_a_changed_member_without_a_commit(schema_db_url: str, tm
     with DatabaseMapping(url) as db:
         with pytest.raises(m.FlexToolMigrationError,
                            match=r"A version 83 upgrade step changed an existing member of the value list "
-                                 r"minimum_time_methods \(minimum_time_methods: 'min_uptime'\); the upgrade stops"):
+                                 r"minimum_time_methods \('min_uptime'\); the upgrade stops"):
             m._v83_minimum_time_method(db)
     with DatabaseMapping(url) as db:
         assert _members(db) == ["min_uptime", "min_downtime", "both", "none"]
@@ -406,7 +451,7 @@ def test_guard_removal_form(schema_db_url: str, tmp_path: Path) -> None:
     with DatabaseMapping(_schema_copy(schema_db_url, tmp_path)) as db:
         before = m._list_members(db, ["minimum_time_methods"])
         none_id = next(i for i, (_l, v, _t) in before.items() if v == b'"none"')
-        with pytest.raises(m.FlexToolMigrationError, match="'none'"):
+        with pytest.raises(m.FlexToolMigrationError, match=r"\('none' \(its planned removal did not happen\)\)"):
             m._v83_check_members(db, "minimum_time_methods", before, removed={none_id})
         item = next(x for x in db.get_items("list_value", parameter_value_list_name="minimum_time_methods")
                     if x["parsed_value"] == "none")
@@ -421,6 +466,6 @@ def test_undecided_unit_is_printed(schema_db_url: str, tmp_path: Path, capsys: p
         _fill(db, {"mc": CASES["masking_conflict"][0]}, {"S1": ["E", "base"], "S2": ["base"]}, {})
         m._v83_minimum_time_method(db)
     assert ("v83: minimum_time_method not written for unit mc: a value in alternative base would replace your "
-            "minimum_time_method in alternative E in scenario S1. In scenarios S2 its min_downtime no longer applies "
+            "minimum_time_method in alternative E in scenario S1. In scenario S2 its min_downtime no longer applies "
             "(results change). Set minimum_time_method yourself (both, min_uptime or min_downtime) where it should "
             "apply.") in capsys.readouterr().out

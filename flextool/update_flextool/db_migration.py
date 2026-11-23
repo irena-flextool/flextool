@@ -4,7 +4,7 @@ import math
 import os
 import argparse
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, NamedTuple
 from spinedb_api import import_data, from_database, SpineDBAPIError, to_database, Map
 from spinedb_api.exception import NothingToCommit
 import logging
@@ -11434,16 +11434,7 @@ def _v81_value_lists(db) -> None:
     for name, members in V81_NEW_VALUE_LISTS.items():
         if not db.get_item("parameter_value_list", name=name):
             db.add_parameter_value_list(name=name)
-        items = db.get_items("list_value", parameter_value_list_name=name)
-        have = {x["parsed_value"] for x in items}
-        index = max((x["index"] for x in items), default=-1)
-        for member in members:
-            if member in have:
-                continue
-            index += 1
-            val, typ = to_database(member)
-            db.add_list_value(parameter_value_list_name=name, value=val, type=typ, index=index)
-            have.add(member)
+        _append_list_members(db, name, members)
 
 
 def _v81_definitions_part(db, *, update: bool = True, texts: dict[tuple[str, str], str] | None = None) -> None:
@@ -12286,15 +12277,14 @@ _V83_MEMBER_MESSAGE = ("A version 83 upgrade step changed an existing member of 
 @dataclass(frozen=True)
 class MinTimePlan:
     """What part 1 of v83 writes.  ``writes``: ``(unit, alternative, method)``; ``undecided``: ``(unit, reason,
-    candidate scenarios, method it would have written)`` (nothing is written for such a unit)."""
+    candidate scenarios, ((candidate scenario, the kinds it needs), ...))`` (nothing is written for such a unit)."""
     writes: tuple = ()
     undecided: tuple = ()
 
 
 def _append_list_members(db, name: str, members) -> None:
     """Append the *members* missing (by parsed value) from the existing value list *name*, in the given order, at
-    1 + the largest stored index.  A stored member is never reordered or rewritten.  (The v81 step keeps its own
-    copy of this loop: ``value_list_history``'s step scan follows calls only three levels deep.)"""
+    1 + the largest stored index.  A stored member is never reordered or rewritten."""
     items = db.get_items("list_value", parameter_value_list_name=name)
     have = {x["parsed_value"] for x in items}
     index = max((x["index"] for x in items), default=-1)
@@ -12307,14 +12297,34 @@ def _append_list_members(db, name: str, members) -> None:
         have.add(member)
 
 
+def _v83_write_values(db, entity_class: str, name: str, writes) -> None:
+    """Write each ``(entity, alternative, value)`` of *writes* into *name* of *entity_class*, by value: a row
+    already there (a null one: :func:`_v83_read` reads it as unset) is updated, else one is added."""
+    rows = {(pv["entity_byname"][0], pv["alternative_name"]): pv["id"]
+            for pv in db.find_parameter_values(entity_class_name=entity_class, parameter_definition_name=name)}
+    for entity, alternative, value in writes:
+        val, typ = to_database(value)
+        if (entity, alternative) in rows:
+            db.update_parameter_value(id=rows[(entity, alternative)], value=val, type=typ)
+        else:
+            db.add_parameter_value(entity_class_name=entity_class, entity_byname=(entity,),
+                                   parameter_definition_name=name, alternative_name=alternative, value=val, type=typ)
+
+
+def _v83_scenarios_text(scenarios) -> str:
+    """``scenario S`` or ``scenarios S1, S2`` (the v83 prints)."""
+    return f"scenario{'s' if len(scenarios) > 1 else ''} {', '.join(scenarios)}"
+
+
 def _v83_check_members(db, name: str, before: dict, removed=frozenset()) -> None:
     """The v83 member guard: every member of the value list *name* in *before* (:func:`_list_members`, taken before
     the part) that the part does not remove on purpose (*removed*: database ids) is still there with the same
     ``(list, value, type)``, and every id of *removed* is gone.  Raises :class:`FlexToolMigrationError` (before the
     step's commit) otherwise."""
     after = _list_members(db, [name])
-    changed = sorted(f"{lst}: {from_database(v, t)!r}" for i, (lst, v, t) in before.items()
-                     if (i in after if i in removed else after.get(i) != (lst, v, t)))
+    changed = sorted(f"{from_database(v, t)!r}{' (its planned removal did not happen)' if i in removed else ''}"
+                     for i, (_lst, v, t) in before.items()
+                     if (i in after if i in removed else after.get(i) != (_lst, v, t)))
     if changed:
         raise FlexToolMigrationError(_V83_MEMBER_MESSAGE.format(list=name, members=", ".join(changed)))
 
@@ -12330,35 +12340,63 @@ def _v83_is_time(value) -> bool:
         return False
 
 
+def _v83_read(alternatives, table, key, default=None) -> tuple:
+    """``(value, alternative)`` of *key* in a scenario of *alternatives* (lowest rank first), as the engine reads
+    it: the value of the winning row of *table* ``{(key, alternative): parsed value}`` (the highest-ranked
+    alternative holding a row, a null one included), else *default*; ``alternative`` is where that row is (None
+    without one).  A winning null reads as unset, so *default* applies, not a lower alternative's value: the engine's
+    scenario filter keeps the top row, ``SpineDbReader._unroll_rows`` drops a whole-null value and
+    ``_parameter_frame`` fills in the definition default (``engine/input/_spinedb_reader.py``); the solve reader
+    ``params_to_dict`` (``engine/input/_solve_config.py``) skips it, and
+    ``SolveConfig.dispatch_realization_method_for`` reads the absent value as within_solve."""
+    where = _v77_winner(alternatives, table, key)
+    value = table[(key, where)] if where is not None else None
+    return (default if value is None else value), where
+
+
 def _v83_method(unit: str, alternatives, table, default) -> tuple:
-    """``(resolves, method, alternative)`` of *unit*'s ``minimum_time_method`` in a scenario of *alternatives*:
-    the winning value of *table* ``{(unit, alternative): method}`` (``alternative`` where it wins), else the
-    definition *default*, which resolves only as a member other than ``none``."""
-    where = _v77_winner(alternatives, table, unit)
-    method = table[(unit, where)] if where is not None else default
-    return where is not None or method not in (None, "none"), method, where
+    """``(resolves, method, alternative)`` of *unit*'s ``minimum_time_method`` in a scenario of *alternatives*
+    (:func:`_v83_read`: a winning null reads the definition *default*).  It resolves when a non-null value wins, or
+    when the default that reads is a member other than ``none``; ``alternative``: where the winning row is (a null
+    row there still hides a write below it)."""
+    method, where = _v83_read(alternatives, table, unit, default)
+    explicit = where is not None and table[(unit, where)] is not None
+    return explicit or method not in (None, "none"), method, where
 
 
-def _v83_unit_state(unit: str, alternatives, values, defaults) -> tuple:
-    """``(online, need, resolves, method, alternative)`` of *unit* in a scenario of *alternatives* (lowest rank
-    first) as the engine reads it before data version 83 (C rev 3 §6.2).  ``online``: it has online variables
-    (``startup_method``, else ``minimum_time_method`` promoting ``no_startup``, else a ``piecewise_linear`` curve
-    with ``auto_startup``); ``need``: the kinds with a time when online (their rows are built); ``resolves``: a
-    ``minimum_time_method`` value wins, or the default is a member other than ``none``; ``method``: the method that
-    reads; ``alternative``: where its value wins (None for the default)."""
+class _V83State(NamedTuple):
+    """A unit in one scenario as the engine reads it before data version 83 (C rev 3 §6.2)."""
+    online: bool  #: it has online variables
+    need: frozenset  #: the kinds with a time when online (their rows are built)
+    resolves: bool  #: a minimum_time_method value wins, or the default is a member other than none
+    method: object  #: the method that reads
+    where: str | None  #: where the winning method row is (None for none)
+    off_by: tuple  #: when not online: the alternatives whose winning values keep it off (startup_method, then
+    #: conversion_method, then the curve)
+
+
+def _v83_unit_state(unit: str, alternatives, values, defaults) -> _V83State:
+    """*unit* in a scenario of *alternatives* (lowest rank first) as the engine reads it before data version 83.
+    ``online``: ``startup_method`` in :data:`_V83_ONLINE`, else ``no_startup`` with ``minimum_time_method``
+    promoting it, else with a ``piecewise_linear`` curve with ``auto_startup``.  Every value through
+    :func:`_v83_read` (a winning null reads the default)."""
     def read(name):
-        winner = _v77_winner(alternatives, values.get(name, {}), unit)
-        return (values[name][(unit, winner)], winner) if winner is not None else (defaults.get(name), None)
+        return _v83_read(alternatives, values.get(name, {}), unit, defaults.get(name))
 
-    startup = read("startup_method")[0] or "no_startup"
+    startup, st_alt = read("startup_method")
+    startup = startup or "no_startup"
     resolves, method, where = _v83_method(unit, alternatives, values.get("minimum_time_method", {}),
                                           defaults.get("minimum_time_method"))
+    conversion, ct_alt = read("conversion_method")
+    curve, curve_alt = read("piecewise_linear_efficiency")
+    piecewise = (conversion or "constant_efficiency") == "piecewise_linear"
     online = startup in _V83_ONLINE or startup == "no_startup" and (
-        method in ("min_uptime", "min_downtime", "both")
-        or (read("conversion_method")[0] or "constant_efficiency") == "piecewise_linear"
-        and bool(read("piecewise_linear_efficiency")[0]))
+        method in ("min_uptime", "min_downtime", "both") or piecewise and bool(curve))
     need = frozenset(k for k in _V83_ENABLES if online and _v83_is_time(read(k)[0]))
-    return online, need, resolves, method, where
+    off_by = () if online else tuple(a for a, keeps_off in (
+        (st_alt, True), (ct_alt, startup == "no_startup" and not piecewise),
+        (curve_alt, startup == "no_startup" and piecewise and not curve)) if a is not None and keeps_off)
+    return _V83State(online, need, resolves, method, where, off_by)
 
 
 def _v83_unit_writes(unit, method, candidates, before, values, held, scenarios, defaults) -> tuple[dict, str | None]:
@@ -12373,24 +12411,26 @@ def _v83_unit_writes(unit, method, candidates, before, values, held, scenarios, 
             return {}, f"no alternative of scenario {s} holds a value of the unit"
         planned[target] = method
     own = values.get("minimum_time_method", {})
-    for s, (online, *_rest) in before.items():
-        table = {**own, **{(unit, a): m for a, m in planned.items()}}
-        winner = _v77_winner(scenarios[s], table, unit)
-        if not online and winner in planned and planned[winner] != "none":
-            top = scenarios[s][-1]
-            if top in planned:
-                return {}, f"a value in alternative {top} would give the unit online variables in scenario {s}"
-            planned[top] = "none"
+    for s, state in before.items():
+        alts = scenarios[s]
+        winner = _v77_winner(alts, {**own, **{(unit, a): m for a, m in planned.items()}}, unit)
+        if not state.online and winner in planned and planned[winner] != "none":
+            # The switch-off: none into the alternative that keeps u off in s, else (it ranks too low to win, or
+            # there is none) into the highest alternative of s.
+            off = next((a for a in state.off_by if alts.index(a) > alts.index(winner)), alts[-1])
+            if off in planned:
+                return {}, f"a value in alternative {off} would give the unit online variables in scenario {s}"
+            planned[off] = "none"
     table = {**own, **{(unit, a): m for a, m in planned.items()}}
-    for s, (online, need, resolves, old, where) in before.items():
+    for s, state in before.items():
         new_resolves, new, winner = _v83_method(unit, scenarios[s], table, defaults.get("minimum_time_method"))
         new = new if new_resolves else None
-        if resolves and new != old:
+        if state.resolves and new != state.method:
             return {}, (f"a value in alternative {winner} would replace your minimum_time_method in alternative "
-                        f"{where} in scenario {s}")
-        if s in candidates and not all(new in _V83_ENABLES[k] for k in need):
-            return {}, f"the values written would not enable its {' and '.join(sorted(need))} in scenario {s}"
-        if not online and new in ("min_uptime", "min_downtime", "both"):
+                        f"{state.where} in scenario {s}")
+        if s in candidates and not all(new in _V83_ENABLES[k] for k in state.need):
+            return {}, f"the values written would not enable its {' and '.join(sorted(state.need))} in scenario {s}"
+        if not state.online and new in ("min_uptime", "min_downtime", "both"):
             return {}, f"a value in alternative {winner} would give the unit online variables in scenario {s}"
     return planned, None
 
@@ -12400,18 +12440,19 @@ def plan_minimum_time_method(units, values, scenarios, defaults, inactive=frozen
     engine reads the method (C rev 3 §6.3).  Pure: no database.
 
     *units*: the unit names; *values* ``{parameter: {(unit, alternative): parsed value}}`` with every stored unit
-    parameter (those outside :data:`_V83_READ` only mark the alternatives that hold a value of the unit), the value
-    of ``piecewise_linear_efficiency`` being ``auto_startup`` of its curves; *scenarios* ``{scenario: [alternative,
-    ...]}`` lowest rank first; *defaults* ``{parameter: parsed definition default}``; *inactive* ``{(scenario,
-    unit)}`` (left out of that scenario).
+    parameter (those outside :data:`_V83_READ` only mark the alternatives that hold a value of the unit; a null
+    value is kept: it reads the default), the value of ``piecewise_linear_efficiency`` being ``auto_startup`` of its
+    curves; *scenarios* ``{scenario: [alternative, ...]}`` lowest rank first; *defaults* ``{parameter: parsed
+    definition default}``; *inactive* ``{(scenario, unit)}`` (left out of that scenario).
 
     A unit's candidate scenarios are those where it has rows today and no method resolves.  It gets ``both`` when
     they need both times, else the one time, written into each candidate scenario's ``startup_method`` winner (else
-    its highest alternative holding any value of the unit), plus ``none`` into the highest alternative of a scenario
-    where the written method would win while the unit has no online variables today.  Then every scenario is
-    checked: a method that resolved is unchanged, every needed time is enabled, a unit without online variables gets
-    no enabling method.  A unit that fails any of these gets no write (undecided, the reason of the first failing
-    scenario by name)."""
+    its highest alternative holding any value of the unit), plus ``none`` where the written method would win in a
+    scenario where the unit has no online variables today: into the alternative whose value keeps it off there
+    (``startup_method``, else ``conversion_method``, else the curve), else, when that one ranks too low to win, into
+    the scenario's highest alternative.  Then every scenario is checked: a method that resolved is unchanged, every
+    needed time is enabled, a unit without online variables gets no enabling method.  A unit that fails any of these
+    gets no write (undecided, the reason of the first failing scenario by name)."""
     writes, undecided = [], []
     held: dict[str, set] = {}
     for table in values.values():
@@ -12420,17 +12461,18 @@ def plan_minimum_time_method(units, values, scenarios, defaults, inactive=frozen
     for unit in sorted(units):
         before = {s: _v83_unit_state(unit, scenarios[s], values, defaults)
                   for s in sorted(scenarios) if (s, unit) not in inactive}
-        candidates = [s for s, (_on, need, resolves, *_r) in before.items() if need and not resolves]
+        candidates = [s for s, state in before.items() if state.need and not state.resolves]
         if not candidates:
             continue
-        kinds = frozenset().union(*(before[s][1] for s in candidates))
+        kinds = frozenset().union(*(before[s].need for s in candidates))
         method = "both" if len(kinds) == 2 else next(iter(kinds))
         planned, reason = _v83_unit_writes(unit, method, candidates, before, values, held.get(unit, set()),
                                            scenarios, defaults)
         if reason is None:
             writes.extend((unit, alternative, m) for alternative, m in sorted(planned.items()))
         else:
-            undecided.append((unit, reason, tuple(candidates), method))
+            undecided.append((unit, reason, tuple(candidates),
+                              tuple((s, tuple(k for k in _V83_ENABLES if k in before[s].need)) for s in candidates)))
     return MinTimePlan(writes=tuple(writes), undecided=tuple(undecided))
 
 
@@ -12472,24 +12514,23 @@ def _v83_minimum_time_method(db) -> None:
     _v83_check_members(db, "minimum_time_methods", before)  # the writes below touch no member
     marked = any(md["name"] == BEHAVIOUR_CHANGE_MARKER_PREFIX + V83_MIN_TIME_MARKER for md in db.get_items("metadata"))
     plan = plan_minimum_time_method(*_v83_unit_inputs(db))
-    for unit, alternative, method in plan.writes:
-        val, typ = to_database(method)
-        db.add_parameter_value(entity_class_name="unit", entity_byname=(unit,),
-                               parameter_definition_name="minimum_time_method", alternative_name=alternative,
-                               value=val, type=typ)
+    _v83_write_values(db, "unit", "minimum_time_method", plan.writes)
     if marked and not plan.writes:
         _already_applied(83, "minimum_time_method: already written")
     if plan.writes:
         print("v83: minimum_time_method written so that min_uptime / min_downtime keep applying (results unchanged):")
         for unit, alternative, method in plan.writes:
             print(f"  unit {unit} [{alternative}]: {method}")
-    for unit, reason, candidates, method in plan.undecided:
-        times = "min_uptime and min_downtime no longer apply" if method == "both" else f"{method} no longer applies"
-        print(f"v83: minimum_time_method not written for unit {unit}: {reason}. In scenarios "
-              f"{', '.join(candidates)} its {times} (results change). Set minimum_time_method yourself (both, "
-              "min_uptime or min_downtime) where it should apply.")
+    for unit, reason, _candidates, needs in plan.undecided:
+        groups: dict[tuple, list] = {}
+        for s, kinds in needs:
+            groups.setdefault(kinds, []).append(s)
+        lost = "; ".join(f"in {_v83_scenarios_text(ss)} its {' and '.join(kinds)} no longer "
+                         f"{'applies' if len(kinds) == 1 else 'apply'}" for kinds, ss in groups.items())
+        print(f"v83: minimum_time_method not written for unit {unit}: {reason}. {lost[0].upper()}{lost[1:]} (results "
+              "change). Set minimum_time_method yourself (both, min_uptime or min_downtime) where it should apply.")
     _merge_marker_lists(db, V83_MIN_TIME_MARKER, 83, "writes", plan.writes,
-                        [[unit, reason, list(candidates)] for unit, reason, candidates, _m in plan.undecided])
+                        [[unit, reason, list(candidates)] for unit, reason, candidates, _n in plan.undecided])
 
 
 #: The members part 2 of v83 appends to ``startup_methods`` (when missing), in this order, and the one it replaces.
@@ -12648,29 +12689,35 @@ def plan_dispatch_realization_method(branches, methods, scenarios) -> tuple[tupl
     keeps running within_solve once an absent method means ``deterministic`` (plan §2a step 2).  Pure: no database.
 
     *branches* ``{(solve, alternative): the stochastic_branches value is non-empty}``; *methods* ``{(solve,
-    alternative): method}``; *scenarios* ``{scenario: [alternative, ...]}`` lowest rank first.  A scenario is a
-    candidate for a solve when its winning ``stochastic_branches`` is non-empty and no method resolves; the target is
-    the alternative of that winning value.  With the writes in place every scenario where a method resolved must
-    read the same method, else the solve gets no write at all.  Returns ``(writes, undecided)``: ``((solve,
+    alternative): method, None for a null row}``; *scenarios* ``{scenario: [alternative, ...]}`` lowest rank first.
+    A scenario is a candidate for a solve when its winning ``stochastic_branches`` is non-empty and no method
+    resolves (a winning null row reads as no method, :func:`_v83_read`); the target is the alternative of that
+    winning value.  With the writes in place every scenario where a method resolved must read the same method and
+    every candidate must read within_solve (a null row above the target hides the write), else the solve gets no
+    write at all.  Returns ``(writes, undecided)``: ``((solve,
     alternative), ...)`` and ``((solve, reason, candidate scenarios), ...)``."""
     writes, undecided = [], []
     for solve in sorted({key[0] for key in branches}):
-        before = {s: _v77_winner(alts, methods, solve) for s, alts in sorted(scenarios.items())}
+        before = {s: _v83_read(alts, methods, solve) for s, alts in sorted(scenarios.items())}
         candidates, targets = [], set()
         for s, alts in sorted(scenarios.items()):
             where = _v77_winner(alts, branches, solve)
-            if where is not None and branches[(solve, where)] and before[s] is None:
+            if where is not None and branches[(solve, where)] and before[s][0] is None:
                 candidates.append(s)
                 targets.add(where)
         if not candidates:
             continue
         table = {**methods, **{(solve, a): _V83_WITHIN_SOLVE for a in targets}}
         reason = None
-        for s, own in before.items():
-            winner = _v77_winner(scenarios[s], table, solve)
-            if own is not None and table[(solve, winner)] != methods[(solve, own)]:
+        for s, (own, where) in before.items():
+            new, winner = _v83_read(scenarios[s], table, solve)
+            if own is not None and new != own:
                 reason = (f"a value in alternative {winner} would replace your dispatch_realization_method in "
-                          f"alternative {own} in scenario {s}")
+                          f"alternative {where} in scenario {s}")
+            elif s in candidates and new != _V83_WITHIN_SOLVE:
+                reason = (f"the empty dispatch_realization_method in alternative {winner} would hide the within_solve "
+                          f"written for scenario {s}")
+            if reason is not None:
                 break
         if reason is None:
             writes.extend((solve, a) for a in sorted(targets))
@@ -12680,8 +12727,8 @@ def plan_dispatch_realization_method(branches, methods, scenarios) -> tuple[tupl
 
 
 def _v83_solve_inputs(db) -> tuple:
-    """:func:`plan_dispatch_realization_method` arguments read from *db* (parsed values only; a value read as
-    nothing is no method, an empty map has no branch)."""
+    """:func:`plan_dispatch_realization_method` arguments read from *db* (parsed values only; a null method row
+    is kept: it reads as no method where it wins, :func:`_v83_read`; an empty map has no branch)."""
     branches, methods = {}, {}
     for pv in db.find_parameter_values(entity_class_name="solve", parameter_definition_name="stochastic_branches"):
         value = pv["parsed_value"]
@@ -12689,8 +12736,7 @@ def _v83_solve_inputs(db) -> tuple:
             isinstance(value, Map) and len(value) == 0)
     for pv in db.find_parameter_values(entity_class_name="solve",
                                        parameter_definition_name="dispatch_realization_method"):
-        if pv["parsed_value"] is not None:
-            methods[(pv["entity_byname"][0], pv["alternative_name"])] = pv["parsed_value"]
+        methods[(pv["entity_byname"][0], pv["alternative_name"])] = pv["parsed_value"]
     return branches, methods, _scenario_alternatives(db)
 
 
@@ -12711,11 +12757,8 @@ def _v83_dispatch_realization_method(db) -> None:
         _append_list_members(db, name, (_V83_DETERMINISTIC,))
         _v83_check_members(db, name, before)  # a changed member would fail the by-value writes first
         writes, undecided = plan_dispatch_realization_method(*_v83_solve_inputs(db))
-        val, typ = to_database(_V83_WITHIN_SOLVE)
-        for solve, alternative in writes:
-            db.add_parameter_value(entity_class_name="solve", entity_byname=(solve,),
-                                   parameter_definition_name="dispatch_realization_method",
-                                   alternative_name=alternative, value=val, type=typ)
+        _v83_write_values(db, "solve", "dispatch_realization_method",
+                          [(solve, alternative, _V83_WITHIN_SOLVE) for solve, alternative in writes])
         if rerun:
             _already_applied(83, "dispatch_realization_method: already written")
         if writes:
@@ -12724,8 +12767,8 @@ def _v83_dispatch_realization_method(db) -> None:
             for solve, alternative in writes:
                 print(f"  solve {solve} [{alternative}]")
         for solve, reason, candidates in undecided:
-            print(f"v83: dispatch_realization_method not written for solve {solve}: {reason}. In scenarios "
-                  f"{', '.join(candidates)} it now runs deterministic: the forecasts are ignored (results change), "
+            print(f"v83: dispatch_realization_method not written for solve {solve}: {reason}. In "
+                  f"{_v83_scenarios_text(candidates)} it now runs deterministic: the forecasts are ignored (results change), "
                   "or the run stops when there is no realized: yes branch. Set dispatch_realization_method "
                   "within_solve yourself where it should apply.")
         pdef = _pdef_or_none(db, "solve", "dispatch_realization_method")

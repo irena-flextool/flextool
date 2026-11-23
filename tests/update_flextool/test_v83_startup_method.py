@@ -259,7 +259,7 @@ def test_guard_stops_on_a_changed_member_without_a_commit(schema_db_url: str, tm
     with DatabaseMapping(url) as db:
         with pytest.raises(m.FlexToolMigrationError,
                            match=r"A version 83 upgrade step changed an existing member of the value list "
-                                 r"startup_methods \(startup_methods: 'no_startup'\); the upgrade stops"):
+                                 r"startup_methods \('no_startup'\); the upgrade stops"):
             m._v83_startup_method(db)
     with DatabaseMapping(url) as db:
         assert _members(db) == ["no_startup", "linear", "binary"]

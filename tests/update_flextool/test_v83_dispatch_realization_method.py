@@ -39,7 +39,7 @@ NEW_TEXT = ("[choice] How a solve with stochastic_branches is solved. determinis
             "over the jump (a single solve: its realized periods) and looks ahead with the forecasts made at their "
             "end; needs a realized: yes branch. Without stochastic_branches the three are the same.")
 UNDECIDED_PRINT = ("v83: dispatch_realization_method not written for solve v: a value in alternative base would "
-                   "replace your dispatch_realization_method in alternative E in scenario S1. In scenarios S2 it now "
+                   "replace your dispatch_realization_method in alternative E in scenario S1. In scenario S2 it now "
                    "runs deterministic: the forecasts are ignored (results change), or the run stops when there is "
                    "no realized: yes branch. Set dispatch_realization_method within_solve yourself where it should "
                    "apply.")
@@ -79,6 +79,9 @@ ROWS = {
     # (no method resolved there before: nothing to keep).
     "empty_above": ({("v", "base"): True, ("v", "a1"): False}, {}, {"S1": ["base", "a1"], "S2": ["base"]},
                     (("v", "base"),), ()),
+    # base's null method row reads as no method (the engine skips it: within_solve today) → candidate, target base
+    # (the row is overwritten).
+    "null_in_target": ({("v", "base"): True}, {("v", "base"): None}, {"S1": ["base"]}, (("v", "base"),), ()),
     # Two solves are decided apart: w undecided (as target_above_method) does not stop v.
     "two_solves": ({("v", "base"): True, ("w", "base"): True}, {("w", "E"): "separate_dispatch"},
                    {"S1": ["E", "base"], "S2": ["base"]}, (("v", "base"),), ("w",)),
@@ -243,6 +246,19 @@ def test_null_and_user_default_are_kept(schema_db_url: str, tmp_path: Path, defa
         assert _members(db) == MEMBERS
 
 
+def test_a_null_row_in_the_target_is_overwritten(schema_db_url: str, tmp_path: Path) -> None:
+    """A null method row (b'null', no type) in the branches' alternative: the engine reads it as absent (within_solve
+    today) → candidate, and the row itself gets within_solve (no second row in base)."""
+    url = _copy(schema_db_url, tmp_path)
+    _seed(url, {"S1": ["base"]}, branches=[("v", "base")], methods=[("v", "base", None)])
+    with DatabaseMapping(url) as db:
+        assert _methods(db) == {("v", "base"): None}
+        m._v83_dispatch_realization_method(db)
+        db.commit_session("v83 part 5")
+    with DatabaseMapping(url) as db:
+        assert _methods(db) == {("v", "base"): "within_solve"}
+
+
 def test_edited_description_is_kept(schema_db_url: str, tmp_path: Path) -> None:
     with DatabaseMapping(_copy(schema_db_url, tmp_path)) as db:
         db.update_item("parameter_definition", id=_pdef(db)["id"], description=OLD_TEXT + " My note.")
@@ -291,7 +307,7 @@ def test_guard_stops_on_a_changed_member(schema_db_url: str, tmp_path: Path,
     with DatabaseMapping(url) as db:
         with pytest.raises(m.FlexToolMigrationError,
                            match=r"A version 83 upgrade step changed an existing member of the value list "
-                                 r"dispatch_realization_methods \(dispatch_realization_methods: 'within_solve'\); "
+                                 r"dispatch_realization_methods \('within_solve'\); "
                                  r"the upgrade stops"):
             m._v83_dispatch_realization_method(db)
     with DatabaseMapping(url) as db:
