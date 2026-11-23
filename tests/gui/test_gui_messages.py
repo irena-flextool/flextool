@@ -959,6 +959,28 @@ def test_w0490_unreadable_file_gives_the_generic_message_and_is_read_again(schem
         "the failed reads were not cached"
 
 
+def test_a_file_flextool_cannot_read_gets_one_message_not_two(schema_db_url, tmp_path):
+    """Files that are not a database at all (one internal, one external): each gets its ``database_unreadable``
+    message only, not the generic W-0490 one as well (both stay until FlexTool can read the file).  Without the
+    unreadable files the W-0490 source alone gives the generic message for both."""
+    mgr, sources = _w0490_project(tmp_path, schema_db_url)
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (shared / "external.sqlite").write_bytes(b"not a database")
+    (sources / "broken.sqlite").write_bytes(b"not a database")
+    mgr.settings.external_refs = {"external.sqlite": "../shared/external.sqlite"}
+    mgr.plan_db_migrations()
+    assert sorted(n.name for n in mgr.planning_notes) == ["broken.sqlite", "external.sqlite"]
+    alone = ms.value_list_source(mgr.value_list_findings, lambda _t: None)(None)
+    assert sorted(msg.subject_label for msg in alone) == ["broken.sqlite", "external.sqlite", "model.sqlite"]
+    main = SimpleNamespace(input_source_mgr=mgr, global_settings=None)
+    center = _center(tmp_path / "s.json", *ms.project_sources(main, tmp_path / "P", "P"))
+    center.recompute("project_open")
+    got = sorted((msg.subject_label, msg.spec.id) for msg in center.messages)
+    assert got == [("broken.sqlite", UNREADABLE.id), ("external.sqlite", UNREADABLE.id),
+                   ("model.sqlite", W0490.id)]
+
+
 # -- W-0491 (P7b) ----------------------------------------------------------------------------------------------------
 LIST_DEFAULTS = MESSAGE_SPECS["list_defaults_lost"]
 _LOST = ["unit.conversion_method", "solve.solve_mode"]

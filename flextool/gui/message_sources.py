@@ -220,15 +220,23 @@ def copy_repair_action(path: Path, clipboard: Callable[[str], None]) -> MessageA
 
 
 def value_list_source(findings: Callable[[], Iterable[tuple[Path, list[Finding] | None]]],
-                      clipboard: Callable[[str], None]) -> MessageSource:
+                      clipboard: Callable[[str], None],
+                      unreadable: Callable[[], Iterable[Path]] = tuple) -> MessageSource:
     """``value_list_check`` (W-0490) messages, one per database in *findings()* (``value_list_findings``: the
     flagged input sources of the open project; findings ``None``: its history could not be read, the generic
-    :data:`W0490_UNREADABLE` text).  TODO(v5.0.0): remove with W-0490."""
+    :data:`W0490_UNREADABLE` text).  The generic text is left out for a database in *unreadable()* (the files with
+    a ``database_unreadable`` message, such as "FlexTool cannot read this database file": that one is not
+    dismissable either and stays until FlexTool can read the file, so nothing is silenced).  TODO(v5.0.0): remove with W-0490."""
     def source(_store: MessageStore) -> list[GuiMessage]:
         from flextool.update_flextool.value_list_history import gui_message
 
         out = []
-        for path, found in findings():
+        found_list = list(findings())
+        cannot_read = ({database_key(p) for p in unreadable()}
+                       if any(found is None for _p, found in found_list) else set())
+        for path, found in found_list:
+            if found is None and database_key(path) in cannot_read:
+                continue
             try:        # one database's text failing must not hide W-0490 for the others, nor for itself
                 title, paragraphs = W0490_UNREADABLE if found is None else gui_message(found)
             except Exception:
@@ -337,6 +345,9 @@ def project_sources(main: Any, project_dir: Path, project_name: str) -> list[Mes
         m = mgr()
         return list(getattr(m, "planning_notes", [])) if m is not None else []
 
+    def unreadable_paths() -> list[Path]:
+        return [note.path for note in notes()]
+
     def value_list_findings() -> list[tuple[Path, list[Finding] | None]]:
         m = mgr()
         return m.value_list_findings() if m is not None else []
@@ -350,7 +361,7 @@ def project_sources(main: Any, project_dir: Path, project_name: str) -> list[Mes
         main.clipboard_append(text)
 
     return [
-        value_list_source(value_list_findings, clipboard),
+        value_list_source(value_list_findings, clipboard, unreadable_paths),
         list_defaults_source(list_defaults_findings, clipboard),
         unreadable_source(notes),
         upgraded_source(database_keys),
