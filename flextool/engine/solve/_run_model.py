@@ -1998,6 +1998,9 @@ def native_run_model(state, solver) -> int:
     # question used by the warm-path per-level retention slim.  Empty
     # tuple is safe (no upcoming iter exists for the empty case).
     state._all_level_keys = tuple(level_keys)
+    # Each complete solve's last sub-solve in the run (the order is final here): a rolling solve's gathered
+    # solver-outcome note (W-0540) prints after that one.
+    state._last_sub_solve_index = {complete_solve[s]: i for i, s in enumerate(all_solves)}
 
     for i, solve in enumerate(all_solves):
         timer_in_solve = time.perf_counter()

@@ -56,6 +56,9 @@
 - **The GUI's Add → Convert from FlexTool 2.0 input file works again.** Since 4.4.0 the conversion job failed at its
   last step, after the import had succeeded, and deleted the converted database. Now the database is moved into
   `input_sources` and the new input source is ticked.
+- **The solver note W-0540 of a rolling solve whose rolls alternate with its realization solve, or that is nested
+  in another rolling solve, counts all its rolls and gives the largest factor** (it named the first roll only).
+  The note now follows the last roll's solver output.
 
 ## Release 4.6.2 (22.11.2026) — fixes: one-variable connections ignore variable cost and losses (efficiency only converts between units); warning for databases possibly hit by the spinedb_api value-list bug, with a checklist
 
