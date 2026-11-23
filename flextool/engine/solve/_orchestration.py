@@ -3679,6 +3679,12 @@ def _drive_cascade(
                 _unit_level,
                 self.state.solve.reduce_system_detail_for(complete_solve_name),
             )
+            # Obligations carried in from an earlier solve (minimum up-time, realization pins) yield to an
+            # outage that solve did not see (W-0592), judged on the reduced data and after the coarse frames.
+            from flextool.engine.preprocess.flex_data import carried_obligations_yield_to_outages
+            carried_obligations_yield_to_outages(
+                data, _roll_label(complete_solve_name, getattr(self.state, "current_roll_index", None)),
+                _unit_level)
             _reduce_base = re.sub(r"_roll_\d+$", "", complete_solve_name)
             if _reduce_report.warnings:
                 _warned = self.__dict__.setdefault("_reduce_detail_warned", set())

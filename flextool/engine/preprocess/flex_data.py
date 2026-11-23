@@ -3571,31 +3571,79 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
     )
 
 
-def _pins_yield_to_outages(flex_data: "FlexData", workdir: Path, provider: "object | None") -> None:
-    """Drop every realization pin (``p_fix_online``) of a unit pinned online (> 0) at a step where it cannot be
-    online (``params._mintime.online_blocked_cells``: its availability, the realized data, is below its min_load
-    there), and note it (W-0592).  The stochastic solve committed the unit without seeing that outage; the
-    realization decides it again under its own rows over the whole solve, so its minimum down time after the
-    outage holds too.  The other units keep their pins.  Only an LP that the pin makes infeasible changes."""
+def carried_obligations_yield_to_outages(flex_data: "FlexData", solve: str, unit_level: str = "none") -> None:
+    """Obligations carried in from an earlier solve yield to an outage that solve did not see (W-0592), on the
+    solve's data after its ``reduce_unit_detail_method`` *unit_level* (a roll and a realization take their base /
+    parent solve's level).  B = ``params._mintime.online_blocked_cells``: the steps where a unit cannot be online
+    (its availability, the realized data, keeps it below its min_load).
+
+    * (a1) the carried minimum up-time (``uptime_carry``) of a unit ends at the first step of B it reaches and does
+      not resume (``_mintime.cut_at_blocked``); the carried minimum down-time never conflicts (offline is always
+      possible).
+    * (a2) a unit with a realization pin (``p_fix_online``) > 0 on B keeps its pins before the first such step and
+      loses them there and at every later step: it is decided again under its own rows from the outage on (no later
+      pin, so no minimum down-time conflicts with one).  A start-up of the kept pins whose minimum up-time runs into
+      that step has it cut there: the ``uptime_lookback`` terms of the rows at and after the step on start-ups at
+      kept pin cells go (``pdt_uptime_set`` follows).  The other units keep their pins.
+
+    Nothing yields under a level that leaves out min limits (``min_limits``: no floor, so no step blocks the unit).
+    Only an LP that the carried obligation makes infeasible changes.  Called after the coarse process frames, which
+    B reads (a coarse process is judged on its coarse-step means)."""
+    from flextool.engine.preprocess._reduce_detail import unit_parts
+    from flextool.engine.preprocess.params._mintime import (
+        cut_at_blocked, note_carried_obligation_cut, online_blocked_cells)
     pin = flex_data.p_fix_online
-    if pin is None or pin.frame.height == 0:
+    carry = flex_data.uptime_carry
+    has_pin = pin is not None and pin.frame.height > 0
+    if ("min_limits" in unit_parts(unit_level) or not (has_pin or (carry is not None and carry.height > 0))):
         return
-    from flextool.engine.preprocess.params._derived import _read_active_solve
-    from flextool.engine.preprocess.params._mintime import note_carried_obligation_cut, online_blocked_cells
     blocked = online_blocked_cells(flex_data)
     if blocked is None:
         return
-    keys = ("p", "d", "t")
-    hit = (pin.frame.filter(pl.col("value") > 0.0).select(*(pl.col(k).cast(pl.Utf8) for k in keys))
-           .join(blocked, on=list(keys), how="semi").sort(*keys))
-    if hit.height == 0:
+    timeline = (flex_data.dt, flex_data.p_step_duration, flex_data.dt_ramp_link)
+    notes: dict[str, str] = {}
+    if carry is not None and carry.height > 0:
+        mt = flex_data.online_min_time
+        cut: list = []
+        flex_data.uptime_carry = cut_at_blocked(
+            carry, blocked, *timeline, float(mt["value"].max()) if mt is not None and mt.height > 0 else float("inf"),
+            cut)
+        notes.update({p: f"solve {solve}: the carried minimum up-time ends at step ({d}, {t})"
+                      for p, d, t in reversed(cut)})
+    if has_pin:
+        keys = ["p", "d", "t"]
+        on = (pin.frame.filter(pl.col("value") > 0.0).select(*(pl.col(k).cast(pl.Utf8) for k in keys))
+              .join(blocked, on=keys, how="semi"))
+        cut, reached = [], []
+        kept = cut_at_blocked(pin.frame, on, *timeline, float("inf"), cut, reached)
+        if cut:
+            flex_data.p_fix_online = Param(pin.dims, kept) if kept is not None else None
+            _cut_pinned_uptime(flex_data, reached[0], kept)
+            notes.update({p: f"solve {solve}: the units online pinned to the stochastic solve are decided again "
+                             f"from step ({d}, {t}) on, where they cannot run" for p, d, t in cut})
+    note_carried_obligation_cut(notes)
+
+
+def _cut_pinned_uptime(flex_data: "FlexData", reached: pl.DataFrame, kept: "pl.DataFrame | None") -> None:
+    """Drop the ``uptime_lookback`` terms of the rows at the *reached* cells ``(p, d, t)`` (from a unit's first
+    blocked pinned step on) on start-ups at its *kept* pin cells, and project ``pdt_uptime_set`` again."""
+    from flextool.engine.preprocess.params._derived import pdt_uptime_set_from_lookback
+    lb = flex_data.uptime_lookback
+    if lb is None or lb.height == 0 or kept is None:
         return
-    first = hit.group_by("p", maintain_order=True).first()
-    keep = pin.frame.filter(~pl.col("p").cast(pl.Utf8).is_in(first["p"].to_list()))
-    flex_data.p_fix_online = Param(pin.dims, keep) if keep.height > 0 else None
-    solve = _read_active_solve(workdir, provider=provider) if provider is not None else None
-    note_carried_obligation_cut({p: f"solve {solve}: the units online pinned to the stochastic solve are decided "
-                                    f"again; they cannot run at step ({d}, {t})" for p, d, t in first.rows()})
+    utf8 = lb.with_columns(*(pl.col(k).cast(pl.Utf8).alias(f"__{k}") for k in ("p", "d", "t", "d_back", "t_back")))
+    pinned = kept.select(pl.col("p").cast(pl.Utf8).alias("__p"), pl.col("d").cast(pl.Utf8).alias("__d_back"),
+                         pl.col("t").cast(pl.Utf8).alias("__t_back"))
+    voided = (utf8.join(reached.select(pl.col("p").alias("__p"), pl.col("d").alias("__d"), pl.col("t").alias("__t")),
+                        on=["__p", "__d", "__t"], how="semi")
+              .join(pinned, on=["__p", "__d_back", "__t_back"], how="semi"))
+    if voided.height == 0:
+        return
+    rest = utf8.join(voided.select(c for c in voided.columns if c.startswith("__")),
+                     on=[c for c in utf8.columns if c.startswith("__")], how="anti", maintain_order="left")
+    rest = rest.select(lb.columns)
+    flex_data.uptime_lookback = rest if rest.height > 0 else None
+    flex_data.pdt_uptime_set = pdt_uptime_set_from_lookback(flex_data.uptime_lookback)
 
 
 def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
@@ -5687,9 +5735,6 @@ def load_flextool(source: "Path | str | FlexInputSource",
         if db_reader is not None:
             from flextool.engine.preprocess.params._derived import process_minload_from_p_min_load
             flex_data.process_minload = process_minload_from_p_min_load(flex_data.p_min_load)
-            # A realization pin yields to an outage the stochastic solve did not see (before the coarse frames,
-            # which read the pins).
-            _pins_yield_to_outages(flex_data, sd.parent, provider)
 
         # Units / connections whose every balance node is coarse: their coarse steps.  After every set the
         # rule reads (process_minload above included).

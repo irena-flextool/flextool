@@ -44,12 +44,15 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
 - **An outage ends an obligation carried in from an earlier solve, instead of making the solve infeasible.** A
   rolling solve carries the minimum up-time of the units the previous roll started, and a realization solve pins
   the units online to its stochastic solve's commitment. Where such a unit cannot run (its availability, times its
-  `capacity_max_coeff`, is below its `min_load`), that solve stopped as infeasible when the earlier solve could not
-  see the outage (beyond its horizon, or only in the realized data). Now the carried minimum up-time ends at the
-  first such step and does not resume after it; a pinned unit is decided again in the realization solve (all its
-  pins are dropped, the other units keep theirs); and the carried ramp-down limit of a unit without online
-  variables asks at most what the unit can produce there. Note W-0592 names the units, once per run. A solve that
-  sees the outage coming still keeps the minimum up-time. Only solves that were infeasible before change.
+  `capacity_max_coeff`, is below its `min_load`; for a unit with coarse time steps, the averages over its coarse
+  step), that solve stopped as infeasible when the earlier solve could not see the outage (beyond its horizon, or
+  only in the realized data). Now the carried minimum up-time ends at the first such step and does not resume
+  after it; a pinned unit keeps its pins up to the outage and is decided again in the realization solve from the
+  outage on (the minimum up-time of a start it was pinned to ends at the outage; the other units keep their pins);
+  and the carried ramp-down limit of a unit without online variables asks at most the flow its capacity
+  allows there. Under a `reduce_unit_detail_method` that leaves out min limits nothing changes. Note W-0592 names
+  the units, once per run. A solve that sees the outage coming still keeps the minimum up-time. Only solves that
+  were infeasible before change, or that had to invest to keep a ramp-down limit an outage voided.
 - **`deterministic` is the new default of `dispatch_realization_method`.** A solve with stochastic branches and no
   method uses the `realized: yes` branch only, as a deterministic solve (warning W-0593 names it): the forecasts,
   `stochastic_invest_method` `recourse` and the realization solve are ignored. Without a `realized: yes` branch

@@ -221,8 +221,7 @@ def check_history_continues_carried_step(history: pl.DataFrame, carried: "tuple[
 def mintime_roll_carry(dt: "pl.DataFrame | None", step_duration: "object | None", link: "pl.DataFrame | None",
                        carry: "pl.DataFrame | None", history: "pl.DataFrame | None",
                        procs: "list[tuple[str, float]]", metric: str,
-                       period_branch: "pl.DataFrame | None" = None, blocked: "pl.DataFrame | None" = None,
-                       cut: "list[tuple[str, str, str]] | None" = None) -> "pl.DataFrame | None":
+                       period_branch: "pl.DataFrame | None" = None) -> "pl.DataFrame | None":
     """``(p, d, t, value)`` Utf8: the realized *metric* (``startup`` / ``shutdown``) of the previous solve that the
     minimum time ``L`` of *procs* ``[(p, L)]`` still covers at the steps of this solve.
 
@@ -234,13 +233,7 @@ def mintime_roll_carry(dt: "pl.DataFrame | None", step_duration: "object | None"
     to, not including, ``(d, t)``) carries ``Σ_h metric[p, h]`` over ``elapsed + hours_to_end[h] < L``.  ``None``
     when nothing is carried (no roots: first roll, single solve, a carried step that is not adjacent).  Raises
     ``ValueError`` when the history does not end at the carried step
-    (:func:`check_history_continues_carried_step`).
-
-    ``blocked`` ``(p, d, t)`` (:func:`online_blocked_cells`; for the up-time carry): the carry of a process ends at
-    the first blocked step it reaches and does not resume after it — every step reached from a blocked step that
-    carries (the step itself included) loses the carry.  The carry does not grow along the chain, so a cut changes
-    only a carry that met a step where the unit cannot be online.  ``cut`` (a list) gets the ``(p, d, t)`` of those
-    first blocked steps."""
+    (:func:`check_history_continues_carried_step`)."""
     procs = [(str(p), float(L)) for p, L in procs if float(L) > 0]
     if (dt is None or dt.height == 0 or carry is None or carry.height == 0 or history is None
             or history.height == 0 or not procs):
@@ -267,10 +260,7 @@ def mintime_roll_carry(dt: "pl.DataFrame | None", step_duration: "object | None"
     out = (reach.select("i", "elapsed").join(hist, how="cross")
            .filter(pl.col("elapsed") + pl.col("hours_to_end") < pl.col("L"))
            .group_by("p", "i").agg(pl.col("value").sum())
-           .filter(pl.col("value").abs() > 1e-12))
-    if blocked is not None and blocked.height > 0 and out.height > 0:
-        out = _cut_at_blocked(out, blocked, steps, edges, lmap["L"].max(), cut)
-    out = (out
+           .filter(pl.col("value").abs() > 1e-12)
            .join(steps.select("i", "d", "t"), on="i", how="inner")
            .select("p", "d", "t", "value")
            .sort("p", "d", "t"))
@@ -280,11 +270,17 @@ def mintime_roll_carry(dt: "pl.DataFrame | None", step_duration: "object | None"
 def online_blocked_cells(d: object) -> "pl.DataFrame | None":
     """``(p, d, t)`` Utf8: the steps where a unit cannot be online, B = {min_load[p,d,t] > 0 and
     availability[p,d,t] · κ[p] < min_load[p,d,t]}, κ[p] = Σ capacity_max_coeff over its output measure A_p
-    (``model._unit_floors.unit_measured_arcs``; 1 by default).  There ``minFlow_minload`` (≥ min_load · v_online)
-    and ``maxFlow_online`` (≤ κ · availability · v_online on each arc of A_p) leave only v_online = 0, so an
-    obligation carried in from an earlier solve that keeps the unit online there makes the LP infeasible.
-    Availability 0 without min_load is no block (online at zero output is feasible).  ``None`` when no step is
-    blocked.  Reads the solve's shaped ``p_min_load`` / ``p_process_availability`` / ``p_arc_max_cap_coef``."""
+    (``model._unit_floors.unit_measured_arcs``; 1 by default), for an indirect unit min(Σ, 1).  There
+    ``minFlow_minload`` (Σ_{A_p} flow ≥ min_load · v_online), ``maxFlow_online`` (≤ capacity_max_coeff ·
+    availability · v_online on each arc of A_p) and, for an indirect unit, ``maxOutputSum_online`` (Σ_{A_p} flow ≤
+    availability · v_online) leave only v_online = 0, so an obligation carried in from an earlier solve that keeps
+    the unit online there makes the LP infeasible.  Availability 0 without min_load is no block (online at zero
+    output is feasible).
+
+    A coarse process (``processCoarse``, ``process_coarse_step``) is judged as its rows are: once per coarse step,
+    at the step's first fine step, on the Δt-weighted means of availability and min_load over the step.  ``None``
+    when no step is blocked.  Reads the solve's shaped ``p_min_load`` / ``p_process_availability`` /
+    ``p_arc_max_cap_coef``."""
     from flextool.engine.input._param_shapes import promote_param_to_dt
     from flextool.engine.model._common import _availability_factor, _coef_factor
     from flextool.engine.model._unit_floors import unit_measured_arcs
@@ -300,10 +296,15 @@ def online_blocked_cells(d: object) -> "pl.DataFrame | None":
     kappa = (_coef_factor(arcs, coef, keys).frame if coef is not None
              else arcs.select(keys).unique().with_columns(value=pl.lit(1.0)))
     kappa = kappa.group_by(pl.col("p").cast(pl.Utf8)).agg(pl.col("value").sum().alias("kappa"))
+    indirect = getattr(d, "process_indirect", None)
+    if indirect is not None and indirect.height > 0:
+        ind = indirect.select(pl.col("p").cast(pl.Utf8)).unique()["p"].implode()
+        kappa = kappa.with_columns(pl.when(pl.col("p").is_in(ind)).then(pl.min_horizontal("kappa", pl.lit(1.0)))
+                                   .otherwise(pl.col("kappa")).alias("kappa"))
     cells = (promote_param_to_dt(ml, dt)
              .select(pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8),
                      pl.col("value").cast(pl.Float64).alias("ml"))
-             .filter(pl.col("ml") > 0.0).collect()
+             .collect()
              .join(kappa, on="p", how="inner"))
     if cells.height == 0:
         return None
@@ -314,36 +315,70 @@ def online_blocked_cells(d: object) -> "pl.DataFrame | None":
         cells = cells.join(av, on=["p", "d", "t"], how="left").with_columns(pl.col("av").fill_null(1.0))
     else:
         cells = cells.with_columns(av=pl.lit(1.0))
-    out = cells.filter(pl.col("av") * pl.col("kappa") < pl.col("ml")).select("p", "d", "t").sort("p", "d", "t")
+    cells = _at_coarse_steps(cells, getattr(d, "process_coarse_step", None))
+    out = (cells.filter((pl.col("ml") > 0.0) & (pl.col("av") * pl.col("kappa") < pl.col("ml")))
+           .select("p", "d", "t").sort("p", "d", "t"))
     return out if out.height > 0 else None
 
 
+def _at_coarse_steps(cells: pl.DataFrame, coarse_step: "pl.DataFrame | None") -> pl.DataFrame:
+    """*cells* ``(p, d, t, ml, kappa, av)`` Utf8 with the rows of each coarse process (*coarse_step* ``(p, d,
+    b_first, t, w)``) replaced by one row per coarse step at its first fine step: ``ml`` and ``av`` their
+    w-weighted sums (the Δt-weighted means the coarse rows read; ``_coarse_flows.average``)."""
+    if coarse_step is None or coarse_step.height == 0:
+        return cells
+    steps = coarse_step.select(pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8),
+                               pl.col("b_first").cast(pl.Utf8), pl.col("w").cast(pl.Float64))
+    with_b = cells.join(steps, on=["p", "d", "t"], how="left")
+    coarse = (with_b.filter(pl.col("b_first").is_not_null())
+              .group_by("p", "d", "b_first", maintain_order=True)
+              .agg((pl.col("ml") * pl.col("w")).sum(), pl.col("kappa").first(), (pl.col("av") * pl.col("w")).sum())
+              .select("p", "d", pl.col("b_first").alias("t"), "ml", "kappa", "av"))
+    return pl.concat([with_b.filter(pl.col("b_first").is_null()).select(cells.columns), coarse])
+
+
 def note_carried_obligation_cut(cases: "dict[str, str]") -> None:
-    """Note W-0592 (once per unit and run) for the units whose obligation carried in from an earlier solve met a
-    step where they cannot run; *cases* ``{unit: detail}`` (solve and step) go to the debug log."""
+    """Note W-0592 (one grouped line per run) for the units whose obligation carried in from an earlier solve met
+    a step where they cannot run; *cases* ``{unit: detail}`` (solve and step) go to the debug log."""
     if cases:
         from flextool import run_warnings
         run_warnings.note("W-0592", sorted(cases), details=cases, per_run=True)
 
 
-def _cut_at_blocked(out: pl.DataFrame, blocked: pl.DataFrame, steps: pl.DataFrame, edges: pl.DataFrame,
-                    l_max: float, cut: "list | None") -> pl.DataFrame:
-    """*out* ``(p, i, value)`` without the cells at or after a blocked cell of *out* along *edges* (forward, within
-    *l_max* hours: no carry reaches further); the first blocked cells (no other one before them) go to *cut* as
-    ``(p, d, t)``."""
+def cut_at_blocked(frame: "pl.DataFrame | None", blocked: "pl.DataFrame | None", dt: "pl.DataFrame | None",
+                   step_duration: "object | None", link: "pl.DataFrame | None", l_max: float,
+                   cut: "list | None" = None, reached: "list | None" = None) -> "pl.DataFrame | None":
+    """*frame* ``(p, d, t, …)`` — the up-time roll carry (:func:`mintime_roll_carry`) or the realization pins —
+    without what an outage voids: the rows of a process end at the first step of *blocked* ``(p, d, t)``
+    (:func:`online_blocked_cells`, or a subset of it) that holds one of its rows, and do not resume after it — every
+    step reached along *link* from such a step (the step itself included, within *l_max* hours) loses its rows.
+    ``cut`` (a list) gets the ``(p, d, t)`` of those first blocked steps, ``reached`` (a list) the reached cells as
+    one ``(p, d, t)`` Utf8 frame.  *frame* unchanged when nothing is cut; ``None`` when nothing is left."""
+    if frame is None or frame.height == 0 or blocked is None or blocked.height == 0 or dt is None:
+        return frame
+    steps, edges = _solve_steps(dt, step_duration, link, "cut_at_blocked")
+    keys = ["p", "d", "t"]
+    utf8 = frame.with_columns(*(pl.col(k).cast(pl.Utf8).alias(f"__{k}") for k in keys))
+    out = utf8.join(steps.select("i", pl.col("d").alias("__d"), pl.col("t").alias("__t")), on=["__d", "__t"],
+                    how="inner", maintain_order="left")
     hit = (blocked.select(pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
            .join(steps.select("i", "d", "t"), on=["d", "t"], how="inner")
-           .join(out.select("p", "i"), on=["p", "i"], how="semi"))
+           .join(out.select(pl.col("__p").alias("p"), "i"), on=["p", "i"], how="semi"))
     if hit.height == 0:
-        return out
+        return frame
     procs = hit.select("p").unique().sort("p").with_row_index("back")
     start = (hit.join(procs, on="p", how="inner")
              .select("i", "back", pl.lit(0.0, dtype=pl.Float64).alias("elapsed")))
-    reached = _walk(start, edges, l_max, steps.height, forward=True).join(procs, on="back", how="inner")
+    walk = _walk(start, edges, l_max, steps.height, forward=True).join(procs, on="back", how="inner")
     if cut is not None:
-        later = reached.filter(pl.col("elapsed") > 0.0).select("p", "i")
+        later = walk.filter(pl.col("elapsed") > 0.0).select("p", "i")
         cut.extend(hit.join(later, on=["p", "i"], how="anti").sort("p", "d", "t").select("p", "d", "t").rows())
-    return out.join(reached.select("p", "i").unique(), on=["p", "i"], how="anti")
+    cells = walk.select("p", "i").unique()
+    if reached is not None:
+        reached.append(cells.join(steps.select("i", "d", "t"), on="i", how="inner").select("p", "d", "t"))
+    out = (out.join(cells.select(pl.col("p").alias("__p"), "i"), on=["__p", "i"], how="anti", maintain_order="left")
+           .select(frame.columns))
+    return out if out.height > 0 else None
 
 
 def cut_short_lookback_warnings(min_times: "dict[str, list[tuple[str, float]]]",

@@ -18,12 +18,34 @@ Hand-derived oracles (``tests.json``: ``coal_plant`` one 500 MW unit, ``dispatch
   infeasible.
 * T-a2: two ``integer_fix_in_uc`` peakers of 100 MW (10 and 20 €/MWh, min_load 0.5), demand 150 MW at t1-t3,
   balance penalties 10 000 €/MWh.  Every forecast sees both available: cheap 100 + dear 50, both online (1, 1, 1).
-  The realized branch has the cheap one unavailable at t2: its pin 1 there is infeasible (today), so it loses all
-  its pins and is decided again: online (1, 0, 1); the dear one keeps its three pins (1, 1, 1).
+  The realized branch has the cheap one unavailable at t2: its pin 1 there is infeasible (today), so it keeps its
+  pin before the outage (t1) and loses those from t2 on, decided again there: online (1, 0, 1) (t3: the cheap one
+  runs again); the dear one keeps its three pins (1, 1, 1).
+* T-a2p (6 h, both peakers min_uptime 4 h): demand 80 MW at t1, 150 MW at t2-t6.  Every forecast: cheap alone at t1
+  (80 ≥ its min load 50; the dear one at min load would leave the cheap one 30 < 50), both online at t2-t6: pins
+  cheap (1, 1, 1, 1, 1, 1), dear (0, 1, 1, 1, 1, 1), the dear one started at t2.  Realized: the cheap one unavailable
+  at t5-t6, the dear one at t4.  (1) the cheap one keeps its pins t1-t4 and is online exactly t1-t4; (2) the dear
+  one keeps (0, 1, 1) at t1-t3: its start-up at t2 (= t4 − 2) would need it online t2-t5, so that up-time is cut
+  at t4; online 0 at t4, then free: online again at t5-t6 (the cheap one is out, 150 MW demand): (0, 1, 1, 0, 1, 1).
+  Today the pin at t4 (dear) / t5 (cheap) is infeasible; dropping all pins would re-decide t1-t3 as well.
 * T-a3: no online variables, ramp_speed_down 0.002 / min (ρ̄ = 0.12 of capacity per 1 h step), horizon = jump =
   4 h, outage t0021-24.  Roll 4 ends at 0.332 (as without the outage); the carried down row would ask flow(t0021) ≥
   0.332 − 0.12 = 0.212 at availability 0.  Capped at min(0.332, 0 + 0.12): flow ≥ 0, so flow(t0021) = 0.
+* T-a3 partial: availability 0.1 at t0021-24: maxFlow's ceiling U = 0.1, cap U + ρ̄ = 0.22 < 0.332, so the row asks
+  flow ≥ 0.22 − 0.12 = 0.1 = U: flow(t0021) = 0.1 exactly (today 0.212 > 0.1: infeasible).  Availability 0.25:
+  U + ρ̄ = 0.37 ≥ 0.332, no cap and no note; the row asks flow(t0021) ≥ 0.212 ≤ 0.25 (feasible today, unchanged).
 * T-a4: one W-0592 line per run, naming coal_plant (the cut also repeats in the next roll).
+* T-a1x (indirect, extraction CHP ``coal_chp``: capacity_max_coeff heat 1.0, west 0.8, Σ = 1.8): min_load 0.5,
+  availability 0.4 from t0021.  maxOutputSum_online caps heat + west at 0.4 · online, below 0.5 · online: no unit
+  can be online, so B holds t0021-28 (κ = min(1.8, 1) = 1; with κ = 1.8, 0.72 ≥ 0.5 would miss it and the carried
+  minimum up-time of 100 h would make roll 5 infeasible).  Online 0 at t0021-28, every roll optimal.
+* T-a1c (coarse, ``lh2_three_region`` ``liquefier_A`` with 24-h coarse steps, rolling 72 / 36 h, min_load 0.5,
+  min_uptime 96 h): availability 0 at the single hour t0080 only.  The coarse rows read the step means: the step
+  t0073-96 has mean availability 23/24 ≥ 0.5, so no step of the unit is blocked and nothing yields — the run solves as
+  without fix (a) (no W-0592, roll 2 keeps its carry at every step).
+* T-a2r: T-a2 under ``reduce_unit_detail_method integers_min_limits`` (startup_cost 1 keeps the online variables):
+  the level drops min_load, so the pinned cheap peaker can be online at t2 with output 0: nothing yields, the
+  realization keeps all six pins and the cheap peaker online (1, 1, 1).
 """
 from __future__ import annotations
 
@@ -60,7 +82,7 @@ def _chain(steps: list[tuple[str, str]], links: list[tuple[tuple[str, str], tupl
 
 
 def _carry(dt, link, roots, blocked, cut=None):
-    from flextool.engine.preprocess.params._mintime import mintime_roll_carry
+    from flextool.engine.preprocess.params._mintime import cut_at_blocked, mintime_roll_carry
 
     carry = pl.DataFrame({"d": [d for d, _ in roots], "t": [t for _, t in roots],
                           "d_previous": ["p"] * len(roots), "t_previous": ["t20"] * len(roots)})
@@ -69,7 +91,8 @@ def _carry(dt, link, roots, blocked, cut=None):
                             "shutdown": [0.0, 0.0], "duration": [1.0, 1.0], "hours_to_end": [2.0, 1.0]})
     b = None if blocked is None else pl.DataFrame({"p": ["u"] * len(blocked), "d": [d for d, _ in blocked],
                                                      "t": [t for _, t in blocked]})
-    out = mintime_roll_carry(dt, None, link, carry, history, [("u", 8.0)], "startup", blocked=b, cut=cut)
+    out = cut_at_blocked(mintime_roll_carry(dt, None, link, carry, history, [("u", 8.0)], "startup"),
+                               b, dt, None, link, 8.0, cut)
     return [] if out is None else [(r["d"], r["t"]) for r in out.sort("d", "t").iter_rows(named=True)]
 
 
@@ -100,14 +123,18 @@ def test_t_a1b_blocked_cells_boundary() -> None:
     """u: min_load 0.5, availability 0.4 at t1 (blocked: no unit of it can run at 0.4 < 0.5, however many units
     it has), 0.6 at t2 (not); z: availability 0 and min_load 0 (online at zero output is feasible: not blocked);
     k: capacity_max_coeff 0.5 and availability 0.9, 0.45 < min_load 0.5 (blocked); w: availability not authored
-    (1), min_load 0.5 (not)."""
+    (1), min_load 0.5 (not); x: indirect with two outputs of capacity_max_coeff 1.0 (Σ 2, κ = min(2, 1) = 1),
+    availability 0.4 at t1 (0.4 < 0.5 blocked, although 2 · 0.4 ≥ 0.5) and 0.6 at t2 (not)."""
     from flextool.engine.preprocess.params._mintime import online_blocked_cells
 
-    units = ["u", "z", "k", "w"]
+    units = ["u", "z", "k", "w", "x"]
     dt = pl.DataFrame({"d": ["p"] * 2, "t": ["t1", "t2"]})
     cells = [(p, t) for p in units for t in ("t1", "t2")]
-    ml = {"u": 0.5, "z": 0.0, "k": 0.5, "w": 0.5}
-    av = {("u", "t1"): 0.4, ("u", "t2"): 0.6, ("z", "t1"): 0.0, ("z", "t2"): 0.0, ("k", "t1"): 0.9, ("k", "t2"): 1.0}
+    ml = {"u": 0.5, "z": 0.0, "k": 0.5, "w": 0.5, "x": 0.5}
+    av = {("u", "t1"): 0.4, ("u", "t2"): 0.6, ("z", "t1"): 0.0, ("z", "t2"): 0.0, ("k", "t1"): 0.9, ("k", "t2"): 1.0,
+          ("x", "t1"): 0.4, ("x", "t2"): 0.6}
+    pss = pl.DataFrame({"p": [*units[:4], "x", "x", "x"], "source": [*units[:4], "f", "x", "x"],
+                        "sink": ["n"] * 4 + ["x", "h", "e"]})
     d = SimpleNamespace(
         dt=dt,
         p_min_load=Param(("p", "d", "t"), pl.DataFrame({"p": [p for p, _ in cells], "d": ["p"] * len(cells),
@@ -116,18 +143,47 @@ def test_t_a1b_blocked_cells_boundary() -> None:
         p_process_availability=Param(("p", "d", "t"), pl.DataFrame(
             {"p": [p for p, _ in av], "d": ["p"] * len(av), "t": [t for _, t in av], "value": list(av.values())})),
         p_arc_max_cap_coef=Param(("p", "source", "sink"),
-                                 pl.DataFrame({"p": ["k"], "source": ["k"], "sink": ["n"], "value": [0.5]})),
-        process_source_sink=pl.DataFrame({"p": units, "source": units, "sink": ["n"] * 4}),
-        process_unit=pl.DataFrame({"p": units}), process_minload=None, process_indirect=None,
+                                 pl.DataFrame({"p": ["k", "x", "x"], "source": ["k", "x", "x"], "sink": ["n", "h", "e"],
+                                               "value": [0.5, 1.0, 1.0]})),
+        process_source_sink=pss, process_unit=pl.DataFrame({"p": units}), process_minload=None,
+        process_indirect=pl.DataFrame({"p": ["x"]}),
+        process_output_flows=pl.DataFrame({"p": ["x", "x"], "source": ["x", "x"], "sink": ["h", "e"]}),
         process_source_sink_uncapped=None)
     got = online_blocked_cells(d)
-    assert got.rows() == [("k", "p", "t1"), ("u", "p", "t1")]
+    assert got.rows() == [("k", "p", "t1"), ("u", "p", "t1"), ("x", "p", "t1")]
+
+
+def test_t_a1b_coarse_unit_on_step_means() -> None:
+    """Coarse units judged once per coarse step, at its first fine step, on the Δt-weighted means (w 0.5 each over
+    t1-t2), min_load 0.5: c1 availability (1.0, 0.0), mean 0.5 (not blocked, although t2 alone is); c2 (0.6, 0.2),
+    mean 0.4 < 0.5 (blocked at t1, although t1 alone is not); f, fine, (0.6, 0.2): blocked at t2 only."""
+    from flextool.engine.preprocess.params._mintime import online_blocked_cells
+
+    units = ["c1", "c2", "f"]
+    dt = pl.DataFrame({"d": ["p"] * 2, "t": ["t1", "t2"]})
+    cells = [(p, t) for p in units for t in ("t1", "t2")]
+    av = {("c1", "t1"): 1.0, ("c1", "t2"): 0.0, ("c2", "t1"): 0.6, ("c2", "t2"): 0.2, ("f", "t1"): 0.6,
+          ("f", "t2"): 0.2}
+    d = SimpleNamespace(
+        dt=dt,
+        p_min_load=Param(("p", "d", "t"), pl.DataFrame({"p": [p for p, _ in cells], "d": ["p"] * len(cells),
+                                                         "t": [t for _, t in cells], "value": [0.5] * len(cells)})),
+        p_process_availability=Param(("p", "d", "t"), pl.DataFrame(
+            {"p": [p for p, _ in av], "d": ["p"] * len(av), "t": [t for _, t in av], "value": list(av.values())})),
+        p_arc_max_cap_coef=None,
+        process_source_sink=pl.DataFrame({"p": units, "source": units, "sink": ["n"] * 3}),
+        process_unit=pl.DataFrame({"p": units}), process_minload=None, process_indirect=None,
+        process_source_sink_uncapped=None,
+        process_coarse_step=pl.DataFrame({"p": ["c1", "c1", "c2", "c2"], "d": ["p"] * 4,
+                                          "b_first": ["t1"] * 4, "t": ["t1", "t2"] * 2, "w": [0.5] * 4}))
+    assert online_blocked_cells(d).rows() == [("c2", "p", "t1"), ("f", "p", "t2")]
 
 
 # ─── T-a1 / T-a3 / T-a4: rolling single-stage toys ──────────────────────────
 
 
-def _roll_values(horizon: float, jump: float, duration: float, outage: list[str]) -> list:
+def _roll_values(horizon: float, jump: float, duration: float, outage: list[str], level: float = 0.0,
+                 unit: str = PLANT) -> list:
     vals = [["solve", ROLL, "period_timeset",
              b64({"index_type": "str", "index_name": "period", "data": [["p2020", "fullYear"]]}, "map")],
             ["solve", ROLL, "realized_periods", b64({"value_type": "str", "data": ["p2020"]}, "array")],
@@ -135,9 +191,9 @@ def _roll_values(horizon: float, jump: float, duration: float, outage: list[str]
             ["solve", ROLL, "rolling_solve_jump", b64(jump, "float")],
             ["solve", ROLL, "rolling_duration", b64(duration, "float")]]
     if outage:
-        vals.append(["unit", PLANT, "availability", b64(
+        vals.append(["unit", unit, "availability", b64(
             {"index_type": "str", "index_name": "time",
-             "data": [[t, 0.0 if t in outage else 1.0] for t in TIMESTEPS]}, "map")])
+             "data": [[t, level if t in outage else 1.0] for t in TIMESTEPS]}, "map")])
     return vals
 
 
@@ -206,6 +262,20 @@ def test_t_a3_carried_ramp_down_yields_to_the_outage(tmp_path_factory) -> None:
     assert _series(rolls[5], "v_flow")["t0021"] == 0.0
     assert got.names("W-0592") == [PLANT]
     assert "carried ramp-down ends at step (p2020, t0021)" in got.detail("W-0592", PLANT)
+
+
+@pytest.mark.solver
+@pytest.mark.parametrize("level", [0.1, 0.25])
+def test_t_a3_cap_is_the_arcs_flow_ceiling(tmp_path_factory, level) -> None:
+    rolls, got = _rolls_with_ramp(tmp_path_factory, f"ramp_partial_{level}", _roll_values(4.0, 4.0, 28.0, OUT_A, level))
+    assert _series(rolls[4], "v_flow")["t0020"] == pytest.approx(0.332, abs=1e-9)
+    flow = _series(rolls[5], "v_flow")["t0021"]
+    if level == 0.1:
+        assert flow == pytest.approx(0.1, abs=1e-9)
+        assert got.names("W-0592") == [PLANT]
+    else:
+        assert 0.212 - 1e-9 <= flow <= 0.25 + 1e-9
+        assert got.names("W-0592") == []
 
 
 def _rolls_with_ramp(tmp_path_factory, alt: str, values: list):
@@ -299,5 +369,143 @@ def test_t_a2_pin_yields_to_a_realized_outage(tmp_path) -> None:
         assert online(steps[PARENT], d) == {"peaker": [1.0, 1.0, 1.0], "dear": [1.0, 1.0, 1.0]}, d
     assert online(steps[SIBLING], "p2035") == {"peaker": [1.0, 0.0, 1.0], "dear": [1.0, 1.0, 1.0]}
     pins = utf8(steps[SIBLING].flex_data.p_fix_online.frame)
-    assert sorted(set(pins["p"])) == ["dear"] and pins.height == 3
+    assert sorted(pins.select("p", "t", "value").rows()) == [
+        ("dear", "t0001", 1.0), ("dear", "t0002", 1.0), ("dear", "t0003", 1.0), ("peaker", "t0001", 1.0)]
     assert got.names("W-0592") == ["peaker"]
+    assert "decided again from step (p2035, t0002) on" in got.detail("W-0592", "peaker")
+
+
+def _six_hours(data: dict) -> None:
+    """T-a2p: the T-a2 model over six 1-h steps (module docstring)."""
+    ts = [f"t000{i}" for i in range(1, 7)]
+    data["entities"].append(["group__unit", ["stoch_g", "dear"], None])
+    rows = [r for r in data["parameter_values"] if not (r[1] in ("peaker", "dear") and r[2] == "availability")]
+    for r in rows:
+        if r[1] == "y3h" and r[2] == "timestep_duration":
+            r[3] = b64({"index_type": "str", "data": [[t, 1.0] for t in ts]}, "map")
+        elif r[1] == "ts1" and r[2] == "timeset_duration":
+            r[3] = b64({"index_type": "str", "data": [["t0001", 6.0]]}, "map")
+        elif r[1] == "elec" and r[2] == "inflow":
+            r[3] = b64({"index_type": "str", "data": [[t, -80.0 if t == "t0001" else -150.0] for t in ts]}, "map")
+    for u, rlz in (("peaker", [1.0, 1.0, 1.0, 1.0, 0.0, 0.0]), ("dear", [1.0, 1.0, 1.0, 0.0, 1.0, 1.0])):
+        rows += [["unit", u, "min_uptime", b64(4.0, "float"), "base"],
+                 ["unit", u, "minimum_time_method", b64("min_uptime", "str"), "base"],
+                 ["unit", u, "availability", _stoch_series({"rlz": rlz, "high": [1.0] * 6, "low": [1.0] * 6}),
+                  "stoch"]]
+    data["parameter_values"] = rows
+
+
+@pytest.mark.solver
+def test_t_a2p_pins_before_the_outage_are_kept(tmp_path) -> None:
+    from flextool.engine import run_chain_from_db
+    from flextool.update_flextool.db_migration import migrate_database
+    from tests.db_utils import json_to_db
+
+    data = json.loads(T0_FIXTURE.read_text(encoding="utf-8"))
+    _two_peakers(data)
+    _six_hours(data)
+    (tmp_path / "t.json").write_text(json.dumps(data), encoding="utf-8")
+    url = json_to_db(tmp_path / "t.json", tmp_path / "t.sqlite")
+    migrate_database(url)
+    with capture_coded() as got:
+        steps = run_chain_from_db(url, "stoch_t0_commit", work_folder=tmp_path / "work", warm=False,
+                                  keep_solutions=True)
+    assert list(steps) == [PARENT, SIBLING]
+    assert all(s.solution.optimal for s in steps.values())
+
+    def online(step, d: str) -> dict:
+        df = utf8(step.solution.value("v_online_integer")).filter(pl.col("d") == d)
+        return {p: [round(v, 9) + 0.0 for v in g.sort("t")["value"]] for (p,), g in df.group_by("p")}
+
+    for d in ("p2035_high", "p2035_low"):
+        assert online(steps[PARENT], d) == {"peaker": [1.0] * 6, "dear": [0.0, 1.0, 1.0, 1.0, 1.0, 1.0]}, d
+    assert online(steps[SIBLING], "p2035") == {"peaker": [1.0, 1.0, 1.0, 1.0, 0.0, 0.0],
+                                               "dear": [0.0, 1.0, 1.0, 0.0, 1.0, 1.0]}
+    pins = utf8(steps[SIBLING].flex_data.p_fix_online.frame)
+    assert sorted(pins.select("p", "t", "value").rows()) == [
+        ("dear", "t0001", 0.0), ("dear", "t0002", 1.0), ("dear", "t0003", 1.0),
+        *[("peaker", f"t000{i}", 1.0) for i in range(1, 5)]]
+    assert got.names("W-0592") == ["dear", "peaker"]
+
+
+# ─── T-a1x: an indirect (extraction CHP) unit ───────────────────────────────
+
+CHP = "coal_chp"
+
+
+@pytest.mark.solver
+def test_t_a1x_indirect_unit_blocked_by_its_output_sum(tmp_path_factory) -> None:
+    outage = [t for t in TIMESTEPS if t >= "t0021"]
+    unit = [["unit", CHP, "min_load", b64(0.5, "float")], ["unit", CHP, "startup_method", b64("linear", "str")],
+            ["unit", CHP, "startup_cost", b64(10.0, "float")], ["unit", CHP, "min_uptime", b64(100.0, "float")],
+            ["unit", CHP, "minimum_time_method", b64("min_uptime", "str")]]
+    rolls, got = _rolls(tmp_path_factory, "chp_outage", unit + _roll_values(4.0, 4.0, 28.0, outage, 0.4, CHP),
+                        ["init", "west", "coal_chp", "heat", "coal_chp_extraction", "fullYear", ROLL])
+    assert len(rolls) == 7
+    for roll in rolls[5:]:
+        df = utf8(roll.solution.value("v_online_linear")).filter(pl.col("p") == CHP)
+        assert df["value"].abs().max() < 1e-9
+    assert got.names("W-0592") == [CHP]
+
+
+# ─── T-a1c: a coarse unit is judged on its coarse-step means ────────────────
+
+
+@pytest.mark.solver
+def test_t_a1c_coarse_unit_keeps_its_carry(tmp_path_factory) -> None:
+    from flextool.engine import run_chain_from_db
+    from tests.engine.test_coarse_flows import LH2, _chain
+
+    u = "liquefier_A"
+    vals = [["solve", "lh2_week", "solve_mode", b64("rolling_window", "str")],
+            ["solve", "lh2_week", "rolling_solve_horizon", b64(72.0, "float")],
+            ["solve", "lh2_week", "rolling_solve_jump", b64(36.0, "float")],
+            ["unit", u, "startup_method", b64("linear", "str")], ["unit", u, "min_load", b64(0.5, "float")],
+            ["unit", u, "min_uptime", b64(96.0, "float")],
+            ["unit", u, "minimum_time_method", b64("min_uptime", "str")],
+            ["unit", u, "startup_cost", b64(50.0, "float")],
+            ["unit", u, "availability", b64({"index_type": "str", "index_name": "time", "data": [
+                [f"t{i:04d}", 0.0 if i == 80 else 1.0] for i in range(1, 169)]}, "map")]]
+    url, scen = make_db(tmp_path_factory, alt="coarse_outage", values=vals, base_chain=_chain(LH2, "lh2_three_region"),
+                        fixture_json=LH2)
+    with capture_coded() as got:
+        steps = run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp("coarse_outage_w"),
+                                  keep_solutions=True)
+    assert all(s.solution.optimal for s in steps.values())
+    roll2 = steps["lh2_week_roll_2"].flex_data
+    assert u in set(utf8(roll2.processCoarse)["p"])
+    carry = utf8(roll2.uptime_carry).filter(pl.col("p") == u)
+    # The carry reaches past the blocked hour to the first fine steps of the next coarse steps, uncut (a per-fine-step
+    # B would cut it from t0080 on: the carry at t0097 and t0109 would be gone).
+    assert {"t0073", "t0080", "t0097", "t0109"} <= set(carry["t"])
+    assert got.names("W-0592") == []
+
+
+# ─── T-a2r: a level without min limits keeps the pins ───────────────────────
+
+
+@pytest.mark.solver
+def test_t_a2r_min_limits_level_keeps_the_pins(tmp_path) -> None:
+    from flextool.engine import run_chain_from_db
+    from flextool.update_flextool.db_migration import migrate_database
+    from tests.db_utils import json_to_db
+
+    data = json.loads(T0_FIXTURE.read_text(encoding="utf-8"))
+    _two_peakers(data)
+    data["parameter_values"].append(["solve", PARENT, "reduce_unit_detail_method",
+                                     b64("integers_min_limits", "str"), "base"])
+    for u in ("peaker", "dear"):
+        data["parameter_values"].append(["unit", u, "startup_cost", b64(1.0, "float"), "base"])
+    (tmp_path / "t.json").write_text(json.dumps(data), encoding="utf-8")
+    url = json_to_db(tmp_path / "t.json", tmp_path / "t.sqlite")
+    migrate_database(url)
+    with capture_coded() as got:
+        steps = run_chain_from_db(url, "stoch_t0_commit", work_folder=tmp_path / "work", warm=False,
+                                  keep_solutions=True)
+    assert list(steps) == [PARENT, SIBLING]
+    assert all(s.solution.optimal for s in steps.values())
+    pins = utf8(steps[SIBLING].flex_data.p_fix_online.frame)
+    assert sorted(set(pins["p"])) == ["dear", "peaker"] and pins.height == 6
+    df = utf8(steps[SIBLING].solution.value("v_online_integer")).filter(pl.col("p") == "peaker").sort("t")
+    assert [round(v, 9) + 0.0 for v in df["value"]] == [1.0, 1.0, 1.0]
+    assert got.names("W-0592") == []
