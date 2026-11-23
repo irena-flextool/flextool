@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
 import sys
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import ttk
 
 from flextool._child_python import SAFE_PATH_FLAG, child_env
 from flextool._resources import package_data_path
+from flextool.gui.dialogs import message_box
 from flextool.gui.dialogs.file_picker import FilePickerDialog
 from flextool.gui.project_utils import get_projects_dir
 from flextool.sqlite_url import sqlite_url_string
@@ -19,6 +21,91 @@ logger = logging.getLogger(__name__)
 
 # Default name for the alternative created during old FlexTool import
 _OLD_FLEX_ALTERNATIVE = "base"
+
+_DOCS_CONVERT_FT2 = "flextool_gui_interface.md#convert-a-flextool-20-model"
+_DOCS_SOURCES = "flextool_gui_interface.md#input-sources"
+_DOCS_EXCEL = "excel_interface.md"
+_DOCS_TROUBLESHOOTING = "install_gui.md#troubleshooting"
+
+
+def _older_version_text(filename: str, version: int | None, current_version: int) -> str:
+    """"'F' is version V; this FlexTool uses version C." (an unknown version: "an older input layout")."""
+    old = f"is version {version}" if version is not None else "uses an older input layout"
+    return f"'{filename}' {old}; this FlexTool uses version {current_version}."
+
+
+def _tell_ft2_file(parent: tk.Misc, filename: str) -> None:
+    """#65: a FlexTool 2.0 workbook chosen for copy or reference."""
+    message_box.tell(
+        parent, "Use Convert for FlexTool 2.0 files",
+        f"'{filename}' is a FlexTool 2.0 file. Add it with 'Convert from FlexTool 2.0 input file' instead.",
+        kind="warning", docs=_DOCS_CONVERT_FT2,
+    )
+
+
+def _tell_unknown_excel(parent: tk.Misc, filename: str) -> None:
+    """#66: an Excel file that detect_excel_format cannot place (it does not open, or has no FlexTool version)."""
+    message_box.tell(
+        parent, "Choose a FlexTool input file",
+        f"'{filename}' does not look like a FlexTool input file: it does not open, or it has no FlexTool version "
+        "information. Check that you chose the right file.",
+        kind="warning", docs=_DOCS_SOURCES,
+    )
+
+
+def _ask_replace(parent: tk.Misc, filename: str, when: str = "Replacing it deletes the old one.") -> bool:
+    """#67: True when the user agrees to replace *filename* in input_sources."""
+    return message_box.ask(
+        parent, "Replace the existing file?",
+        f"'{filename}' is already in this project's input sources. {when}",
+        buttons=(("Replace", "replace"), ("Cancel", None)), kind="danger",
+    ) == "replace"
+
+
+def _tell_added(parent: tk.Misc, names: list[str], one: str, several: str) -> None:
+    """#69: the files just added; *one* takes the name, *several* comes before the list."""
+    if len(names) == 1:
+        message_box.tell(parent, "File added", one.format(names[0]))
+    else:
+        message_box.tell(parent, "Files added", several, message_box.name_list(names))
+
+
+def _check_new_name(parent: tk.Misc, name: str, dest: Path) -> bool:
+    """#72 / #73: True when *name* is given and *dest* is free."""
+    if not name:
+        message_box.tell(parent, "Type a file name", "Type a name for the new file, then try again.", kind="warning")
+        return False
+    if dest.exists():
+        message_box.tell(
+            parent, "Choose another file name", f"'{dest.name}' is already in this project's input sources.",
+            kind="warning",
+        )
+        return False
+    return True
+
+
+def _tell_template_missing(parent: tk.Misc, path: Path) -> None:
+    """#74 (as #41)."""
+    message_box.tell(
+        parent, "FlexTool's template file is missing",
+        f"FlexTool could not find {path}. The installation may be incomplete: update or reinstall FlexTool.",
+        kind="error", docs=_DOCS_TROUBLESHOOTING,
+    )
+
+
+def _tell_create_failed(parent: tk.Misc, exc: Exception) -> None:
+    """#75 / #76: the new empty input file was not created (the error is logged with its traceback)."""
+    if isinstance(exc, ImportError):
+        message_box.tell(
+            parent, "A package FlexTool needs is missing", str(exc),
+            "The installation may be incomplete: update or reinstall FlexTool.",
+            kind="error", docs=_DOCS_TROUBLESHOOTING,
+        )
+        return
+    logger.warning("Could not create the input file: %s", exc, exc_info=True)
+    message_box.tell(
+        parent, "The file was not created", str(exc), "The full error is in the FlexTool log.", kind="error",
+    )
 
 
 def ask_old_flextool_master(
@@ -30,17 +117,17 @@ def ask_old_flextool_master(
     the user cancelled (the conversion should not start).
     """
     while True:
-        answer = messagebox.askyesnocancel(
-            "FlexTool 2.0 sensitivities",
-            "Import the sensitivities too?\n\n"
-            "They are in the FlexTool 2.0 master workbook (the one with the "
-            "'Sensitivity definitions' sheet), and are imported as "
-            "alternatives and scenarios.",
-            parent=parent,
+        answer = message_box.ask(
+            parent, "Import the sensitivities too?",
+            "FlexTool 2.0 keeps the sensitivities in the master workbook, the one with the 'Sensitivity "
+            "definitions' sheet. FlexTool can import them as alternatives and scenarios; you choose the master "
+            "workbook next.",
+            buttons=(("Import them", "import"), ("Skip them", "skip"), ("Cancel", None)),
+            docs=_DOCS_CONVERT_FT2,
         )
         if answer is None:
             return False
-        if not answer:
+        if answer == "skip":
             return None
         picker = FilePickerDialog(
             parent,
@@ -56,73 +143,31 @@ def ask_old_flextool_master(
         )
         if picker.result:
             return Path(picker.result)
-        # No file chosen: ask again (Yes / No / Cancel), so a cancelled
+        # No file chosen: ask again (Import / Skip / Cancel), so a cancelled
         # picker never aborts the conversion without a word.
 
 
 def _ask_migration_choice(
     parent: tk.Misc,
     filename: str,
-    version_str: str,
+    version: int | None,
     current_version: int,
 ) -> str:
-    """Ask how to handle an older Excel file that needs migration.
+    """#64: ask how to handle an older Excel file that is being copied into the project.
 
     Returns:
         ``"sqlite"`` to convert to Spine DB, ``"excel"`` to migrate and
-        keep as Excel, or ``"cancel"`` to do nothing.
+        keep as Excel, or ``"cancel"`` to do nothing (Cancel, Escape and the window button).
     """
-    dlg = tk.Toplevel(parent)
-    dlg.title("Version migration needed")
-    dlg.transient(parent)
-    dlg.grab_set()
-    dlg.resizable(False, False)
-
-    result = "cancel"
-
-    msg = (
-        f"'{filename}' is version {version_str} "
-        f"(current is {current_version}) and needs to be migrated.\n\n"
-        f"Choose how to handle the update:"
+    answer = message_box.ask(
+        parent, "Upgrade this Excel file",
+        _older_version_text(filename, version, current_version),
+        "Convert it to a database (recommended: the database editor can open it), or update the Excel file. "
+        "This changes the copy in the project; the file you chose stays as it is.",
+        buttons=(("Convert to database", "sqlite"), ("Update Excel", "excel"), ("Cancel", None)),
+        docs=_DOCS_EXCEL,
     )
-    lbl = ttk.Label(dlg, text=msg, wraplength=420, justify="left")
-    lbl.pack(padx=16, pady=(16, 8))
-
-    btn_frame = ttk.Frame(dlg)
-    btn_frame.pack(padx=16, pady=(4, 16))
-
-    def _choose(choice: str) -> None:
-        nonlocal result
-        result = choice
-        dlg.destroy()
-
-    ttk.Button(
-        btn_frame, text="Convert to Spine DB",
-        command=lambda: _choose("sqlite"),
-    ).pack(side="left", padx=4)
-    ttk.Button(
-        btn_frame, text="Update Excel",
-        command=lambda: _choose("excel"),
-    ).pack(side="left", padx=4)
-    ttk.Button(
-        btn_frame, text="Cancel",
-        command=lambda: _choose("cancel"),
-    ).pack(side="left", padx=4)
-
-    dlg.protocol("WM_DELETE_WINDOW", lambda: _choose("cancel"))
-
-    # Center on parent
-    dlg.update_idletasks()
-    pw = parent.winfo_width()
-    ph = parent.winfo_height()
-    px = parent.winfo_rootx()
-    py = parent.winfo_rooty()
-    dw = dlg.winfo_width()
-    dh = dlg.winfo_height()
-    dlg.geometry(f"+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")
-
-    parent.wait_window(dlg)
-    return result
+    return answer if answer is not None else "cancel"
 
 
 class AddDialog(tk.Toplevel):
@@ -350,12 +395,7 @@ class AddDialog(tk.Toplevel):
                 info = detect_excel_format(fp)
 
                 if info.format == ExcelFormat.OLD_V2:
-                    messagebox.showwarning(
-                        "FlexTool 2.0 file",
-                        f"'{fp.name}' is a FlexTool 2.0 file.\n\n"
-                        "Use 'Convert from FlexTool 2.0 input file' instead.",
-                        parent=self,
-                    )
+                    _tell_ft2_file(self, fp.name)
                     continue
 
                 # Check whether the file needs migration
@@ -369,36 +409,23 @@ class AddDialog(tk.Toplevel):
                 )
 
                 if info.format == ExcelFormat.UNKNOWN:
-                    messagebox.showwarning(
-                        "Unrecognised format",
-                        f"'{fp.name}' does not appear to be a valid FlexTool "
-                        f"input file (no scenario sheet found).",
-                        parent=self,
-                    )
+                    _tell_unknown_excel(self, fp.name)
                     continue
 
                 # For older files, ask how to handle migration before copying
                 if needs_migration:
-                    version_str = str(info.version) if info.version is not None else "unknown"
                     migration_choice = _ask_migration_choice(
                         self,
                         fp.name,
-                        version_str,
+                        info.version,
                         CURRENT_FLEXTOOL_DB_VERSION,
                     )
                     if migration_choice == "cancel":
                         continue
 
             dest = self._input_dir / fp.name
-            if dest.exists():
-                overwrite = messagebox.askyesno(
-                    "File exists",
-                    f"'{fp.name}' already exists in input_sources.\n"
-                    "Do you want to overwrite it?",
-                    parent=self,
-                )
-                if not overwrite:
-                    continue
+            if dest.exists() and not _ask_replace(self, fp.name):
+                continue
             try:
                 shutil.copy2(str(fp), str(dest))
                 copied_names.append(fp.name)
@@ -417,10 +444,11 @@ class AddDialog(tk.Toplevel):
                 self._run_migration_callback(self._update_xlsx_callback, fp.name)
 
         if errors:
-            messagebox.showerror(
-                "Copy errors",
-                "Some files could not be copied:\n" + "\n".join(errors),
-                parent=self,
+            message_box.tell(
+                self, "Some files were not added",
+                "FlexTool could not copy these files into the project:", message_box.name_list(errors),
+                "Check that they exist and are not open in another program.",
+                kind="error",
             )
 
         # When no migration callbacks are wired (e.g. in tests), the queued
@@ -435,14 +463,9 @@ class AddDialog(tk.Toplevel):
         if copied_names:
             self.result = True
         if ready_names:
-            file_list = "\n".join(f"  - {name}" for name in ready_names)
-            done_text = (
-                f"Done — copied {len(ready_names)} file(s):\n{file_list}"
-            )
-            messagebox.showinfo(
-                "Done",
-                done_text,
-                parent=self,
+            _tell_added(
+                self, ready_names, "'{}' is copied into the project's input sources.",
+                "These files are copied into the project's input sources:",
             )
 
     def _run_migration_callback(self, callback, name: str) -> None:
@@ -468,10 +491,9 @@ class AddDialog(tk.Toplevel):
     def _on_choose_external(self) -> None:
         """Register external files as input source references (no copy)."""
         if self._input_source_mgr is None:
-            messagebox.showerror(
-                "Not available",
-                "Cannot add external references before a project is loaded.",
-                parent=self,
+            message_box.tell(
+                self, "Open a project first",
+                "Choose a project in the Project list at the top, or create one with Projects….",
             )
             return
 
@@ -517,21 +539,10 @@ class AddDialog(tk.Toplevel):
             if fp.suffix.lower() in (".xlsx", ".xlsm", ".ods"):
                 info = detect_excel_format(fp)
                 if info.format == ExcelFormat.OLD_V2:
-                    messagebox.showwarning(
-                        "FlexTool 2.0 file",
-                        f"'{fp.name}' is a FlexTool 2.0 file and cannot be "
-                        "referenced externally.\nUse 'Convert from FlexTool "
-                        "2.0 input file' instead.",
-                        parent=self,
-                    )
+                    _tell_ft2_file(self, fp.name)
                     continue
                 if info.format == ExcelFormat.UNKNOWN:
-                    messagebox.showwarning(
-                        "Unrecognised format",
-                        f"'{fp.name}' does not appear to be a valid FlexTool "
-                        "input file (no scenario sheet found).",
-                        parent=self,
-                    )
+                    _tell_unknown_excel(self, fp.name)
                     continue
                 needs_migration = (
                     info.format == ExcelFormat.SPECIFICATION
@@ -541,21 +552,16 @@ class AddDialog(tk.Toplevel):
                         and info.version < CURRENT_FLEXTOOL_DB_VERSION
                     )
                 )
-                if needs_migration:
-                    version_str = (
-                        str(info.version) if info.version is not None else "unknown"
-                    )
-                    proceed = messagebox.askyesno(
-                        "Outdated file version",
-                        f"'{fp.name}' is version {version_str} "
-                        f"(current is {CURRENT_FLEXTOOL_DB_VERSION}).\n\n"
-                        "External references cannot be migrated. Add "
-                        "anyway? Reading scenarios may still work, but "
-                        "execution may fail until the file is updated.",
-                        parent=self,
-                    )
-                    if not proceed:
-                        continue
+                # #71: only an external Excel file is never updated; an external .sqlite gets the
+                # migration consent dialog at the next refresh.
+                if needs_migration and message_box.ask(
+                    self, "Add an outdated Excel file?",
+                    _older_version_text(fp.name, info.version, CURRENT_FLEXTOOL_DB_VERSION)
+                    + " FlexTool does not update an Excel file outside the project, so its scenarios may not run.",
+                    "To have it updated, add a copy to the project instead.",
+                    buttons=(("Add anyway", "add"), ("Cancel", None)), kind="danger", docs=_DOCS_EXCEL,
+                ) != "add":
+                    continue
 
             try:
                 name, _rel = self._input_source_mgr.add_external_ref(fp)
@@ -567,49 +573,32 @@ class AddDialog(tk.Toplevel):
                 logger.error("Failed to add external ref %s: %s", fp, exc)
 
         if errors:
-            messagebox.showerror(
-                "Errors",
-                "Some files could not be added:\n" + "\n".join(errors),
-                parent=self,
+            message_box.tell(
+                self, "Some files were not added",
+                "FlexTool could not add these files:", message_box.name_list(errors), kind="error",
             )
 
         if added_names:
             self.result = True
-            file_list = "\n".join(f"  - {name}" for name in added_names)
-            messagebox.showinfo(
-                "Done",
-                f"Added {len(added_names)} external reference(s):\n{file_list}",
-                parent=self,
+            _tell_added(
+                self, added_names,
+                "'{}' is now in the input sources as an external reference; the file stays where it is.",
+                "These files are now in the input sources as external references; they stay where they are:",
             )
 
     def _on_add_xlsx(self) -> None:
         """Create an empty FlexTool Excel from the JSON master template."""
         name = self._xlsx_name_var.get().strip()
-        if not name:
-            messagebox.showwarning(
-                "Invalid name", "Please enter a file name.", parent=self
-            )
-            return
-
         filename = f"{name}.xlsx"
         dest = self._input_dir / filename
-        if dest.exists():
-            messagebox.showwarning(
-                "Already exists",
-                f"'{filename}' already exists in input_sources.",
-                parent=self,
-            )
+        if not _check_new_name(self, name, dest):
             return
 
         json_template = (
             package_data_path("schemas/spinedb_schema.json")
         )
         if not json_template.exists():
-            messagebox.showerror(
-                "Template missing",
-                f"Cannot find template:\n{json_template}",
-                parent=self,
-            )
+            _tell_template_missing(self, json_template)
             return
 
         import tempfile
@@ -649,14 +638,10 @@ class AddDialog(tk.Toplevel):
             )
             export_to_excel(db_url, str(dest), include_groups=include_groups)
         except ImportError as exc:
-            messagebox.showerror(
-                "Missing dependency",
-                f"Required dependency not available:\n{exc}",
-                parent=self,
-            )
+            _tell_create_failed(self, exc)
             return
         except Exception as exc:
-            messagebox.showerror("Error", str(exc), parent=self)
+            _tell_create_failed(self, exc)
             if dest.exists():
                 dest.unlink(missing_ok=True)
             return
@@ -665,40 +650,21 @@ class AddDialog(tk.Toplevel):
                 tmp_sqlite.unlink(missing_ok=True)
 
         self.result = True
-        messagebox.showinfo(
-            "Done",
-            f"Created '{filename}' in input_sources.",
-            parent=self,
-        )
+        message_box.tell(self, "File created", f"'{filename}' is now in the input sources.")
 
     def _on_add_sqlite(self) -> None:
         """Create a new Spine database from the master template."""
         name = self._sqlite_name_var.get().strip()
-        if not name:
-            messagebox.showwarning(
-                "Invalid name", "Please enter a file name.", parent=self
-            )
-            return
-
         filename = f"{name}.sqlite"
         dest = self._input_dir / filename
-        if dest.exists():
-            messagebox.showwarning(
-                "Already exists",
-                f"'{filename}' already exists in input_sources.",
-                parent=self,
-            )
+        if not _check_new_name(self, name, dest):
             return
 
         json_template = (
             package_data_path("schemas/spinedb_schema.json")
         )
         if not json_template.exists():
-            messagebox.showerror(
-                "Template missing",
-                f"Cannot find template:\n{json_template}",
-                parent=self,
-            )
+            _tell_template_missing(self, json_template)
             return
 
         try:
@@ -707,23 +673,12 @@ class AddDialog(tk.Toplevel):
             )
 
             initialize_database(str(json_template), str(dest))
-        except ImportError:
-            messagebox.showerror(
-                "Missing dependency",
-                "spinedb_api is required to create SQLite databases.",
-                parent=self,
-            )
-            return
-        except Exception as exc:
-            messagebox.showerror("Error", str(exc), parent=self)
+        except Exception as exc:  # ImportError included: _tell_create_failed tells it apart
+            _tell_create_failed(self, exc)
             return
 
         self.result = True
-        messagebox.showinfo(
-            "Done",
-            f"Created '{filename}' in input_sources.",
-            parent=self,
-        )
+        message_box.tell(self, "File created", f"'{filename}' is now in the input sources.")
 
     def _on_convert_old_flextool(self) -> None:
         """Convert a FlexTool 2.0 input data file (and optionally the
@@ -775,15 +730,10 @@ class AddDialog(tk.Toplevel):
         dest_name = filepath.stem + ".sqlite"
         dest = self._input_dir / dest_name
 
-        if dest.exists():
-            overwrite = messagebox.askyesno(
-                "File exists",
-                f"'{dest_name}' already exists in input_sources.\n"
-                "Do you want to overwrite it?",
-                parent=self,
-            )
-            if not overwrite:
-                return
+        if dest.exists() and not _ask_replace(
+            self, dest_name, "The converted database replaces it when the conversion has succeeded.",
+        ):
+            return
 
         # Import into a working file OUTSIDE input_sources/ (the only folder
         # the input-source scan reads) and move it in only when the import,
@@ -854,7 +804,7 @@ class AddDialog(tk.Toplevel):
                             f"\nConversion failed (exit code {rc}).",
                         )
                     else:
-                        _os.replace(work, dest)
+                        os.replace(work, dest)
                         mgr.append_stdout(
                             job.job_id, f"Input source '{dest_name}' is ready.")
                 except Exception as exc:
@@ -893,11 +843,13 @@ class AddDialog(tk.Toplevel):
                     alternative_name=_OLD_FLEX_ALTERNATIVE,
                     master=str(master_path) if master_path is not None else None,
                 )
-                import os as _os
-                _os.replace(work, dest)
+                os.replace(work, dest)
             except Exception as exc:
                 logger.error("Old FlexTool conversion failed: %s", exc, exc_info=True)
-                messagebox.showerror("Conversion failed", str(exc), parent=self)
+                message_box.tell(
+                    self, "The conversion did not work", str(exc), "The full error is in the FlexTool log.",
+                    kind="error", docs=_DOCS_CONVERT_FT2,
+                )
                 return
             finally:
                 work.unlink(missing_ok=True)
@@ -905,16 +857,15 @@ class AddDialog(tk.Toplevel):
 
             logger.info("%s", report.format())
             self.result = True
-            failed = (f"{len(report.failed)} value(s) could not be written. "
+            failed = (f" {len(report.failed)} values could not be written."
                       if report.failed else "")
-            messagebox.showinfo(
-                "Done",
-                f"Converted '{filepath.name}' \u2192 '{dest_name}' in "
-                f"input_sources.\n\n{failed}{len(report.unmapped)} FlexTool 2 "
-                "input(s) were not carried over or work differently in "
-                "FlexTool 4. The import report, with what to do for each, is "
-                "in the FlexTool log (flextool_gui.log in the projects folder).",
-                parent=self,
+            message_box.tell(
+                self, "Converted: check the import report",
+                f"'{filepath.name}' is now '{dest_name}' in the input sources. {len(report.unmapped)} FlexTool 2 "
+                f"inputs were not carried over or work differently in FlexTool 4.{failed}",
+                "The import report in the FlexTool log (flextool_gui.log in the projects folder) says what to do "
+                "for each.",
+                docs=_DOCS_CONVERT_FT2,
             )
 
     def _on_back(self) -> None:

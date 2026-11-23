@@ -49,6 +49,9 @@
   its list-valued defaults (such as `conversion_method`, `invest_method`, `solve_mode`).** An older Spine library
   had stored them as text, so the database editor showed them empty and the migration then cleared them. A
   database already migrated keeps the empty defaults; `flextool-repair-value-list` restores them.
+- **The GUI's Add → Convert from FlexTool 2.0 input file works again.** Since 4.4.0 the conversion job failed at its
+  last step, after the import had succeeded, and deleted the converted database. Now the database is moved into
+  `input_sources` and the new input source is ticked.
 
 ## Release 4.6.2 (22.11.2026) — fixes: one-variable connections ignore variable cost and losses (efficiency only converts between units); warning for databases possibly hit by the spinedb_api value-list bug, with a checklist
 
