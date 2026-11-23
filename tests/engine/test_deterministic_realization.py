@@ -1,15 +1,17 @@
 """``dispatch_realization_method`` ``deterministic`` (the default since 4.7.0) on a solve with ``stochastic_branches``.
 
-The solve ignores the forecasts and solves once with the data of its ``realized: yes`` branch (one W-0593 line), so
-its LP is the LP of the same model written by hand without ``stochastic_branches``, with the realized branch's
-data as a plain time series (the independent oracle: no stochastic data in it at all).  Without a ``realized: yes``
-branch the run stops with an error naming the solve.  Without ``stochastic_branches`` the members give the same LP.
+The solve ignores the forecasts and reads only its ``realized: yes`` branch (one W-0593 line), flattened into one
+timeline: each step reads the realized series that covers it, where several do the one made nearest to the solve's
+(a roll's) start.  So the LP of each build is the LP of the same model written by hand without
+``stochastic_branches``, with that roll's flattened realized series as a plain time series (the independent oracle:
+no stochastic data in it at all).  Without a ``realized: yes`` branch, or at a step no realized series covers, the
+run stops with an error naming the solve.  Without ``stochastic_branches`` the members give the same LP.
 
 Model: one balance node ``elec`` (demand 100 MW, penalty 10 000 EUR/MWh), ``gen`` (200 MW, 10 EUR/MWh) and ``wind``
 (100 MW, upper-limit profile ``wp``, in the group ``sg`` with ``include_stochastics``), one period ``p1`` on 1 h
 steps t01..t06.  The forecasts ``high`` (0.9 everywhere) and ``low`` (0.05 everywhere) differ from the realized
-series ``real`` = 0.3, 0.5, 0.2, 0.6, 0.4, 0.1, which every forecast made at t01 / t03 / t05 repeats from its
-analysis time on.
+series ``real``: the series made at analysis time ``at`` is ``REAL[t] + 0.01 * position of at`` (t01: +0, t03:
++0.02, t05: +0.04), with REAL = 0.3, 0.5, 0.2, 0.6, 0.4, 0.1, so a build tells which analysis time each step read.
 """
 from __future__ import annotations
 
@@ -23,11 +25,31 @@ from tests.engine import _solve_copy_models as scm
 STEPS = ("t01", "t02", "t03", "t04", "t05", "t06")
 REAL = dict(zip(STEPS, (0.3, 0.5, 0.2, 0.6, 0.4, 0.1)))
 FORECAST = {"high": 0.9, "low": 0.05}
+#: Forecasts made at t01, t03 and t05, each up to the end of the timeline (they overlap).
+OVERLAP = {at: STEPS[STEPS.index(at):] for at in ("t01", "t03", "t05")}
+#: Forecasts made at t01, t03 and t05, each up to the next one (no overlap).
+ABUTTING = {"t01": ("t01", "t02"), "t03": ("t03", "t04"), "t05": ("t05", "t06")}
 
 
-def _spec(*, stochastic: bool, rolling: bool = False, realized_row: bool = True, method: str | None = None) -> dict:
-    """The model; *stochastic*: ``stochastic_branches`` (the forecasts made at t01, and at t03 / t05 when
-    *rolling*) and the profile as a branch map, else the realized series as a plain profile."""
+def _real(at: str, t: str) -> float:
+    """The realized value at *t* of the series made at analysis time *at*."""
+    return round(REAL[t] + 0.01 * STEPS.index(at), 6)
+
+
+def _made_at(at: str) -> dict[str, float]:
+    """The plain profile of the realized series made at *at*, over the whole timeline (an oracle profile)."""
+    return {t: _real(at, t) for t in STEPS}
+
+
+def _spec(*, stochastic: bool, rolling: bool | tuple[float, float] = False, realized_row: bool = True,
+          method: str | None = None, forecasts: "dict[str, tuple[str, ...]] | None" = None,
+          plain: "dict[str, float] | None" = None) -> dict:
+    """The model; *stochastic*: ``stochastic_branches`` with the forecasts made at the analysis times of
+    *forecasts* (``{analysis time: steps it covers}``, default t01 over all steps) and the profile as a branch map,
+    else *plain* (default the series made at t01) as a plain profile.  *rolling*: ``(jump, horizon)``, ``True`` =
+    ``(2, 4)``."""
+    forecasts = forecasts or {"t01": STEPS}
+    plain = plain or _made_at("t01")
     from flextool.update_flextool.fixture_schema import schema_sections
 
     pack, pmap, nested = scm.pack, scm.pmap, scm.nested
@@ -42,15 +64,15 @@ def _spec(*, stochastic: bool, rolling: bool = False, realized_row: bool = True,
                         ["group__unit", ["sg", "wind"], None], ["unit__node__profile", ["wind", "elec", "wp"], None]]
     spec["entity_alternatives"] = [["node", ["elec"], "init", True], ["unit", ["gen"], "init", True],
                                    ["unit", ["wind"], "init", True]]
-    times = ("t01", "t03", "t05") if rolling else ("t01",)
+    times = tuple(forecasts)
     if stochastic:
-        branches = [(b, nested([(at, nested([(t, v) for t in STEPS[STEPS.index(at):]])) for at in times]))
+        branches = [(b, nested([(at, nested([(t, v) for t in steps])) for at, steps in forecasts.items()]))
                     for b, v in FORECAST.items()]
-        branches.append(("real", nested([(at, nested([(t, REAL[t]) for t in STEPS[STEPS.index(at):]]))
-                                         for at in times])))
+        branches.append(("real", nested([(at, nested([(t, _real(at, t)) for t in steps]))
+                                         for at, steps in forecasts.items()])))
         profile = pack(pmap(branches), "map")
     else:
-        profile = pack(pmap(list(REAL.items()), index_name="time"), "map")
+        profile = pack(pmap(list(plain.items()), index_name="time"), "map")
     pv = [
         ["model", "flextool", "solves", scm.array(["st"]), "init"],
         ["timeline", "tl", "timestep_duration", pack(pmap([(t, 1.0) for t in STEPS], index_name="time"), "map"),
@@ -75,8 +97,9 @@ def _spec(*, stochastic: bool, rolling: bool = False, realized_row: bool = True,
         ["solve", "st", "years_represented", pack(pmap([("p1", 1.0)], index_name="period"), "map"), "init"],
     ]
     if rolling:
-        pv += [["solve", "st", "rolling_solve_jump", pack(2.0, "float"), "init"],
-               ["solve", "st", "rolling_solve_horizon", pack(4.0, "float"), "init"]]
+        jump, horizon = (2.0, 4.0) if rolling is True else rolling
+        pv += [["solve", "st", "rolling_solve_jump", pack(jump, "float"), "init"],
+               ["solve", "st", "rolling_solve_horizon", pack(horizon, "float"), "init"]]
     if stochastic:
         rows = [(b, w, "no") for b, w in (("high", 1.0), ("low", 3.0))]
         if realized_row:
@@ -102,19 +125,67 @@ def _assert_same_lp(case: list, oracle: list) -> None:
         assert off_a == off_b, solve
 
 
-@pytest.mark.parametrize("rolling", [False, True], ids=["single", "rolling"])
-def test_deterministic_solve_reads_the_realized_branch(tmp_path_factory, caplog, rolling) -> None:
-    """The stochastic solve under the default method builds the oracle's LP in every roll (single: one build ``st``,
-    no ``st__realized_dispatch``; rolling: three rolls reading the forecast made at each roll's start), with
-    one W-0593 line naming the solve."""
+def test_deterministic_solve_reads_the_realized_branch(tmp_path_factory, caplog) -> None:
+    """The single stochastic solve under the default method builds the oracle's LP (one build ``st``, no
+    ``st__realized_dispatch``), with one W-0593 line naming the solve."""
     caplog.set_level(logging.WARNING)
-    case, _ = scm.run_spec(_spec(stochastic=True, rolling=rolling), tmp_path_factory.mktemp("case"))
+    case, _ = scm.run_spec(_spec(stochastic=True), tmp_path_factory.mktemp("case"))
     lines = _w0593(caplog)
-    oracle, _ = scm.run_spec(_spec(stochastic=False, rolling=rolling), tmp_path_factory.mktemp("oracle"))
-    expected = ["st"] * (3 if rolling else 1)
-    assert [s for s, _, _ in case] == expected
+    oracle, _ = scm.run_spec(_spec(stochastic=False), tmp_path_factory.mktemp("oracle"))
+    assert [s for s, _, _ in case] == ["st"]
     _assert_same_lp(case, oracle)
-    assert len(lines) == 1 and "solve 'st' is deterministic" in lines[0], lines
+    assert lines == ["Warning: solve 'st' has stochastic_branches but dispatch_realization_method deterministic: "
+                     "only the realized: yes branch is used [W-0593]"], lines
+
+
+# Rolling cases: (jump, horizon), the forecasts, and the analysis time whose series each roll reads, hand-derived
+# from the rule "each step reads the nearest analysis time (to the roll's start, in steps; a tie: the earlier)
+# whose realized series covers it":
+# * overlap, jump 2: rolls start t01 / t03 / t05; each start is an analysis time (distance 0) whose series covers
+#   the roll's whole horizon, so roll k reads the series made at its own start.
+# * overlap, jump 3: rolls start t01 / t04.  Roll 2 (t04..t06): t03 and t05 are both one step away, the earlier
+#   (t03) wins, and its series covers t04..t06; it never reads the series made at t05, nor 0 at t04.
+# * once: only t01's forecasts, over the whole timeline: every roll reads them (rolls 2 and 3 have no forecast of
+#   their own).
+ROLLING_CASES = {
+    "overlap_jump2": ((2.0, 4.0), OVERLAP, ["t01", "t03", "t05"]),
+    "overlap_jump3": ((3.0, 4.0), OVERLAP, ["t01", "t03"]),
+    "once": ((2.0, 4.0), {"t01": STEPS}, ["t01", "t01", "t01"]),
+}
+
+
+@pytest.mark.parametrize("case_id", list(ROLLING_CASES))
+def test_rolling_deterministic_solve_reads_the_nearest_realized_series(tmp_path_factory, case_id) -> None:
+    """Roll k of the stochastic rolling solve builds roll k of the oracle whose plain profile is the series that
+    roll reads (``ROLLING_CASES``); one oracle run per distinct series."""
+    rolling, forecasts, reads = ROLLING_CASES[case_id]
+    case, _ = scm.run_spec(_spec(stochastic=True, rolling=rolling, forecasts=forecasts),
+                           tmp_path_factory.mktemp("case"))
+    assert [s for s, _, _ in case] == ["st"] * len(reads)
+    oracles = {at: scm.run_spec(_spec(stochastic=False, rolling=rolling, plain=_made_at(at)),
+                                tmp_path_factory.mktemp(f"oracle_{at}"))[0] for at in dict.fromkeys(reads)}
+    for k, at in enumerate(reads):
+        _assert_same_lp([case[k]], [oracles[at][k]])
+
+
+def test_rolling_deterministic_solve_reads_one_flattened_timeline(tmp_path_factory) -> None:
+    """Forecasts that abut (t01: t01..t02, t03: t03..t04, t05: t05..t06): every roll reads the one flattened
+    series -- t01's values at t01 / t02, t03's at t03 / t04, t05's at t05 / t06 (the only series covering each
+    step) -- even where its own start's series ends inside its horizon."""
+    flattened = {t: _real(at, t) for at, steps in ABUTTING.items() for t in steps}
+    case, _ = scm.run_spec(_spec(stochastic=True, rolling=True, forecasts=ABUTTING), tmp_path_factory.mktemp("case"))
+    oracle, _ = scm.run_spec(_spec(stochastic=False, rolling=True, plain=flattened), tmp_path_factory.mktemp("oracle"))
+    assert [s for s, _, _ in case] == ["st"] * 3
+    _assert_same_lp(case, oracle)
+
+
+def test_step_no_realized_series_covers_is_an_error(tmp_path_factory) -> None:
+    """A gap: t03's series covers only t03, so t04 (in the first roll's horizon) has no realized value."""
+    gap = {"t01": ("t01", "t02"), "t03": ("t03",), "t05": ("t05", "t06")}
+    with pytest.raises(FlexToolConfigError, match=(
+            r"profile 'wp', parameter 'profile': solve 'st[^']*' has stochastic_branches and "
+            r"dispatch_realization_method deterministic, .* No realized series covers time step 't04'")):
+        scm.run_spec(_spec(stochastic=True, rolling=True, forecasts=gap), tmp_path_factory.mktemp("gap"))
 
 
 def test_explicit_deterministic_is_the_default(tmp_path_factory) -> None:

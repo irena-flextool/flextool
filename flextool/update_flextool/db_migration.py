@@ -12723,7 +12723,7 @@ def _v83_dispatch_realization_texts() -> dict[tuple[str, str], tuple[str, str]]:
         "branch gets a separate realization solve. separate_dispatch: a first, stochastic solve fixes the units "
         "online of _fix_in_uc units; a realization solve then dispatches the realized: yes branch over the jump (a "
         "single solve: its realized periods) and looks ahead with the forecasts made at their end; needs a "
-        "realized: yes branch. Without stochastic_branches the three are the same.")}
+        "realized: yes branch. Without stochastic_branches, deterministic and within_solve give the same model.")}
 
 
 def plan_dispatch_realization_method(branches, methods, scenarios) -> tuple[tuple, tuple]:

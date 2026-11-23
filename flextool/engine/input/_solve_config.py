@@ -1631,7 +1631,9 @@ class SolveConfig:
         fall-back is hard-coded.  An unrecognised value also reads
         ``"deterministic"`` here; ``_dispatch_realization_raw_guard`` refuses
         it before the solve runs.  Authoring case is ignored.  Without
-        ``stochastic_branches`` the three members give the same model.
+        ``stochastic_branches``, ``deterministic`` and ``within_solve`` give
+        the same model (``separate_dispatch`` needs a ``realized: yes``
+        branch).
         """
         raw = self.dispatch_realization_method.get(solve_name)
         value = "" if raw is None else str(raw).strip().lower()
@@ -1642,27 +1644,40 @@ class SolveConfig:
 
         The forecasts, ``stochastic_invest_method`` and the realization solve are ignored: the solve's
         ``stochastic_branches`` rows move to :attr:`deterministic_branches` (the solve then reads only its
-        ``realized: yes`` branch, ``native_run_model`` step 3.7) and its ``stochastic_invest_method`` is dropped.
-        One warning names the solve (W-0593).  Raises :class:`FlexToolConfigError` naming the solve when no row
-        says ``realized: yes``.  Only a blank, absent or ``deterministic`` value counts; an unknown value is
-        left for ``_dispatch_realization_raw_guard``.  Over the solves the model runs (:meth:`solves_in_run`,
-        after the 2-D map split)."""
+        ``realized: yes`` branch, flattened into one timeline, ``native_run_model`` step 3.7) and its
+        ``stochastic_invest_method`` is dropped.  One warning per database solve (W-0593; a solve of a 2-D period
+        map is named by the solve the user wrote).  Raises :class:`FlexToolConfigError` naming the solve when no
+        row says ``realized: yes`` (the same exact match as the stochastic pass), or when the ``realized: yes``
+        rows name more than one branch (one realized series per solve, as for ``within_solve``).  Only a blank,
+        absent or ``deterministic`` value counts; an unknown value is left for ``_dispatch_realization_raw_guard``.
+        Over the solves the model runs (:meth:`solves_in_run`, after the 2-D map split)."""
         from flextool import run_warnings
 
+        warned: set[str] = set()
         for s in self.solves_in_run():
             rows = self.stochastic_branches.get(s) or []
             raw = self.dispatch_realization_method.get(s)
             if not rows or str("" if raw is None else raw).strip().lower() not in ("", "deterministic"):
                 continue
-            if not any(len(row) > 3 and str(row[3]).strip().lower() == "yes" for row in rows):
+            name = self.map2d_duplicate_of.get(s, (s,))[0]
+            realized = list(dict.fromkeys(row[1] for row in rows if len(row) > 3 and row[3] == "yes"))
+            if not realized:
                 raise FlexToolConfigError(
-                    f"Solve '{s}' has stochastic_branches and dispatch_realization_method deterministic (the "
+                    f"Solve '{name}' has stochastic_branches and dispatch_realization_method deterministic (the "
                     "default since FlexTool 4.7.0), but no branch with realized: yes. Mark the branch that holds "
                     "the realized data with realized: yes, or set dispatch_realization_method within_solve or "
                     "separate_dispatch to solve the forecasts.")
+            if len(realized) > 1:
+                raise FlexToolConfigError(
+                    f"Solve '{name}' has stochastic_branches and dispatch_realization_method deterministic, and its "
+                    f"realized: yes rows name different branches: {', '.join(repr(str(b)) for b in realized)}. "
+                    "A deterministic solve reads one realized series: name the same branch in every realized: yes "
+                    "row. Check stochastic_branches.")
             self.deterministic_branches[s] = self.stochastic_branches.pop(s)
             self.stochastic_invest_method.pop(s, None)
-            run_warnings.warn("W-0593", solve=s)
+            if name not in warned:
+                warned.add(name)
+                run_warnings.warn("W-0593", solve=name)
 
     def _reduce_detail_for(self, solve_name: str, values: dict, param: str, valid: tuple[str, ...]) -> str:
         """The authored ``solve.<param>`` of *solve_name*: its roll suffix stripped, a realization solve mapped to

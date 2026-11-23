@@ -18,8 +18,9 @@ from flextool.run_warnings.registry import RETIRED, SEVERITIES, WARNINGS, WARNIN
 
 CODE = re.compile(r"^W-\d{4}$")
 #: Codes whose line is longer than 100 characters on purpose: W-0541 quotes the HiGHS warnings it explains (the
-#: owner's wording; printed once per run).
-LONG_LINE_OK = {"W-0541"}
+#: owner's wording; printed once per run); W-0593 names the parameter and the value that make a stochastic solve
+#: deterministic, so a user who set nothing sees why (the release plan's wording; printed once per solve).
+LONG_LINE_OK = {"W-0541", "W-0593"}
 
 
 @pytest.fixture

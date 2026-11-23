@@ -39,7 +39,8 @@ NEW_TEXT = ("[choice] How a solve with stochastic_branches is solved. determinis
             "a realized: yes branch gets a separate realization solve. separate_dispatch: a first, stochastic solve "
             "fixes the units online of _fix_in_uc units; a realization solve then dispatches the realized: yes branch "
             "over the jump (a single solve: its realized periods) and looks ahead with the forecasts made at their "
-            "end; needs a realized: yes branch. Without stochastic_branches the three are the same.")
+            "end; needs a realized: yes branch. Without stochastic_branches, deterministic and within_solve give "
+            "the same model.")
 UNDECIDED_PRINT = ("v83: dispatch_realization_method not written for solve v: a value in alternative base would "
                    "replace your dispatch_realization_method in alternative E in scenario S1. In scenario S2 it now "
                    "runs deterministic: the forecasts are ignored (results change), or the run stops when there is "

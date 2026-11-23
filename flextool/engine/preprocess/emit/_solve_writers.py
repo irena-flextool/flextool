@@ -50,6 +50,7 @@ import polars as pl
 from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.preprocess import _provider_keys as K
 from flextool.engine.preprocess._provider_io import _emit
+from flextool.engine.preprocess.emit._pdt_lookup import READ_FIRST_FAN
 
 
 def _emit_path(provider, path: "Path | str", df: pl.DataFrame) -> None:
@@ -692,7 +693,7 @@ def derive_solve_branch_weight(
     """
     time_branch_weight: dict[str, Any] = defaultdict()
     if branch_start_time is not None:
-        for row in stochastic_branches[complete_solve]:
+        for row in stochastic_branches.get(complete_solve, []):
             if (
                 branch_start_time[0] == row[0]
                 and branch_start_time[1] == row[2]
@@ -799,19 +800,20 @@ def project_branch_time_start_rows(
     return [(d, step) for d, step in parent_rows if (d, d) in period_branch]
 
 
-def derive_branch_time_start(rows: list[tuple[str, str]]) -> pl.DataFrame:
+def derive_branch_time_start(rows: list[tuple[str, str]], read_first: str = READ_FIRST_FAN) -> pl.DataFrame:
     """Build the ``branch_time_start`` frame (period, step, read_first); header-only without a fan.
 
-    ``read_first`` is ``fan`` on every row: a period from the fan onwards reads the forecast made at the fan's
-    analysis time first, in a single solve and in a roll of a rolling solve alike (item 255); see ``_pdt_lookup``
-    "Which forecast a branch period reads".
+    ``read_first`` is ``fan`` on every row of a fan: a period from the fan onwards reads the forecast made at the
+    fan's analysis time first, in a single solve and in a roll of a rolling solve alike (item 255); ``flat`` on the
+    rows of a deterministic solve's flattened realized branch (one row per period and analysis time, nearest to the
+    start first); see ``_pdt_lookup`` "Which forecast a branch period reads".
     """
-    return _to_utf8_frame(("period", "step", "read_first"), [(d, step, "fan") for d, step in rows])
+    return _to_utf8_frame(("period", "step", "read_first"), [(d, step, read_first) for d, step in rows])
 
 
-def emit_branch_time_start(rows: list[tuple[str, str]], *, provider) -> None:
+def emit_branch_time_start(rows: list[tuple[str, str]], *, read_first: str = READ_FIRST_FAN, provider) -> None:
     """Emit ``solve_data/branch_time_start`` to the Provider."""
-    _emit(provider, "solve_data/branch_time_start.csv", derive_branch_time_start(rows))
+    _emit(provider, "solve_data/branch_time_start.csv", derive_branch_time_start(rows, read_first))
 
 
 # ---------------------------------------------------------------------------

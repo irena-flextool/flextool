@@ -56,8 +56,10 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
   were infeasible before change, or that had to invest to keep a ramp-down limit an outage voided.
 - **`deterministic` is the new default of `dispatch_realization_method`.** A solve with stochastic branches and no
   method uses the `realized: yes` branch only, as a deterministic solve (warning W-0593 names it): the forecasts,
-  `stochastic_invest_method` `recourse` and the realization solve are ignored. Without a `realized: yes` branch
-  the run stops with an error naming the solve. Upgraded databases get `within_solve` written on the stochastic
+  `stochastic_invest_method` `recourse` and the realization solve are ignored. The realized series of the
+  analysis times are read as one timeline (where they overlap, the one made nearest to the solve's or roll's
+  start is used). Without a `realized: yes` branch, or at a time step no realized series covers, the run stops
+  with an error naming the solve. Upgraded databases get `within_solve` written on the stochastic
   solves that relied on the default, so their results are unchanged. Tools and scripts that write stochastic
   solves must write `dispatch_realization_method` (`within_solve` or `separate_dispatch`) to solve the forecasts.
 

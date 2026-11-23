@@ -57,6 +57,7 @@ from flextool.engine.input._solve_state import (
 # implementations.  The legacy disk-writing module remains in the tree
 # but is no longer called from the cascade.
 from flextool.engine.preprocess.emit import _solve_writers as solve_writers
+from flextool.engine.preprocess.emit._pdt_lookup import READ_FIRST_FLAT
 from flextool.engine.preprocess import _provider_keys
 from flextool.engine.preprocess import _provider_translators
 
@@ -81,7 +82,7 @@ from flextool.engine.solve._recursive_solve import (
     ParentSolveInfo,
     RecursiveSolveBuilder,
 )
-from flextool.engine.solve._stochastic import StochasticSolver, fan_start, realized_branch_rows
+from flextool.engine.solve._stochastic import StochasticSolver, realized_analysis_times
 from flextool.engine.solve import _carry_routing
 from flextool.engine.solve import _realization
 from flextool.engine.input._timeline import (
@@ -1835,17 +1836,38 @@ def native_run_model(state, solver) -> int:
     # 3.7 ``dispatch_realization_method`` deterministic: the stochastic pass
     # above solved the solve as a deterministic one (its stochastic_branches
     # rows are set aside, ``SolveConfig.apply_deterministic_realization``).
-    # Each of its rolls reads the realized branch the way a realization
-    # solve reads its parent's (3.6): the realized rows of its periods, and
-    # the fan start of the roll for the fan-start fallback below.
+    # It reads its realized branch flattened into one timeline: every period
+    # of every roll reads the realized branch (``solve_branch__time_branch``)
+    # through one analysis-time tier per ``realized: yes`` row, the one
+    # nearest to the roll's start first (``branch_time_start`` rows with
+    # ``read_first`` = ``flat``, ``_pdt_lookup.ts_tiers``), so each step reads
+    # the nearest realized series that covers it; a step none covers is an
+    # input error (``_check_pre_reveal_reads_have_forecast``).  Rolls only cut
+    # that timeline.  No fan: no fan start, no branch weight but the self row's.
     deterministic_branches = getattr(state.solve, "deterministic_branches", None) or {}
+    flat_time_start_lists: dict[str, list[tuple[str, str]]] = {}
+    _det_timelines: dict[str, dict[tuple[str, str], None]] = {}
+    for _s in all_solves:
+        if complete_solve[_s] in deterministic_branches:
+            _det_timelines.setdefault(complete_solve[_s], {}).update(dict.fromkeys(
+                (_p, _e.timestep) for _p, _ats in active_time_lists[_s].items() for _e in _ats))
     for _s in all_solves:
         _info = deterministic_branches.get(complete_solve[_s])
-        if not _info:
+        _steps = [(_p, _e.timestep) for _p, _ats in active_time_lists[_s].items() for _e in _ats]
+        if not _info or not _steps:
             continue
-        branch_start_time_lists[_s] = fan_start(_info, active_time_lists[_s])
-        solve_branch__time_branch_lists[_s] = realized_branch_rows(
-            _info, active_time_lists[_s], branch_start_time_lists[_s], state.logger)
+        _times = realized_analysis_times(_info, list(_det_timelines[complete_solve[_s]]), _steps[0])
+        if not _times:
+            _name = state.solve.map2d_duplicate_of.get(complete_solve[_s], (complete_solve[_s],))[0]
+            raise FlexToolConfigError(
+                f"Solve '{_name}' has stochastic_branches and dispatch_realization_method deterministic, but no "
+                "realized: yes row of its stochastic_branches starts at a time step of the solve, so it has no "
+                "realized series to read. Give the realized: yes rows the analysis_time of a time step the "
+                "solve uses, or set dispatch_realization_method within_solve or separate_dispatch.")
+        _branch = next(row[1] for row in _info if row[3] == "yes")
+        branch_start_time_lists[_s] = None
+        solve_branch__time_branch_lists[_s] = [(_d, _branch) for _d in active_time_lists[_s]]
+        flat_time_start_lists[_s] = [(_d, _ts) for _d in active_time_lists[_s] for _ts in _times]
 
     # The fan start of each solve (``solve_data/branch_time_start``): a branch
     # period whose own first step authors no stochastic-time value for a cell
@@ -2397,10 +2419,14 @@ def native_run_model(state, solver) -> int:
         # fan's analysis time, in a single solve and in a roll alike, never a
         # forecast made later (``_pdt_lookup`` "Which forecast a branch
         # period reads").
-        solve_writers.emit_branch_time_start(
-            branch_time_start_lists.get(solve, []),
-            provider=sub_solve_provider,
-        )
+        if solve in flat_time_start_lists:
+            solve_writers.emit_branch_time_start(
+                flat_time_start_lists[solve], read_first=READ_FIRST_FLAT, provider=sub_solve_provider)
+        else:
+            solve_writers.emit_branch_time_start(
+                branch_time_start_lists.get(solve, []),
+                provider=sub_solve_provider,
+            )
         solve_writers.emit_first_and_last_periods(
             active_time_lists[solve],
             state.solve.timesets_used_by_solves[complete_solve[solve]],

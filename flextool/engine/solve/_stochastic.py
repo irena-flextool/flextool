@@ -119,7 +119,7 @@ def fan_start(info: list, active_time_list: dict) -> tuple[str, str] | None:
 
 def realized_branch_rows(
     info: list, active_time_list: dict, branch_start: tuple[str, str] | None,
-    logger: logging.Logger | None = None,
+    logger: logging.Logger | None = None, solve: str | None = None,
 ) -> list[tuple[str, str]]:
     """The ``solve_branch__time_branch`` rows ``(period, realized branch)`` of a solve's real periods.
 
@@ -137,12 +137,30 @@ def realized_branch_rows(
             found = [(period, row[1]) for row in info
                      if row[0] == branch_start[0] and row[2] == branch_start[1] and row[3] == "yes"]
         if len(found) > 1:
-            message = "Each period should have at most one realized branch. Found: " + str(len(found)) + "\n"
+            message = (f"Each period should have at most one realized branch. Found: {len(found)} in period "
+                       f"'{period}'" + (f" of solve '{solve}'." if solve is not None else "."))
             if logger is not None:
                 logger.error(message)
             raise FlexToolConfigError(message)
         rows += found
     return rows
+
+
+def realized_analysis_times(info: list, timeline: list[tuple[str, str]], start: tuple[str, str]) -> list[str]:
+    """The analysis times of the ``realized: yes`` rows of *info*, the one nearest to *start* first: the tiers a
+    solve (or roll) that runs ``dispatch_realization_method`` ``deterministic`` reads its realized branch through,
+    flattened into one timeline (``_pdt_lookup.ts_tiers``, ``read_first`` = ``flat``).
+
+    Distance is counted in steps of *timeline*, the ``(period, step)`` order of the whole solve (every roll), so
+    an analysis time before a roll's start counts as well; of two at the same distance the earlier one comes
+    first.  A row whose ``(period, analysis time)`` is not on *timeline* is left out; each step is listed once.
+    """
+    position = {ps: i for i, ps in enumerate(timeline)}
+    origin = position[start]
+    made = sorted({position[(row[0], row[2])] for row in info
+                   if row[3] == "yes" and (row[0], row[2]) in position},
+                  key=lambda i: (abs(i - origin), i))
+    return list(dict.fromkeys(timeline[i][1] for i in made))
 
 
 def connect_two_timelines(
@@ -1165,7 +1183,7 @@ class StochasticSolver:
 
             # The realized branch of each period (``realized_branch_rows``).
             solve_branch__time_branch_lists[solve] += realized_branch_rows(
-                info, active_time_list, branch_start_time_lists[solve], self.logger)
+                info, active_time_list, branch_start_time_lists[solve], self.logger, solve)
 
             # A period label (the original name of a period that opens a fan) has no dispatch: drop it from
             # the active, realized and fix-storage lists.  Its pre-stochastic steps and committed cells are kept

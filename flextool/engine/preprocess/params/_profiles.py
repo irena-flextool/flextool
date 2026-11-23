@@ -642,7 +642,8 @@ def _profile_stochastic_lf(workdir: Path | None,
             f"profile {names}, parameter 'profile': the value is a stochastic forecast (a map over "
             "branch, analysis time and time), but this solve has no realized branch to take the value "
             "from: no row of its stochastic_branches says realized: yes, and no other solve hands its "
-            "realized branch to this one. Either mark one branch realized: yes in this solve's "
+            "realized branch to this one (a solve that runs dispatch_realization_method deterministic "
+            "hands none on). Either mark one branch realized: yes in this solve's "
             "stochastic_branches, or give the profile a plain value instead of a forecast map. Check "
             "also which alternative of the scenario gives the value."
         )
@@ -664,23 +665,27 @@ def _profile_stochastic_lf(workdir: Path | None,
                                           fan_for_d, sd, provider=provider, kind="profile")
 
     # Each fold reads, per value cell, the first analysis-time tier with a
-    # value: d's own first step and the fan start, in ``ts_tiers`` order.  The tier
-    # rides along as ``tier``; a part is summed per (f, d, t, tier) and the
-    # priority ``branch * 2 + tier`` keeps branch order first, tier second.
+    # value: d's own first step and the fan start, in ``ts_tiers`` order (a
+    # deterministic solve's flattened realized branch: one tier per analysis
+    # time).  The tier rides along as ``tier``; a part is summed per
+    # (f, d, t, tier) and the priority ``branch * n_tiers + tier`` keeps branch
+    # order first, tier second.
+    tiers_by_d = {d: ts_tiers(d, ts_for_d, fan_for_d) for d in dict.fromkeys([*tb_for_d, *pe_for_d])}
+    n_tiers = max((len(tiers) for tiers in tiers_by_d.values()), default=1)
+
     def _fold_frame(rows: list[tuple[str, str, str, int]]) -> pl.LazyFrame:
         return (pl.LazyFrame(
             {"d": [r[0] for r in rows],
              "tb": [r[1] for r in rows],
              "ts": [r[2] for r in rows],
              "tier": [r[3] for r in rows]},
-            schema={"d": pl.Utf8, "tb": pl.Utf8, "ts": pl.Utf8, "tier": pl.Int8})
+            schema={"d": pl.Utf8, "tb": pl.Utf8, "ts": pl.Utf8, "tier": pl.Int64})
             .with_columns(alias_to_axis("d", "d")))
 
     def _sum_by_tier(lf: pl.LazyFrame, branch: int) -> pl.LazyFrame:
         return (lf.group_by(["f", "d", "t", "tier"])
                   .agg(pl.col("value").sum())
-                  .with_columns(branch_priority=(pl.lit(2 * branch, dtype=pl.Int8) + pl.col("tier"))
-                                .cast(pl.Int8))
+                  .with_columns(branch_priority=pl.lit(n_tiers * branch, dtype=pl.Int64) + pl.col("tier"))
                   .drop("tier"))
 
     # Branch 1: stochastic UNION fold.
@@ -691,7 +696,7 @@ def _profile_stochastic_lf(workdir: Path | None,
         # Build a join frame: (d, tb, ts, tier) tuples.
         d_tb_ts = []
         for d, tbs in tb_for_d.items():
-            for tier, tss in enumerate(ts_tiers(d, ts_for_d, fan_for_d)):
+            for tier, tss in enumerate(tiers_by_d[d]):
                 for tb in tbs:
                     for ts in tss:
                         d_tb_ts.append((d, tb, ts, tier))
@@ -708,7 +713,7 @@ def _profile_stochastic_lf(workdir: Path | None,
         # Build (d, tb, ts, tier) where tb is from each parent's tb_for_d.
         d_tb_ts_pp = []
         for d, parents in pe_for_d.items():
-            for tier, tss in enumerate(ts_tiers(d, ts_for_d, fan_for_d)):
+            for tier, tss in enumerate(tiers_by_d[d]):
                 for pe in parents:
                     tbs = tb_for_d.get(pe, [])
                     for tb in tbs:
