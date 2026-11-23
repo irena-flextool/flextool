@@ -1,18 +1,18 @@
 """The realization roll R_k of a rolling stochastic solve: which solves get one, and the plan of each roll.
 
 A rolling stochastic solve that runs ``dispatch_realization_method`` ``within_solve`` or ``separate_dispatch``
-realizes each jump ``[s_k, s_{k+1})`` on the ``realized: yes`` data and looks ahead from ``s_{k+1}`` (the end of the
-jump) with the forecasts made there.  ``within_solve``: the realization roll is the roll itself; ``separate_dispatch``:
+realizes each jump ``[s_k, s_{k+1})`` on its ``realized: yes`` branch, read as one timeline (the rule of a
+``deterministic`` solve), and looks ahead from ``s_{k+1}`` (the end of the jump) with the forecasts made there.  ``within_solve``: the realization roll is the roll itself; ``separate_dispatch``:
 the roll ``k`` of the engine-added realization solve, after the roll's fully stochastic solve (1).
 
 * :func:`realization_roll_method` is the gate: the one predicate that says whether a solve has realization rolls
   (also read by ``_orchestration._spawn_realized_dispatch_siblings``).
 * :func:`roll_tail_plan` makes the :class:`RollTail` of each roll of a gated solve from the authored
   ``stochastic_branches`` rows (never changed) and raises the configuration errors of a missing forecast or a
-  missing ``realized: yes`` branch.
-* :func:`roll_branch_rows` gives each planned roll the ``stochastic_branches`` rows it reads (the forecasts made at
-  ``s_{k+1}`` and the ``realized: yes`` row there), read by the stochastic expansion and the branch-weight emit
-  through :func:`plan_branch_rows` (no plan: the complete solve's rows, as before).
+  missing, ambiguous or unreachable ``realized: yes`` branch.
+* :func:`roll_branch_rows` gives each planned roll the forecast rows of its tail (made at ``s_{k+1}``), read by the
+  stochastic expansion and the branch-weight emit through :func:`plan_branch_rows` (no plan: the complete solve's
+  rows, as before).  The realized branch of the jump comes from the plan (``RollTail.realized``), not from rows.
 * :func:`check_tail_weights` (G2b): every forecast of a planned roll has its own branch weight.
 
 The plans are made in ``native_run_model`` through the seam ``_run_model._roll_tail_plans``.
@@ -41,6 +41,11 @@ class RollTail:
     database order.  ``shape``: ``split`` when ``s_{k+1}`` lies inside ``p`` (the jump holds steps of ``p``),
     ``seam`` when it is ``p``'s first step in the roll, ``deterministic`` when the horizon ends with the jump (no tail,
     ``deterministic`` is then True and ``cohort`` empty).
+
+    The jump (every period of a ``deterministic`` roll) reads ``realized``, the one ``realized: yes`` branch of the
+    complete solve, flattened into one timeline: one analysis-time tier per entry of ``realized_times``, the one
+    nearest to the roll start ``s_k`` first, the earlier one first on a tie (``_stochastic.realized_analysis_times``,
+    the rule of ``dispatch_realization_method`` ``deterministic``).
     """
 
     cohort: tuple[str, ...]
@@ -48,6 +53,8 @@ class RollTail:
     deterministic: bool
     jump_steps: tuple[tuple[str, str], ...]
     tail_start: tuple[str, str] | None
+    realized: str
+    realized_times: tuple[str, ...]
 
 
 class RollWindow(NamedTuple):
@@ -89,7 +96,8 @@ def realization_roll_method(solve_cfg: Any, solve: str) -> RollMethod | None:
     (``_realization.configured_realization_solve``; the engine-added one is not author-declared).
     ``deterministic`` (absent or explicit; such a solve has no ``stochastic_branches`` left,
     ``SolveConfig.apply_deterministic_realization``) and single solves get ``None``.  The engine-added realization
-    solve of a ``separate_dispatch`` solve (``realized_dispatch_parent``) takes its parent's answer.
+    solve of a ``separate_dispatch`` solve (``realized_dispatch_parent``) takes its parent's answer.  Pass a solve,
+    not a roll: a roll name is in no ``model.solves`` and gets ``None``.
     """
     from flextool.engine.solve import _realization
 
@@ -161,18 +169,22 @@ def _no_forecast_error(solve: str, k: int, jump: list, cell: tuple[str, str], wh
                        fix: str) -> FlexToolConfigError:
     return FlexToolConfigError(
         f"Solve '{solve}', roll {k} (time steps {jump[0][1]} to {jump[-1][1]}): no forecast of stochastic_branches "
-        f"is made at {cell[1]}, {where}. Since FlexTool 4.7.0 {why}. Add forecasts with analysis time {cell[1]} "
+        f"is made at {cell[1]}, {where}. Since FlexTool 4.7.0 {why}. Add forecasts with analysis_time {cell[1]} "
         f"for period '{cell[0]}', or set rolling_solve_jump so that {fix}.")
 
 
-def roll_tail_plan(solve_cfg: Any, rolls: list[RollWindow]) -> dict[str, RollTail]:
+def roll_tail_plan(solve_cfg: Any, rolls: list[RollWindow], timeline: list[tuple[str, str]]) -> dict[str, RollTail]:
     """The :class:`RollTail` of each roll in *rolls* (the rolls of one stochastic complete solve, in run order).
 
-    ``{}`` when the solve is not gated (:func:`realization_roll_method`).  Raises :class:`FlexToolConfigError` when a
-    ``within_solve`` solve has no ``realized: yes`` branch, when a roll with a tail has no forecast made at the end
-    of its jump, and (``separate_dispatch``) when no forecast is made at the start of a roll (its solve (1) branches
-    there).  The authored rows are read, never changed.
+    *timeline* is the ``(period, step)`` timeline the solve's realized branch is read on
+    (``_run_model._solve_timelines``).  ``{}`` when the solve is not gated (:func:`realization_roll_method`).  Raises
+    :class:`FlexToolConfigError` when the solve has no ``realized: yes`` row, when its ``realized: yes`` rows name more
+    than one branch or none lies on *timeline*, when a roll with a tail has no forecast made at the end of its jump,
+    and (``separate_dispatch``) when no forecast is made at the start of a roll (its solve (1) branches there).  The
+    authored rows are read, never changed.
     """
+    from flextool.engine.solve._stochastic import realized_analysis_times
+
     if not rolls:
         return {}
     solve = rolls[0].solve
@@ -181,45 +193,66 @@ def roll_tail_plan(solve_cfg: Any, rolls: list[RollWindow]) -> dict[str, RollTai
     method = realization_roll_method(solve_cfg, solve)
     if method is None:
         return {}
+    name = (getattr(solve_cfg, "map2d_duplicate_of", None) or {}).get(solve, (solve,))[0]
     rows = list((getattr(solve_cfg, "stochastic_branches", None) or {}).get(solve) or [])
-    if method == "within_solve" and not any(str(r[3]) == "yes" for r in rows):
+    realized_rows = [r for r in rows if str(r[3]) == "yes"]
+    if not realized_rows:
         raise FlexToolConfigError(
-            f"Solve '{solve}' is a rolling stochastic solve with dispatch_realization_method within_solve, but its "
+            f"Solve '{name}' is a rolling stochastic solve with dispatch_realization_method {method}, but its "
             "stochastic_branches have no branch with realized: yes. Since FlexTool 4.7.0 such a solve dispatches "
             "each jump with the data of the realized branch. Mark the branch that holds the realized data with "
             "realized: yes.")
+    realized_names = list(dict.fromkeys(str(r[1]) for r in realized_rows))
+    if len(realized_names) > 1:
+        raise FlexToolConfigError(
+            f"Solve '{name}': the realized: yes rows of its stochastic_branches name more than one branch "
+            f"({', '.join(realized_names)}). Since FlexTool 4.7.0 a rolling stochastic solve dispatches each jump "
+            "with the data of its realized branch, read as one timeline: name the same branch in every "
+            "realized: yes row.")
+    on_line = set(timeline)
+    if not any((str(r[0]), str(r[2])) in on_line for r in realized_rows):
+        raise FlexToolConfigError(
+            f"Solve '{name}' is a rolling stochastic solve with dispatch_realization_method {method}, but no "
+            "realized: yes row of its stochastic_branches starts at a time step of the timeline of its periods, "
+            "so its jumps have no realized series to read. Give the realized: yes rows the analysis_time of a time "
+            "step of that timeline.")
+    realized = realized_names[0]
     plan: dict[str, RollTail] = {}
     for k, roll in enumerate(rolls):
         steps = _steps(roll.active)
         jump = _steps(roll.jump)
         if not steps or not jump:
             continue
+        if steps[:len(jump)] != jump:
+            raise RuntimeError(
+                f"Internal error: the jump of roll '{roll.name}' is not the start of its horizon. Please report this.")
         if method == "separate_dispatch" and not _forecasts_at(rows, steps[0]):
             raise _no_forecast_error(
-                solve, k, jump, steps[0], "the start of the roll",
+                name, k, jump, steps[0], "the start of the roll",
                 "the first solve of each roll of a rolling separate_dispatch solve branches into the forecasts "
                 "made at the start of the roll", "each roll starts at a time step with forecasts")
-        end = steps.index(jump[-1]) + 1 if jump[-1] in steps else len(steps)
-        if end >= len(steps):
-            plan[roll.name] = RollTail((), "deterministic", True, tuple(jump), None)
+        times = tuple(realized_analysis_times(rows, timeline, steps[0]))
+        if len(jump) == len(steps):
+            plan[roll.name] = RollTail((), "deterministic", True, tuple(jump), None, realized, times)
             continue
-        tail_start = steps[end]
+        tail_start = steps[len(jump)]
         cohort = _forecasts_at(rows, tail_start)
         if not cohort:
             raise _no_forecast_error(
-                solve, k, jump, tail_start, "the end of its jump",
+                name, k, jump, tail_start, "the end of its jump",
                 "a rolling stochastic solve realizes each jump and then looks ahead with the forecasts made at "
                 "the end of the jump", "each jump ends at a time step with forecasts")
-        shape: RollShape = "split" if tail_start[0] in roll.jump else "seam"
-        plan[roll.name] = RollTail(cohort, shape, False, tuple(jump), tail_start)
+        shape: RollShape = "split" if roll.jump.get(tail_start[0]) else "seam"
+        plan[roll.name] = RollTail(cohort, shape, False, tuple(jump), tail_start, realized, times)
     return plan
 
 
 def roll_branch_rows(solve_cfg: Any, rolls: Mapping[str, list[RollWindow]],
                      plan: Mapping[str, RollTail]) -> dict[str, list]:
     """``{sub-solve: rows}`` for every planned roll: the authored ``stochastic_branches`` rows of its complete solve
-    made at ``tail_start`` that are a forecast of C_k* or ``realized: yes``, in database order and not re-dated
-    (``[]`` for a ``deterministic`` roll).  Keyed on the sub-solve, so a realization solve's roll gets its rows."""
+    made at ``tail_start`` that are a forecast of C_k*, in database order and not re-dated (``[]`` for a
+    ``deterministic`` roll).  No ``realized: yes`` row: the jump reads ``RollTail.realized`` (one source of the
+    realized branch).  Keyed on the sub-solve, so a realization solve's roll gets its rows."""
     branches = getattr(solve_cfg, "stochastic_branches", None) or {}
     out: dict[str, list] = {}
     for windows in rolls.values():
@@ -232,7 +265,7 @@ def roll_branch_rows(solve_cfg: Any, rolls: Mapping[str, list[RollWindow]],
                 continue
             out[w.name] = [r for r in branches.get(w.solve) or []
                            if (str(r[0]), str(r[2])) == tail.tail_start
-                           and (str(r[1]) in tail.cohort or str(r[3]) == "yes")]
+                           and str(r[1]) in tail.cohort and str(r[3]) != "yes"]
     return out
 
 

@@ -111,11 +111,39 @@ _RP_METHOD_DOWNGRADE: dict[str, str] = {
 }
 
 
-def _roll_tail_plans(solve_cfg, rolls: dict) -> dict:
+def _roll_tail_plans(solve_cfg, rolls: dict, timelines: dict) -> dict:
     """``{sub-solve: RollTail}``: the realization-roll plans of the run (``_realization_tail.roll_tail_plan`` of
-    each gated solve's rolls *rolls*).  Not wired yet: returns ``{}``, so every reader takes the complete solve's
-    ``stochastic_branches`` rows as before.  Tests replace it to run a realization roll end to end."""
+    each gated solve's rolls *rolls* on its timeline *timelines*, :func:`_solve_timelines`).  Not wired yet: returns
+    ``{}``, so every reader takes the complete solve's ``stochastic_branches`` rows as before.  Tests replace it to
+    run a realization roll end to end."""
     return {}
+
+
+def _solve_timelines(state, solves, complete_solve: dict, active_time_lists: dict,
+                     wanted) -> dict[str, list[tuple[str, str]]]:
+    """``{complete solve: [(period, step), ...]}`` for each complete solve in *wanted*: the timeline its realized
+    branch is read on, flattened (``_stochastic.realized_analysis_times``).
+
+    Per period, every step of the timeline of the period's timeset (also those the solve does not use), so a
+    realized series made before the solve's first step counts; the steps the rolls of *solves* use when they are
+    not all on it.  Periods in the order the rolls first use them.
+    """
+    by_solve: dict[str, dict[str, dict[str, None]]] = {}
+    for s in solves:
+        if complete_solve[s] in wanted:
+            by_period = by_solve.setdefault(complete_solve[s], {})
+            for p, ats in active_time_lists[s].items():
+                by_period.setdefault(p, {}).update(dict.fromkeys(e.timestep for e in ats))
+    timelines: dict[str, list[tuple[str, str]]] = {}
+    for c, by_period in by_solve.items():
+        timeset_of = dict(state.solve.timesets_used_by_solves.get(c, []))
+        line: dict[tuple[str, str], None] = {}
+        for p, active in by_period.items():
+            tl = state.timeline.timesets__timeline.get(timeset_of.get(p))
+            full = [step for step, *_ in state.timeline.timelines.get(tl, [])]
+            line.update(dict.fromkeys((p, step) for step in (full if set(active) <= set(full) else active)))
+        timelines[c] = list(line)
+    return timelines
 
 
 def _roll_period_whole(active_time_list: dict, complete_active_time_list: dict,
@@ -1675,7 +1703,8 @@ def native_run_model(state, solver) -> int:
     # ------------------------------------------------------------------
     _tail_rolls = _realization_tail.realization_rolls(
         state.solve, all_solves, complete_solve, active_time_lists, realized_time_lists)
-    state.solve.roll_tail_plan = _roll_tail_plans(state.solve, _tail_rolls)
+    _tail_timelines = _solve_timelines(state, all_solves, complete_solve, active_time_lists, set(_tail_rolls))
+    state.solve.roll_tail_plan = _roll_tail_plans(state.solve, _tail_rolls, _tail_timelines)
     state.solve.roll_branch_rows = _realization_tail.roll_branch_rows(
         state.solve, _tail_rolls, state.solve.roll_tail_plan)
 
@@ -1869,26 +1898,13 @@ def native_run_model(state, solver) -> int:
     # check.
     deterministic_branches = getattr(state.solve, "deterministic_branches", None) or {}
     flat_time_start_lists: dict[str, list[tuple[str, str]]] = {}
-    _det_active: dict[str, dict[str, dict[str, None]]] = {}
-    for _s in all_solves:
-        if complete_solve[_s] in deterministic_branches:
-            _by_period = _det_active.setdefault(complete_solve[_s], {})
-            for _p, _ats in active_time_lists[_s].items():
-                _by_period.setdefault(_p, {}).update(dict.fromkeys(_e.timestep for _e in _ats))
-    _det_timelines: dict[str, dict[tuple[str, str], None]] = {}
-    for _c, _by_period in _det_active.items():
-        _timeset_of = dict(state.solve.timesets_used_by_solves.get(_c, []))
-        _line = _det_timelines.setdefault(_c, {})
-        for _p, _active in _by_period.items():
-            _tl = state.timeline.timesets__timeline.get(_timeset_of.get(_p))
-            _full = [_step for _step, *_ in state.timeline.timelines.get(_tl, [])]
-            _line.update(dict.fromkeys((_p, _step) for _step in (_full if set(_active) <= set(_full) else _active)))
+    _det_timelines = _solve_timelines(state, all_solves, complete_solve, active_time_lists, deterministic_branches)
     for _s in all_solves:
         _info = deterministic_branches.get(complete_solve[_s])
         _steps = [(_p, _e.timestep) for _p, _ats in active_time_lists[_s].items() for _e in _ats]
         if not _info or not _steps:
             continue
-        _times = realized_analysis_times(_info, list(_det_timelines[complete_solve[_s]]), _steps[0])
+        _times = realized_analysis_times(_info, _det_timelines[complete_solve[_s]], _steps[0])
         if not _times:
             _name = state.solve.map2d_duplicate_of.get(complete_solve[_s], (complete_solve[_s],))[0]
             raise FlexToolConfigError(
