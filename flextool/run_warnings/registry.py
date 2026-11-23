@@ -40,10 +40,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-#: The web page that explains every code; a code's section is ``#w-0123`` (:func:`docs_url`).
-WARNINGS_DOCS_URL = "https://irena-flextool.github.io/flextool/reference/warnings/"
+#: The published documentation's root; the page ``a/b.md`` of ``docs/`` is ``<it>a/b/`` (mkdocs directory URLs).
+DOCS_BASE_URL = "https://irena-flextool.github.io/flextool/"
 #: The page's path in the web docs (the mkdocs hook generates it; ``flextool.docs_build.scope``).
 WARNINGS_PAGE = "reference/warnings.md"
+#: The web page that explains every code; a code's section is ``#w-0123`` (:func:`docs_url`).
+WARNINGS_DOCS_URL = DOCS_BASE_URL + WARNINGS_PAGE.removesuffix(".md") + "/"
 
 WARNING = "warning"
 NOTE = "note"
@@ -65,6 +67,8 @@ class WarningSpec:
     #: The code names no entity: it is emitted without names (``warn_grouped(code)``) and its line has no
     #: ``(...)`` part.  Every other code names what it is about (the log guard checks this).
     entityless: bool = False
+    #: How many names a line of several cases shows after "e.g." (1 for nearly every code).
+    examples: int = 1
 
 
 _SPECS: tuple[WarningSpec, ...] = (

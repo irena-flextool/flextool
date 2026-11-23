@@ -28,8 +28,10 @@ _PLOTS = "Plots"
 _DATABASE = "Input database"
 
 
-def _w(code: str, message: str, title: str, topic: str, body: str, severity: str = WARNING) -> WarningSpec:
-    return WarningSpec(code=code, message=message, title=title, topic=topic, body=body, severity=severity)
+def _w(code: str, message: str, title: str, topic: str, body: str, severity: str = WARNING,
+       examples: int = 1) -> WarningSpec:
+    return WarningSpec(code=code, message=message, title=title, topic=topic, body=body, severity=severity,
+                       examples=examples)
 
 
 INPUT_SPECS: tuple[WarningSpec, ...] = (
@@ -408,24 +410,54 @@ INPUT_SPECS: tuple[WarningSpec, ...] = (
        "could overwrite the list's first member, and every default and value that used that member then "
        "silently changed with it. The line names the lists to check; the debug log and the run log give the "
        "data versions of the session. FlexTool does not know which library the migration used, so this is a "
-       "possibility, not a finding. The GUI shows a short \"Please check this database\" box when it opens the "
-       "project, with a button to this checklist. The message repeats at every run and every time the GUI opens "
-       "the database, also after you have checked, until a repair is recorded in the database (a repair tool is "
-       "planned).\n\n"
+       "possibility, not a finding. The GUI lists a \"Please check this database\" message for it when it opens "
+       "the project, with a button to this checklist. The message repeats at every run and every time the GUI opens "
+       "the database, also after you have checked, until a repair is recorded in the database: only FlexTool's "
+       "repair tool records one.\n\n"
        "For `invest_methods` (migration from data version 21 to 22): the list should contain `not_allowed`. If "
        "it is missing, the class default of `invest_method` (unit, connection, node) and any value that was "
        "`not_allowed` before that date now read `cumulative_limits`, which since FlexTool 4.4 lets those "
        "entities invest and retire without limit.\n\n"
-       "**How to fix:** check the list (a checklist):\n\n"
+       "**How to fix:** run the repair tool on the database, in a terminal:\n\n"
+       "`flextool-repair-value-list \"<database>\"`\n\n"
+       "or, with the Python of FlexTool's environment, "
+       "`python -P -m flextool.cli.cmd_repair_value_list \"<database>\"`.\n\n"
+       "The tool never changes the database itself. It asks about each default and value that may have "
+       "changed, and writes a repaired copy (`<name>_repaired.sqlite` next to it) that records the repair; the "
+       "warning ends when that copy is used in place of the database. If you have a copy of the database from "
+       "before the upgrade (data version 21 or older), add `--archive \"<old copy>\"`: the tool then uses it as "
+       "evidence. The steps (answers file, exit codes, swapping the copy in) are in "
+       "[Repairing a value list](../terminal_workflow.md#repairing-a-value-list-w-0490).\n\n"
+       "If the tool cannot repair the list (it says so), check it by hand (a checklist):\n\n"
        "1. Make a copy of the database and work on the copy.\n"
        "2. In the Spine DB editor, open *Parameter value list* and the named list (`invest_methods`). Check that "
-       "it contains `not_allowed` (for another list: check it has every member listed in the parameter reference).\n"
-       "3. If a member is missing, add it to the list.\n"
+       "it has every member listed in the parameter reference (14 for `invest_methods`, among them `not_allowed` "
+       "and `cumulative_limits`).\n"
+       "3. If a member is missing, add it to the list (at the end).\n"
        "4. For `invest_methods`, set the default value of `invest_method` of `unit`, `connection` and `node` "
        "to `not_allowed` (the shipped default).\n"
        "5. Filter the parameter values by `invest_method` = `cumulative_limits`. For each one, decide whether it "
        "was meant: compare with a copy from before the migration date, your Excel input or your notes. An "
        "entity that has no `cumulative_max_capacity` and should not invest should be `not_allowed`.\n"
-       "6. Re-run, and compare the investments and retirements with the previous results.\n\n"
+       "6. Re-run, and compare the investments and retirements with the previous results.\n"
+       "7. Run the repair tool on the fixed copy to record the repair: the warning stays until one is recorded. "
+       "If the tool still cannot read the list (it says so again), run it with `--checked-by-hand`: you confirm "
+       "that you have checked every item above, and the tool records the repair in a copy without changing any "
+       "value.\n\n"
        "If you copied data from this database into another one, check that one too."),
+    # TODO(v5.0.0): remove W-0491 with the repair tool (flextool/update_flextool/list_default_restore.py).
+    _w("W-0491", "defaults emptied by an old upgrade", "Shipped defaults lost in an old upgrade", _DATABASE,
+       "An upgrade of this database before FlexTool 4.6.3 left some default values empty: an old Spine library "
+       "had stored them in a form the upgrade could not read. The line names them (up to three; the run log "
+       "lists all of them with their shipped values). An empty default works like the shipped one, because "
+       "FlexTool uses the shipped value when none is stored. Only `storage_start_end_method` can change results; "
+       "when the line names it, an unaffected database keeps the start of storage nodes with their own start "
+       "value fixed (`fix_start`), and this one leaves it free. The GUI lists a \"Shipped defaults lost in an "
+       "old upgrade\" message for it when it opens the project, with a button that copies the repair command.\n\n"
+       "**How to fix:** run the repair tool on the database: `flextool-repair-value-list \"<database>\"` (or "
+       "`python -P -m flextool.cli.cmd_repair_value_list \"<database>\"`). It writes a repaired copy next to the "
+       "original, puts the shipped defaults back and asks about each such storage node. Then use the copy in "
+       "place of the original. The note stops once the database holds the tool's repair record. The steps are "
+       "in [Repairing a value list](../terminal_workflow.md#repairing-a-value-list-w-0490).",
+       severity=NOTE, examples=3),
 )

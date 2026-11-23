@@ -24,7 +24,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 from dataclasses import dataclass
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
@@ -213,10 +213,11 @@ def note_solver_outcome(sol: Any, acceptance: Any, *, solve_name: str, solver: s
     code); a later case of the same solve with the same outcome only goes to the debug log.  Prints at once
     (flushes an open ``collecting()`` scope), so the note stands next to the solver's output it explains.
 
-    A roll's :data:`RELATIVE_TOLERANCES` (*sub_solve*, the roll, other than the complete solve, or a
-    ``<solve>_roll_<k>`` *solve_name*) with *pending* (a dict the caller keeps for the run) is gathered instead:
+    A roll's :data:`RELATIVE_TOLERANCES` (*sub_solve* named ``<...>_roll_<k>``, also a renamed nested roll, of
+    the complete solve *solve_name*) with *pending* (a dict the caller keeps for the run) is gathered instead:
     :func:`flush_solver_outcome_notes` prints one line per complete solve, with the number of its rolls that had
-    the outcome and the largest factor among them.
+    the outcome and the largest factor among them.  Any other sub-solve (a renamed single instance
+    ``<solve>_p2020``) prints at once.
     """
     from flextool import run_warnings
 
@@ -231,7 +232,8 @@ def note_solver_outcome(sol: Any, acceptance: Any, *, solve_name: str, solver: s
     else:
         return
     complete = run_warnings.complete_solve(solve_name) or solve_name
-    roll = sub_solve if sub_solve and sub_solve != complete else (solve_name if solve_name != complete else None)
+    roll = (sub_solve if sub_solve and sub_solve != complete and run_warnings.complete_solve(sub_solve) != sub_solve
+            else None)
     for one in found:
         key = (one.code, None if one.code in _ONCE_PER_RUN else complete)
         if key in noted:
@@ -249,8 +251,7 @@ def flush_solver_outcome_notes(pending: dict, noted: set, *, keep: Collection[st
     """Print the gathered :data:`RELATIVE_TOLERANCES` notes of the rolls in *pending* (``{complete solve: {roll:
     (X, detail)}}``, :func:`note_solver_outcome`): one line per complete solve, ``... at up to <largest X>x ... in
     <n> rolls``, the worst roll first in the debug log.  *keep*: the complete solves whose rolls are still running
-    (left in *pending*): the one running now and those it is nested in.  A solve already noted in this run (a later instance of a nested solve) only goes to the
-    debug log."""
+    (left in *pending*, :func:`still_running`).  A solve already noted in this run only goes to the debug log."""
     from flextool import run_warnings
 
     for complete in [c for c in pending if c not in keep]:
@@ -271,7 +272,13 @@ def flush_solver_outcome_notes(pending: dict, noted: set, *, keep: Collection[st
         run_warnings.flush()
 
 
+def still_running(last_index: Mapping[str, int], next_index: int) -> set[str]:
+    """The complete solves with a sub-solve at or after *next_index* in the run (*last_index*: each complete
+    solve's last sub-solve index, known before the run starts)."""
+    return {complete for complete, last in last_index.items() if last >= next_index}
+
+
 __all__ = [
     "IPM_RELATIVE_ONLY", "NEAR_OPTIMAL", "RELATIVE_TOLERANCES", "SolverNote", "flush_solver_outcome_notes",
-    "interpret_optimal", "note_solver_outcome", "outcome_facts", "snapshot_highs_outcome",
+    "interpret_optimal", "note_solver_outcome", "outcome_facts", "snapshot_highs_outcome", "still_running",
 ]

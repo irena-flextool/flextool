@@ -19,11 +19,12 @@ import tkinter as tk
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, ttk
 
 from flextool import project_package as pp
 from flextool.gui.check_tree import CheckTreeController
 from flextool.gui.data_models import TIMESTAMP_FORMAT
+from flextool.gui.dialogs import message_box
 
 logger = logging.getLogger(__name__)
 
@@ -295,8 +296,10 @@ class ExportDialog(tk.Toplevel):
             return
         overwrite = False
         if zip_path.exists():
-            if self._replace_ok != target and not messagebox.askyesno(
-                    "Replace the package?", f"{zip_path} exists already. Replace it?", parent=self):
+            if self._replace_ok != target and message_box.ask(
+                    self, "Replace the existing package?",
+                    f"{zip_path} exists already. Replacing it deletes the old package.",
+                    buttons=(("Replace", "replace"), ("Cancel", None)), kind="danger") != "replace":
                 return
             overwrite = True
         include_external = self._external_var.get()

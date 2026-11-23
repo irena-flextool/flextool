@@ -23,6 +23,7 @@ from flextool.gui import project_utils
 from flextool.gui.assistant import entry as entry_module
 from flextool.gui.assistant.entry import AssistantEntry
 from flextool.gui.data_models import GlobalSettings
+from flextool.gui.dialogs import message_box
 from tests.assistant.conftest import fake_keyring, user_cache_in_tmp, user_config_in_tmp  # noqa: F401
 
 ORIGIN = ("ollama", "http://localhost:11434/v1", "m")
@@ -253,7 +254,7 @@ def test_a_rename_while_a_worker_runs_is_refused_and_the_runtime_file_kept(
     entry._finishing.append(stuck)
     shown: list[str] = []
     monkeypatch.setattr(main_window_module.simpledialog, "askstring", lambda *a, **k: "Beta")
-    monkeypatch.setattr(main_window_module.messagebox, "showinfo", lambda title, text, **k: shown.append(text))
+    monkeypatch.setattr(message_box, "tell", lambda _parent, _title, *texts, **k: shown.extend(texts))
     main._assistant = entry
     main_window_module.MainWindow._on_combo_rename(main, None)
     assert shown == ["The AI assistant is still finishing a tool call. Try again in a moment."]

@@ -505,7 +505,7 @@ def test_pre_run_filter_migrates_and_leaves_out_what_stays_not_current(
     }
 
     warnings: list[str] = []
-    monkeypatch.setattr(mw.messagebox, "showwarning", lambda _title, text, **_kw: warnings.append(text))
+    monkeypatch.setattr(mw.message_box, "tell", lambda _parent, _title, *text, **_kw: warnings.append("\n".join(text)))
     # The refresh migrates the older-version source only (as if the schema one were an external source declined).
     host._sqlite_sources_not_current = lambda s: mw.MainWindow._sqlite_sources_not_current(host, s)
     host._refresh_input_sources = lambda: check_and_upgrade_database(old)

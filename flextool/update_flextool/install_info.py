@@ -237,28 +237,33 @@ def _git_behind_upstream(root: Path, timeout: float) -> bool:
         return False
 
 
-def _pypi_latest_version(timeout: float) -> str | None:
-    """Latest FlexTool version string on PyPI, or ``None`` on any failure."""
+def latest_pypi_version(timeout: float = 5.0) -> str | None:
+    """Latest FlexTool version string on PyPI, or ``None`` on any failure (offline, blocked, bad answer).
+    Performs network I/O; call it off the UI thread."""
     request = Request(
         "https://pypi.org/pypi/flextool/json",
         headers={"User-Agent": "flextool-gui"},
     )
     try:
         with urlopen(request, timeout=timeout) as response:
-            return json.load(response)["info"]["version"]
+            version = json.load(response)["info"]["version"]
+        return version if isinstance(version, str) and version else None
     except Exception:
         logger.debug("PyPI update check failed", exc_info=True)
         return None
 
 
-def _pypi_has_newer(timeout: float) -> bool:
-    latest = _pypi_latest_version(timeout)
-    if latest is None:
-        return False
+def is_newer_than_installed(version: str) -> bool:
+    """Whether *version* is newer than the installed FlexTool; ``False`` when either cannot be compared."""
     try:
         from packaging.version import Version
 
-        return Version(latest) > Version(flextool_version())
+        return Version(version) > Version(flextool_version())
     except Exception:
-        logger.debug("Version comparison failed (latest=%s)", latest, exc_info=True)
+        logger.debug("Version comparison failed (version=%s)", version, exc_info=True)
         return False
+
+
+def _pypi_has_newer(timeout: float) -> bool:
+    latest = latest_pypi_version(timeout)
+    return latest is not None and is_newer_than_installed(latest)

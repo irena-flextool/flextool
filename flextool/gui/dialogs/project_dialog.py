@@ -3,11 +3,11 @@ from __future__ import annotations
 import logging
 import shutil
 import tkinter as tk
-import tkinter.font as tkfont
 from collections.abc import Callable
-from tkinter import ttk, messagebox
+from tkinter import ttk
 
 from flextool.gui.assistant import strings as assistant_strings
+from flextool.gui.dialogs import message_box
 from flextool.gui.project_utils import (
     create_project,
     get_projects_dir,
@@ -17,6 +17,8 @@ from flextool.gui.project_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+_DOCS_SHARING = "flextool_gui_interface.md#sharing-a-project"
 
 
 class ProjectDialog(tk.Toplevel):
@@ -186,11 +188,12 @@ class ProjectDialog(tk.Toplevel):
             return None
         return self._project_listbox.get(sel[0])
 
-    def _project_change_allowed(self, name: str, title: str) -> bool:
+    def _project_change_allowed(self, name: str) -> bool:
         """Ask the AI assistant whether *name* may be renamed or deleted now; a refusal is said."""
         if self._before_project_change is None or self._before_project_change(name):
             return True
-        messagebox.showinfo(title, assistant_strings.PROJECT_STILL_FINISHING, parent=self)
+        # The assistant's own text (design decision 9): only the title is FlexTool's.
+        message_box.tell(self, "Wait for the AI assistant", assistant_strings.PROJECT_STILL_FINISHING)
         return False
 
     # ── Event handlers ──────────────────────────────────────────────
@@ -198,28 +201,23 @@ class ProjectDialog(tk.Toplevel):
     def _on_create(self) -> None:
         name = self._new_name_var.get().strip()
         if not name:
-            messagebox.showwarning("Invalid name", "Please enter a project name.", parent=self)
+            message_box.tell(self, "Type a project name", "Type a name, then press Create.", kind="warning")
             return
         # Disallow names with path separators or other problematic chars
         if "/" in name or "\\" in name:
-            messagebox.showwarning(
-                "Invalid name",
-                "Project name must not contain '/' or '\\'.",
-                parent=self,
-            )
+            message_box.tell(self, "Remove / and \\ from the name", "A project name cannot contain '/' or '\\'.",
+                             kind="warning")
             return
         # Check for duplicate before creating
         if (get_projects_dir() / name).exists():
-            messagebox.showwarning(
-                "Already exists",
-                f"A project named '{name}' already exists.",
-                parent=self,
-            )
+            message_box.tell(self, "Choose another project name", f"A project named '{name}' already exists.",
+                             kind="warning")
             return
         try:
             create_project(name)
         except OSError as exc:
-            messagebox.showerror("Error", str(exc), parent=self)
+            logger.warning("Creating project %r failed", name, exc_info=True)
+            message_box.tell(self, "The project was not created", str(exc), kind="error")
             return
 
         self._populate_projects()
@@ -238,7 +236,7 @@ class ProjectDialog(tk.Toplevel):
     def _on_open(self) -> None:
         name = self._selected_project()
         if name is None:
-            messagebox.showinfo("No selection", "Please select a project first.", parent=self)
+            message_box.tell(self, "Select a project first", "Click a project in the list, then press Open the selected project.")
             return
         self.result = name
         self.grab_release()
@@ -273,8 +271,10 @@ class ProjectDialog(tk.Toplevel):
         if report is None:
             self._populate_projects()
             return
-        messagebox.showinfo(
-            "Project imported", "\n\n".join(project_package.describe_import(report)), parent=self,
+        review = bool(report.solver_config_held) or any(state == "different" for _n, state in report.solver_config)
+        message_box.tell(
+            self, "Project imported: review its solver options" if review else "Project imported",
+            *project_package.describe_import(report), docs=_DOCS_SHARING,
         )
         self.result = report.name
         self.grab_release()
@@ -289,7 +289,7 @@ class ProjectDialog(tk.Toplevel):
             return
         if not self._confirm_delete(name):
             return
-        if not self._project_change_allowed(name, "Delete project"):
+        if not self._project_change_allowed(name):
             return
 
         project_path = get_projects_dir() / name
@@ -301,11 +301,8 @@ class ProjectDialog(tk.Toplevel):
             forget_trusted_folder(resolved)
         except OSError as exc:
             logger.warning("Failed to delete project %r", name, exc_info=True)
-            messagebox.showerror(
-                "Delete failed",
-                f"Could not delete project '{name}':\n\n{exc}",
-                parent=self,
-            )
+            message_box.tell(self, "The project was not deleted", str(exc),
+                             "Close any program that uses its files and try again.", kind="error")
             return
         notify_assistant_project_deleted(resolved)
 
@@ -314,114 +311,16 @@ class ProjectDialog(tk.Toplevel):
         self._update_ok_state()
 
     def _confirm_delete(self, name: str) -> bool:
-        """Show a custom confirmation dialog; return True if user confirms.
-
-        The confirmation uses a capital-letters warning line and a
-        regular-text explanation that the deletion is recursive
-        (including any imported input databases).  Default focus is
-        Cancel so an accidental Enter doesn't trigger deletion.
-        """
-        dlg = tk.Toplevel(self)
-        dlg.title("Delete project")
-        dlg.transient(self)
-        dlg.grab_set()
-        dlg.resizable(False, False)
-
-        # Sizing — match the parent dialog's DPI-aware metric helper.
-        from flextool.gui.ui_metrics import get_metrics
-        _m = get_metrics(dlg)
-        cw, lh = _m.cw, _m.lh
-        wrap_px = cw * 60
-
-        confirmed = {"value": False}
-
-        body = ttk.Frame(dlg, padding=(cw * 2, lh))
-        body.pack(fill="both", expand=True)
-
-        warning_font = tkfont.Font(font="TkDefaultFont")
-        warning_font.configure(weight="bold", size=warning_font.cget("size") + 2)
-
-        ttk.Label(
-            body,
-            text="ALL PROJECT DATA WILL BE PERMANENTLY DELETED",
-            font=warning_font,
-            foreground="#b00020",
-            wraplength=wrap_px,
-            justify="left",
-        ).pack(anchor="w", pady=(0, lh))
-
-        ttk.Label(
-            body,
-            text=(
-                "This includes input databases (Excel, SQLite) that were "
-                "copied or imported into the project folder, as well as "
-                "all output results, plots, settings, and any other files "
-                "under the project directory."
-            ),
-            wraplength=wrap_px,
-            justify="left",
-        ).pack(anchor="w")
-
-        ttk.Label(
-            body,
-            text=assistant_strings.PROJECT_DELETE_NOTE,
-            wraplength=wrap_px,
-            justify="left",
-        ).pack(anchor="w", pady=(lh // 2, 0))
-
-        ttk.Label(
-            body,
-            text=f"Project: {name}",
-            wraplength=wrap_px,
-            justify="left",
-        ).pack(anchor="w", pady=(lh, 0))
-
-        # -- Buttons --
-        btn_row = ttk.Frame(dlg, padding=(cw * 2, 0, cw * 2, lh))
-        btn_row.pack(fill="x")
-
-        def _do_delete() -> None:
-            confirmed["value"] = True
-            dlg.grab_release()
-            dlg.destroy()
-
-        def _do_cancel() -> None:
-            confirmed["value"] = False
-            dlg.grab_release()
-            dlg.destroy()
-
-        # Try to use a danger style if the theme defines one; fall back
-        # silently to the default button style.
-        delete_btn = ttk.Button(btn_row, text="Delete", command=_do_delete)
-        try:
-            ttk.Style().configure("Danger.TButton", foreground="#b00020")
-            delete_btn.configure(style="Danger.TButton")
-        except tk.TclError:
-            pass
-        delete_btn.pack(side="left")
-
-        cancel_btn = ttk.Button(btn_row, text="Cancel", command=_do_cancel)
-        cancel_btn.pack(side="right")
-
-        dlg.protocol("WM_DELETE_WINDOW", _do_cancel)
-        dlg.bind("<Escape>", lambda _e: _do_cancel())
-        # Default focus = Cancel (defensive — Enter should not delete).
-        cancel_btn.focus_set()
-
-        # Centre on parent dialog.
-        dlg.update_idletasks()
-        px = self.winfo_rootx()
-        py = self.winfo_rooty()
-        pw = self.winfo_width()
-        ph = self.winfo_height()
-        w = dlg.winfo_width()
-        h = dlg.winfo_height()
-        x = px + (pw - w) // 2
-        y = py + (ph - h) // 2
-        dlg.geometry(f"+{x}+{y}")
-
-        self.wait_window(dlg)
-        return confirmed["value"]
+        """Ask before the project folder is deleted with everything in it; focus starts on Cancel."""
+        answer = message_box.ask(
+            self, "Delete this project?",
+            f"Project '{name}' is deleted with everything in its folder: the input sources copied into it, the "
+            "results, plots and settings. External input sources stay where they are.",
+            assistant_strings.PROJECT_DELETE_NOTE,
+            "This cannot be undone.",
+            buttons=(("Delete", "delete"), ("Cancel", None)), kind="danger",
+        )
+        return answer == "delete"
 
     # ── Inline rename ───────────────────────────────────────────────
 
@@ -466,27 +365,22 @@ class ProjectDialog(tk.Toplevel):
 
         if not new_name or new_name == old_name:
             return
-        if not self._project_change_allowed(old_name, "Rename project"):
+        if not self._project_change_allowed(old_name):
             return
 
         try:
             rename_project(old_name, new_name)
         except FileExistsError:
-            messagebox.showwarning(
-                "Already exists",
-                f"A project named '{new_name}' already exists.",
-                parent=self,
-            )
+            message_box.tell(self, "Choose another project name", f"A project named '{new_name}' already exists.",
+                             kind="warning")
             return
         except FileNotFoundError:
-            messagebox.showerror(
-                "Not found",
-                f"Project '{old_name}' no longer exists.",
-                parent=self,
-            )
+            message_box.tell(self, "This project no longer exists",
+                             f"'{old_name}' was moved or deleted outside FlexTool.", kind="error")
             return
         except OSError as exc:
-            messagebox.showerror("Error", str(exc), parent=self)
+            logger.warning("Renaming project %r failed", old_name, exc_info=True)
+            message_box.tell(self, "The project was not renamed", str(exc), kind="error")
             return
 
         if old_name == self._current_project:

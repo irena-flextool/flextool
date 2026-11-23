@@ -28,9 +28,12 @@ from __future__ import annotations
 import os
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, ttk
 
 from flextool import _local_solver_settings as local
+from flextool.gui.dialogs import message_box
+
+_DOCS_SOLVER = "flextool_gui_interface.md#solver-options-on-this-computer"
 
 _LABELS = {"gurobi": "Gurobi", "cplex": "CPLEX", "xpress": "Xpress", "copt": "COPT"}
 
@@ -285,11 +288,12 @@ class LocalSolverSettingsDialog(tk.Toplevel):
             self._workspace_shown = local.show_folder(self.workspace)
             if self.project is not None:
                 self._project_shown = local.show_folder(self.project)
-            messagebox.showerror("Solver settings on this computer",
-                                 f"{exc}\nNothing was saved. Read the files again, then press OK.", parent=self)
+            message_box.tell(self, "The solver settings were not saved", str(exc),
+                             "Nothing was saved. Look at the files again, then press OK.", kind="error",
+                             docs=_DOCS_SOLVER)
             return
         except local.LocalSolverSettingsError as exc:
-            messagebox.showerror("Solver settings on this computer", str(exc), parent=self)
+            message_box.tell(self, "The solver settings were not saved", str(exc), kind="error", docs=_DOCS_SOLVER)
             return
         self.saved = True
         self._close()
@@ -318,7 +322,7 @@ def open_local_solver_settings(
     try:
         return LocalSolverSettingsDialog(parent, workspace=workspace, project=project)
     except local.LocalSolverSettingsError as exc:
-        messagebox.showerror("Solver settings on this computer", str(exc), parent=parent)
+        message_box.tell(parent, "The solver settings could not be read", str(exc), kind="error", docs=_DOCS_SOLVER)
         return None
 
 

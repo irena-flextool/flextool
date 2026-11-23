@@ -5,9 +5,10 @@ from __future__ import annotations
 import logging
 import os
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk
 
 from flextool.gui._menus import popup_at_pointer
+from flextool.gui.dialogs import message_box
 from flextool.gui.execution_manager import ExecutionManager, JobStatus, JobType
 from flextool.gui.hover_tooltip import attach_tooltip
 from flextool.gui.log_view import SOLVER_BLOCK_STARTS, LogView
@@ -1256,11 +1257,11 @@ class ExecutionWindow(tk.Toplevel):
     def _on_close_attempt(self) -> None:
         """Handle the close button or window manager close request."""
         if self._mgr.has_pending_or_running():
-            messagebox.showwarning(
-                "Jobs still active",
-                "There are running or pending jobs.\n"
-                "Please use 'Kill all' or 'Wind down' first.",
-                parent=self,
+            message_box.tell(
+                self, "Stop the jobs first",
+                "Some jobs are still running or waiting to run. Wait for them to finish, or stop them with Kill all, "
+                "then close this window.",
+                kind="warning", docs="flextool_gui_interface.md#execution-jobs",
             )
             return
         self._save_sash()

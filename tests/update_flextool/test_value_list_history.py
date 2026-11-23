@@ -76,6 +76,8 @@ def test_an_unreadable_file_gives_no_finding(tmp_path: Path) -> None:
     bad.write_bytes(b"not a database")
     assert vlh.possible_value_list_overwrite_ro(bad) == []
     assert vlh.possible_value_list_overwrite_ro(tmp_path / "missing.sqlite") == []
+    with pytest.raises(sqlite3.Error):   # the GUI's check: a failed read is not "no finding"
+        vlh.possible_value_list_overwrite_ro(bad, strict=True)
 
 
 def _step_blocks() -> dict[int, str]:
@@ -141,69 +143,58 @@ def test_a_run_warns_once_at_its_start(tmp_path_factory) -> None:
     assert sum("[W-0490]" in line for line in got.lines()) == 1
 
 
-def test_gui_shows_the_text_once_per_opened_project(make, tmp_path: Path) -> None:
+def test_gui_lists_the_flagged_file_at_every_check(make, tmp_path: Path) -> None:
+    """The GUI's message list asks at every recompute: the flagged file stays flagged (W-0490 has no Dismiss)."""
     from flextool.gui.data_models import ProjectSettings
     from flextool.gui.input_sources import InputSourceManager
 
     project = tmp_path / "project"
-    make(CYPRUS, "cyprus.sqlite", project / "input_sources")
+    cyprus = make(CYPRUS, "cyprus.sqlite", project / "input_sources")
     make([("19", "2024-08-28"), ("22", "2024-08-28")], "fine.sqlite", project / "input_sources")
     mgr = InputSourceManager(project, ProjectSettings())
-    messages = mgr.plan_db_migrations()[3]
-    assert not [m for m in messages if "W-0490" in m], "not with the migration messages (their own box)"
-    flagged = mgr.take_check_findings()
-    assert [(name, f.step, f.date) for name, f in flagged] == [("cyprus.sqlite", 22, "2024-09-19")]
-    assert not mgr.take_check_findings(), "taken once"
-    mgr.plan_db_migrations()
-    assert not mgr.take_check_findings(), "a refresh does not repeat it"
-    again = InputSourceManager(project, ProjectSettings())
-    again.plan_db_migrations()
-    assert len(again.take_check_findings()) == 1, "opening it again does"
+    notes = mgr.plan_db_migrations()[3]
+    assert not [n for n in notes if "W-0490" in n.text], "not with the migration notes (its own message)"
+    for _ in range(2):
+        assert [(path, [(f.step, f.date) for f in found]) for path, found in mgr.value_list_findings()] == [
+            (cyprus, [(22, "2024-09-19")])]
 
 
-def test_gui_text_for_one_file() -> None:
-    text = vlh.gui_dialog_text([("cyprus.sqlite", Finding(22, ("invest_methods",), 21, 22, "2024-09-19"))])
-    assert text == (
-        "cyprus.sqlite may contain wrong investment settings.\n\n"
-        "When it was upgraded on 19.9.2024, a bug in a library FlexTool uses may have changed 'not_allowed' into "
-        "'cumulative_limits'. Units, connections or nodes that should not invest could then invest without "
-        "limit.\n\n"
-        "The documentation has a short checklist for finding and fixing this.")
+def test_gui_message_for_one_session() -> None:
+    title, paragraphs = vlh.gui_message([Finding(22, ("invest_methods",), 21, 22, "2024-09-19")])
+    assert title == "Please check this database"
+    assert paragraphs == (
+        "When this database was upgraded on 19.9.2024, a bug in a library that FlexTool uses may have changed "
+        "'not_allowed' into 'cumulative_limits'. Units, connections or nodes that should not invest could then "
+        "invest without limit.",
+        "FlexTool's repair tool writes a repaired copy and leaves this file as it is: the Copy repair command button "
+        "copies the command to paste into a terminal, and the documentation shows how to swap the copy in.",
+        "This message stays until a repaired file is in its place.")
+    assert not any("remove" in p for p in paragraphs), "never 'remove this database' (Delete deletes the file)"
 
 
-def test_gui_text_lists_every_flagged_file_once() -> None:
+def test_gui_message_names_each_upgrade_date_once() -> None:
     inv = ("invest_methods",)
-    text = vlh.gui_dialog_text([
-        ("a.sqlite", Finding(22, inv, 21, 22, "2024-09-19")),
-        ("b.sqlite", Finding(22, inv, 21, 30, "2025-01-05")),
-        ("b.sqlite", Finding(22, inv, 21, 30, "2025-01-05")),
-        ("c.sqlite", Finding(27, ("minimum_time_methods",), 26, 30, "2025-03-01")),
-    ])
-    paragraphs = text.split("\n\n")
-    assert paragraphs[0] == ("These databases may contain wrong investment settings:\n"
-                             "  a.sqlite (upgraded on 19.9.2024)\n  b.sqlite (upgraded on 5.1.2025)")
-    assert paragraphs[1].startswith("When they were upgraded, a bug in a library FlexTool uses may have changed")
-    assert paragraphs[2] == "c.sqlite may contain wrong settings in the value list 'minimum_time_methods'."
-    assert paragraphs[3].startswith("When it was upgraded on 1.3.2025, a bug")
-    assert paragraphs[-1] == "The documentation has a short checklist for finding and fixing this."
-    assert text.count("checklist") == 1
+    _, paragraphs = vlh.gui_message([Finding(22, inv, 21, 22, "2024-09-19"), Finding(22, inv, 21, 22, "2024-09-19"),
+                                     Finding(22, inv, 21, 30, "2025-02-03")])
+    assert paragraphs[0].startswith("When this database was upgraded on 19.9.2024 and 3.2.2025, a bug")
 
 
 def test_gui_planning_survives_an_unexpected_history_error(make, tmp_path: Path, monkeypatch) -> None:
-    """An unexpected error of the check (implausible data) is logged, and the migration planning goes on."""
+    """An unexpected error of the check (implausible data) is logged: the migration planning goes on, and the file
+    is listed as unreadable (findings ``None``: the generic W-0490 message), never as "no finding"."""
     from flextool.gui.data_models import ProjectSettings
     from flextool.gui.input_sources import InputSourceManager
 
     project = tmp_path / "project"
     make(CYPRUS, "cyprus.sqlite", project / "input_sources")
 
-    def boom(path):
+    def boom(path, **_kw):
         raise OverflowError("cannot convert float infinity to integer")
 
     monkeypatch.setattr(vlh, "possible_value_list_overwrite_ro", boom)
     mgr = InputSourceManager(project, ProjectSettings())
     assert len(mgr.plan_db_migrations()) == 4
-    assert mgr.take_check_findings() == []
+    assert mgr.value_list_findings() == [(project / "input_sources" / "cyprus.sqlite", None)]
 
 
 def test_guard_stops_an_import_that_rewrites_a_member(schema_db_url: str, tmp_path: Path, monkeypatch) -> None:

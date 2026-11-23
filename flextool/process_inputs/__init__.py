@@ -177,12 +177,9 @@ def read_specification_changelog_version(file_path: str | Path) -> int | None:
 
 
 def unsupported_specification_message(version: int | None) -> str:
-    """User-facing message for specification Excels older than support."""
-    shown = f"v{version}" if version is not None else "an unsupported version"
+    """User-facing message for specification Excels older than support (the GUI box and the CLI print it)."""
+    shown = f"the input layout of v{version}" if version is not None else "an older input layout"
     return (
-        f"The layout of the input file corresponds to {shown}. This is not "
-        f"supported by the current importer, which supports imports from "
-        f"v{MIN_SUPPORTED_SPECIFICATION_VERSION} onward. You can get it "
-        f"imported by using legacy FlexTool (checkout branch 'master') with "
-        f"Spine Toolbox. Alternatively, convert it manually."
+        f"This Excel file uses {shown}; FlexTool imports v{MIN_SUPPORTED_SPECIFICATION_VERSION} and newer. "
+        "Import it with legacy FlexTool (the 'master' branch, with Spine Toolbox), or convert it by hand."
     )

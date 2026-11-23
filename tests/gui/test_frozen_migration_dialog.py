@@ -1,4 +1,4 @@
-"""The frozen-database choice dialog (C-8): "Migrate a copy" / "Migrate in place" (with a second confirm) / "Cancel".
+"""The frozen-database choice dialog (C-8): "Upgrade a copy" / "Upgrade in place" (with a second confirm) / "Cancel".
 
 Run headless:  xvfb-run -a python -m pytest tests/gui/test_frozen_migration_dialog.py --run-gui
 """
@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from flextool.gui.dialogs.message_box import MessageBox
 from flextool.gui.dialogs.migration_consent_dialog import ask_frozen_migration_choice
 
 pytestmark = pytest.mark.gui
@@ -26,19 +27,21 @@ def root():
 
 
 def _ask(root: tk.Tk, presses: list[str], confirm_answers: list[bool]) -> tuple[str, list[str]]:
-    """Open the dialog, press the buttons named in *presses* in turn; returns the choice and the dialog text."""
+    """Open the dialog, press the buttons named in *presses* in turn (each on the box then open; declining the
+    second confirm asks again in a new box); returns the choice and the text of the first box."""
     texts: list[str] = []
+    seen: set[str] = set()
 
     def press() -> None:
-        dialogs = [w for w in root.winfo_children() if isinstance(w, tk.Toplevel)]
-        if not dialogs:
+        boxes = [w for w in root.winfo_children() if isinstance(w, MessageBox) and str(w) not in seen]
+        if not boxes or not boxes[-1].winfo_viewable():
             root.after(20, press)
             return
-        dlg = dialogs[-1]
+        box = boxes[-1]
+        seen.add(str(box))
         if not texts:
-            texts.extend(str(w.cget("text")) for w in dlg.winfo_children() if w.winfo_class() == "TLabel")
-        name = presses.pop(0)
-        dlg.nametowidget(f"{dlg.winfo_children()[-1]}.{name}").invoke()
+            texts.append(box.text)
+        box.body.nametowidget(f"buttons.{presses.pop(0)}").invoke()
         if presses:
             root.after(20, press)
 
@@ -54,12 +57,12 @@ def _ask(root: tk.Tk, presses: list[str], confirm_answers: list[bool]) -> tuple[
     (["copy"], [], "copy"),
     (["in_place"], [True], "in_place"),
     (["cancel"], [], "cancel"),
-    # Declining the second confirm keeps the dialog open; Cancel then closes it.
+    # Declining the second confirm asks again; Cancel then closes it.
     (["in_place", "cancel"], [False], "cancel"),
 ])
 def test_choice_buttons(root: tk.Tk, presses: list[str], answers: list[bool], expected: str) -> None:
     choice, texts = _ask(root, list(presses), list(answers))
     assert choice == expected
     text = " ".join(texts)
-    assert "ref.sqlite is frozen ('Reference 1.0', v78). This FlexTool needs v79." in text
+    assert "ref.sqlite is frozen ('Reference 1.0', version 78); this FlexTool needs version 79." in text
     assert "ref_v79.sqlite" in text and "new input source" in text

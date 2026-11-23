@@ -1307,19 +1307,6 @@ def _patch_agg_stoch_trunk(data: dict) -> dict:
                     values=[["solve", "stoch_2p_mid", "new_stepduration", 2.0]])
 
 
-def _patch_agg_roll_blocks(data: dict) -> dict:
-    """coal ramp, rolling dispatch (horizon 8 h, jump 4 h) over the 5weeks timeset aggregated to 2 h: only
-    the roll that starts at t0013 (adjacent to the t0009 block) carries the previous roll's flow."""
-    return _overlay(data, name="agg_roll_blocks", base=["init", "west", "coal", "fullYear", "dispatch_fullYear_roll"],
-                    values=_RAMP_COAL + [
-                        ["solve", "dispatch_fullYear_roll", "period_timeset", _pmap({"p2020": "5weeks"})],
-                        ["solve", "dispatch_fullYear_roll", "realized_periods",
-                         {"type": "array", "value_type": "str", "data": ["p2020"]}],
-                        ["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", 8.0],
-                        ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", 4.0],
-                        ["solve", "dispatch_fullYear_roll", "new_stepduration", 2.0]])
-
-
 def _agg_rp_values() -> list:
     """Representative-period timeset rpg on y2020: rep blocks t0001 and t0049 (24 h each, gap t0025-t0048),
     base periods t0001, t0025, t0049 blended from them."""
@@ -1513,20 +1500,6 @@ def _patch_rp_stoch_midhorizon(data: dict) -> dict:
 def _patch_rp_stoch_first_period(data: dict) -> dict:
     """Forecasts open at y2030 (the first period): rp_inter_period_fan_start ties lh2_B's chain starts."""
     return _rp_stoch(data, "rp_stoch_first_period", "y2030", "t0001")
-
-
-def _patch_rp_rolling_blended(data: dict) -> dict:
-    """lh2_three_region_rp_invest rolling (horizon 48 h, jump 36 h; no investment) with the three blended methods:
-    every blended node binds forward only (item 126); daily_group's coarse step 12 h aligns with the jump."""
-    data["parameter_values"] = [
-        v for v in data["parameter_values"]
-        if not (v[0] == "solve" and v[1] == _RP_SOLVE and v[2] in ("invest_periods", "realized_invest_periods"))]
-    return _overlay(data, name="rp_rolling_blended", base="lh2_three_region_rp_invest", values=[
-        ["solve", _RP_SOLVE, "solve_mode", "rolling_window"],
-        ["solve", _RP_SOLVE, "rolling_solve_horizon", 48.0],
-        ["solve", _RP_SOLVE, "rolling_solve_jump", 36.0],
-        ["group", "daily_group", "new_stepduration", 12.0]]
-        + [["node", n, "storage_binding_method", m] for n, m in _RP_METHODS_MIX.items()])
 
 
 def _patch_nested_rolling_storage_uc(data: dict) -> dict:
@@ -2131,7 +2104,6 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "agg_intraperiod": _patch_agg_intraperiod,
     "agg_two_timesets": _patch_agg_two_timesets,
     "agg_stoch_trunk": _patch_agg_stoch_trunk,
-    "agg_roll_blocks": _patch_agg_roll_blocks,
     "agg_rp": _patch_agg_rp,
     "coarse_explicit_unit": _patch_coarse_explicit_unit,
     "coarse_two_sink": _patch_coarse_two_sink,
@@ -2150,7 +2122,6 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "rolling_intraperiod_blocks": _patch_rolling_intraperiod_blocks,
     "rp_stoch_midhorizon": _patch_rp_stoch_midhorizon,
     "rp_stoch_first_period": _patch_rp_stoch_first_period,
-    "rp_rolling_blended": _patch_rp_rolling_blended,
     "nested_rolling_storage_uc": _patch_nested_rolling_storage_uc,
     "storage_sequence_start_end": _patch_storage_sequence_start_end,
     "nested_fix_quantity_reference": _patch_nested_fix_quantity_reference,
@@ -2352,7 +2323,6 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("agg_intraperiod", _T),
     ("agg_two_timesets", _T),
     ("agg_stoch_trunk", _F + "stoch_two_period_midhorizon_nreal0.json"),
-    ("agg_roll_blocks", _T),
     ("agg_rp", _T),
     ("coarse_explicit_unit", _F + "lh2_three_region.json"),
     ("coarse_two_sink", _F + "lh2_three_region.json"),
@@ -2392,7 +2362,6 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("stoch_rank3_profile_anchor", _F + "stochastics.json"),
     ("rp_stoch_midhorizon", _F + "lh2_three_region_rp_invest.json"),
     ("rp_stoch_first_period", _F + "lh2_three_region_rp_invest.json"),
-    ("rp_rolling_blended", _F + "lh2_three_region_rp_invest.json"),
 )
 
 FIXTURES: tuple[Fixture, ...] = (

@@ -904,6 +904,11 @@ network_graph.py                 Network-topology figure builder.
 check_tree.py                    CheckTreeController.
 hover_tooltip.py / tree_reorder.py / downsampling.py / cli_format.py / scenario_key.py / config_parser.py
 dialogs/                         Add / project / plot / file-picker dialogs.
+dialogs/_modal_base.py           ModalBase + ModalGrab: the shared modal base (deferred grab, shield).
+dialogs/message_box.py           The one FlexTool box: tell / ask / name_list (no native messagebox).
+dialogs/message_list_window.py   Non-modal message list window + MessageListController (indicator, auto-show).
+messages.py                      Tk-free message list core: specs, per-user store, MessageCenter.
+message_sources.py               The list's sources (W-0490, upgraded, unreadable, solver settings, update).
 ```
 
 ### `flextool/update_flextool/` — migration and updates

@@ -3482,24 +3482,17 @@ def _drive_cascade(
             """One sub-solve (a roll, or a whole solve), with its coded warnings gathered: each code prints one
             line for the sub-solve, before the solver runs (:func:`_print_solver_args`) or when it ends; the
             solve-scoped codes (``solve=``) print once per complete solve."""
-            # The rolls of an earlier complete solve have ended: their gathered solver-outcome note (W-0540: in
-            # how many rolls, the largest factor) prints now.  This solve and the solves it is nested in (their
-            # rolls go on after it) keep theirs.
-            self.flush_solver_outcome_notes(keep=self._open_solves(run_warnings.complete_solve(complete_solve_name)))
             with run_warnings.collecting():
-                return self._run_one(complete_solve_name)
-
-        def _open_solves(self, complete: str | None) -> set[str]:
-            """*complete* and every solve whose ``contains_solves`` holds it, directly or through others."""
-            contains = getattr(getattr(self.state, "solve", None), "contains_solves", None) or {}
-            open_solves = {complete} if complete else set()
-            grew = True
-            while grew:
-                parents = {parent for parent, children in contains.items()
-                           if open_solves.intersection(children or ())}
-                grew = not parents <= open_solves
-                open_solves |= parents
-            return open_solves
+                status = self._run_one(complete_solve_name)
+            # The gathered solver-outcome note (W-0540: in how many rolls, the largest factor) of each complete
+            # solve whose last sub-solve in the run was this one prints now, after its solver output.  Without the
+            # run's order (a caller outside ``native_run_model``) the cascade's final flush prints it.
+            last = getattr(self.state, "_last_sub_solve_index", None)
+            index = getattr(self.state, "_current_iter_index", None)
+            if last is not None and index is not None:
+                from flextool.engine.solve._solver_outcome import still_running
+                self.flush_solver_outcome_notes(keep=still_running(last, index + 1))
+            return status
 
         def flush_solver_outcome_notes(self, keep: Collection[str] = frozenset()) -> None:
             """Print the W-0540 notes gathered over the rolls of each complete solve but *keep*
@@ -5080,12 +5073,8 @@ def _drive_cascade(
             # results (W-0540..W-0542), once per complete solve.  Diagnostic
             # only: a failure in it must not fail a run that has solved.
             try:
-                # The roll's own name (``<solve>_roll_<k>``) for a roll: its W-0540 is gathered over the rolls.
-                _outcome_name = getattr(self.state, "current_scale_solve_name", None) or complete_solve_name
-                if run_warnings.complete_solve(_outcome_name) != complete_solve_name:
-                    _outcome_name = complete_solve_name
                 note_solver_outcome(
-                    sol, _acc, solve_name=_outcome_name, solver=_active_solver_cfg.name,
+                    sol, _acc, solve_name=complete_solve_name, solver=_active_solver_cfg.name,
                     noted=self.state.__dict__.setdefault("_solver_outcome_noted", set()),
                     pending=self.state.__dict__.setdefault("_solver_outcome_pending", {}),
                     sub_solve=getattr(self.state, "current_scale_solve_name", None),
@@ -5765,6 +5754,13 @@ def run_chain_from_db(
         warn_at_run_start(db_url)
     except Exception:  # noqa: BLE001 - a check of the history never stops a run
         logging.getLogger(__name__).debug("value list history check failed", exc_info=True)
+    # W-0491: list defaults an upgrade before 4.6.3 left empty, until the repair tool's record (own try: a W-0490
+    # error never hides it; TODO(v5.0.0): remove).
+    try:
+        from flextool.update_flextool.list_default_restore import note_at_run_start
+        note_at_run_start(db_url)
+    except Exception:  # noqa: BLE001 - a check of the defaults never stops a run
+        logging.getLogger(__name__).debug("list defaults check failed", exc_info=True)
     _reset_solver_args_echo()
 
     if work_folder is None:

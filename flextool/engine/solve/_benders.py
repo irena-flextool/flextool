@@ -736,6 +736,9 @@ class Coupling:
     import_cols: np.ndarray = field(
         default_factory=lambda: np.zeros(0, dtype=np.int64)
     )
+    # The region (and master) column family: ``v_flow``, or ``v_flow_back`` for the reverse direction of a
+    # one-variable connection (half-flows with ``one_var``, item 301), whose cols are its v_flow_back columns.
+    var: str = "v_flow"
 
 
 def _identify_coupling_cols(
@@ -754,15 +757,24 @@ def _identify_coupling_cols(
     with the master side ``None``/empty.  With the default empty set the
     behaviour is byte-identical to the historical pair-only path.
     """
+    region_idx = {s.region: i for i, s in enumerate(splits)}
+    out = _couplings_of(splits, warm, region_idx, master_hosted_nodes, "v_flow")
+    # The reverse direction of the one-variable connections: their v_flow_back columns, paired the same way.
+    return out + _couplings_of(splits, warm, region_idx, master_hosted_nodes, "v_flow_back")
+
+
+def _couplings_of(splits, warm, region_idx, master_hosted_nodes, var: str) -> list[Coupling]:
+    """The couplings of column family *var* (:func:`_identify_coupling_cols`): every half-flow for
+    ``v_flow``, the ``one_var`` half-flows for ``v_flow_back``."""
     by_e: dict[tuple, tuple[str, list[HalfFlow]]] = {}
     by_i: dict[tuple, tuple[str, list[HalfFlow]]] = {}
     for s in splits:
         for hf in s.half_flows:
+            if var == "v_flow_back" and not hf.one_var:
+                continue
             key = (hf.original_p, hf.original_source, hf.original_sink)
             (by_e if hf.side == "export" else by_i).setdefault(
                 key, (s.region, []))[1].append(hf)
-
-    region_idx = {s.region: i for i, s in enumerate(splits)}
 
     def _cols(vf, hf):
         return (vf.frame.filter(
@@ -778,7 +790,7 @@ def _identify_coupling_cols(
             # master-hosted sink (region↔master arc).  Anything else
             # unpaired keeps today's silent skip.
             if key[2] in master_hosted_nodes:
-                v_flow_e = warm[region_idx[er]]._p._vars["v_flow"]
+                v_flow_e = warm[region_idx[er]]._p._vars[var]
                 e_cols = _cols(v_flow_e, hfs_e[0])
                 if e_cols.size == 0:
                     raise RuntimeError(
@@ -787,12 +799,12 @@ def _identify_coupling_cols(
                     )
                 out.append(Coupling(
                     pipeline_key=key, export_region=er, import_region=None,
-                    export_cols=e_cols,
+                    export_cols=e_cols, var=var,
                 ))
             continue
         ir, hfs_i = by_i[key]
-        v_flow_e = warm[region_idx[er]]._p._vars["v_flow"]
-        v_flow_i = warm[region_idx[ir]]._p._vars["v_flow"]
+        v_flow_e = warm[region_idx[er]]._p._vars[var]
+        v_flow_i = warm[region_idx[ir]]._p._vars[var]
         ehf, ihf = hfs_e[0], hfs_i[0]
         e_cols, i_cols = _cols(v_flow_e, ehf), _cols(v_flow_i, ihf)
         if e_cols.size == 0 or i_cols.size == 0:
@@ -805,7 +817,7 @@ def _identify_coupling_cols(
                 f"export={e_cols.size} vs import={i_cols.size}.")
         out.append(Coupling(
             pipeline_key=key, export_region=er, import_region=ir,
-            export_cols=e_cols, import_cols=i_cols,
+            export_cols=e_cols, import_cols=i_cols, var=var,
         ))
     # Single-sided IMPORT half-flows: a master-hosted source feeding a
     # region node.  Every by_i key already paired above was handled in
@@ -815,7 +827,7 @@ def _identify_coupling_cols(
             continue
         if key[1] not in master_hosted_nodes:
             continue
-        v_flow_i = warm[region_idx[ir]]._p._vars["v_flow"]
+        v_flow_i = warm[region_idx[ir]]._p._vars[var]
         i_cols = _cols(v_flow_i, hfs_i[0])
         if i_cols.size == 0:
             raise RuntimeError(
@@ -824,7 +836,7 @@ def _identify_coupling_cols(
             )
         out.append(Coupling(
             pipeline_key=key, export_region=None, import_region=ir,
-            import_cols=i_cols,
+            import_cols=i_cols, var=var,
         ))
     return out
 
@@ -849,6 +861,12 @@ class _ArcMaster:
     # dim_tuples.  Export region pins the export half-flow; import the import.
     export_pin_cols: np.ndarray
     import_pin_cols: np.ndarray
+    # Column family of the region pins and of the master ``f_col_ids``: ``v_flow``, or ``v_flow_back`` for the
+    # reverse direction of a one-variable connection.  Such a back arc's ``key`` is its direction of travel
+    # ``(p, sink, source)`` (a one-variable connection has no arc of its own that way; it is the key a ``regular``
+    # connection's reverse arc has), while ``dim_tuples`` keep the original ``(p, source, sink, d, t)``: the
+    # master's v_flow_back index.
+    var: str = "v_flow"
 
 
 @dataclass
@@ -1036,7 +1054,7 @@ class _BendersMaster:
         # region pin cell map 1:1 (Phase-3 §1.4).
         for a in self.arcs:
             a.f_col_ids = np.array(
-                [int(self._wp.col_id_of_var("v_flow", dt))
+                [int(self._wp.col_id_of_var(a.var, dt))
                  for dt in a.dim_tuples],
                 dtype=np.int64,
             )
@@ -1125,6 +1143,11 @@ class _BendersMaster:
 
     def _build(self, data: FlexData) -> None:
         arcs = self.arcs
+        back = sorted({a.conn for a in arcs if a.var != "v_flow"})
+        if back:
+            raise FlexToolConfigError(
+                "Benders: the hand-built master (master='hand') has no reverse flow of a one-variable "
+                f"connection between regions: {', '.join(back)}.  Use the default master (master='flextool').")
         conns = sorted({a.conn for a in arcs})
 
         # --- invest annuity coefficient, read from the SAME source the
@@ -1790,6 +1813,7 @@ class _Region:
 def _resolve_entity_owner(
     region_membership: dict[str, dict[str, set[str]]],
     regions: list[str],
+    by_nodes: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Build an ``entity -> owning-region`` map from region membership.
 
@@ -1810,11 +1834,15 @@ def _resolve_entity_owner(
     ``sorted(regions)`` so the tie-break is stable regardless of caller list
     order.
 
+    *by_nodes* (:func:`_region_filter.process_region_by_nodes`) gives a
+    process that NO region lists the region of its nodes: explicit
+    membership always wins, only unlisted processes take it.
+
     Returns
     -------
     dict[str, str]
         ``{entity_name: region_name}`` for every node/process appearing in
-        any region's membership.
+        any region's membership (or in *by_nodes*).
     """
     owner: dict[str, str] = {}
     claims: dict[str, list[str]] = {}
@@ -1836,6 +1864,8 @@ def _resolve_entity_owner(
             "is given to the first region in sorted order.  Shared invest-eligible entities are an untested "
             "edge case.", len(shared), "y is" if len(shared) == 1 else "ies are", first, claims[first],
         )
+    for entity, region in (by_nodes or {}).items():
+        owner.setdefault(entity, region)
     return owner
 
 
@@ -1941,6 +1971,7 @@ def _assemble_benders_invest_vars(
     region_col_values: list[np.ndarray] | None,
     master_invest_frames: dict[str, pl.DataFrame] | None,
     trade_conns: set[str],
+    process_region_by_nodes: dict[str, str] | None = None,
 ) -> dict[str, pl.DataFrame]:
     """Assemble the whole-system TIER-1 invest handoff: the UNION of each
     region's owner-selected in-region invest/divest frames and the master's
@@ -1961,6 +1992,11 @@ def _assemble_benders_invest_vars(
     them, F3), so their union is disjoint by construction too; the
     defensive ``unique`` is a belt-and-braces guard only.
 
+    A unit or connection that no region group lists (the documented setup
+    lists nodes only) is owned by the region of its nodes
+    (*process_region_by_nodes*); the split keeps it in every region as a
+    shared process, and only that region's copy has balance rows to serve.
+
     Returns the same-shaped dict the downstream ``SnapshotSolution`` /
     ``build_handoff_from_solution`` expects (each frame's columns match
     ``Solution.value(name)`` exactly: the Var's dims, then ``"value"``).
@@ -1969,7 +2005,7 @@ def _assemble_benders_invest_vars(
     # trade connections EXCLUDED (they are the master's, see docstring).
     out: dict[str, pl.DataFrame] = {}
     if region_col_values is not None:
-        owner_by_entity = _resolve_entity_owner(region_membership, regions)
+        owner_by_entity = _resolve_entity_owner(region_membership, regions, process_region_by_nodes)
 
         def _owner_of_entity(region_idx: int, entity: str) -> bool:
             if entity in trade_conns:
@@ -2027,10 +2063,10 @@ def _build_arcs(
         # (import region's for a master→region single-sided arc — the only
         # region side that exists there).
         if cpl.export_region is not None:
-            vf = warm[region_idx[cpl.export_region]]._p._vars["v_flow"]
+            vf = warm[region_idx[cpl.export_region]]._p._vars[cpl.var]
             side_cols = cpl.export_cols
         else:
-            vf = warm[region_idx[cpl.import_region]]._p._vars["v_flow"]
+            vf = warm[region_idx[cpl.import_region]]._p._vars[cpl.var]
             side_cols = cpl.import_cols
         hf_rows = vf.frame.filter(
             pl.col("col_id").is_in(side_cols)
@@ -2042,7 +2078,8 @@ def _build_arcs(
         ]
         arcs.append(
             _ArcMaster(
-                key=cpl.pipeline_key,
+                # A back arc (v_flow_back) is keyed by its direction of travel, sink -> source.
+                key=cpl.pipeline_key if cpl.var == "v_flow" else (p, k, s),
                 conn=p,
                 export_region=cpl.export_region,
                 import_region=cpl.import_region,
@@ -2050,6 +2087,7 @@ def _build_arcs(
                 f_col_ids=np.zeros(len(dim_tuples), dtype=np.int64),  # filled by master
                 export_pin_cols=cpl.export_cols.astype(np.int64),
                 import_pin_cols=cpl.import_cols.astype(np.int64),
+                var=cpl.var,
             )
         )
     return arcs
@@ -2057,7 +2095,10 @@ def _build_arcs(
 
 def _reverse_cols(split, warm: WarmProblem) -> np.ndarray:
     """All half-flow v_flow columns in ``split`` whose virtual arc is a
-    REVERSE cross-region direction (so we pin them to 0)."""
+    REVERSE cross-region direction (so we pin them to 0).
+
+    Only ``v_flow`` columns: the ``v_flow_back`` columns of a one-variable connection's half-flows are pinned
+    through their own couplings (:func:`_couplings_of`), never to 0 here."""
     vf = warm._p._vars["v_flow"]
     # A reverse half-flow is one whose (original_source, original_sink) is the
     # reverse of a forward coupling; but simpler: pin EVERY half-flow that is
@@ -2286,6 +2327,13 @@ def _maybe_run_pin_diagnostic(
     point_path = os.environ.get(_BENDERS_PIN_DIAGNOSTIC_ENV)
     if not point_path:
         return None
+    back = sorted({a.conn for a in arcs if a.var != "v_flow"})
+    if back:
+        # The point file has one (p, source, sink, d, t) flow per arc: it cannot hold a one-variable
+        # connection's reverse flow (v_flow_back) apart from its forward flow.
+        raise FlexToolConfigError(
+            f"Benders pin diagnostic ({_BENDERS_PIN_DIAGNOSTIC_ENV}): one-variable connection(s) between regions "
+            f"are not supported: {', '.join(back)}.  Unset {_BENDERS_PIN_DIAGNOSTIC_ENV}.")
 
     blowup_mult = float(os.environ.get(_BENDERS_PIN_BLOWUP_MULT_ENV, "100"))
     mono_env = os.environ.get(_BENDERS_PIN_MONOLITH_OBJ_ENV)
@@ -2607,8 +2655,8 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     # region pin col order).
     pin_dim_cache: dict[int, list[tuple]] = {}
 
-    def _region_dim_tuples(w: WarmProblem, col_ids: np.ndarray) -> list[tuple]:
-        vf = w._p._vars["v_flow"]
+    def _region_dim_tuples(w: WarmProblem, col_ids: np.ndarray, var: str = "v_flow") -> list[tuple]:
+        vf = w._p._vars[var]
         fr = vf.frame.filter(pl.col("col_id").is_in(col_ids))
         # Order by the given col_ids.
         order = {int(c): i for i, c in enumerate(col_ids)}
@@ -2640,9 +2688,9 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             if rm.plan is not None:
                 vals = vals * rm.plan.col_factors[region_cols]
             dt = pin_dim_cache.setdefault(
-                id(region_cols), _region_dim_tuples(w, region_cols)
+                id(region_cols), _region_dim_tuples(w, region_cols, a.var)
             )
-            w.fix_cols("v_flow", dt, vals)
+            w.fix_cols(a.var, dt, vals)
         if rm.reverse_cols.size:
             dt_rev = pin_dim_cache.setdefault(
                 id(rm.reverse_cols), _region_dim_tuples(w, rm.reverse_cols)
@@ -3091,6 +3139,8 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         region_col_values=payload.get("region_col_values"),
         master_invest_frames=payload.get("master_invest_frames"),
         trade_conns={a.conn for a in arcs},
+        process_region_by_nodes=_region_filter.process_region_by_nodes(
+            data.process_source_sink, {r: m["nodes"] for r, m in region_membership.items()}),
     )
 
     return BendersResult(
@@ -3113,8 +3163,9 @@ def _flow_frames(arcs: list[_ArcMaster], f_bar: dict[int, float]) -> dict[tuple,
     out: dict[tuple, pl.DataFrame] = {}
     for a in arcs:
         rows = []
+        _, s, k = a.key  # the direction of travel (a back arc's dim_tuples keep the original arc)
         for dt, cid in zip(a.dim_tuples, a.f_col_ids):
-            p, s, k, d, t = dt
+            p, _s, _k, d, t = dt
             rows.append(
                 {"p": p, "source": s, "sink": k, "d": d, "t": t,
                  "value": f_bar[int(cid)]}

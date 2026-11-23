@@ -5,19 +5,37 @@ import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from flextool.gui.data_models import InputSourceInfo, ProjectSettings, ScenarioInfo
 from flextool.gui.settings_io import save_project_settings
 from flextool.sqlite_url import sqlite_url_string
 
 if TYPE_CHECKING:
+    from flextool.update_flextool.list_default_restore import LostDefaults
     from flextool.update_flextool.value_list_history import Finding
 
 logger = logging.getLogger(__name__)
 
 # File extensions recognised as input sources
 SUPPORTED_EXTENSIONS = {".xlsx", ".ods", ".sqlite"}
+
+
+@dataclass(frozen=True)
+class PlanningNote:
+    """A file :meth:`InputSourceManager.plan_db_migrations` could not plan for (design
+    ``gui_message_list_design.md`` §3.1 "Planning notes").
+
+    *kind* ``"unreadable"``: an external file whose data version cannot be read (skipped); ``"frozen_unreadable"``:
+    a file whose frozen marker cannot be read (not migrated).  The message list shows each as a
+    ``database_unreadable`` message while the latest plan has it.  *text* is the technical detail (log line).
+    """
+
+    kind: str
+    name: str
+    path: Path
+    text: str
 
 
 @dataclass(frozen=True)
@@ -75,10 +93,11 @@ class InputSourceManager:
         # Frozen sources the user chose not to migrate this session: not asked
         # again, shown as "frozen, older version" and not runnable.
         self._frozen_declined: set[Path] = set()
-        # The sources whose W-0490 text was shown since the project was opened (TODO(v5.0.0): remove).
-        self._value_list_checked: set[Path] = set()
-        # Their W-0490 findings, shown in their own box, not with the migration messages (take_check_findings).
-        self._check_findings: list[tuple[str, Finding]] = []
+        # W-0490 findings and W-0491 results by (check, path), kept while the file's (size, mtime_ns) is unchanged
+        # (value_list_findings, list_defaults_findings; TODO(v5.0.0): remove with W-0490 / W-0491).
+        self._check_cache: dict[tuple[str, Path], tuple[tuple[int, int], Any]] = {}
+        # The notes of the latest plan_db_migrations (replaced at each plan; the message list reads them).
+        self.planning_notes: list[PlanningNote] = []
         # SHA-256 of frozen files by (path, size, mtime), for the migrated-copy check.
         self._sha_cache: dict[tuple[Path, int, int], str] = {}
 
@@ -576,11 +595,59 @@ class InputSourceManager:
                 )
         return result
 
-    def take_check_findings(self) -> list[tuple[str, Finding]]:
-        """The W-0490 ``(file name, finding)`` of the sources :meth:`plan_db_migrations` checked since the last
-        call (then cleared).  TODO(v5.0.0): remove with W-0490."""
-        out, self._check_findings = self._check_findings, []
+    def _cached_checks(self, kind: str, check: Callable[[Path], Any], *,
+                       unreadable: bool = False) -> list[tuple[Path, Any]]:
+        """``(path, check(path))`` of every registered ``.sqlite`` source whose result is truthy, in source order;
+        each result is cached by ``(size, mtime_ns)`` (an unchanged file is not read again, a changed or swapped
+        one is).  A file that cannot be stat'ed has no entry.  A check that fails (any exception) is never cached:
+        the file is read again at the next refresh, and meanwhile its last truthy result stays (a failed read never
+        hides a message that was showing); without one, *unreadable* gives ``(path, None)``, else no entry."""
+        out: list[tuple[Path, Any]] = []
+        for path in self._registered_sqlite_paths():
+            try:  # a check never stops a refresh
+                stat = path.stat()
+            except OSError as exc:
+                logger.debug("%s of %s not checked: %s", kind, path, exc)
+                continue
+            stamp = (stat.st_size, stat.st_mtime_ns)
+            cached = self._check_cache.get((kind, path))
+            if cached is None or cached[0] != stamp:
+                try:
+                    result = check(path)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("%s of %s not checked: %s", kind, path, exc)
+                    if cached is not None and cached[1]:
+                        out.append((path, cached[1]))
+                    elif unreadable:
+                        out.append((path, None))
+                    continue
+                cached = (stamp, result)
+                self._check_cache[(kind, path)] = cached
+            if cached[1]:
+                out.append((path, cached[1]))
         return out
+
+    def value_list_findings(self) -> list[tuple[Path, list[Finding] | None]]:
+        """W-0490: ``(path, findings)`` of every registered ``.sqlite`` source (internal and external) that
+        :func:`~flextool.update_flextool.value_list_history.possible_value_list_overwrite_ro` flags, in source
+        order.  That check is already filtered by the repair record, so a repaired file has no entry.  Cached as
+        :meth:`_cached_checks`; findings ``None``: the history could not be read (only a repair record may end
+        W-0490, so an unreadable file is not "no finding").  TODO(v5.0.0): remove with W-0490."""
+        from flextool.update_flextool import value_list_history
+
+        return self._cached_checks(
+            "value list history",
+            lambda p: list(value_list_history.possible_value_list_overwrite_ro(p, strict=True)), unreadable=True)
+
+    def list_defaults_findings(self) -> list[tuple[Path, LostDefaults]]:
+        """W-0491: ``(path, lost)`` of every registered ``.sqlite`` source for which
+        :func:`~flextool.update_flextool.list_default_restore.list_defaults_lost_ro` gives a result (empty shipped
+        defaults and no part B record of that set), in source order; cached as :meth:`_cached_checks`.
+        TODO(v5.0.0): remove with W-0491."""
+        from flextool.update_flextool import list_default_restore
+
+        return self._cached_checks("list defaults",
+                                   lambda p: list_default_restore.list_defaults_lost_ro(p, strict=True))
 
     def plan_db_migrations(
         self,
@@ -588,19 +655,21 @@ class InputSourceManager:
         list[tuple[str, Path]],
         list[tuple[str, Path, int, int]],
         list[FrozenMigration],
-        list[str],
+        list[PlanningNote],
     ]:
         """Probe sqlite input sources for needed FlexTool DB migrations.
 
         Returns ``(internal_to_migrate, external_to_migrate,
-        frozen_to_migrate, planning_messages)``.  Internal entries are
+        frozen_to_migrate, planning_notes)``.  Internal entries are
         ``(source_name, abs_path)``; external entries include current and
         target version numbers for the consent dialog.  A frozen source
         (internal or external) older than this FlexTool is never in the
         first two lists: it is in *frozen_to_migrate*, unless the user
         declined it this session or a registered source is already its
         migrated copy.  Every probe reads the file with sqlite3 read-only,
-        so planning never changes a file.
+        so planning never changes a file.  The notes (files that could not
+        be planned, :class:`PlanningNote`) are also kept in
+        :attr:`planning_notes` until the next plan.
         """
         from flextool.gui.db_version_check import (
             _read_flextool_version,
@@ -612,7 +681,7 @@ class InputSourceManager:
         internal_to_migrate: list[tuple[str, Path]] = []
         external_to_migrate: list[tuple[str, Path, int, int]] = []
         frozen_to_migrate: list[FrozenMigration] = []
-        planning_messages: list[str] = []
+        planning_notes: list[PlanningNote] = []
 
         target_version = get_target_flextool_version()
 
@@ -630,20 +699,11 @@ class InputSourceManager:
                 continue
             candidates.append((ext_name, abs_path, True))
 
-        from flextool.update_flextool import value_list_history
-
         for name, path, external in candidates:
-            if path.resolve() not in self._value_list_checked:
-                self._value_list_checked.add(path.resolve())
-                try:  # a check of the history never stops the migration planning
-                    self._check_findings.extend(
-                        (path.name, f) for f in value_list_history.possible_value_list_overwrite_ro(path))
-                except Exception as exc:  # noqa: BLE001
-                    logger.debug("value list history of %s not checked: %s", path, exc)
             try:
                 frozen = self._frozen_needing_migration(path, target_version)
             except FrozenCheckError as exc:
-                planning_messages.append(f"{name}: {exc}")
+                planning_notes.append(PlanningNote("frozen_unreadable", name, path, exc.reason))
                 continue
             if frozen is not None:
                 info, current, _schema_outdated = frozen
@@ -662,31 +722,27 @@ class InputSourceManager:
                 if needs is True:
                     internal_to_migrate.append((name, path))
                 elif needs is None:
-                    planning_messages.append(
-                        f"{name}: could not read FlexTool version; "
-                        f"migration will attempt to surface the error."
-                    )
+                    # Migrated all the same: its migration result reports the error (no note).
+                    logger.info("%s: could not read its FlexTool version; the migration will surface the error.",
+                                name)
                     internal_to_migrate.append((name, path))
                 continue
             if needs is True:
                 current_version = _read_flextool_version(sqlite_url_string(path))
                 if current_version is None:
-                    planning_messages.append(
-                        f"{name}: external file's FlexTool version "
-                        f"became unreadable between checks; skipped."
-                    )
+                    planning_notes.append(PlanningNote(
+                        "unreadable", name, path, "its FlexTool version became unreadable between checks"))
                     continue
                 external_to_migrate.append(
                     (name, path, current_version, target_version)
                 )
             elif needs is None:
-                planning_messages.append(
-                    f"{name}: could not read external file's FlexTool "
-                    f"version; skipped (open it in a tool that can read the "
-                    f"file to investigate)."
-                )
+                planning_notes.append(PlanningNote("unreadable", name, path, "its FlexTool version cannot be read"))
 
-        return internal_to_migrate, external_to_migrate, frozen_to_migrate, planning_messages
+        for note in planning_notes:
+            logger.info("%s: not migrated: %s", note.name, note.text)
+        self.planning_notes = list(planning_notes)
+        return internal_to_migrate, external_to_migrate, frozen_to_migrate, planning_notes
 
     # ── Frozen sources ────────────────────────────────────────────────
 

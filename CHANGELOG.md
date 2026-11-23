@@ -1,3 +1,95 @@
+## Release 4.6.3 (23.11.2026) — fixes: list-valued defaults kept when migrating FlexTool 3.x databases, Benders between regions, FlexTool 2.0 conversion in the GUI; repair tool for W-0490 databases; GUI message list
+
+Patch release: no new data version (input databases stay at 82). Requires `polar-high>=3.16.1`. Results change
+only for Benders solves with a `no_losses_no_variable_cost` connection between regions, and for storage nodes of a
+database last saved by FlexTool 3.x that relied on the old `storage_start_end_method` default `fix_start`. Some
+Benders models with units or DC lines between regions are now refused with an error.
+
+### Behaviour changes — read before upgrading
+
+- **Storage start of a database last saved by FlexTool 3.x.** Because the migration now sees its list-valued
+  defaults (see Fixes), a storage node that relied on the old `storage_start_end_method` default `fix_start` with
+  its own start value keeps `fix_start`, as in an unaffected database (FlexTool 4.6.2 left its start free); the
+  migration notice (W-0601) names it.
+- **Benders: a `no_losses_no_variable_cost` connection between two regions (or between a region and the master)
+  now models its reverse direction.** Before, each region subproblem got a free, unlimited source at one end of
+  the connection: the investments were wrong and the final solve paid unserved energy for it. Results of such
+  models change.
+- **Benders: a DC power-flow line (`dc_power_flow_with_angles`) between regions is refused** with an error saying
+  how to fix the model. Before, it ran without its angle coupling.
+- **Benders: a unit that is not listed in a region group and has nodes in two regions is refused** with an error
+  saying how to fix the model, when it has several inputs or outputs, or one input and one output with a
+  piecewise efficiency of two or more segments. Before, each region subproblem kept the unit with only its own
+  side balanced, a free source in one region, so the investments came out wrong (or, with an investment in the
+  unit, the solve stopped with an internal error). A unit with one input and one output, no online variables, no
+  reserves and a single efficiency is cut between the regions like a connection, as before; with online
+  variables or reserves it is refused, as before.
+
+### New features
+
+- **`flextool-repair-value-list` repairs a database that W-0490 names, and restores list-valued defaults that an
+  upgrade before 4.6.3 left empty.** It never changes the database: it writes a repaired copy
+  (`<name>_repaired.sqlite`) with a report. It puts the lost `not_allowed` member back into `invest_methods` and
+  asks about each class default and value that may have been changed into `cumulative_limits` (the shipped
+  default is recommended for class defaults; values saved before the upgrade are marked when they are certain).
+  It offers the shipped default for each empty list-valued default, and for storage nodes whose start an
+  unaffected database keeps fixed it asks, with no recommended answer, whether to fix the start. Answers can be
+  given at the prompt or in a CSV file (`--dry-run --write-answers`, then `--answers`); an older copy of the
+  database can serve as evidence (`--archive`). When every item has an answer, the copy records the repair, and
+  W-0490 and the GUI's "Please check this database" message end for it. For a database the tool cannot read even
+  after the W-0490 checklist, `--checked-by-hand` records the repair in the copy once you confirm that you have
+  checked every item by hand (no value is changed). See "Repairing a value list (W-0490)" in the terminal workflow
+  documentation.
+- **New note W-0491 for a database whose list-valued defaults an upgrade before 4.6.3 left empty.** Each run names
+  the empty defaults until the database holds the repair tool's record of restoring them. Only
+  `storage_start_end_method` can change results.
+- **The FlexTool GUI collects its notices in a message list.** A **Messages** button at the top right opens it
+  and shows how many there are. When the project opens or you press Refresh, the list opens by itself if a new
+  message is waiting. **Close for now** brings the messages back the next time the project is opened; **Dismiss**
+  removes a message for good. A message that only reports something opens the list by itself at most twice. The
+  list shows:
+  - "Please check this database" for each database that W-0490 names (this replaces the 4.6.2 box). It opens the
+    list at every project open, has no Dismiss, and ends only when a repaired copy is in its place. Its **Copy
+    repair command** button copies the `flextool-repair-value-list` command for that database, to paste into a
+    terminal. A database whose upgrade history cannot be read gets it too, with a general text, until a read
+    succeeds (unless the database already has the "cannot read" message below);
+  - "Shipped defaults lost in an old upgrade" for each database that W-0491 names. It has no Dismiss and the same
+    button, opens the list by itself at most twice, and ends only when the database holds the repair tool's
+    record;
+  - one "This database was upgraded" message for each database FlexTool upgraded (this replaces the "Database
+    upgrades" box), with the data versions before and after;
+  - "FlexTool cannot read this database file" while an external database's version or a database's frozen marker
+    cannot be read;
+  - "This project's solver settings were updated", the notice that was a box until now;
+  - "A newer FlexTool is available", for a FlexTool installed from PyPI with the start-up update check on.
+
+  A red row in the input-source list whose database has a message says so in its tooltip; double-clicking it (or
+  pressing Enter on it) opens the list at that message. Dismissals are kept in `gui_messages.json` in FlexTool's
+  user settings folder, never in a database. A failed upgrade, and an external database that could not be copied into the project, still get a box.
+- **Every box of the FlexTool GUI has one style.** The title says what happened or what to do, the buttons are
+  named by their action ("Delete", "Upgrade a copy") instead of Yes / No, a question that deletes or changes files
+  starts on Cancel, an **Open documentation** button opens the section that explains the subject (where there is
+  one), and Ctrl+C copies the text.
+
+### Fixes
+
+- **Migrating a database last saved by FlexTool 3.x (data version 22–25, August 2024 onwards) no longer empties
+  its list-valued defaults (such as `conversion_method`, `invest_method`, `solve_mode`).** An older Spine library
+  had stored them as text, so the database editor showed them empty and the migration then cleared them. A
+  database already migrated keeps the empty defaults; `flextool-repair-value-list` restores them.
+- **A Benders solve with an investable unit or connection that is not listed in its region group (the documented
+  setup lists nodes only) no longer stops after the loop with an internal error ("no Benders value for
+  v_invest_p").** Its investment is now taken from the region of its nodes.
+- **The GUI's Add → Convert from FlexTool 2.0 input file works again.** Since 4.4.0 the conversion job failed at its
+  last step, after the import had succeeded, and deleted the converted database. Now the database is moved into
+  `input_sources` and the new input source is ticked.
+- **Cancelling a conversion between Excel and database in the GUI no longer replaces or renames an existing
+  file.** The "file already exists" question came before "Convert?", so a Replace or Keep answer there had
+  already changed the existing file when the conversion was then cancelled. Now "Convert?" is asked first.
+- **The solver note W-0540 of a rolling solve whose rolls alternate with its realization solve, or that is nested
+  in another rolling solve, counts all its rolls and gives the largest factor** (it named the first roll only).
+  The note now follows the last roll's solver output.
+
 ## Release 4.6.2 (22.11.2026) — fixes: one-variable connections ignore variable cost and losses (efficiency only converts between units); warning for databases possibly hit by the spinedb_api value-list bug, with a checklist
 
 Patch release: no new data version (input databases stay at 82). Requires `polar-high>=3.16.1`. Results change

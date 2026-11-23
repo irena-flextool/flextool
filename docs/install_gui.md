@@ -176,7 +176,7 @@ The dialog has an **Install Spine Toolbox** checkbox. Spine Toolbox is a large, 
 
 ### Update notifications
 
-By default FlexTool makes one lightweight check at startup — against PyPI, or your git remote for a git checkout — for a newer version. When one is available the **Update FlexTool…** button is highlighted. The check fails silently if you are offline or the network is restricted.
+By default FlexTool makes one lightweight check at startup — against PyPI, or your git remote for a git checkout — for a newer version. When one is available the **Update FlexTool…** button is highlighted. For a FlexTool installed from PyPI, the [message list](flextool_gui_interface.md#messages) also shows "A newer FlexTool is available" until you update or dismiss it. The check fails silently if you are offline or the network is restricted.
 
 To disable it, untick **Check for updates on startup** in the Update FlexTool dialog (the choice is remembered), or set the environment variable `FLEXTOOL_NO_UPDATE_CHECK=1` to suppress the check entirely.
 

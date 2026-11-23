@@ -4,11 +4,12 @@ import logging
 import tkinter as tk
 from dataclasses import replace
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import ttk
 
 from flextool.gui.check_tree import CheckTreeController
 from flextool.gui.config_parser import parse_plot_configs
 from flextool.gui.dialogs.file_picker import FilePickerDialog
+from flextool.gui.dialogs import message_box
 from flextool.gui.data_models import PlotSettings, ProjectSettings
 from flextool.gui.settings_io import save_project_settings
 
@@ -272,11 +273,8 @@ class _PlotSection:
 
         new_path = Path(filepath) if not isinstance(filepath, Path) else filepath
         if not new_path.is_file():
-            messagebox.showerror(
-                "Invalid file",
-                f"Cannot read:\n{new_path}",
-                parent=self.frame,
-            )
+            message_box.tell(self.frame, "Choose a readable plot settings file",
+                             f"FlexTool cannot read {new_path}: it is not a file.", kind="error")
             return
 
         self._config_path = new_path
@@ -402,11 +400,8 @@ class PlotDialog(tk.Toplevel):
         edited file is used on the next plot generation.
         """
         if self._project_path is None:
-            messagebox.showinfo(
-                "No project",
-                "No project is loaded.",
-                parent=self,
-            )
+            message_box.tell(self, "Open a project first",
+                             "Choose a project in the Project list at the top, or create one with Projects….")
             return
 
         from flextool.gui.dialogs.plot_settings_picker import PlotSettingsPicker
@@ -436,11 +431,7 @@ class PlotDialog(tk.Toplevel):
             save_project_settings(self._project_path, self._settings)
         except OSError as exc:
             logger.error("Failed to save plot settings: %s", exc)
-            messagebox.showerror(
-                "Save error",
-                f"Could not save settings:\n{exc}",
-                parent=self,
-            )
+            message_box.tell(self, "The settings were not saved", str(exc), kind="error")
 
         self.grab_release()
         self.destroy()

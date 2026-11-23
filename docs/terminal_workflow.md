@@ -85,6 +85,7 @@ After `pip install -e .` or `pip install .`, these commands are available direct
 | `flextool-read-old` | `flextool.cli.cmd_read_old_flextool:main` |
 | `flextool-migrate-database` | `flextool.cli.cmd_migrate_database:main` |
 | `flextool-freeze` | `flextool.cli.cmd_freeze_database:main` |
+| `flextool-repair-value-list` | `flextool.cli.cmd_repair_value_list:main` (repair a database that warning W-0490 names, and restore shipped defaults an old upgrade left empty: [Repairing a value list](#repairing-a-value-list-w-0490)) |
 | `flextool-project` | `flextool.cli.cmd_project_package:main` |
 | `flextool-time-runs` | `flextool.cli.cmd_time_runs:main` |
 | `flextool-trust-workspace` | `flextool.cli.cmd_trust_workspace:main` (trust a workspace's or project's solver option files on this computer: [Which option folders are trusted](solvers/index.md#which-option-folders-are-trusted)) |
@@ -521,6 +522,61 @@ flextool-freeze input.sqlite --unfreeze
 | `--unfreeze` | Remove the frozen marker |
 
 Freezing writes into the file, so take the SHA-256 of the released file after freezing it. Editing a frozen database (in the database editor, or by importing data into it) is not prevented.
+
+### Repairing a value list (W-0490)
+
+Warning [W-0490](reference/warnings.md#w-0490) says that an old Spine library may have overwritten the `not_allowed` member of the `invest_methods` value list when the database was upgraded (with it, the class defaults and values that were `not_allowed` now read `cumulative_limits`, which lets those entities invest without limit). `flextool-repair-value-list` repairs such a database. In the same run it also restores list-valued defaults (such as `conversion_method` or `solve_mode`) that an upgrade before FlexTool 4.6.3 left empty.
+
+```bash
+flextool-repair-value-list "C:\models\my_model.sqlite"
+# or, with the Python of FlexTool's environment:
+python -P -m flextool.cli.cmd_repair_value_list "C:\models\my_model.sqlite"
+```
+
+In PowerShell, quote with single quotes: `flextool-repair-value-list 'C:\models\my_model.sqlite'` (a full path to `python.exe` needs `&` in front: `& 'C:\FlexTool\venv\Scripts\python.exe' -P -m flextool.cli.cmd_repair_value_list 'C:\models\my_model.sqlite'`). In Command Prompt, a path that contains `%NAME%` of an existing environment variable is expanded by cmd even inside quotes; use PowerShell for such a path.
+
+**The database itself is never changed.** The tool works on a private copy and writes the repaired copy `<name>_repaired.sqlite` next to the database (`--output PATH` for another name; an existing file is never overwritten), with two side files: `<name>_repaired.sqlite.value_list_repair.csv` (the answers it applied) and `<name>_repaired.sqlite.value_list_repair.txt` (a report of every change). Close Spine Toolbox and the FlexTool window before running it on a database they have open.
+
+**Questions.** The tool asks one question per group of similar items, and **Enter** takes the suggestion:
+
+- a **class default** (`invest_method` of unit, connection and node, or an empty shipped default): the suggestion is FlexTool's shipped default, which is strongly recommended (a missing or different class default can lead to unwanted behaviour);
+- a **value** saved before the upgrade that read `not_allowed`: the suggestion is `not_allowed` (marked "certain");
+- a **value** saved after the upgrade: there is no suggestion, because nobody can tell from the file whether `cumulative_limits` was meant. Check it against your notes or Excel input;
+- a **storage node** (restoring empty defaults, see below): no answer is recommended.
+
+The keys: `k` keeps the current value, `set:<member>` sets that member (a number works too where the question lists the members), `x` skips, `e` answers each item of a group one by one, `q` quits. A summary and a confirmation come before anything is written. If you quit, the answers so far go to `<name>_repaired.sqlite.value_list_answers.csv` (next to the database, or in the current folder if that folder cannot be written): finish them there and run the tool with `--answers` (see below).
+
+**Answering in a file (dry run, answers, apply).** Without a terminal, or to think the answers over:
+
+```bash
+flextool-repair-value-list my_model.sqlite --dry-run --write-answers answers.csv
+# fill in the "answer" column: keep, set:<member> or skip (empty = skip)
+flextool-repair-value-list my_model.sqlite --answers answers.csv
+```
+
+The file is UTF-8 with `,` between columns. Excel with a Finnish (or other `;`) locale opens it as one column on a double-click; open it instead from Excel's **Data → From Text/CSV** (choose "65001: Unicode (UTF-8)" and the comma delimiter, then **Load**), or edit it in any text editor. Save it as **CSV UTF-8**: the tool reads `,` and `;`. Edit only the `answer` column. The `file_key` column ties the file to this database: a file made for another copy (even a copy of the same database with more changes) is refused. `--accept-certain` answers only the items marked "certain" with their suggestion; class defaults and storage questions are always asked.
+
+**An older copy as evidence.** If you have a copy of the database from before the upgrade (data version 21 or older), add `--archive "<old copy>"`: where the old copy proves what a value was, the tool marks it "certain". A copy the tool cannot use is refused, and the message says why.
+
+**Exit codes.**
+
+| Code | Meaning |
+|---|---|
+| 0 | The repaired copy was written (with or without a repair record), or there was nothing to do, or the file has no migration history (W-0490 does not apply), or the copy was already repaired, or a dry run finished |
+| 1 | You quit (the answers so far are in the answers file) or did not confirm `--checked-by-hand`, or the file, the answers file, the archive or `--checked-by-hand` was refused; the message says why |
+| 2 | The command line was wrong |
+| 3 | Answers are needed, but there is no terminal and no `--answers` file (the message gives the three steps above), or `--checked-by-hand` without a terminal and without `--yes` |
+| 4 | The list matches no pattern the tool knows: nothing was written; use the checklist of [W-0490](reference/warnings.md#w-0490), then `--checked-by-hand` (below) |
+
+**The repair record ends the warning.** When every item has an answer (`keep` counts as an answer; `skip` does not), the copy holds a record of the repair, and W-0490 and the GUI's "Please check this database" message stop for that copy. A run with a skipped item still writes the other answers, but no record: the warning stays until every item has an answer. Running the tool again on a repaired copy asks nothing and lists the items you kept. To change the decisions, run it again on the original database. A database you fixed by hand (for example by renaming the member back to `not_allowed`) needs one tool run to record the repair; it asks only about what the hand fix does not settle.
+
+**A list the tool cannot read (exit code 4).** First go through the checklist of [W-0490](reference/warnings.md#w-0490) on the database. If the tool still gives exit code 4, run it with `--checked-by-hand`: you confirm that you have checked every item of the checklist by hand (type `yes` at the question; without a terminal, add `--yes`). The tool then changes no value for W-0490: it only writes the repair record into the repaired copy, so W-0490 ends for that copy. Empty shipped defaults (below) are still asked about as usual. The option is refused for a database the tool can read (run it without the option), while the list still lacks a member (steps 2-3), and for a database with several W-0490 sessions (please report such a file).
+
+**Swapping the repaired copy in.** Check the report, run a scenario on the repaired copy and compare the investments with earlier results. Then close Spine Toolbox and the FlexTool window, move the original out of the way (keep it as the backup) and rename `<name>_repaired.sqlite` to the original name. In a FlexTool GUI project the database is in the project's `input_sources/` folder, so the repaired copy appears there as one more input source until you swap it in; keep the backup outside `input_sources/`, or it is listed as an input source too.
+
+**Restoring empty shipped defaults.** An upgrade with FlexTool before 4.6.3 could leave list-valued class defaults (such as `conversion_method`, `invest_method`, `solve_mode`) empty. The tool offers FlexTool's shipped default for each empty one (Enter = restore). This changes no result: FlexTool already uses the shipped default when none is stored. One effect of that old upgrade is different: a storage node that relied on the old `storage_start_end_method` default `fix_start` and had its own start value kept its start fixed in an unaffected database, but this database leaves it free. The tool lists such nodes and asks, for each, whether to fix the start (`set:fix_start`) or keep it free (`k`). **No answer is recommended**: many models bind storage with `storage_binding_method` instead of fixing the start, so check how your model is meant to work. Until every storage question has an answer, the default of `storage_start_end_method` stays empty (the summary says so) and the tool asks again at its next run. These defaults have their own repair record; a default emptied again later is asked again. Until a copy holds that record, each run and the GUI give note [W-0491](reference/warnings.md#w-0491) for the database (the GUI message "Shipped defaults lost in an old upgrade" has no Dismiss); only the record ends it, also when you keep some defaults empty (`k`).
+
+**Limits.** Removing the database's metadata (for example with a Spine Toolbox purge) removes the repair record, and the warning comes back: run the tool again. A database whose `invest_methods` list was cut down on purpose (a shipped member deleted) cannot get a repair record, so the warning stays. The tool repairs `.sqlite` files only.
 
 ### Sharing a project
 

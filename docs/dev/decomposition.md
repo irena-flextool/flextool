@@ -149,6 +149,22 @@ monolith reference). The rewriter / half-flow metadata structure is in
 `_region_filter` (`HalfFlow`, `Coupling`, `split`); the arc / pin
 bookkeeping for the master lives in `_benders._build_arcs`.
 
+A one-variable connection (`process_source_sink_2way_1var`: one arc, signed
+flow `v_flow − v_flow_back`) keeps that form on both sides of the cut: its
+half-flows (`HalfFlow.one_var`) are one-variable arcs too, so each region's
+`v_flow_back` on the half-flow is the reverse direction with the monolith's
+balance terms (the slope at the source, a unit conversion). The severed arc
+itself is in no region's `process_source_sink_2way_1var`, and the master's
+holds only the coupling arcs. Each such arc gets a second coupling
+(`Coupling.var` / `_ArcMaster.var` = `v_flow_back`) pinned and cut like the
+forward one; the master holds both directions and the capacity
+(`maxFlow` / `maxFlow_back`). A back arc's `_ArcMaster.key` is its direction
+of travel `(p, sink, source)` (so `BendersResult.trade_flow` reads as for a
+`regular` connection's reverse arc), its `dim_tuples` the original arc (the
+master's `v_flow_back` index). The hand master and the pin diagnostic refuse
+back arcs. A DC power-flow line between regions is refused by `split`: the
+half-flows cannot carry its voltage angles.
+
 Star topologies (more than two regions sharing one pipeline) are not
 supported; the rewriter asserts bilateral arcs only.
 

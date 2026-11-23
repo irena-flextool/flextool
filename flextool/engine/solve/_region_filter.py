@@ -60,6 +60,7 @@ from flextool.engine.input._axis_enums import (
 )
 from flextool.engine.input._param_shapes import promote_param_to_dt
 from flextool.engine.model._pdt_join import compute_pss_dt
+from flextool.engine.model import _dc_power_flow
 from flextool.engine.input._solve_state import FlexToolConfigError
 
 _logger = logging.getLogger(__name__)
@@ -110,6 +111,9 @@ class HalfFlow:
     virtual_p: str
     virtual_arc_source: str
     virtual_arc_sink: str
+    # The original arc is a one-variable connection's (process_source_sink_2way_1var): the virtual arc is one
+    # too, so its reverse direction is a v_flow_back column coupled like v_flow (item 301).
+    one_var: bool = False
 
 
 @dataclass
@@ -211,6 +215,27 @@ def load_region_membership(
             "processes": set(procs_by_g.get(g, set())),
         }
     return out
+
+
+def process_region_by_nodes(
+    pss: pl.DataFrame | None, region_nodes: dict[str, set[str]],
+) -> dict[str, str]:
+    """``{process: region}`` for each process whose arcs touch region nodes of exactly ONE region.
+
+    Read from the ``source`` / ``sink`` of the process's ``process_source_sink`` arcs; other tokens (the unit
+    itself, shared or master-hosted nodes) are ignored.  A cross-region connection, a unit with nodes in two
+    regions and a process with no region node (master-local, shared only) are left out.  Used for the region
+    investments of processes not listed in their region group (the documented setup lists nodes only).
+    """
+    if pss is None or pss.height == 0:
+        return {}
+    node_region = {n: r for r, ns in region_nodes.items() for n in ns}
+    regions_of: dict[str, set[str]] = {}
+    for p, source, sink in pss.select(pl.col("p", "source", "sink").cast(pl.Utf8)).iter_rows():
+        for n in (source, sink):
+            if n in node_region:
+                regions_of.setdefault(p, set()).add(node_region[n])
+    return {p: next(iter(rs)) for p, rs in regions_of.items() if len(rs) == 1}
 
 
 def compute_master_hosted_nodes(
@@ -364,6 +389,7 @@ def _classify_arcs(
 def _make_half_flows(
     cross_arcs: pl.DataFrame,
     region_master_arcs: pl.DataFrame | None = None,
+    one_var_arcs: "set[tuple[str, str, str]] | frozenset" = frozenset(),
 ) -> dict[str, list[HalfFlow]]:
     """For each cross-region arc, produce two HalfFlow records (one
     per region).
@@ -374,6 +400,8 @@ def _make_half_flows(
     is the sink.  Naming reuses the region-side stem of the paired
     convention (the master side is implicit; no master-side virtual
     entity exists — the master keeps the whole original arc).
+
+    A half-flow of an arc in *one_var_arcs* (``process_source_sink_2way_1var``) gets ``one_var``.
     """
     out: dict[str, list[HalfFlow]] = {}
     for r in cross_arcs.iter_rows(named=True):
@@ -400,6 +428,7 @@ def _make_half_flows(
             virtual_p=ve_conn,
             virtual_arc_source=s,
             virtual_arc_sink=ve_node,
+            one_var=(p, s, k) in one_var_arcs,
         ))
         out.setdefault(rb, []).append(HalfFlow(
             region=rb, side="import",
@@ -409,6 +438,7 @@ def _make_half_flows(
             virtual_p=vi_conn,
             virtual_arc_source=vi_node,
             virtual_arc_sink=k,
+            one_var=(p, s, k) in one_var_arcs,
         ))
     if region_master_arcs is not None and region_master_arcs.height > 0:
         for r in region_master_arcs.iter_rows(named=True):
@@ -429,6 +459,7 @@ def _make_half_flows(
                     virtual_p=ve_conn,
                     virtual_arc_source=s,
                     virtual_arc_sink=ve_node,
+                    one_var=(p, s, k) in one_var_arcs,
                 ))
             else:
                 # Region node is the SINK ⇒ import half-flow in rb.
@@ -442,6 +473,7 @@ def _make_half_flows(
                     virtual_p=vi_conn,
                     virtual_arc_source=vi_node,
                     virtual_arc_sink=k,
+                    one_var=(p, s, k) in one_var_arcs,
                 ))
     return out
 
@@ -528,6 +560,45 @@ def _validate_no_straddling_units(
                 f"connection, and keep the unit's arcs wholly on one "
                 f"side."
             )
+
+
+def _validate_units_in_one_region(pss: pl.DataFrame | None, region_nodes: dict[str, set[str]],
+                                  listed: set[str]) -> None:
+    """Raise when the arcs of a unit that no region group lists have nodes in two regions.
+
+    A node-to-node arc between regions (a connection, or a unit with one input, one output and one direct flow) is
+    cut into half-flows.  The arcs of a unit with several inputs or outputs, or of a unit with one input and one
+    output whose piecewise efficiency curve has two or more segments (an input flow of its own,
+    ``process_indirect``), go through the unit itself, so the split would keep the unlisted unit in each region
+    with only that region's side balanced (a free source in one region), and no region would own its investment.
+    A *listed* unit is kept in its own region only (unchanged here).
+    """
+    if pss is None or pss.height == 0:
+        return
+    node_region = {n: r for r, ns in region_nodes.items() for n in ns}
+    nodes_by_region: dict[str, dict[str, set[str]]] = {}
+    ends: dict[str, list[int]] = {}   # unit -> [inputs, outputs] of its arcs through the unit itself
+    for p, source, sink in pss.select(pl.col("p", "source", "sink").cast(pl.Utf8)).iter_rows():
+        if p in listed or (source in node_region and sink in node_region):
+            continue  # listed, or node-to-node: in one region or cut into half-flows
+        count = ends.setdefault(p, [0, 0])
+        count[0 if sink == p else 1] += 1
+        for n in (source, sink):
+            if n in node_region:
+                nodes_by_region.setdefault(p, {}).setdefault(node_region[n], set()).add(n)
+    bad = {p: by_r for p, by_r in sorted(nodes_by_region.items()) if len(by_r) > 1}
+    if bad:
+        def why(p: str) -> str:
+            # One input and one output through the unit: only a piecewise curve of two or more segments does that.
+            return ("a piecewise efficiency curve gives its input a flow of its own" if ends[p] == [1, 1]
+                    else "several inputs or outputs")
+        text = "; ".join(f"{p} (" + " and ".join(f"{', '.join(sorted(ns))} in {r}" for r, ns in sorted(by_r.items()))
+                         + f": {why(p)})" for p, by_r in bad.items())
+        raise FlexToolConfigError(
+            "Benders decomposition: unit(s) with nodes in more than one region: " + text + ".  The split cuts "
+            "only a node-to-node flow between region subproblems (a connection, or a unit with one input, one "
+            "output and a single efficiency); these units convert through the unit itself.  Put all nodes of the "
+            "unit in one region, or join the regions with a connection.")
 
 
 def _validate_startup_nodes(data: FlexData, region_nodes: dict[str, set[str]],
@@ -1137,6 +1208,10 @@ def _build_region_data(
     new.flow_from_commodity_eff = _filter_arc_by_proc(src.flow_from_commodity_eff)
     new.flow_from_commodity_noEff = _filter_arc_by_proc(src.flow_from_commodity_noEff)
     new.flow_to_commodity = _filter_arc_by_proc(src.flow_to_commodity)
+    # One-variable connections (v_flow_back): this region's arcs only.  The severed arcs leave with the rest, so no
+    # region carries a reverse column on them (it would be an unlimited free source at one end, item 301); their
+    # half-flows get their own 1var arcs in _inject_half_flows.
+    new.process_source_sink_2way_1var = _filter_arc_by_proc(src.process_source_sink_2way_1var)
 
     new.p_unitsize = _filter_param(src.p_unitsize, "p", keep_procs)
     new.p_flow_upper = _filter_param_arc(src.p_flow_upper)
@@ -1349,6 +1424,7 @@ def _inject_half_flows(
     new_unitsize_rows: list[dict] = []
     new_flow_upper_rows: list[dict] = []
     new_flow_upper_existing_rows: list[dict] = []
+    new_2way_1var_rows: list[dict] = []
 
     # Classification: inherit from the original arc.  When the original
     # arc is in process_source_sink_eff (with slope p_slope), so is the
@@ -1390,6 +1466,15 @@ def _inject_half_flows(
             "source": hf.virtual_arc_source,
             "sink": hf.virtual_arc_sink,
         })
+        # A one-variable connection's half-flow is one-variable too: its v_flow_back is the reverse direction on
+        # this side of the cut (signed flow v_flow − v_flow_back, the slope at the source as in the monolith),
+        # pinned to the master's like v_flow.  Its maxFlow_back gets the same (uncapped) RHS as its maxFlow.
+        if hf.one_var:
+            new_2way_1var_rows.append({
+                "p": hf.virtual_p,
+                "source": hf.virtual_arc_source,
+                "sink": hf.virtual_arc_sink,
+            })
         if is_eff:
             new_pss_eff_rows.append({
                 "p": hf.virtual_p,
@@ -1563,6 +1648,9 @@ def _inject_half_flows(
     if new_pss_noEff_rows:
         rd.process_source_sink_noEff = _concat(
             rd.process_source_sink_noEff, new_pss_noEff_rows, _pss_schema)
+    if new_2way_1var_rows:
+        rd.process_source_sink_2way_1var = _concat(
+            rd.process_source_sink_2way_1var, new_2way_1var_rows, _pss_schema)
     # Phase E.3: ``rd.pss_dt`` is no longer persisted; the half-flow
     # virtual (p, source, sink) rows already appended to
     # ``rd.process_source_sink`` will produce the matching cross-join
@@ -2083,6 +2171,8 @@ def master_network_data(
     new.process_source_sink = _keep_cross_triple(data.process_source_sink)
     new.process_source_sink_eff = _keep_cross_triple(data.process_source_sink_eff)
     new.process_source_sink_noEff = _keep_cross_triple(data.process_source_sink_noEff)
+    # One-variable connections: the master's v_flow_back (and maxFlow_back) only on the kept arcs (item 301).
+    new.process_source_sink_2way_1var = _keep_cross_triple(data.process_source_sink_2way_1var)
     new.pss_dt = None  # rebuilt on demand from process_source_sink × dt.
     new.process_source_canonical = _keep_proc(data.process_source_canonical)
     new.process_sink_canonical = _keep_proc(data.process_sink_canonical)
@@ -2383,12 +2473,20 @@ def _validate_cross_region_connections(data: FlexData, cross: pl.DataFrame,
     A severed connection is replaced by half-flows (other processes) in the regions, so its own rows are gone:
     its online status and direction switch would be free columns without flow rows, and its reserve (limited by
     its flows, connection_reserve_*) would have no channel left.  None of them can be split between two region
-    subproblems.
+    subproblems.  Nor can a DC power-flow line: its dc_flow_eq joins the voltage angles of both end nodes.
     """
     procs = {str(p) for frame in (cross, region_master) if frame is not None and frame.height > 0
              for p in frame.get_column("p").to_list()}
     if not procs:
         return
+    # DC power-flow lines: dc_flow_eq joins the voltage angles of both end nodes, which half-flows cannot carry.
+    dc_arcs = _dc_power_flow.dc_arcs_frame(data) if _dc_power_flow.has_feature(data) else None
+    dc_hit = sorted(procs & ({str(p) for p in dc_arcs.get_column("p").to_list()} if dc_arcs is not None else set()))
+    if dc_hit:
+        raise FlexToolConfigError(
+            "Benders decomposition: DC power-flow line(s) between regions (or between a region and the master): "
+            + ", ".join(dc_hit) + ".  The split cannot carry the voltage angles across the cut.  Put both nodes "
+            "of the line in one region, or take the nodes out of the dc_power_flow_with_angles group.")
     checks = (("a startup_method (online variables)",
                [getattr(data, "process_online_linear", None), getattr(data, "process_online_integer", None)]),
               ("the exact transfer method", [getattr(data, "process_exact", None)]),
@@ -2401,10 +2499,11 @@ def _validate_cross_region_connections(data: FlexData, cross: pl.DataFrame,
             problems.append(f"{', '.join(hit)} ({what})")
     if problems:
         raise FlexToolConfigError(
-            "Benders decomposition: connection(s) between regions (or between a region and the master) cannot "
-            "have online variables, the exact transfer method or reserve, because the split replaces them with "
-            "half-flows in each region: " + "; ".join(problems) + ".  Remove these from the connections, put "
-            "both of their nodes in one region, or leave them out of the solve (reduce_system_detail_method "
+            "Benders decomposition: connection(s), or unit(s) with one input and one output, between regions (or "
+            "between a region and the master) cannot have online variables, the exact transfer method or reserve, "
+            "because the split replaces them with half-flows in each region: " + "; ".join(problems) + ".  Remove "
+            "these from the connections or units, put both of their nodes in one region, or leave them out of the "
+            "solve (reduce_system_detail_method "
             "reserves, reduce_unit_detail_method integers for exact, online for online variables).")
     flow_refs = _cross_connection_flow_references(data, procs)
     if flow_refs:
@@ -2581,6 +2680,7 @@ def split(
     shared_nodes = all_nodes - all_region_nodes
     shared_procs = all_procs - all_region_procs
     _validate_startup_nodes(data, region_nodes, region_procs)
+    _validate_units_in_one_region(data.process_source_sink, region_nodes, all_region_procs)
 
     if master_hosted_nodes:
         overlap = set(master_hosted_nodes) & all_region_nodes
@@ -2653,7 +2753,11 @@ def split(
 
     _validate_cross_region_connections(data, cross, region_master)
 
-    half_flows_by_region = _make_half_flows(cross, region_master)
+    _two_way = data.process_source_sink_2way_1var
+    one_var_arcs: set[tuple[str, str, str]] = (
+        {(str(p), str(src), str(snk)) for p, src, snk in _two_way.select("p", "source", "sink").iter_rows()}
+        if _two_way is not None else set())
+    half_flows_by_region = _make_half_flows(cross, region_master, one_var_arcs)
 
     cross_arcs_by_pss: set[tuple[str, str, str]] = set()
     for r in cross.iter_rows(named=True):

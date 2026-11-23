@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 import re
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -167,8 +168,8 @@ def test_rolls_give_one_line_with_their_number_and_the_largest_factor(coded_log)
 
     for k, x in ((1, 1.19), (2, None), (3, 3.51), (4, 2.01)):
         f = facts(x) if x is not None else _facts()
-        note_solver_outcome(_sol(f), _ACC, solve_name=f"st_roll_roll_{k}", solver="highs", noted=noted,
-                            pending=pending)
+        note_solver_outcome(_sol(f), _ACC, solve_name="st_roll", sub_solve=f"st_roll_roll_{k}", solver="highs",
+                            noted=noted, pending=pending)
     note_solver_outcome(_sol(facts(1.5)), _ACC, solve_name="invest", solver="highs", noted=noted, pending=pending)
     printed = coded_log()
     assert [line for line in printed.splitlines() if "[W-0540]" in line] == [
@@ -183,10 +184,72 @@ def test_rolls_give_one_line_with_their_number_and_the_largest_factor(coded_log)
     assert details.index("st_roll_roll_3") < details.index("st_roll_roll_4") < details.index("st_roll_roll_1")
     assert pending == {}
     # A later instance of the same solve (nested): the debug log only.
-    note_solver_outcome(_sol(facts(9.0)), _ACC, solve_name="st_roll_roll_9", solver="highs", noted=noted,
-                        pending=pending)
+    note_solver_outcome(_sol(facts(9.0)), _ACC, solve_name="st_roll", sub_solve="st_roll_roll_9", solver="highs",
+                        noted=noted, pending=pending)
     flush_solver_outcome_notes(pending, noted)
     assert "Note:" not in coded_log()
+
+
+def _w0540(text: str) -> list[str]:
+    return [line for line in text.splitlines() if "[W-0540]" in line]
+
+
+def _replay(order, coded_log) -> list[list[str]]:
+    """Replay the cascade's W-0540 handling over *order* (``(sub-solve, complete solve, X or None)`` in run
+    order), as ``native_run_model`` and ``_PolarHighCascadeSolver.run`` do it: the last index of each complete
+    solve from the order, the note at the end of each sub-solve, then the flush that keeps the solves still
+    running.  The W-0540 lines printed at each step."""
+    from flextool.engine.solve._solver_outcome import flush_solver_outcome_notes, still_running
+
+    run_warnings.start_run()
+    noted: set = set()
+    pending: dict = {}
+    last = {complete: i for i, (_name, complete, _x) in enumerate(order)}
+    printed = []
+    for i, (name, complete, x) in enumerate(order):
+        f = (_facts(num_relative_dual_infeasibilities=1, max_relative_dual_infeasibility=x * 1e-7)
+             if x is not None else _facts())
+        note_solver_outcome(_sol(f), _ACC, solve_name=complete, sub_solve=name, solver="highs", noted=noted,
+                            pending=pending)
+        flush_solver_outcome_notes(pending, noted, keep=still_running(last, i + 1))
+        printed.append(coded_log())
+    assert pending == {}
+    return printed
+
+
+def _line(solve: str, factor: str, rolls: str = "") -> str:
+    return f"Note: solve '{solve}' optimal by HiGHS at up to {factor}x its relative tolerances{rolls} [W-0540]"
+
+
+def test_interleaved_and_nested_rolls_print_after_their_last_roll(coded_log):
+    """A complete solve's W-0540 prints once, right after its last sub-solve in the run (the order is known
+    before the run).  Expected lines from that rule, by hand:
+
+    * interleaved (rolling ``uc`` and its realization ``uc__realized_dispatch``): last ``uc`` = step 4, last
+      dispatch = step 5.  ``uc`` had X in rolls 0 (3.0) and 1 (5.0): at step 4 "up to 5x ... in 2 rolls";
+      dispatch rolls 1 (2.0) and 2 (4.0): at step 5 "up to 4x ... in 2 rolls"; nothing before.
+    * nested (rolling ``P`` contains rolling ``C``, renamed per period, then a single ``S``): last P = 3, last
+      C = 5, last S = 6.  P: X only in roll 0 (1.5): step 3 "up to 1.5x ... in 1 roll" (its own last roll,
+      although C still runs).  C: 2.5, 7.0, 1.2 in three rolls: step 5 "up to 7x ... in 3 rolls".  S, not a
+      roll: step 6 "up to 3x" without a roll count.
+    """
+    U, D = "uc", "uc__realized_dispatch"
+    steps = _replay([(f"{U}_roll_0", U, 3.0), (f"{D}_roll_0", D, None), (f"{U}_roll_1", U, 5.0),
+                     (f"{D}_roll_1", D, 2.0), (f"{U}_roll_2", U, None), (f"{D}_roll_2", D, 4.0)], coded_log)
+    assert [_w0540(text) for text in steps] == [
+        [], [], [], [], [_line(U, "5", " in 2 rolls")], [_line(D, "4", " in 2 rolls")]]
+
+    steps = _replay([("P_roll_0", "P", 1.5), ("C_p2020_roll_0", "C", 2.5), ("C_p2020_roll_1", "C", None),
+                     ("P_roll_1", "P", None), ("C_p2025_roll_0", "C", 7.0), ("C_p2025_roll_1", "C", 1.2),
+                     ("S", "S", 3.0)], coded_log)
+    assert [_w0540(text) for text in steps] == [
+        [], [], [], [_line("P", "1.5", " in 1 roll")], [], [_line("C", "7", " in 3 rolls")], [_line("S", "3")]]
+    details = next(line for line in steps[5].splitlines() if line.startswith("W-0540 in 'C_"))
+    assert details.index("C_p2025_roll_0") < details.index("C_p2020_roll_0") < details.index("C_p2025_roll_1")
+
+    # A renamed single instance (not a roll) prints at once, without "rolls".
+    steps = _replay([("X_p2020", "X", 2.0), ("Y", "Y", None)], coded_log)
+    assert [_w0540(text) for text in steps] == [[_line("X", "2")], []]
 
 
 def test_the_generic_ipx_note_is_printed_once_per_run(coded_log):
@@ -404,3 +467,67 @@ def test_rolling_ipm_solve_notes_follow_highs_log(tmp_path_factory, monkeypatch,
     rolls = f"{len(hits)} roll{'s' if len(hits) != 1 else ''}"
     assert printed == [_IPX, f"Note: solve '{roll}' optimal by HiGHS at up to {worst:.3g}x its relative "
                              f"tolerances in {rolls} [W-0540]"]
+
+
+def test_interleaved_separate_dispatch_notes_follow_highs_log(tmp_path_factory, monkeypatch, capfd, coded_log):
+    """``rolling_separate_dispatch.json`` (rolling ``1week_rolling``, its rolls interleaved with those of the
+    realization solve ``1week_rolling__realized_dispatch``) as an LP (``startup_method linear``: a MIP gets no
+    W-0540), IPM without crossover, presolve off, a loose ``ipm_optimality_tolerance`` (the sibling inherits the
+    arguments).  Oracle: the X of each roll in HiGHS's own log, grouped by the ``Solve start:`` lines.  Each
+    complete solve gets one W-0540 line, after the HiGHS output of its last roll and before the next
+    ``Solve start:``, with the largest X of its group and the number of its rolls that had an X."""
+    import json
+    import logging
+    import sys
+
+    from tests.db_utils import json_to_db
+    from tests.engine._unit_db import b64
+    from flextool.engine import run_chain_from_db
+    from flextool.update_flextool.db_migration import migrate_database
+
+    monkeypatch.delenv("FLEXTOOL_SAVE_MEMORY", raising=False)
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "rolling_separate_dispatch.json"
+    data = json.loads(fixture.read_text(encoding="utf-8"))
+    for row in data["parameter_values"]:
+        if row[0] == "unit" and row[2] == "startup_method":
+            row[3] = b64("linear", "str")
+    args = {"index_type": "str", "index_name": "x", "data": [
+        ["solver", "ipm"], ["presolve", "off"], ["run_crossover", "off"], ["ipm_optimality_tolerance", "1e-5"]]}
+    data["parameter_values"].append(["solve", "1week_rolling", "solver_arguments", b64(args, "map"),
+                                     "1week_rolling"])
+    tmp = tmp_path_factory.mktemp("interleaved_w0540")
+    (tmp / "fixture.json").write_text(json.dumps(data), encoding="utf-8")
+    url = json_to_db(tmp / "fixture.json", tmp / "fixture.sqlite")
+    migrate_database(url)
+    capfd.readouterr()
+    # The coded lines into the same captured stream as HiGHS's log, as on the console of a run.
+    console = logging.StreamHandler(sys.stdout)
+    console.setLevel(logging.INFO)
+    logging.getLogger(run_warnings.LOGGER_NAME).addHandler(console)
+    try:
+        assert run_chain_from_db(url, "rolling_separate_dispatch", work_folder=tmp / "work", keep_solutions=True)
+    finally:
+        logging.getLogger(run_warnings.LOGGER_NAME).removeHandler(console)
+    stdout = capfd.readouterr().out
+
+    # One segment per sub-solve: "<complete>, i/n", its HiGHS output, then what printed before the next start.
+    segments = stdout.split("Solve start: ")[1:]
+    uc, disp = "1week_rolling", "1week_rolling__realized_dispatch"
+    names = [segment.split(",", 1)[0] for segment in segments]
+    assert names == [uc, disp] * 3
+    xs: dict[str, list[float]] = {uc: [], disp: []}
+    for name, segment in zip(names, segments):
+        x = _highs_x(segment.split("Running HiGHS", 1)[1])
+        if x is not None:
+            xs[name].append(x)
+    if not (xs[uc] and xs[disp]):
+        pytest.skip(f"HiGHS logged no X in every solve on this platform: {xs}")
+
+    def expected(name: str) -> str:
+        count = len(xs[name])
+        return _line(name, f"{max(xs[name]):.3g}", f" in {count} roll{'s' if count != 1 else ''}")
+
+    found = [_w0540(segment) for segment in segments]
+    assert found == [[], [], [], [], [expected(uc)], [expected(disp)]]
+    for k in (4, 5):  # after the HiGHS output of that roll
+        assert segments[k].index(found[k][0]) > segments[k].rindex("Running HiGHS")

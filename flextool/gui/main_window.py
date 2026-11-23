@@ -10,7 +10,7 @@ import sys
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, simpledialog
 from types import SimpleNamespace
 from typing import Any
 
@@ -30,7 +30,6 @@ from flextool.gui.settings_io import (
     load_project_settings,
     save_global_settings,
     save_project_settings,
-    solver_defaults_dialog_text,
     solver_defaults_notice,
 )
 from flextool.gui.assistant.entry import AssistantEntry
@@ -57,6 +56,7 @@ from flextool.gui.execution_window import ExecutionWindow
 from flextool.gui.output_actions import OutputActionManager
 from flextool.gui.result_viewer import ResultViewer
 from flextool.gui.db_version_check import check_and_upgrade_database
+from flextool.gui.message_sources import UpgradeResult
 from flextool.gui.dialogs.migration_consent_dialog import (
     ask_external_migration_consent,
     ask_frozen_migration_choice,
@@ -64,6 +64,7 @@ from flextool.gui.dialogs.migration_consent_dialog import (
 from flextool.gui.dialogs.calibrate_dialog import CalibrateDialog
 from flextool.gui.dialogs.migration_progress_dialog import MigrationProgressDialog
 from flextool.gui.dialogs.plot_dialog import PlotDialog
+from flextool.gui.dialogs import message_box
 from flextool.gui.error_handling import safe_callback
 from flextool.gui.platform_utils import (
     open_file_in_default_app,
@@ -121,6 +122,8 @@ CHECK_ON = "\u25a0"   # ■
 CHECK_OFF = "\u25a1"  # □
 STATUS_OK = "\u2713"      # ✓
 STATUS_ERR = "\u2717"     # ✗
+# The tooltip of a red row whose database has a message in the message list.
+ERROR_ROW_TIP = "FlexTool cannot use this file. Double-click for what to do."
 STATUS_EMPTY = "\u25cb"   # (no scenarios; Geometric Shapes circle — was U+2300 diameter sign)
 STATUS_EDITING = "\u25b6" # open in editor (Geometric Shapes; was U+23F3)
 STATUS_RETIRED = "\u2298" # ghost row: input file gone, only results remain
@@ -132,6 +135,28 @@ STATUS_FROZEN_OLD = "\u2744\u2717"
 # Input-sources tree iid prefixes
 _EXT_IID_PREFIX = "ext:"      # external reference
 _GHOST_IID_PREFIX = "ghost:"  # retired source (file gone, results survive)
+
+
+#: The docs section of database upgrades (the message list's ``database_upgraded`` spec has the same).
+_DOCS_MIGRATION = "flextool_gui_interface.md#migration-and-frozen-databases"
+#: The install troubleshooting section (a solver library that crashes).
+_DOCS_TROUBLESHOOTING = "install_gui.md#troubleshooting"
+#: The Execution window's section of the GUI page.
+_DOCS_EXECUTION = "flextool_gui_interface.md#execution-jobs"
+#: The answers of the "jobs are still running" questions.
+_STOP_AND_SWITCH = (("Stop and switch", "stop"), ("Cancel", None))
+_STOP_AND_CLOSE = (("Stop and close", "stop"), ("Cancel", None))
+#: Spine Toolbox (the Spine DB Editor), updating FlexTool and the Excel interface.
+_DOCS_TOOLBOX = "install_toolbox.md"
+_DOCS_UPDATING = "install_gui.md#updating-flextool"
+_DOCS_EXCEL = "excel_interface.md"
+#: The answers of the "Spine Toolbox is not installed" questions.
+_INSTALL_TOOLBOX = (("Open Update FlexTool", "update"), ("Open with another program", "other"), ("Cancel", None))
+
+
+def _folders(count: int) -> str:
+    """ "The result folder" / "The N result folders", for the ghost-row questions."""
+    return "The result folder" if count == 1 else f"The {count} result folders"
 
 
 def _source_name_from_iid(iid: str) -> str:
@@ -176,6 +201,45 @@ def _migrate_frozen_copy(
         f"{marker.version} to the current version as {copy_path.name}, a new input source. "
         f"The frozen file is unchanged."
     ]
+
+
+def upgrade_one(
+    name: str,
+    path: Path,
+    mode: str,
+    copy_path: Path | None,
+    *,
+    progress_callback,
+    cancel_check,
+) -> UpgradeResult:
+    """Migrate one file of a migration run (no Tk; the worker of ``_run_db_migrations_with_ui``).
+
+    *mode* ``"plain"``, ``"frozen_in_place"`` or ``"frozen_copy"`` (then *copy_path* is the copy).  The data
+    version is read read-only before (from *path*) and after (from the copy for a frozen copy); an after-read
+    that fails on an upgraded file counts as the target version.
+    """
+    from flextool.gui.db_version_check import _read_flextool_version, get_target_flextool_version
+    from flextool.sqlite_url import sqlite_url_string
+
+    before = _read_flextool_version(sqlite_url_string(path))
+    if mode == "frozen_copy":
+        assert copy_path is not None
+        upgraded, failed, messages = _migrate_frozen_copy(
+            path, copy_path, progress_callback=progress_callback, cancel_check=cancel_check,
+        )
+        result_path, copy_of = copy_path, name
+    else:
+        upgraded, failed, messages = check_and_upgrade_database(
+            path, progress_callback=progress_callback, cancel_check=cancel_check,
+            allow_frozen=mode == "frozen_in_place",
+        )
+        result_path, copy_of = path, None
+    after = before
+    if upgraded and not failed:
+        after = _read_flextool_version(sqlite_url_string(result_path))
+        if after is None:
+            after = get_target_flextool_version()
+    return UpgradeResult(name, result_path, before, after, copy_of, upgraded, failed, list(messages))
 
 
 def _is_ghost_iid(iid: str) -> bool:
@@ -452,6 +516,13 @@ class MainWindow(tk.Tk):
         top_right = ttk.Frame(outer)
         top_right.grid(row=row, column=5, sticky="e", padx=5)
 
+        # The message list's indicator, "Messages (N)" (dialogs/message_list_window.py).
+        from flextool.gui.dialogs.message_list_window import MessageListController
+
+        self.messages_btn = ttk.Button(top_right, text="Messages")
+        self.messages_btn.pack(side="left", padx=(0, 5))
+        self._messages = MessageListController(self, self.messages_btn)
+
         self.ui_settings_btn = ttk.Button(
             top_right, text="UI settings…", command=self._on_ui_settings_btn
         )
@@ -579,6 +650,7 @@ class MainWindow(tk.Tk):
             can_check=lambda iid: not _is_ghost_iid(iid),
         )
         self.input_sources_tree.bind("<Double-1>", self._on_input_source_dblclick)
+        self.input_sources_tree.bind("<Return>", self._on_input_source_return)
         self.input_sources_tree.bind("<B1-Motion>", self._on_tree_drag_select)
         self.input_sources_tree.bind("<<TreeviewSelect>>", lambda _e: self._update_input_button_states())
         self.input_sources_tree.bind("<Button-3>", self._on_input_source_right_click)
@@ -1264,7 +1336,9 @@ class MainWindow(tk.Tk):
 
         Skipped when the "Check for updates on startup" preference is off (set
         in the Update FlexTool dialog) or when ``FLEXTOOL_NO_UPDATE_CHECK`` is
-        set — either way, no outbound request is made.
+        set — either way, no outbound request is made.  For a PyPI install the
+        offered version is also kept for the message list (design §3.1
+        ``update_available``); a git checkout gets the button only.
         """
         if os.environ.get("FLEXTOOL_NO_UPDATE_CHECK"):
             return
@@ -1272,20 +1346,32 @@ class MainWindow(tk.Tk):
             return
 
         def _worker() -> None:
+            latest: str | None = None
+            conclusive = False
             try:
                 from flextool.update_flextool import install_info
 
-                available = install_info.update_available()
+                if install_info.is_git_install():
+                    available = install_info.update_available()
+                else:
+                    latest = install_info.latest_pypi_version()
+                    conclusive = latest is not None
+                    available = conclusive and install_info.is_newer_than_installed(latest)
             except Exception:
                 logger.debug("Update check failed", exc_info=True)
                 available = False
-            self.post_to_main(self._apply_update_indicator, available)
+            self.post_to_main(self._apply_update_indicator, available, latest if conclusive else None, conclusive)
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _apply_update_indicator(self, available: bool | None) -> None:
-        """Blue-highlight the Update button when an update is available."""
+    def _apply_update_indicator(self, available: bool | None, latest: str | None = None,
+                                conclusive: bool = False) -> None:
+        """Blue-highlight the Update button when an update is available.  A conclusive PyPI answer (*latest*)
+        stores the offered version for the message list, or removes it when nothing is newer; no answer (offline,
+        a git checkout) leaves the stored one as it is."""
         self._update_available = available
+        if conclusive:
+            self._store_offered_version(latest if available else None)
         if not hasattr(self, "update_btn") or not self.update_btn.winfo_exists():
             return
         self.update_btn.configure(
@@ -1295,6 +1381,26 @@ class MainWindow(tk.Tk):
             from flextool.gui.hover_tooltip import attach_tooltip
 
             attach_tooltip(self.update_btn, "A newer FlexTool version is available.")
+
+    def _store_offered_version(self, version: str | None) -> None:
+        """Keep the offered FlexTool version (``None``: nothing newer) in the message store and recompute."""
+        controller = getattr(self, "_messages", None)
+        if controller is None:
+            return
+        try:
+            if controller.center is not None:
+                store = controller.center.store
+            else:
+                from flextool.gui.messages import MessageStore
+
+                store = MessageStore(controller.store_path())
+            if store.offered_version() == version:
+                return
+            store.set_offered_version(version)
+        except Exception:  # noqa: BLE001 — the message list never breaks the update check
+            logger.warning("Message list: the offered version was not stored", exc_info=True)
+            return
+        self._messages_recompute("other")
 
     # ── Native solver-stack compatibility self-check ──────────────
     def _check_polars_async(self, force: bool = False, from_crash: bool = False) -> None:
@@ -1351,11 +1457,11 @@ class MainWindow(tk.Tk):
                 # A scenario crashed natively yet the solver libraries import
                 # and run fine — so the crash was not a solver wheel. Point at
                 # the real culprit class instead of leaving the user guessing.
-                messagebox.showwarning(
-                    "Scenario crashed — check your Python environment",
-                    "The scenario stopped with a native crash, but FlexTool's "
-                    "solver libraries (polars and HiGHS) import and run fine on "
-                    "this computer.\n\n" + env_check.unfixable_help(),
+                message_box.tell(
+                    self, "A scenario crashed: check your Python environment",
+                    "The scenario stopped with a crash, but FlexTool's solver libraries work on this computer.",
+                    env_check.unfixable_help(),
+                    kind="warning", docs=_DOCS_TROUBLESHOOTING,
                 )
             return
 
@@ -1367,7 +1473,12 @@ class MainWindow(tk.Tk):
 
         if not env_check.has_remediation(probe.failed_component):
             # A native crash with no package-level remedy (e.g. polar_high).
-            messagebox.showerror("FlexTool cannot run on this computer yet", env_check.unfixable_help())
+            message_box.tell(
+                self, "FlexTool cannot run scenarios on this computer yet",
+                "A solver library crashed when FlexTool tested it, and re-installing it would not help.",
+                env_check.unfixable_help(),
+                kind="error", docs=_DOCS_TROUBLESHOOTING,
+            )
             return
 
         self._offer_solver_fix(probe)
@@ -1385,34 +1496,30 @@ class MainWindow(tk.Tk):
             verdict = env_check.cpu_verdict()
             steps = env_check.polars_compat_steps(sys.executable)
             intro = env_check.proactive_banner(verdict)
-            question = (
-                env_check.compat_runtime_message(verdict, steps)
-                + "\n\nUntil it is installed, scenarios will not run (they stop with this "
-                "message). FlexTool can run the command for you; progress is shown in the "
-                "execution window.\n\n"
-                "Run it now?"
-            )
+            title = "Install the compatible solver library?"
+            paragraphs = [
+                *env_check.compat_runtime_message(verdict, steps).split("\n\n"),
+                "Until it is installed, scenarios do not run. FlexTool can run the command for you; "
+                "the Execution window shows the progress.",
+            ]
+            buttons = (("Install", "install"), ("Not now", None))
         else:
             comp = probe.failed_component
             steps = env_check.remediation_steps(comp, sys.executable)
             intro = env_check.remediation_banner(comp)
             what = {
-                "polars": "the 'polars' data library",
-                "highspy": "the HiGHS solver (highspy)",
-            }.get(comp, "a solver library")
-            question = (
-                f"{what} crashed when FlexTool tested it on this computer — "
-                "scenarios will not run until this is fixed.\n\n"
-                "FlexTool can automatically re-install the compatible version "
-                "for you. Progress is shown in the execution window.\n\n"
-                "Re-install the compatible version now?"
-            )
+                "polars": "The 'polars' data library",
+                "highspy": "The HiGHS solver (highspy)",
+            }.get(comp, "A solver library")
+            title = "Re-install the solver libraries?"
+            paragraphs = [
+                f"{what} crashed when FlexTool tested it, so scenarios cannot run on this computer.",
+                "FlexTool can re-install a compatible version; the Execution window shows the progress.",
+            ]
+            buttons = (("Re-install", "reinstall"), ("Not now", None))
         if not steps:
             return
-        proceed = messagebox.askyesno(
-            "FlexTool cannot run on this computer yet", question, icon="warning",
-        )
-        if not proceed:
+        if message_box.ask(self, title, *paragraphs, buttons=buttons) is None:
             return
 
         from flextool.gui.execution_manager import JobType
@@ -1441,13 +1548,17 @@ class MainWindow(tk.Tk):
         if reprobe.ok:
             self.global_settings.polars_check_fingerprint = env_check.env_fingerprint()
             save_global_settings(get_projects_dir(), self.global_settings)
-            messagebox.showinfo(
-                "Compatibility fixed",
-                "FlexTool re-installed the compatible solver libraries and "
-                "verified they run on this computer. You can run scenarios now.",
+            message_box.tell(
+                self, "Solver libraries fixed",
+                "FlexTool re-installed them and checked that they run. You can run scenarios now.",
             )
         else:
-            messagebox.showerror("Still not working", env_check.unfixable_help())
+            message_box.tell(
+                self, "The solver libraries still do not work",
+                "After the re-install they still fail FlexTool's test; the Execution window shows the details.",
+                env_check.unfixable_help(),
+                kind="error", docs=_DOCS_TROUBLESHOOTING,
+            )
 
     def _show_project_dialog_if_needed(self) -> None:
         """Open the ProjectDialog if no project is currently loaded."""
@@ -1474,12 +1585,15 @@ class MainWindow(tk.Tk):
     def _on_combo_rename(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
         """Trigger rename of the current project via a simple dialog."""
         if not self.current_project:
-            messagebox.showinfo("No project", "No project is currently loaded.")
+            message_box.tell(
+                self, "Open a project first",
+                "Choose a project in the Project list at the top, or create one with Projects….",
+            )
             return
 
         new_name = simpledialog.askstring(
             "Rename project",
-            f"Rename '{self.current_project}' to:",
+            f"New name for '{self.current_project}':",
             initialvalue=self.current_project,
             parent=self,
         )
@@ -1490,27 +1604,30 @@ class MainWindow(tk.Tk):
         # The AI assistant's chat window closes first and its workers get a
         # moment to finish; one still running a tool call refuses the rename.
         if not self._assistant.before_project_change(self.current_project):
-            messagebox.showinfo(
-                "Rename project", ASSISTANT_STILL_FINISHING, parent=self,
-            )
+            message_box.tell(self, "Wait for the AI assistant", ASSISTANT_STILL_FINISHING)
             return
         try:
             rename_project(self.current_project, new_name)
         except FileExistsError:
-            messagebox.showwarning(
-                "Already exists",
-                f"A project named '{new_name}' already exists.",
+            message_box.tell(
+                self, "Choose another project name", f"A project named '{new_name}' already exists.",
+                kind="warning",
             )
             self._assistant.ensure_open(self.current_project)
             return
         except FileNotFoundError:
-            messagebox.showerror(
-                "Not found",
-                f"Project '{self.current_project}' no longer exists.",
+            message_box.tell(
+                self, "This project no longer exists",
+                f"'{self.current_project}' was moved or deleted outside FlexTool.",
+                kind="error",
             )
             return
         except OSError as exc:
-            messagebox.showerror("Error", str(exc))
+            logger.warning("Renaming project %s failed", self.current_project, exc_info=True)
+            message_box.tell(
+                self, "The project was not renamed", str(exc), "The full error is in the FlexTool log.",
+                kind="error",
+            )
             self._assistant.ensure_open(self.current_project)
             return
 
@@ -1849,15 +1966,14 @@ class MainWindow(tk.Tk):
         window is closed; the next time it opens it uses computed defaults.
         The main-window default applies on next launch.
         """
-        confirm = messagebox.askyesno(
-            "Reset window layout",
-            "Discard saved window sizes and sash positions for the result "
-            "viewer, execution window and AI assistant window?\n\nOpen "
-            "result viewer, execution window and AI assistant window will be "
-            "closed; their defaults will apply the next time you open them.",
-            parent=self,
+        confirm = message_box.ask(
+            self, "Reset the window layout?",
+            "FlexTool forgets the saved sizes and positions of its windows. The result viewer, the Execution "
+            "window and the AI assistant window close now and open at their default size next time; the main "
+            "window does so at the next start.",
+            buttons=(("Reset", "reset"), ("Cancel", None)), kind="danger",
         )
-        if not confirm:
+        if confirm is None:
             return
 
         # The AI assistant window writes its size at close, so it closes
@@ -1906,12 +2022,7 @@ class MainWindow(tk.Tk):
             self.execution_window.destroy()
         self.execution_window = None
 
-        messagebox.showinfo(
-            "Reset window layout",
-            "Saved window layout cleared. Defaults will apply next time the "
-            "result viewer, execution window or AI assistant window opens.",
-            parent=self,
-        )
+        message_box.tell(self, "Window layout reset", "The windows open at their default size next time.")
 
     # ── Theme toggle ──────────────────────────────────────────────
 
@@ -1920,7 +2031,7 @@ class MainWindow(tk.Tk):
         new_theme = self._theme_var.get()
         self.global_settings.theme = new_theme
         save_global_settings(get_projects_dir(), self.global_settings)
-        messagebox.showinfo("Theme", "Restart to update theme.")
+        message_box.tell(self, "Restart FlexTool to change the theme", "The new theme is used after a restart.")
 
     # ── Project switching ────────────────────────────────────────────
 
@@ -1928,13 +2039,12 @@ class MainWindow(tk.Tk):
         """Switch to the project with the given *name*."""
         # Close execution window and manager from the previous project
         if self.execution_mgr is not None and self.execution_mgr.has_pending_or_running():
-            result = messagebox.askyesno(
-                "Jobs running",
-                "There are running or pending execution jobs for the current project.\n"
-                "Kill all jobs and switch project?",
-                parent=self,
+            result = message_box.ask(
+                self, "Stop the running jobs?",
+                "Jobs of this project are still running or waiting. Switching project stops all of them.",
+                buttons=_STOP_AND_SWITCH, kind="danger", docs=_DOCS_EXECUTION,
             )
-            if not result:
+            if result is None:
                 # Reset the combo back – it already shows the new name
                 self.project_combo.set(self.current_project or "")
                 return
@@ -1990,16 +2100,12 @@ class MainWindow(tk.Tk):
             project_path, on_solver_defaults_reset=_on_solver_defaults_reset,
         )
         if solver_defaults_reset:
-            # Shown once: saving records the updated solver settings
-            # (their revision) in settings.yaml.
+            # Printed once: saving records the updated solver settings (their revision) in settings.yaml.  The
+            # message list keeps it until dismissed (posted below, once the project's list exists).
             _notice = solver_defaults_notice(name)
             logger.warning("%s", _notice)
             print(_notice, flush=True)
             save_project_settings(project_path, self.project_settings)
-            _dialog_text = solver_defaults_dialog_text(name)
-            self.after_idle(
-                lambda: messagebox.showinfo("Solver settings updated", _dialog_text, parent=self)
-            )
 
         # Create input source manager and scenario managers
         self.input_source_mgr = InputSourceManager(project_path, self.project_settings)
@@ -2017,8 +2123,24 @@ class MainWindow(tk.Tk):
         # Sync auto-generate checkboxes with loaded settings
         self._load_auto_gen_vars()
 
+        # A new message list for this project (nothing seen yet).
+        if getattr(self, "_messages", None) is not None:
+            from flextool.gui.message_sources import project_sources
+
+            self._messages.open_project(name, sources=project_sources(self, project_path, name),
+                                        folder=project_path)
+            if solver_defaults_reset and self._messages.center is not None:
+                from datetime import datetime
+
+                from flextool.gui.messages import project_key
+
+                self._messages.center.post_event(
+                    "solver_defaults_updated", project_key(project_path), f"Project {name}",
+                    run=datetime.now().isoformat(timespec="seconds"),
+                )
+
         self._clear_all_lists()
-        self._refresh_input_sources()
+        self._refresh_input_sources(trigger="project_open")
         self._refresh_executed_scenarios()
 
         # One-shot cleanup: drop scenario references from settings.yaml
@@ -2092,14 +2214,17 @@ class MainWindow(tk.Tk):
         """Save state and close the application."""
         # Warn if executions are still active
         if self.execution_mgr is not None and self.execution_mgr.has_pending_or_running():
-            result = messagebox.askyesno(
-                "Jobs running",
-                "There are running or pending execution jobs.\n"
-                "Kill all jobs and close?",
-                parent=self,
+            result = message_box.ask(
+                self, "Stop the running jobs?",
+                "Jobs are still running or waiting. Closing FlexTool stops all of them.",
+                buttons=_STOP_AND_CLOSE, kind="danger",
             )
-            if not result:
+            if result is None:
                 return
+
+        # The message list: its window closes (recording what it listed), a pending auto-show is cancelled.
+        if getattr(self, "_messages", None) is not None:
+            self._messages.close()
 
         # The AI assistant: windows withdrawn, answers stopped without asking
         # (what was received is saved, a running tool call is recorded as not
@@ -2439,12 +2564,37 @@ class MainWindow(tk.Tk):
         self._save_checked_input_sources()
 
     def _on_input_source_dblclick(self, event: tk.Event) -> None:  # type: ignore[type-arg]
-        """Double-click on an input source row opens it for editing."""
+        """Double-click on an input source row opens it for editing; a red row with a message opens that message."""
         item = self.input_sources_tree.identify_row(event.y)
         if item and not _is_ghost_iid(item):
             # Select the item so _on_edit_source sees it as selected
             self.input_sources_tree.selection_set(item)
+            if self._open_row_message(item):
+                return
             self._on_edit_source()
+
+    def _on_input_source_return(self, _event: tk.Event) -> str | None:  # type: ignore[type-arg]
+        """Enter on a red row with a message opens that message (other rows: nothing, as before)."""
+        item = self.input_sources_tree.focus()
+        return "break" if item and self._open_row_message(item) else None
+
+    def _row_message_subject(self, item: str) -> str | None:
+        """The database key of the red ("error") row *item*, else ``None``."""
+        mgr = self.input_source_mgr
+        if mgr is None or _is_ghost_iid(item) or not self.input_sources_tree.tag_has("error", item):
+            return None
+        name = _source_name_from_iid(item)
+        source = next((s for s in mgr._sources if s.name == name), None)
+        if source is None:
+            return None
+        from flextool.gui.messages import database_key
+        return database_key(mgr.resolve_path(source))
+
+    def _open_row_message(self, item: str) -> bool:
+        """Open the message list at the first message about the red row *item*; ``False`` when there is none."""
+        messages = getattr(self, "_messages", None)
+        subject = self._row_message_subject(item)
+        return messages is not None and subject is not None and messages.open_about(subject)
 
     def _on_available_toggled(self, _changed: list[str]) -> None:
         """CheckTreeController callback for available_tree."""
@@ -2616,18 +2766,18 @@ class MainWindow(tk.Tk):
         assert self.input_source_mgr is not None
         path = self.input_source_mgr.resolve_path(source)
         if self.db_editor_mgr.has_uncommitted_changes(path):
-            messagebox.showwarning(
-                "Freeze database",
-                f"{source.name} has uncommitted changes in the database editor. "
-                "Commit or discard them first.",
-                parent=self,
+            message_box.tell(
+                self, "Commit or discard your changes first",
+                f"{source.name} has changes in the database editor that are not committed. "
+                "Commit or discard them, then freeze it.",
+                kind="warning", docs=_DOCS_MIGRATION,
             )
             return
         label = simpledialog.askstring(
             "Freeze database",
-            f"A frozen database is never migrated in place without asking.\n"
+            f"A frozen database is never upgraded without asking.\n"
             f"Label for {source.name} (at most {MAX_LABEL_LENGTH} characters), "
-            f"e.g. \"Reference case 1.0\":",
+            f"for example \"Reference case 1.0\":",
             parent=self,
         )
         if label is None:
@@ -2635,13 +2785,20 @@ class MainWindow(tk.Tk):
         try:
             info = freeze(path, label)
         except FreezeError as exc:
-            messagebox.showerror("Freeze database", str(exc), parent=self)
+            message_box.tell(self, "The database was not frozen", str(exc), kind="error", docs=_DOCS_MIGRATION)
             return
         except Exception as exc:
             logger.warning("Freezing %s failed", path, exc_info=True)
-            messagebox.showerror("Freeze database", f"Could not freeze {source.name}: {exc}", parent=self)
+            message_box.tell(
+                self, "The database was not frozen", f"{source.name}: {exc}", "The full error is in the FlexTool log.",
+                kind="error", docs=_DOCS_MIGRATION,
+            )
             return
-        messagebox.showinfo("Freeze database", f"{source.name} is frozen: {info.describe()}.", parent=self)
+        message_box.tell(
+            self, "Database frozen",
+            f"{source.name} is frozen: {info.describe()}. FlexTool asks before it upgrades this file.",
+            docs=_DOCS_MIGRATION,
+        )
         self._refresh_input_sources()
 
     def _on_unfreeze_source(self, source) -> None:
@@ -2650,18 +2807,21 @@ class MainWindow(tk.Tk):
 
         assert self.input_source_mgr is not None
         path = self.input_source_mgr.resolve_path(source)
-        if not messagebox.askyesno(
-            "Unfreeze database",
-            f"Remove the frozen marker of {source.name} ('{source.frozen_label}')?\n"
-            "It is then migrated like any other input source.",
-            parent=self,
-        ):
+        if message_box.ask(
+            self, "Unfreeze this database?",
+            f"FlexTool removes the frozen marker of {source.name} ('{source.frozen_label}'). "
+            "It then upgrades the file like any other input source.",
+            buttons=(("Unfreeze", "unfreeze"), ("Cancel", None)), kind="danger", docs=_DOCS_MIGRATION,
+        ) is None:
             return
         try:
             unfreeze(path)
         except Exception as exc:
             logger.warning("Unfreezing %s failed", path, exc_info=True)
-            messagebox.showerror("Unfreeze database", f"Could not unfreeze {source.name}: {exc}", parent=self)
+            message_box.tell(
+                self, "The database was not unfrozen", f"{source.name}: {exc}", "The full error is in the FlexTool log.",
+                kind="error",
+            )
             return
         self._refresh_input_sources()
 
@@ -2671,11 +2831,11 @@ class MainWindow(tk.Tk):
         path = self.input_source_mgr.resolve_path(source)
         copy = self.input_source_mgr.migrated_copy_of(path)
         if copy is not None:
-            messagebox.showinfo(
-                "Migrate frozen database",
-                f"{source.name} already has a migrated copy, {copy.name}: run the copy. "
-                "Delete the copy to migrate the frozen file again.",
-                parent=self,
+            message_box.tell(
+                self, "Run the upgraded copy",
+                f"{source.name} already has an upgraded copy, {copy.name}. Run the copy. "
+                "To upgrade the frozen file again, delete the copy first.",
+                docs=_DOCS_MIGRATION,
             )
             return
         self.input_source_mgr.undecline_frozen(path)
@@ -2728,17 +2888,14 @@ class MainWindow(tk.Tk):
             self._refresh_input_sources()
             return
         names = [f.name for f, _ in folders]
-        answer = messagebox.askyesno(
-            "Delete stale results",
-            f"Permanently delete {len(folders)} executed-scenario result "
-            f"folder(s) left over from retired source {number} "
-            "(not retrievable)?\n\n  "
-            + "\n  ".join(names[:20])
-            + ("\n  …" if len(names) > 20 else ""),
-            icon="warning",
-            parent=self,
+        answer = message_box.ask(
+            self, "Delete the old results?",
+            f"{_folders(len(folders))} of input source {number}, which no longer exists:",
+            message_box.all_names(names),
+            "Deleting cannot be undone.",
+            buttons=(("Delete", "delete"), ("Cancel", None)), kind="danger",
         )
-        if not answer:
+        if answer is None:
             return
         self.input_source_mgr.delete_results(number)
         self._refresh_input_sources()
@@ -2752,14 +2909,14 @@ class MainWindow(tk.Tk):
         if not folders:
             self._refresh_input_sources()
             return
-        answer = messagebox.askyesno(
-            "Re-link results",
-            f"Re-link {len(folders)} result folder(s) from retired source "
-            f"{old_number} to source {new_number}?\n\n"
-            "The folders are renamed to record the new source number.",
-            parent=self,
+        answer = message_box.ask(
+            self, f"Move these results to input source {new_number}?",
+            f"{_folders(len(folders))} of the removed input source {old_number}:",
+            message_box.name_list(f.name for f, _ in folders),
+            f"Moving renames them so that they belong to input source {new_number}.",
+            buttons=(("Move", "move"), ("Cancel", None)), kind="danger",
         )
-        if not answer:
+        if answer is None:
             return
         _moved, conflicts = self.input_source_mgr.relink_results(
             old_number, new_number
@@ -2767,12 +2924,12 @@ class MainWindow(tk.Tk):
         self._refresh_input_sources()
         self._refresh_executed_scenarios()
         if conflicts:
-            messagebox.showwarning(
-                "Some results not re-linked",
-                "These result folders already existed under source "
-                f"{new_number} (or could not be moved) and were left in "
-                "place:\n\n  " + "\n  ".join(conflicts),
-                parent=self,
+            message_box.tell(
+                self, "Some results were not moved",
+                f"These folders already exist under input source {new_number}, or could not be moved, "
+                "and were left as they are:",
+                message_box.name_list(conflicts),
+                kind="warning",
             )
 
     def _on_input_source_motion(self, event: tk.Event) -> None:  # type: ignore[type-arg]
@@ -2812,7 +2969,12 @@ class MainWindow(tk.Tk):
         elif status_char == STATUS_EMPTY:
             tip_lines.append("No scenarios found in this file.")
         elif status_char == STATUS_ERR:
-            tip_lines.append("Could not read scenarios (invalid or missing file).")
+            messages = getattr(self, "_messages", None)
+            subject = self._row_message_subject(item)
+            if messages is not None and subject is not None and messages.message_about(subject) is not None:
+                tip_lines.append(ERROR_ROW_TIP)
+            else:
+                tip_lines.append("Could not read scenarios (invalid or missing file).")
         elif status_char == STATUS_EDITING:
             tip_lines.append("File is currently open for editing.")
         if not _is_ghost_iid(item) and self.input_source_mgr is not None:
@@ -2919,7 +3081,10 @@ class MainWindow(tk.Tk):
     def _on_add_source(self) -> None:
         """Open the Add dialog and refresh sources if files were added."""
         if not self.current_project:
-            messagebox.showinfo("No project", "No project is currently loaded.")
+            message_box.tell(
+                self, "Open a project first",
+                "Choose a project in the Project list at the top, or create one with Projects….",
+            )
             return
 
         # Remember existing sources so we can detect what's new
@@ -2991,31 +3156,27 @@ class MainWindow(tk.Tk):
         """Refresh input sources by re-scanning the directory."""
         if not self.input_source_mgr:
             return
-        self._refresh_input_sources()
+        self._refresh_input_sources(trigger="refresh")
 
-    def _run_db_migrations_with_ui(self) -> tuple[bool, list[str]]:
+    def _run_db_migrations_with_ui(self) -> tuple[list[str], list[str]]:
         """Plan, gather consent for, and run pending DB migrations with UI.
 
-        Returns a ``(failed, messages)`` tuple.  *failed* is ``True`` if any
-        database could not be migrated and had to be rolled back, in which
-        case the caller should not proceed to use those sources.  Step-level
-        progress is streamed to the Execution window; a modal dialog keeps
-        the interface locked until the run finishes.
+        Returns ``(failure lines, copy errors)``: the lines of the "upgrade failed" box (``failure_lines``) and the
+        errors of external files that could not be copied into the project.  Each upgraded file gets a
+        ``database_upgraded`` event in the message list (one per database, design §3.1); the files that could not
+        be planned are the input source manager's ``planning_notes``.  Step-level progress is streamed to the
+        Execution window; a modal dialog keeps the interface locked until the run finishes.
         """
         from flextool.gui.execution_manager import JobType
 
         assert self.input_source_mgr is not None
         mgr = self.input_source_mgr
 
-        (
-            internal_to_migrate,
-            external_to_migrate,
-            frozen_to_migrate,
-            planning_messages,
-        ) = mgr.plan_db_migrations()
+        internal_to_migrate, external_to_migrate, frozen_to_migrate, _notes = mgr.plan_db_migrations()
+        copy_errors: list[str] = []
 
         if not internal_to_migrate and not external_to_migrate and not frozen_to_migrate:
-            return False, planning_messages
+            return [], copy_errors
 
         consent: str = "in_place"
         if external_to_migrate:
@@ -3038,7 +3199,7 @@ class MainWindow(tk.Tk):
                     final_list.append((name, dst, "plain", None))
                     settings_changed = True
                 else:
-                    planning_messages.append(error)
+                    copy_errors.append(error)
             if settings_changed:
                 save_project_settings(
                     get_projects_dir() / self.current_project,
@@ -3057,14 +3218,12 @@ class MainWindow(tk.Tk):
             elif choice == "in_place":
                 final_list.append((entry.source_name, entry.path, "frozen_in_place", None))
             else:
+                # The user chose it; the tree shows "frozen, older version".
                 mgr.decline_frozen(entry.path)
-                planning_messages.append(
-                    f"{entry.source_name} is frozen ('{entry.label}') and was not "
-                    f"migrated; it cannot be run in this session."
-                )
+                logger.info("%s is frozen and was not migrated (the user chose Cancel).", entry.source_name)
 
         if not final_list:
-            return False, planning_messages
+            return [], copy_errors
 
         total = len(final_list)
 
@@ -3097,7 +3256,10 @@ class MainWindow(tk.Tk):
             if exec_mgr is not None and job_id is not None:
                 exec_mgr.append_stdout(job_id, line)
 
-        worker_messages: list[str] = []
+        from datetime import datetime
+
+        run_id = datetime.now().isoformat(timespec="seconds")
+        results: list[UpgradeResult] = []
         outcome = {"failed": False}
 
         def _worker() -> None:
@@ -3124,26 +3286,17 @@ class MainWindow(tk.Tk):
                             f"v{curr} → v{nxt} (target v{target})"
                         )
 
-                    if mode == "frozen_copy":
-                        assert copy_path is not None
-                        was_upgraded, failed, messages = _migrate_frozen_copy(
-                            path, copy_path,
-                            progress_callback=_progress_cb,
-                            cancel_check=lambda: dialog.cancel_requested,
-                        )
-                    else:
-                        was_upgraded, failed, messages = check_and_upgrade_database(
-                            path,
-                            progress_callback=_progress_cb,
-                            cancel_check=lambda: dialog.cancel_requested,
-                            allow_frozen=mode == "frozen_in_place",
-                        )
-                    worker_messages.extend(messages)
-                    for msg in messages:
+                    result = upgrade_one(
+                        name, path, mode, copy_path,
+                        progress_callback=_progress_cb,
+                        cancel_check=lambda: dialog.cancel_requested,
+                    )
+                    results.append(result)
+                    for msg in result.messages:
                         _emit(msg)
-                    if not messages and not was_upgraded:
+                    if not result.messages and not result.upgraded:
                         _emit(f"[{i}/{total}] {name}: already up to date.")
-                    if failed:
+                    if result.failed:
                         outcome["failed"] = True
             finally:
                 if exec_mgr is not None and job_id is not None:
@@ -3159,37 +3312,40 @@ class MainWindow(tk.Tk):
         threading.Thread(target=_worker, daemon=True).start()
         self.wait_window(dialog)
 
-        return outcome["failed"], planning_messages + worker_messages
+        from flextool.gui.message_sources import failure_lines, post_upgrades
 
-    def _refresh_input_sources(self) -> None:
-        """Re-scan input sources and repopulate the treeview."""
+        controller = getattr(self, "_messages", None)
+        post_upgrades(getattr(controller, "center", None), results, run_id)
+        return failure_lines(results, cancelled=dialog.cancel_requested), copy_errors
+
+    def _refresh_input_sources(self, trigger: str = "other") -> None:
+        """Re-scan input sources and repopulate the treeview; *trigger* (``"project_open"`` / ``"refresh"`` /
+        ``"other"``) is what the message list's auto-show goes by (``MessageCenter.recompute``)."""
         if not self.input_source_mgr:
             return
 
-        migration_failed, upgrade_messages = self._run_db_migrations_with_ui()
-        if migration_failed:
-            messagebox.showerror(
-                "Database migration failed",
-                "\n".join(upgrade_messages)
-                + "\n\nThe full log is shown in the Execution window.",
-                parent=self,
-            )
-        elif upgrade_messages:
-            messagebox.showinfo(
-                "Database upgrades",
-                "\n".join(upgrade_messages),
-                parent=self,
-            )
-        # W-0490 (TODO(v5.0.0): remove): a warning about the database, in its own box, never in the
-        # "Database migration failed" one, whose cause it is not.
-        flagged = self.input_source_mgr.take_check_findings()
-        if flagged:
-            from flextool.gui.dialogs.database_check_dialog import show_database_check
-            from flextool.run_warnings import docs_url
-            from flextool.update_flextool.value_list_history import CODE, gui_dialog_text
+        failures, copy_errors = self._run_db_migrations_with_ui()
+        from flextool.gui.dialogs import message_box
 
-            show_database_check(self, gui_dialog_text(flagged), docs_url(CODE))
-
+        if failures:
+            message_box.tell(
+                self, "The database upgrade failed",
+                "These problems stopped the upgrade:",
+                message_box.name_list(failures),
+                "A database whose upgrade failed was put back as it was where possible. The full log is in the "
+                "Execution window.",
+                kind="error", docs=_DOCS_MIGRATION,
+            )
+        if copy_errors:
+            one = len(copy_errors) == 1
+            message_box.tell(
+                self,
+                "This file was not copied into the project" if one else "These files were not copied into the project",
+                message_box.name_list(copy_errors),
+                "It stays outside the project and was not upgraded." if one
+                else "They stay outside the project and were not upgraded.",
+                kind="error", docs=_DOCS_MIGRATION,
+            )
         sources = self.input_source_mgr.refresh()
 
         # Clear input sources tree
@@ -3277,6 +3433,17 @@ class MainWindow(tk.Tk):
 
         # Update Edit / Convert / Delete button states
         self._update_input_button_states()
+
+        self._messages_recompute(trigger, sources)
+
+    def _messages_recompute(self, trigger: str = "other", sources: list | None = None) -> None:
+        """Recompute the message list (indicator, open window, auto-show); nothing on a host without one."""
+        controller = getattr(self, "_messages", None)
+        if controller is None:
+            return
+        if sources is not None:
+            controller.set_ranks(self.input_source_mgr, sources)
+        controller.recompute(trigger)  # type: ignore[arg-type]
 
     def _update_add_button_style(self, no_sources: bool) -> None:
         """Highlight the Add button when there are no input sources.
@@ -3545,7 +3712,7 @@ class MainWindow(tk.Tk):
             filepath = project_path / "input_sources" / source_name
 
         if not filepath.exists():
-            messagebox.showerror("File not found", f"Cannot find:\n{filepath}")
+            self._tell_file_missing(filepath)
             return
 
         ext = filepath.suffix.lower()
@@ -3557,7 +3724,7 @@ class MainWindow(tk.Tk):
                 open_file_in_default_app(filepath)
                 self.input_source_mgr.mark_as_editing(source_name)
             except OSError as exc:
-                messagebox.showerror("Error", f"Could not open file:\n{exc}")
+                self._tell_open_failed(exc)
                 return
         elif ext == ".sqlite":
             if self.db_editor_mgr.is_editor_running(source_name):
@@ -3570,30 +3737,17 @@ class MainWindow(tk.Tk):
                 # 'Update FlexTool' and
                 # offer the system default .sqlite app as a fallback.
                 # askyesnocancel: Yes=Update, No=default app, Cancel=nothing.
-                from flextool.update_flextool import install_info
-                choice = messagebox.askyesnocancel(
-                    "Spine DB Editor not available",
-                    "Spine Toolbox is not installed in the Python environment "
-                    "running FlexTool, so .sqlite input sources cannot be "
-                    "opened in the Spine DB Editor.\n\n"
-                    "It is part of Spine Toolbox. You can install it via "
-                    "'Update FlexTool' (tick 'Install Spine Toolbox'), or "
-                    "manually:\n\n"
-                    f"  {install_info.manual_toolbox_command()}\n\n"
-                    "Open 'Update FlexTool' now?\n\n"
-                    "Choose 'No' to open the file with your system's default "
-                    "application for .sqlite files instead.",
-                    parent=self,
+                choice = self._ask_install_toolbox(
+                    "Install Spine Toolbox to edit databases",
+                    "The Spine DB Editor, which edits .sqlite input sources",
                 )
-                if choice is True:
+                if choice == "update":
                     self._on_update_flextool(preselect_toolbox=True)
-                elif choice is False:
+                elif choice == "other":
                     try:
                         open_file_in_default_app(filepath)
                     except OSError as exc:
-                        messagebox.showerror(
-                            "Error", f"Could not open file:\n{exc}"
-                        )
+                        self._tell_open_failed(exc)
                 return
             # The Spine DB editor was launched, but an incomplete Spine
             # Toolbox install can still crash it on startup. Check shortly after
@@ -3603,11 +3757,45 @@ class MainWindow(tk.Tk):
                 2000, self._check_db_editor_launch, proc, source_name
             )
         else:
-            messagebox.showinfo("Unsupported", f"Cannot edit files of type '{ext}'.")
+            kind_of_file = f"'{ext}' files" if ext else "files without an extension"
+            message_box.tell(
+                self, "This file type cannot be edited here",
+                f"FlexTool opens .sqlite, .xlsx and .ods input sources, not {kind_of_file}.",
+            )
             return
 
         # Refresh to show editing status
         self._refresh_input_sources()
+
+    def _tell_file_missing(self, path: Path) -> None:
+        """#31: an input source file that is gone since the last refresh."""
+        message_box.tell(
+            self, "The file is missing",
+            f"FlexTool cannot find {path}. It may have been moved or deleted; press Refresh to update the list.",
+            kind="error",
+        )
+
+    def _tell_open_failed(self, exc: OSError) -> None:
+        """#32: the system's default program did not open an input source (the error is logged)."""
+        logger.warning("Could not open the file: %s", exc, exc_info=True)
+        message_box.tell(
+            self, "The file did not open", str(exc), "The full error is in the FlexTool log.", kind="error",
+        )
+
+    def _ask_install_toolbox(self, title: str, editor: str) -> str | None:
+        """#33 / #61: the Spine DB Editor is missing; ``"update"``, ``"other"`` (another program) or ``None``.
+
+        *editor* opens the first sentence ("The Spine DB Editor, which edits …").
+        """
+        from flextool.update_flextool import install_info
+        return message_box.ask(
+            self, title,
+            f"{editor}, is part of Spine Toolbox, and Spine Toolbox is not installed in FlexTool's Python "
+            "environment.",
+            "Install it with the Install Spine Toolbox button in Update FlexTool…, or by hand with:",
+            install_info.manual_toolbox_command(),
+            buttons=_INSTALL_TOOLBOX, default="update", docs=_DOCS_TOOLBOX,
+        )
 
     def _on_update_flextool(self, preselect_toolbox: bool = False) -> None:
         """Open the Update dialog and, if confirmed, run the update as a job."""
@@ -3666,11 +3854,11 @@ class MainWindow(tk.Tk):
     def _update_finished(self, success: bool, output: str = "") -> None:
         """Report update result; prompt for restart only if code actually changed."""
         if not success:
-            messagebox.showerror(
-                "Update failed",
-                "The update did not complete. See the Execution window log for "
-                "the full output (use 'Copy log text' to share it).",
-                parent=self,
+            message_box.tell(
+                self, "The update did not finish",
+                "The Execution window shows the full output. 'Copy log text' copies it if you want to report "
+                "the problem.",
+                kind="error", docs=_DOCS_UPDATING,
             )
             return
 
@@ -3686,21 +3874,17 @@ class MainWindow(tk.Tk):
 
         if not changed:
             self._apply_update_indicator(False)
-            messagebox.showinfo(
-                "Already up to date",
-                "FlexTool is already at the latest version — nothing to update.",
-                parent=self,
+            message_box.tell(
+                self, "FlexTool is up to date", "You have the latest version, so nothing was changed.",
             )
             return
 
         # Something was updated: clear the highlight and ask for a restart.
         self._apply_update_indicator(False)
-        messagebox.showinfo(
-            "Update complete — restart required",
-            "FlexTool was updated successfully.\n\n"
-            "Please close and restart FlexTool for the new version to take "
-            "effect. The running application is still using the old code.",
-            parent=self,
+        message_box.tell(
+            self, "Restart FlexTool to finish the update",
+            "The new version is installed. Close FlexTool and start it again: until then this window runs the "
+            "old version.",
         )
 
     def _check_db_editor_launch(self, proc, source_name: str) -> None:
@@ -3741,18 +3925,14 @@ class MainWindow(tk.Tk):
                 self.execution_window.select_job(job.job_id)
 
         from flextool.update_flextool import install_info
-        if messagebox.askyesno(
-            "Could not open database",
-            "The Spine DB Editor failed to start, so the database could not "
-            "be opened. This usually means Spine Toolbox is missing or only "
-            "partially installed.\n\n"
-            "The full error is shown in the Execution window. You can "
-            "(re)install Spine Toolbox via 'Update FlexTool' (tick 'Install "
-            "Spine Toolbox'), or manually:\n\n"
-            f"  {install_info.manual_toolbox_command()}\n\n"
-            "Open 'Update FlexTool' now?",
-            parent=self,
-        ):
+        if message_box.ask(
+            self, "Repair Spine Toolbox to open the database",
+            f"The Spine DB Editor did not start, so '{source_name}' did not open. Spine Toolbox is probably "
+            "missing or only partly installed; the Execution window shows the error.",
+            "Install it again with Update FlexTool…, or by hand with:",
+            install_info.manual_toolbox_command(),
+            buttons=(("Open Update FlexTool", "update"), ("Cancel", None)), docs=_DOCS_TOOLBOX,
+        ) == "update":
             self._on_update_flextool(preselect_toolbox=True)
 
     def _flash_input_source_open(self, source_name: str) -> None:
@@ -3819,24 +3999,24 @@ class MainWindow(tk.Tk):
         xlsx_path = input_dir / source_name
 
         if not xlsx_path.exists():
-            messagebox.showerror("File not found", f"Cannot find:\n{xlsx_path}")
+            self._tell_file_missing(xlsx_path)
             return
 
         stem = Path(source_name).stem
         target_sqlite = input_dir / f"{stem}.sqlite"
 
+        # Ask first: the conflict answer below replaces or renames a file, which a Cancel here must not do.
+        if confirm and message_box.ask(
+            self, "Convert to a database?",
+            f"'{source_name}' becomes a database input source. The Excel file is moved to the 'converted' "
+            "folder, so nothing is lost.",
+            buttons=(("Convert", "convert"), ("Cancel", None)), docs=_DOCS_EXCEL,
+        ) != "convert":
+            return
+
         # Check if target already exists in input_sources/
         if not self._resolve_file_conflict(target_sqlite):
             return
-
-        if confirm:
-            answer = messagebox.askokcancel(
-                "Convert to database",
-                f"Convert '{source_name}' to a database input source?\n\n"
-                f"The xlsx will be moved to the 'converted' folder for safekeeping.",
-            )
-            if not answer:
-                return
 
         # Convert into a working file that lives OUTSIDE input_sources/ (the
         # only directory the input-source scan reads), then publish it to the
@@ -3871,9 +4051,10 @@ class MainWindow(tk.Tk):
                 changelog_version is not None
                 and changelog_version < MIN_SUPPORTED_SPECIFICATION_VERSION
             ):
-                messagebox.showerror(
-                    "Unsupported input version",
+                message_box.tell(
+                    self, "This Excel layout is too old to import",
                     unsupported_specification_message(changelog_version),
+                    kind="error", docs=_DOCS_EXCEL,
                 )
                 return
 
@@ -3904,7 +4085,12 @@ class MainWindow(tk.Tk):
             needs_migration = True
 
         if not template.exists():
-            messagebox.showerror("Template missing", f"Cannot find template:\n{template}")
+            message_box.tell(
+                self, "FlexTool's template file is missing",
+                f"FlexTool could not find {template}. The installation may be incomplete: update or reinstall "
+                "FlexTool.",
+                kind="error", docs=_DOCS_TROUBLESHOOTING,
+            )
             return
 
         # Narrate the plan so the log explains what is happening.
@@ -3986,11 +4172,11 @@ class MainWindow(tk.Tk):
             if master_path is not None:
                 cmd += ["--master", str(master_path)]
         else:
-            messagebox.showerror(
-                "Unknown format",
-                f"Cannot determine the Excel format of '{source_name}'.\n\n"
-                "Expected either a self-describing FlexTool Excel, a FlexTool 3.x "
-                "specification-based Excel, or an old FlexTool 2.x .xlsm file.",
+            message_box.tell(
+                self, "FlexTool does not recognise this Excel file",
+                f"FlexTool cannot tell which kind of FlexTool Excel '{source_name}' is. It reads its own Excel "
+                "files, FlexTool 3.x specification Excels and FlexTool 2.x .xlsm files.",
+                kind="error", docs=_DOCS_EXCEL,
             )
             return
 
@@ -4040,7 +4226,7 @@ class MainWindow(tk.Tk):
         xlsx_path = input_dir / source_name
 
         if not xlsx_path.exists():
-            messagebox.showerror("File not found", f"Cannot find:\n{xlsx_path}")
+            self._tell_file_missing(xlsx_path)
             return
 
         info = detect_excel_format(xlsx_path)
@@ -4195,21 +4381,22 @@ class MainWindow(tk.Tk):
         sqlite_path = input_dir / source_name
 
         if not sqlite_path.exists():
-            messagebox.showerror("File not found", f"Cannot find:\n{sqlite_path}")
+            self._tell_file_missing(sqlite_path)
             return
 
         stem = Path(source_name).stem
         target_xlsx = input_dir / f"{stem}.xlsx"
 
-        if not self._resolve_file_conflict(target_xlsx):
+        # Ask first: the conflict answer below replaces or renames a file, which a Cancel here must not do.
+        if message_box.ask(
+            self, "Convert to Excel?",
+            f"'{source_name}' becomes an Excel input source. The database is moved to the 'converted' folder, "
+            "so nothing is lost.",
+            buttons=(("Convert", "convert"), ("Cancel", None)), docs=_DOCS_EXCEL,
+        ) != "convert":
             return
 
-        answer = messagebox.askokcancel(
-            "Convert to Excel",
-            f"Convert '{source_name}' to Excel format?\n\n"
-            f"The sqlite will be moved to the 'converted' folder for safekeeping.",
-        )
-        if not answer:
+        if not self._resolve_file_conflict(target_xlsx):
             return
 
         db_url = sqlite_url_string(sqlite_path)
@@ -4679,12 +4866,10 @@ class MainWindow(tk.Tk):
                 if added and self.execution_window is not None:
                     self.execution_window.select_job(added[-1].job_id)
         else:
-            messagebox.showerror(
-                "Conversion failed",
-                "xlsx \u2192 sqlite conversion failed.\n\n"
-                "Check the conversion entry in the execution window.\n"
-                "Scenarios will not be executed.",
-                parent=self,
+            message_box.tell(
+                self, "The conversion failed, so the scenarios were not run",
+                "The Excel file could not be converted to a database. The Execution window shows what went wrong.",
+                kind="error",
             )
 
     # ── File conflict resolution helpers ─────────────────────────
@@ -4694,19 +4879,14 @@ class MainWindow(tk.Tk):
 
         Returns: "overwrite", "rename", or "cancel".
         """
-        result = messagebox.askyesnocancel(
-            "File already exists",
-            f"'{filepath.name}' already exists in:\n"
-            f"  {filepath.parent}\n\n"
-            f"Yes = Overwrite existing file\n"
-            f"No = Rename existing to .backup (with content hash)\n"
-            f"Cancel = Abort",
+        answer = message_box.ask(
+            self, "A file with this name already exists",
+            f"'{filepath.name}' is already in {filepath.parent}.",
+            f"Replacing deletes that file; keeping renames it to {filepath.stem}.<hash>.backup{filepath.suffix}.",
+            buttons=(("Replace it", "overwrite"), ("Keep it as a .backup copy", "rename"), ("Cancel", None)),
+            default="rename",
         )
-        if result is True:
-            return "overwrite"
-        elif result is False:
-            return "rename"
-        return "cancel"
+        return answer or "cancel"
 
     @staticmethod
     def _backup_with_hash(filepath: Path) -> Path:
@@ -4758,10 +4938,11 @@ class MainWindow(tk.Tk):
             shutil.move(str(source_path), str(dest))
             return True
         except OSError as exc:
-            messagebox.showwarning(
-                "Move failed",
-                f"Conversion succeeded but the file could not be moved "
-                f"to the 'converted' folder:\n{exc}",
+            message_box.tell(
+                self, "The original file was not moved",
+                f"The conversion worked, but {source_path.name} could not be moved to the 'converted' folder "
+                f"({exc}). Move it there yourself.",
+                kind="warning",
             )
             return False
 
@@ -4786,25 +4967,26 @@ class MainWindow(tk.Tk):
 
         # Split confirmation messages: external refs are just unlinked from
         # the project, local files are deleted from disk.
-        lines: list[str] = []
+        paragraphs: list[str] = []
         if local_names:
-            lines.append(
-                "The following files will be DELETED from "
-                f"'projects/{self.current_project}/input_sources' "
-                "(not retrievable):\n  " + "\n  ".join(local_names)
-            )
+            paragraphs += [
+                f"These files are deleted from the input_sources folder of project {self.current_project}:",
+                message_box.all_names(local_names),
+            ]
         if external_names:
-            lines.append(
-                "The following external references will be REMOVED "
-                "(the original files stay where they are):\n  "
-                + "\n  ".join(external_names)
-            )
-        answer = messagebox.askyesno(
-            "Delete input source",
-            "Are you really sure?\n\n" + "\n\n".join(lines),
-            icon="warning",
-        )
-        if not answer:
+            paragraphs += [
+                "These external files are removed from the project; the files themselves stay where they are:",
+                message_box.all_names(external_names),
+            ]
+        if local_names:
+            paragraphs.append("Deleting cannot be undone.")
+            verb = "Delete"
+        else:
+            verb = "Remove"     # nothing is deleted: the external files are only unlinked
+        if message_box.ask(
+            self, f"{verb} this input source?" if len(names) == 1 else f"{verb} these input sources?",
+            *paragraphs, buttons=((verb, "delete"), ("Cancel", None)), kind="danger",
+        ) != "delete":
             return
 
         input_dir = project_path / "input_sources"
@@ -4814,9 +4996,10 @@ class MainWindow(tk.Tk):
                 if filepath.exists():
                     filepath.unlink()
             except OSError as exc:
-                messagebox.showerror(
-                    "Delete failed",
-                    f"Could not delete '{source_name}':\n{exc}",
+                message_box.tell(
+                    self, "The input source was not deleted", str(exc),
+                    "Close any program that uses the file and try again.",
+                    kind="error",
                 )
             if source_name in self.project_settings.input_source_numbers:
                 del self.project_settings.input_source_numbers[source_name]
@@ -5259,11 +5442,10 @@ class MainWindow(tk.Tk):
             return
 
         if self._xlsx_converting_sources:
-            messagebox.showwarning(
-                "Conversion in progress",
-                "An xlsx conversion is already running.\n"
-                "Wait for it to finish or abort it first.",
-                parent=self,
+            message_box.tell(
+                self, "Wait for the conversion to finish",
+                "An Excel conversion is running. Wait for it, or stop it in the Execution window, then add the "
+                "scenarios again.",
             )
             return
 
@@ -5313,16 +5495,14 @@ class MainWindow(tk.Tk):
             s for s in checked if s.source_number in editing_source_numbers
         ]
         if editing_scenarios:
-            names_str = ", ".join(s.name for s in editing_scenarios)
-            result = messagebox.askyesno(
-                "Unsaved changes",
-                f"Some selected scenarios come from input sources that "
-                f"may have unsaved changes (DB editor still open):\n\n"
-                f"  {names_str}\n\n"
-                f"Continue anyway?",
-                parent=self,
-            )
-            if not result:
+            if message_box.ask(
+                self, "Run with uncommitted changes?",
+                "These scenarios come from input sources that are open in the database editor and may have "
+                "changes that are not committed:",
+                message_box.name_list([s.name for s in editing_scenarios]),
+                "A run uses only committed data.",
+                buttons=(("Run anyway", "run"), ("Cancel", None)), kind="danger",
+            ) != "run":
                 return
 
         # A scenario name becomes its result folder names and a command argument: one that cannot be a plain
@@ -5331,12 +5511,12 @@ class MainWindow(tk.Tk):
         unsafe = [(s, output_name_problem(s.name)) for s in checked]
         unsafe = [(s, why) for s, why in unsafe if why is not None]
         if unsafe:
-            messagebox.showwarning(
-                "Scenario names that cannot be used",
-                "These scenarios will not run, because their names cannot be used as folder names. "
-                "Rename them in the input data:\n\n"
-                + "\n".join(f"  {describe_name(s.name)} {why}" for s, why in unsafe),
-                parent=self,
+            message_box.tell(
+                self, "Rename these scenarios",
+                "Their names cannot be used as folder names, so they do not run:",
+                message_box.name_list([f"{describe_name(s.name)} {why}" for s, why in unsafe]),
+                "Rename them in the input data.",
+                kind="warning",
             )
             refused = {id(s) for s, _why in unsafe}
             checked = [s for s in checked if id(s) not in refused]
@@ -5356,23 +5536,19 @@ class MainWindow(tk.Tk):
         new_scenarios = [s for s in checked if s.name not in already_queued]
 
         if duplicates and not new_scenarios:
-            dup_names = ", ".join(s.name for s in duplicates)
-            messagebox.showwarning(
-                "Already in execution list",
-                f"All selected scenarios are already pending or running:\n\n"
-                f"  {dup_names}\n\n"
-                f"They will not be added again.",
-                parent=self,
+            message_box.tell(
+                self, "These scenarios are already running",
+                "All selected scenarios are already waiting or running, so none were added:",
+                message_box.name_list([s.name for s in duplicates]),
             )
             return
 
         if duplicates:
-            dup_names = ", ".join(s.name for s in duplicates)
-            messagebox.showinfo(
-                "Some already queued",
-                f"These scenarios are already pending or running and "
-                f"will be skipped:\n\n  {dup_names}",
-                parent=self,
+            message_box.tell(
+                self, "Some scenarios were skipped",
+                "These are already waiting or running:",
+                message_box.name_list([s.name for s in duplicates]),
+                "The others were added.",
             )
 
         if not new_scenarios:
@@ -5446,12 +5622,12 @@ class MainWindow(tk.Tk):
         still = self._sqlite_sources_not_current(scenarios)
         if not still:
             return scenarios
-        messagebox.showwarning(
-            "Input database not migrated",
-            "These input sources are not current and were not migrated, so "
-            "their scenarios are not run:\n\n  "
-            + "\n  ".join(f"{name} ({still[name]})" for name in sorted(still)),
-            parent=self,
+        message_box.tell(
+            self, "These scenarios were not run",
+            "Their input sources are not up to date and were not upgraded:",
+            message_box.name_list([f"{name} ({still[name]})" for name in sorted(still)]),
+            "Upgrade them (for a frozen one: upgrade a copy), then run again.",
+            kind="warning", docs=_DOCS_MIGRATION,
         )
         return [s for s in scenarios if s.source_name not in still]
 
@@ -5460,9 +5636,9 @@ class MainWindow(tk.Tk):
     def _on_plot_menu(self) -> None:
         """Open the PlotDialog to configure plot settings."""
         if not self.current_project:
-            messagebox.showinfo(
-                "No project",
-                "Please select or create a project first.",
+            message_box.tell(
+                self, "Open a project first",
+                "Choose a project in the Project list at the top, or create one with Projects….",
             )
             return
         project_path = get_projects_dir() / self.current_project
@@ -5476,9 +5652,9 @@ class MainWindow(tk.Tk):
     def _on_view_results(self) -> None:
         """Open the ResultViewer, or update its scenarios if already open."""
         if not self.current_project:
-            messagebox.showinfo(
-                "No project",
-                "Please select or create a project first.",
+            message_box.tell(
+                self, "Open a project first",
+                "Choose a project in the Project list at the top, or create one with Projects….",
             )
             return
         self._open_or_raise_result_viewer()
@@ -5807,16 +5983,13 @@ class MainWindow(tk.Tk):
         if not selected_ids:
             return
 
-        names_str = "\n  ".join(name for _, name in selected_ids)
-        answer = messagebox.askyesno(
-            "Delete results",
-            f"Are you sure you want to permanently delete results for "
-            f"the selected scenarios?\n\n  {names_str}\n\n"
-            f"This will remove all output files "
-            f"(parquet, plots, Excel, CSV).",
-            icon="warning",
-        )
-        if not answer:
+        if message_box.ask(
+            self, "Delete these results?",
+            "All output files of these scenarios are deleted (parquet, plots, Excel, CSV):",
+            message_box.all_names([name for _, name in selected_ids]),
+            "This cannot be undone.",
+            buttons=(("Delete", "delete"), ("Cancel", None)), kind="danger",
+        ) != "delete":
             return
 
         self.exec_scenario_mgr.delete_results(selected_ids)
@@ -6351,7 +6524,10 @@ class MainWindow(tk.Tk):
         """
         ids = self._get_checked_executed_ids()
         if not ids:
-            messagebox.showinfo("No selection", "Please select executed scenarios first.")
+            message_box.tell(
+                self, "Select executed scenarios first",
+                "Tick scenarios in the Executed scenarios list, then try again.",
+            )
             return None
         mgr = self._ensure_output_action_mgr()
         if mgr is None:
@@ -6418,12 +6594,10 @@ class MainWindow(tk.Tk):
         So there is no manual generate — the user enables Auto-gen and
         (re-)runs the scenarios.
         """
-        messagebox.showinfo(
-            "Comparison SpineDB",
-            "The SpineDB results database is written during the solve and "
-            "cannot be regenerated from the stored parquet files.\n\n"
-            "Tick its Auto-gen box and (re-)run the scenarios to produce "
-            "results.sqlite.",
+        message_box.tell(
+            self, "Run the scenarios again to make the results database",
+            "The GUI writes results.sqlite while the scenarios run; this button cannot make it from saved "
+            "results. Tick its Auto-gen box and run the scenarios again.",
         )
 
     # ── Spinner animation for output actions ─────────────────────
@@ -6577,10 +6751,9 @@ class MainWindow(tk.Tk):
         project_path = get_projects_dir() / self.current_project
         results_db = project_path / "results.sqlite"
         if not results_db.is_file():
-            messagebox.showinfo(
-                "Comparison SpineDB",
-                "results.sqlite does not exist yet. Tick its Auto-gen box "
-                "and (re-)run the scenarios to produce it.",
+            message_box.tell(
+                self, "Run the scenarios again to make the results database",
+                "results.sqlite does not exist yet. Tick its Auto-gen box and run the scenarios again.",
             )
             return
 
@@ -6588,8 +6761,8 @@ class MainWindow(tk.Tk):
         if self.db_editor_mgr.is_editor_running(source_name):
             # Already open in a Spine DB Editor we launched — don't spawn a
             # duplicate window (there is no row button here to flash).
-            messagebox.showinfo(
-                "Comparison SpineDB",
+            message_box.tell(
+                self, "The results database is already open",
                 "results.sqlite is already open in the Spine DB Editor.",
             )
             return
@@ -6600,21 +6773,13 @@ class MainWindow(tk.Tk):
             # 'Update FlexTool', and offer the system default .sqlite app
             # as a fallback. askyesnocancel: Yes=Update, No=default app,
             # Cancel=do nothing.
-            choice = messagebox.askyesnocancel(
-                "Spine DB Editor not available",
-                "Spine Toolbox is not installed in the Python environment "
-                "running FlexTool, so the comparison results.sqlite cannot be "
-                "opened in the Spine DB Editor.\n\n"
-                "It is part of Spine Toolbox, which can be added via "
-                "'Update FlexTool' (tick 'Install Spine Toolbox').\n\n"
-                "Open 'Update FlexTool' now?\n\n"
-                "Choose 'No' to open results.sqlite with your system's "
-                "default application for .sqlite files instead.",
-                parent=self,
+            choice = self._ask_install_toolbox(
+                "Install Spine Toolbox to open results.sqlite",
+                "The Spine DB Editor, which opens results.sqlite",
             )
-            if choice is True:
+            if choice == "update":
                 self._on_update_flextool(preselect_toolbox=True)
-            elif choice is False:
+            elif choice == "other":
                 try:
                     open_file_in_default_app(results_db)
                 except OSError as exc:
