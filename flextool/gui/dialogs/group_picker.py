@@ -15,9 +15,10 @@ themes — the rest of the FlexTool GUI uses the same pattern.
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import ttk
 from typing import Sequence
 
+from flextool.gui.dialogs import message_box
 from flextool.gui.hover_tooltip import attach_tooltip
 
 
@@ -234,11 +235,7 @@ class GroupPickerDialog(tk.Toplevel):
     def _on_ok(self) -> None:
         selected = [n for n in self._all_names if self._vars[n].get()]
         if not selected:
-            messagebox.showwarning(
-                "No groups selected",
-                "Select at least one group, or press Cancel.",
-                parent=self,
-            )
+            message_box.tell(self, "Select a group", "Select at least one group, or press Cancel.", kind="warning")
             return
         if len(selected) == len(self._all_names):
             self.result = "all"

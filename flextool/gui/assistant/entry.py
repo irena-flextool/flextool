@@ -30,10 +30,11 @@ import time
 import tkinter as tk
 from collections.abc import Callable
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import ttk
 from typing import TYPE_CHECKING, Any
 
 from flextool.gui.assistant import strings
+from flextool.gui.dialogs import message_box
 
 if TYPE_CHECKING:
     from flextool.assistant.runtime_context import RuntimeContextWriter
@@ -160,8 +161,9 @@ class AssistantEntry:
                 importlib.import_module(name)
         except Exception as exc:  # noqa: BLE001 — a broken installation is a message, not a crash
             logger.exception("The AI assistant could not be loaded")
-            messagebox.showerror(strings.ENTRY_BUTTON.rstrip("…"),
-                                 f"{strings.UNAVAILABLE} ({type(exc).__name__})", parent=self.main)
+            # The assistant's own text (design decision 9; also the button's tooltip): only the title is FlexTool's.
+            message_box.tell(self.main, "Update FlexTool to use the AI assistant",
+                             f"{strings.UNAVAILABLE} ({type(exc).__name__})", kind="error", docs="ai_assistant.md")
             return False
         return True
 
@@ -173,7 +175,8 @@ class AssistantEntry:
             return
         name = getattr(self.main, "current_project", None)
         if not name:
-            messagebox.showinfo("No project", "Please select or create a project first.", parent=self.main)
+            message_box.tell(self.main, "Open a project first",
+                             "Choose a project in the Project list at the top, or create one with Projects….")
             return
         window = self.window
         if window is not None and not window.closing and window.winfo_exists():

@@ -925,7 +925,7 @@ def _run_steps(steps: list[list[str]], run) -> int | str:
     return 0
 
 
-_DIALOG_TITLE = "FlexTool needs the compatible polars build"
+_DIALOG_TITLE = "Install the compatible polars build?"
 
 
 def _no_console_window() -> dict:
@@ -976,7 +976,9 @@ def compat_install_dialog(message: str, steps: list[list[str]], run=subprocess.r
     from tkinter import messagebox, ttk
 
     try:
-        if not messagebox.askyesno(_DIALOG_TITLE, f"{message}\n\nRun it now?", icon="warning", parent=root):
+        if not messagebox.askyesno(
+            _DIALOG_TITLE, f"{message}\n\nFlexTool can install it now.", icon="warning", parent=root
+        ):
             return "declined"
         outcome: dict = {}
 
@@ -988,7 +990,7 @@ def compat_install_dialog(message: str, steps: list[list[str]], run=subprocess.r
         def _worker() -> None:
             outcome["returncode"] = _run_steps(steps, _run_quietly)
 
-        root.title(_DIALOG_TITLE)
+        root.title("Installing the compatible polars build")
         ttk.Label(root, text="Installing the compatible polars build (polars[rtcompat])...", padding=12).pack()
         bar = ttk.Progressbar(root, mode="indeterminate", length=320)
         bar.pack(padx=12, pady=(0, 12))
@@ -1011,15 +1013,17 @@ def compat_install_dialog(message: str, steps: list[list[str]], run=subprocess.r
         returncode = outcome.get("returncode", "not run")
         if returncode != 0:
             tail = "\n".join(outcome.get("output", "").strip().splitlines()[-8:])
+            ended = (f"The installer (pip) ended with exit code {returncode}." if isinstance(returncode, int)
+                     else f"The installer (pip) was {returncode}.")
+            commands = "\n".join("  " + format_command(step) for step in steps)
             messagebox.showerror(
-                _DIALOG_TITLE,
-                f"FlexTool could not install the compatible polars build (exit {returncode}).\n\n{tail}\n\n"
-                f"{message}",
+                "The compatible polars build was not installed",
+                "\n\n".join(part for part in (ended, tail, f"Run this in a terminal:\n{commands}") if part),
                 parent=root,
             )
             return "failed"
         messagebox.showinfo(
-            _DIALOG_TITLE, "The compatible polars build is installed. FlexTool starts now.", parent=root
+            "The compatible polars build is installed", "FlexTool starts now.", parent=root
         )
         return "installed"
     finally:

@@ -71,7 +71,8 @@ def test_export_then_import_suggests_free_name(root: tk.Tk, workspace: dict,  # 
         dlg.destroy()
 
     asked: list[str] = []
-    monkeypatch.setattr(dialog_module.messagebox, "askyesno", lambda *a, **_k: asked.append(a[1]) or False)
+    # The cancel answer (None) of the FlexTool box keeps the old file.
+    monkeypatch.setattr(dialog_module.message_box, "ask", lambda _parent, _title, *paras, **_k: asked.append(paras[0]))
     again = ExportDialog(root, workspace["project"], solver_config_dir=workspace["config"], target_dir=out_dir)
     try:
         before = zip_path.stat().st_mtime_ns

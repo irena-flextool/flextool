@@ -100,7 +100,7 @@ def test_ok_writes_this_computers_settings_file_and_not_the_project(root, tmp_pa
 
 def test_a_refused_wrapper_is_shown_and_nothing_is_written(root, tmp_path, monkeypatch) -> None:
     shown = []
-    monkeypatch.setattr(lsd.messagebox, "showerror", lambda title, message, **kw: shown.append(message))
+    monkeypatch.setattr(lsd.message_box, "tell", lambda _parent, _title, *paras, **kw: shown.append("\n".join(paras)))
     bat = tmp_path / "hold.bat"
     bat.write_text("@echo off\n", encoding="utf-8")
     dialog = _open_from_solver_options(root)
@@ -176,7 +176,7 @@ def test_the_tick_trusts_the_files_as_the_dialog_found_them(root, tmp_path, monk
     trusted unseen: OK shows why and saves nothing; the next OK, after the user has looked again, trusts the files
     as they are then."""
     shown = []
-    monkeypatch.setattr(lsd.messagebox, "showerror", lambda title, message, **kw: shown.append(message))
+    monkeypatch.setattr(lsd.message_box, "tell", lambda _parent, _title, *paras, **kw: shown.append("\n".join(paras)))
     gurobi = Path.cwd() / "solver_config" / "gurobi.opt"
     dialog = _open_from_solver_options(root)
     dialog.trust_var.set(True)

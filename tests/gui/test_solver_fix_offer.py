@@ -140,7 +140,7 @@ def test_dialog_no_runs_nothing(monkeypatch, dialog_root):
     pip = _Pip(0)
     assert env_check.compat_install_dialog("REASON + COMMAND", [_STEP], pip) == "declined"
     assert pip.calls == []
-    assert shown == [("ask", "REASON + COMMAND\n\nRun it now?")]
+    assert shown == [("ask", "REASON + COMMAND\n\nFlexTool can install it now.")]
 
 
 def test_dialog_yes_installs_and_says_so(monkeypatch, dialog_root):
@@ -157,4 +157,6 @@ def test_dialog_failed_install_shows_pip_output(monkeypatch, dialog_root):
     assert env_check.compat_install_dialog("REASON", [_STEP], _Pip(1)) == "failed"
     kind, text = shown[-1]
     assert kind == "error"
-    assert "exit 1" in text and "no matching distribution" in text and "REASON" in text
+    # Design #104: the exit code, pip's last lines, then the command to run by hand.
+    assert "exit code 1" in text and "no matching distribution" in text
+    assert text.endswith("Run this in a terminal:\n  " + env_check.format_command(_STEP))

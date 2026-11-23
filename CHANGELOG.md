@@ -30,6 +30,10 @@
 
   Dismissals are kept in `gui_messages.json` in FlexTool's user settings folder, never in a database. A failed
   upgrade, and an external database that could not be copied into the project, still get a box.
+- **Every box of the FlexTool GUI has one style.** The title says what happened or what to do, the buttons are
+  named by their action ("Delete", "Upgrade a copy") instead of Yes / No, a question that deletes or changes files
+  starts on Cancel, an **Open documentation** button opens the section that explains the subject (where there is
+  one), and Ctrl+C copies the text.
 - **`flextool-repair-value-list` repairs a database that W-0490 names, and restores list-valued defaults that an
   upgrade before 4.6.3 left empty.** It never changes the database: it writes a repaired copy
   (`<name>_repaired.sqlite`) with a report. It puts the lost `not_allowed` member back into `invest_methods` and
