@@ -1,6 +1,6 @@
 """The GUI's offer to install a compatible solver build (no window opened:
-``_offer_solver_fix`` is called on a stand-in object, with the dialog
-mocked)."""
+``_offer_solver_fix`` is called on a stand-in object, with the FlexTool box
+mocked: it answers with one of the buttons it was given)."""
 
 import sys
 import types
@@ -9,6 +9,19 @@ import pytest
 
 from flextool import env_check
 from flextool.gui import main_window
+from flextool.gui.dialogs import message_box
+
+
+def _answer(monkeypatch, press, asked=None):
+    """Replace the box: record (title, paragraphs, buttons) in *asked*; press the first button (the action) when
+    *press*, else the cancel button."""
+
+    def ask(_parent, title, *paragraphs, buttons, **_kw):
+        if asked is not None:
+            asked.append((title, "\n\n".join(paragraphs), buttons))
+        return buttons[0][1] if press else None
+
+    monkeypatch.setattr(message_box, "ask", ask)
 
 
 def _stand_in(jobs):
@@ -24,15 +37,17 @@ def test_proactive_offer_installs_compat_runtime(monkeypatch):
         env_check, "cpu_verdict", lambda: env_check.CpuVerdict(env_check.CPU_NEEDS_COMPAT, "t", ["avx2"])
     )
     asked = []
-    monkeypatch.setattr(main_window.messagebox, "askyesno", lambda title, text, **kw: asked.append(text) or True)
+    _answer(monkeypatch, True, asked)
     jobs = []
     main_window.MainWindow._offer_solver_fix(_stand_in(jobs), None, True)
     (steps, kw), = jobs
     assert steps == [[sys.executable, "-P", "-m", "pip", "install", "polars[rtcompat]==1.40.1"]]
-    # The dialog states the reason and the exact command it will run.
-    assert "avx2" in asked[0]
-    assert env_check.format_command(steps[0]) in asked[0]
-    assert asked[0].endswith("Run it now?")
+    # The box states the reason and the exact command it will run, and its buttons name the action.
+    (title, text, buttons), = asked
+    assert title == "Install the compatible solver library?"
+    assert "avx2" in text
+    assert env_check.format_command(steps[0]) in text
+    assert buttons == (("Install", "install"), ("Not now", None))
     assert kw["intro"] == env_check.proactive_banner()
 
 
@@ -41,7 +56,7 @@ def test_declined_proactive_offer_runs_nothing(monkeypatch):
     monkeypatch.setattr(
         env_check, "cpu_verdict", lambda: env_check.CpuVerdict(env_check.CPU_NEEDS_COMPAT, "t", ["avx2"])
     )
-    monkeypatch.setattr(main_window.messagebox, "askyesno", lambda *a, **kw: False)
+    _answer(monkeypatch, False)
     jobs = []
     main_window.MainWindow._offer_solver_fix(_stand_in(jobs), None, True)
     assert jobs == []
@@ -49,17 +64,22 @@ def test_declined_proactive_offer_runs_nothing(monkeypatch):
 
 def test_crash_offer_uses_component_remedy(monkeypatch):
     monkeypatch.setattr(env_check, "_dist_version", {"highspy": "1.14.0"}.get)
-    monkeypatch.setattr(main_window.messagebox, "askyesno", lambda *a, **kw: True)
+    asked = []
+    _answer(monkeypatch, True, asked)
     jobs = []
     probe = env_check.StackProbe(env_check.NATIVE_FAULT, 3221225477, failed_component="highspy")
     main_window.MainWindow._offer_solver_fix(_stand_in(jobs), probe)
     (steps, _kw), = jobs
     assert steps == env_check.highspy_upgrade_steps(sys.executable)
+    (title, text, buttons), = asked
+    assert title == "Re-install the solver libraries?"
+    assert text.startswith("The HiGHS solver (highspy) crashed")
+    assert buttons == (("Re-install", "reinstall"), ("Not now", None))
 
 
 def test_declined_offer_runs_nothing(monkeypatch):
     monkeypatch.setattr(env_check, "_dist_version", {"highspy": "1.14.0"}.get)
-    monkeypatch.setattr(main_window.messagebox, "askyesno", lambda *a, **kw: False)
+    _answer(monkeypatch, False)
     jobs = []
     probe = env_check.StackProbe(env_check.NATIVE_FAULT, 3221225477, failed_component="highspy")
     main_window.MainWindow._offer_solver_fix(_stand_in(jobs), probe)

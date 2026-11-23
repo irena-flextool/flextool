@@ -757,12 +757,9 @@ def proactive_banner(verdict: CpuVerdict | None = None) -> str:
 # built on Anaconda/conda (mixed native libraries), a missing Visual C++
 # runtime, or running from a network/mapped drive under concurrency.
 UNFIXABLE_HELP = (
-    "This is an environment-level problem a package install cannot fix. A "
-    "native crash like this usually means the Python environment itself is "
-    "unstable — most often a venv built on Anaconda/conda (mixing native "
-    "libraries), a missing Visual C++ runtime, or running from a network/"
-    "mapped drive. Rebuild the venv from a clean python.org Python on a "
-    "local disk (e.g. C:), not a network drive, and keep the project local too."
+    "This usually means the Python environment itself is unstable: a venv built on Anaconda, a missing "
+    "Visual C++ runtime, or a network drive. Rebuild it from a clean python.org Python on a local disk, "
+    "and keep the project on a local disk too."
 )
 
 
