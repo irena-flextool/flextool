@@ -180,16 +180,30 @@ def _repoint(path: Path, old: int, new: int) -> None:
         (str(new).encode(), str(old)))
 
 
+def make_archive(path: Path, archive: Path) -> None:
+    """Copy *path* to *archive* and make the copy a data version 21 file (``make_hit``'s *archive*)."""
+    shutil.copy2(path, archive)
+    sql(archive, "UPDATE parameter_definition SET default_value = ?, default_type = 'float' WHERE name = 'version' "
+                 "AND entity_class_id = (SELECT id FROM entity_class WHERE name = 'model')", (b"21.0",))
+    appended = member_id(archive, "invest_methods", "cumulative_limits")
+    assert not sql(archive, "SELECT id FROM parameter_value WHERE type = 'list_value_ref' AND CAST(value AS TEXT) = "
+                            "?", (str(appended),))
+    sql(archive, "DELETE FROM list_value WHERE id = ?", (appended,))
+
+
 def make_hit(tmp_path: Path, schema_db: str | Path, *, name: str = "hit.sqlite", before=(), after=(),
              legacy: bool = False, pre_v77_group: bool = False, overwrite: bool = True,
-             retried: bool = False) -> HitCase:
+             retried: bool = False, archive: Path | None = None) -> HitCase:
     """A step-22 hit file (module docstring).  *legacy*: R held the legacy member ``LEGACY`` before the session,
     and ``not_allowed`` is another row (index 14, commit NULL) that the references to R had used (every shipped
     member present; "before" values may name either).  *pre_v77_group*: the group
     ``invest_method`` is bound to ``invest_methods`` with the default R (before v77).  ``overwrite=False`` leaves
     the list as shipped (``cumulative_limits`` appended at index 13 with commit C: the bug did not fire).
     *retried*: the migration failed after its value-list commit (in the window; R keeps that commit, C - 1) and was
-    retried after the window (C, C+1 and →22 dated ``RETRY_DATE``)."""
+    retried after the window (C, C+1 and →22 dated ``RETRY_DATE``).  *archive*: a copy taken right before the
+    session's first list-value commit (after the "before" values and the version commits →20, →21), made a data
+    version 21 file by raw SQL (``model.version`` 21, no ``cumulative_limits`` member; no commit added, so it is
+    the same lineage as the hit file)."""
     path = tmp_path / name
     shutil.copy2(Path(str(schema_db).removeprefix("sqlite:///")), path)
     list_id = sql(path, "SELECT id FROM parameter_value_list WHERE name = 'invest_methods'")[0][0]
@@ -208,6 +222,8 @@ def make_hit(tmp_path: Path, schema_db: str | Path, *, name: str = "hit.sqlite",
     write_values(path, before)
     for version, date in SESSION:
         start = add_commit(path, VERSION_PREFIX + version, date)
+    if archive is not None:
+        make_archive(path, archive)
     failed = add_commit(path, LIST_STEP, HIT_DATE) if retried else None
     date = RETRY_DATE if retried else HIT_DATE
     c = add_commit(path, LIST_STEP, date)

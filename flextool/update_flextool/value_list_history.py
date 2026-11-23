@@ -16,7 +16,8 @@ Only SQLite files are checked: a database on a server (not a ``sqlite:///`` URL)
 TODO(v5.0.0): remove this module, W-0490 (``run_warnings/_input_specs.py``), its call sites
 (``engine/solve/_orchestration.py``, ``gui/input_sources.py``, ``gui/main_window.py``,
 ``gui/dialogs/database_check_dialog.py``), the repair tool ``flextool-repair-value-list``
-(``update_flextool/value_list_repair.py``, ``value_list_suspects.py``, ``cli/cmd_repair_value_list.py``) and
+(``update_flextool/value_list_repair.py``, ``value_list_suspects.py``, ``value_list_archive.py``,
+``cli/cmd_repair_value_list.py``) and
 their tests.  The warning is temporary.
 """
 from __future__ import annotations

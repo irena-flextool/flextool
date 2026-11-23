@@ -41,8 +41,9 @@ AFTER = "written after the overwrite"
 SHIPPED = "recommended: shipped default"
 CARRIED_LABEL = "carried by v77, inert either way"
 RENAMED = "written while R read cumulative_limits"
-#: The labels ``--accept-certain`` and a group-apply may pre-answer (the archive package adds its own).
-CERTAIN_LABELS: tuple[str, ...] = (CERTAIN,)
+CERTAIN_ARCHIVE = "certain (archive)"  # the same row in a same-lineage archive (``value_list_archive``)
+#: The labels ``--accept-certain`` and a group-apply may pre-answer.
+CERTAIN_LABELS: tuple[str, ...] = (CERTAIN, CERTAIN_ARCHIVE)
 
 DEFAULT_REASON = ("Recommended: FlexTool's shipped default. A class default that is not the shipped default, or a "
                   "missing one, can lead to unwanted behaviour (here: entities that rely on it invest and retire up "
@@ -123,7 +124,8 @@ class Suspect:
     commit: int | None = None
     reason: str = ""
     keep_text: str = ""
-    archive: str | None = None  # the archive's member (archive mode)
+    archive: str | None = None  # the archive's member, translated (archive mode)
+    archive_note: str = ""  # what the archive shows, for the prompt and the CSV ``archive`` column
     part_b: bool = False  # an empty shipped default or a storage node (``list_default_restore``)
 
     @property
@@ -158,6 +160,13 @@ def _ref(payload) -> int | None:
     return int(raw) if isinstance(raw, bytes) and raw.isdigit() else None
 
 
+def overwrite_commit(a: vr.Analysis) -> int:
+    """The commit that separates "before" from "after the overwrite": C in ``renamed-back``, else R's commit (the
+    moment R got the appended text; C in ``hit``), else C, else the session's closing version commit."""
+    commit = a.c if a.state == vr.RENAMED_BACK else (a.r.commit if a.r.commit is not None else a.c)
+    return commit if commit is not None else a.finding.end_commit
+
+
 def suspects(a: vr.Analysis) -> tuple[Suspect, ...]:
     """The suspects of the analysed snapshot: none unless the state is ``hit``, ``hit-unanchored`` or
     ``renamed-back``.  Defaults first, then values, then carried group values."""
@@ -186,8 +195,7 @@ class _Reader:
         for alt, name in con.execute("SELECT sa.alternative_id, s.name FROM scenario_alternative sa JOIN scenario s "
                                      "ON s.id = sa.scenario_id ORDER BY s.name"):
             self.scenarios.setdefault(alt, []).append(name)
-        overwrite = a.c if a.state == vr.RENAMED_BACK else (a.r.commit if a.r.commit is not None else a.c)
-        self.overwrite = overwrite if overwrite is not None else a.finding.end_commit
+        self.overwrite = overwrite_commit(a)
         self.overwrite_date = self.commits.get(self.overwrite, ("?", ""))[0]
 
     def _member(self, payload, list_id: int) -> str:
