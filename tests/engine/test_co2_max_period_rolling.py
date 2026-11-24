@@ -545,11 +545,21 @@ def test_stochastic_rolls_total_cap_per_forecast_path(stochastic_total_rolls) ->
     LHS weighs a tonne by years_represented / period_share = 1 / (168/8760) = 8760/168 (timeset_duration 168 h,
     one-hour steps), so the carry is subtracted with that weight too:
     RHS = 1e7·min(24k + 96, 168)/168 − R_k·8760/168, the same on every path.
-    Roll 0: 1e7·96/168 = 5 714 285.71.  Roll 1: roll 0's jump is hours 1-24, where gas_plant (unitsize 1000,
-    efficiency 0.9) runs at most 1000 MW: R_1 ≤ 24 000 / 0.9 · 0.2 = 5 333.3 t (read from the input-side fuel flow;
-    before 4.7.0 the jump-only realization emitted 4 838.9 t, RHS 6 890 542.5; the jump is now dispatched with
-    the look-ahead, another LP), and RHS = 1e7·120/168 − R_1·8760/168.  The pre-item-59 RHS
-    subtracted raw tonnes."""
+    Roll 0: 1e7·96/168 = 5 714 285.71.  Roll 1: R_1 = the gas burnt in roll 0's jump (hours 1-24), by hand
+    (the cap, ~2.6e5 t in the row's units, never binds).  Demand 3000 MW, wind 4000·r_t (the realized series made
+    at t0001), so the residual is 3000 − 4000·r_t.  Gas (6/0.9 EUR/MWh out, ≤ 1000 MW) is cheaper than coal
+    (16/0.9); hydro sends x to the demand and x to ``downriver`` per x of water (efficiency 2, ``hydro_divide``),
+    so the 100 MW downriver demand needs x ≥ 100.  An MWh of water left at the jump end is worth, over the three
+    equally weighted tails (the reservoir ends at its reference level on every path): coal in ``lower`` (wind
+    ~0.2, coal runs every hour), gas in ``mid`` (wind ~0.5: hydro and gas cover the residual, gas below its
+    capacity), nothing in ``upper`` (wind ~0.9 covers the demand): (17.8 + 6.7 + 0)/3 = 8.1 EUR/MWh, between gas
+    and coal.  So the jump uses water to displace coal only: hydro max(100, residual − 1000), gas
+    min(1000, residual − 100), no coal.  This keeps the reservoir (start 2500, inflow 400/h, size 5000) below its
+    size at every hour (the water used by hour t exceeds 400t − 2500 for every t ≤ 24) and uses 7 829.9 MWh.
+    Σ_t min(1000, 3000 − 4000·r_t − 100) = 23 545.152764 MWh of gas out, so R_1 = 23 545.152764 / 0.9 · 0.2 =
+    5 232.25617 t (read from the input-side fuel flow).  Before 4.7.0 the jump-only realization had to end the jump
+    at the reference level (water use = 9 600 MWh): gas = Σ residual − 9 600 = 21 775.1, R_1 = 4 838.9 t.
+    RHS = 1e7·120/168 − R_1·8760/168.  The pre-item-59 RHS subtracted raw tonnes."""
     from tests.engine._lp_rows import row_bounds, row_terms
 
     realized = 0.0
@@ -561,7 +571,7 @@ def test_stochastic_rolls_total_cap_per_forecast_path(stochastic_total_rolls) ->
         assert set(rows) == {f"co2_max_total_path[co2_limit,{f.removeprefix('period1_')}]" for f in FORECASTS}, k
         want = STOCH_TOTAL_CAP * min(24 * k + 96, 168) / 168 - realized * 8760 / 168
         if k == 1:
-            assert 0.0 < realized <= 24_000 / 0.9 * 0.2 * (1 + 1e-9)
+            assert realized == pytest.approx(23_545.152764 / 0.9 * 0.2, rel=1e-6)
             assert want == pytest.approx(1e7 * 120 / 168 - realized * 8760 / 168, rel=1e-12)
         for nm, (_lb, ub) in rows.items():
             assert ub == pytest.approx(want, rel=1e-9), (k, nm)
