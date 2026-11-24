@@ -1118,14 +1118,34 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
         topic=_SOLVES,
         entityless=True,
         body=(
-            "The solve has `stochastic_branches`, but its `dispatch_realization_method` is `deterministic` (the "
-            "default since FlexTool 4.7.0). It is solved with the data of the `realized: yes` branch only, as one "
+            "The solve is a dispatch solve with `stochastic_branches`, and its `dispatch_realization_method` is "
+            "`deterministic` (the default of a dispatch solve since FlexTool 4.7.0; an investment solve, a solve "
+            "that is not rolling and has `invest_periods` or `realized_invest_periods`, solves its forecasts "
+            "unless it sets `deterministic`, warning W-0637). It is solved with the data of the `realized: yes` "
+            "branch only, as one "
             "timeline: each time step reads the realized series that covers it (where several do, the one made "
             "nearest to the start of the solve, or of the roll in a rolling solve). The forecasts, "
             "`stochastic_invest_method` `recourse` and the realization solve are ignored. Without a "
             "`realized: yes` branch, or at a time step no realized series covers, the run stops with an error.\n\n"
             "**How to fix:** set `dispatch_realization_method` to `within_solve` or `separate_dispatch` to solve "
             "the forecasts."
+        ),
+    ),
+    WarningSpec(
+        code="W-0637",
+        message="investment solve '{solve}' has dispatch_realization_method deterministic",
+        title="Investment solve made deterministic",
+        topic=_SOLVES,
+        entityless=True,
+        body=(
+            "The solve is an investment solve (not rolling, with `invest_periods` or `realized_invest_periods`) "
+            "with `stochastic_branches`, and it sets `dispatch_realization_method` `deterministic`. It invests and "
+            "dispatches with the data of the `realized: yes` branch only, as one timeline, knowing that data in "
+            "advance: a perfect-foresight benchmark. The forecasts, `stochastic_invest_method` and the realization "
+            "solve are ignored. Without that setting an investment solve solves its forecasts. Without a "
+            "`realized: yes` branch, or at a time step no realized series covers, the run stops with an error.\n\n"
+            "**How to fix:** nothing, if the benchmark is intended. To invest against the forecasts, remove "
+            "`dispatch_realization_method` from the solve, or set it to `within_solve`."
         ),
     ),
     WarningSpec(

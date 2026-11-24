@@ -79,9 +79,13 @@ W-0636) name what changed.
   allows there. Under a `reduce_unit_detail_method` that leaves out min limits nothing changes. Note W-0592 names
   the units, once per run. A solve that sees the outage coming still keeps the minimum up-time. Only solves that
   were infeasible before change, or that had to invest to keep a ramp-down limit an outage voided.
-- **`deterministic` is the new default of `dispatch_realization_method`.** A solve with stochastic branches and no
-  method uses the `realized: yes` branch only, as a deterministic solve (warning W-0593 names it): the forecasts,
-  `stochastic_invest_method` `recourse` and the realization solve are ignored. The realized series of the
+- **`deterministic` is the new default of `dispatch_realization_method` for dispatch solves.** A dispatch solve
+  with stochastic branches and no method uses the `realized: yes` branch only, as a deterministic solve (warning
+  W-0593 names it): the forecasts and the realization solve are ignored. The method governs the dispatch model: an
+  investment solve (not rolling, with `invest_periods` or `realized_invest_periods`) without a method solves its
+  forecasts as before, under its `stochastic_invest_method`. An explicit `deterministic` on an investment solve
+  makes it a perfect-foresight benchmark on the `realized: yes` branch (warning W-0637 names it; the forecasts and
+  `stochastic_invest_method` are ignored). The realized series of the
   analysis times are read as one timeline (where they overlap, the one made nearest to the solve's or roll's
   start is used). Without a `realized: yes` branch, or at a time step no realized series covers, the run stops
   with an error naming the solve. Upgraded databases get `within_solve` written on the stochastic

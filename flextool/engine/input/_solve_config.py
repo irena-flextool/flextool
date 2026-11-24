@@ -375,6 +375,26 @@ def _check_field_registry(cfg: object) -> None:
 # ---------------------------------------------------------------------------
 
 
+def solve_decides_investments(solve_cfg, solve: str) -> bool:
+    """Whether *solve* authors investment decisions: ``invest_periods`` or ``realized_invest_periods`` non-empty, or
+    ``stochastic_invest_method`` other than ``none`` (the test of the rolling-invest warning in
+    ``_recursive_solve``)."""
+    if (getattr(solve_cfg, "invest_periods", None) or {}).get(solve):
+        return True
+    if (getattr(solve_cfg, "realized_invest_periods", None) or {}).get(solve):
+        return True
+    method_for = getattr(solve_cfg, "stochastic_invest_method_for", None)
+    return method_for is not None and method_for(solve) != "none"
+
+
+def is_investment_solve(solve_cfg, solve: str) -> bool:
+    """Whether *solve* is an investment solve: it decides investments (:func:`solve_decides_investments`) and is not
+    rolling (the rolls of a rolling solve build no investment).  A solve of a 2-D period map is one when its own
+    rows are.  Every other solve is a dispatch solve."""
+    return (solve_decides_investments(solve_cfg, solve)
+            and (getattr(solve_cfg, "solve_modes", None) or {}).get(solve) != "rolling_window")
+
+
 class SolveConfig:
     """All solve-level parameters and mutable tracking state.
 
@@ -1640,7 +1660,8 @@ class SolveConfig:
         parameter of this class, the definition default is not read, so the
         fall-back is hard-coded.  An unrecognised value also reads
         ``"deterministic"`` here; ``_dispatch_realization_raw_guard`` refuses
-        it before the solve runs.  Authoring case is ignored.  Without
+        it before the solve runs.  An investment solve without a method still solves its forecasts
+        (:meth:`apply_deterministic_realization` flattens it only on an explicit ``deterministic``).  Authoring case is ignored.  Without
         ``stochastic_branches``, ``deterministic`` and ``within_solve`` give
         the same model (``separate_dispatch`` needs a ``realized: yes``
         branch).
@@ -1655,8 +1676,11 @@ class SolveConfig:
         The forecasts, ``stochastic_invest_method`` and the realization solve are ignored: the solve's
         ``stochastic_branches`` rows move to :attr:`deterministic_branches` (the solve then reads only its
         ``realized: yes`` branch, flattened into one timeline, ``native_run_model`` step 3.7) and its
-        ``stochastic_invest_method`` is dropped.  One warning per database solve (W-0593; a solve of a 2-D period
-        map is named by the solve the user wrote).  Raises :class:`FlexToolConfigError` naming the solve when no
+        ``stochastic_invest_method`` is dropped.  A dispatch solve runs ``deterministic`` when its method is blank,
+        absent or ``deterministic``; an investment solve (:func:`is_investment_solve`) only when it is an explicit
+        ``deterministic``: the method governs the dispatch model, so an investment solve without one solves its
+        forecasts.  One warning per database solve (W-0593 for a dispatch solve, W-0637 for an investment solve; a
+        solve of a 2-D period map is named by the solve the user wrote).  Raises :class:`FlexToolConfigError` naming the solve when no
         row says ``realized: yes`` (the same exact match as the stochastic pass), or when the ``realized: yes``
         rows name more than one branch (one realized series per solve, as for ``within_solve``).  Only a blank,
         absent or ``deterministic`` value counts; an unknown value is left for ``_dispatch_realization_raw_guard``.
@@ -1670,14 +1694,19 @@ class SolveConfig:
             # A realization solve has no rows here (engine-spawned ones drop stochastic_branches, an author-declared
             # one is deterministic; a realization roll's forecasts come from its plan), so it is never made
             # deterministic.
-            if not rows or str("" if raw is None else raw).strip().lower() not in ("", "deterministic"):
+            method = str("" if raw is None else raw).strip().lower()
+            if not rows or method not in ("", "deterministic"):
+                continue
+            investment = is_investment_solve(self, s)
+            if investment and method != "deterministic":
                 continue
             name = self.map2d_duplicate_of.get(s, (s,))[0]
             realized = list(dict.fromkeys(row[1] for row in rows if len(row) > 3 and row[3] == "yes"))
             if not realized:
+                default = "" if investment else " (the default of a dispatch solve since FlexTool 4.7.0)"
                 raise FlexToolConfigError(
-                    f"Solve '{name}' has stochastic_branches and dispatch_realization_method deterministic (the "
-                    "default since FlexTool 4.7.0), but no branch with realized: yes. Mark the branch that holds "
+                    f"Solve '{name}' has stochastic_branches and dispatch_realization_method deterministic{default}, "
+                    "but no branch with realized: yes. Mark the branch that holds "
                     "the realized data with realized: yes, or set dispatch_realization_method within_solve or "
                     "separate_dispatch to solve the forecasts.")
             if len(realized) > 1:
@@ -1690,7 +1719,7 @@ class SolveConfig:
             self.stochastic_invest_method.pop(s, None)
             if name not in warned:
                 warned.add(name)
-                run_warnings.warn("W-0593", solve=name)
+                run_warnings.warn("W-0637" if investment else "W-0593", solve=name)
 
     def _reduce_detail_for(self, solve_name: str, values: dict, param: str, valid: tuple[str, ...]) -> str:
         """The authored ``solve.<param>`` of *solve_name*: its roll suffix stripped, a realization solve mapped to

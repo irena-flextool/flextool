@@ -95,8 +95,8 @@ class SolveFacts:
     steps_per_period: tuple[int, int] | None     # the fewest and the most steps of one period
     branches: tuple[BranchFan, ...]
     representative: tuple[tuple[str, int, int], ...]   # (timeset, representative periods, base periods)
-    # dispatch_realization_method: within_solve or separate_dispatch solve the forecasts; deterministic (absent,
-    # blank or unrecognised: the engine's reading) reads only the realized branch.
+    # dispatch_realization_method: within_solve or separate_dispatch solve the forecasts; deterministic (absent or
+    # blank on a dispatch solve, or unrecognised: the engine's reading) reads only the realized branch.
     realization: str = "deterministic"
 
 
@@ -373,14 +373,22 @@ def input_facts(db: Any, scenario: str) -> tuple[SolveFacts, ...]:
             steps_per_period=(min(per_period), max(per_period)) if per_period else None,
             branches=_fans(stochastic) if stochastic is not None else (),
             representative=representative,
-            realization=_realization(data.value("solve", solve, "dispatch_realization_method"))))
+            realization=_realization(
+                data.value("solve", solve, "dispatch_realization_method"),
+                investment=mode != "rolling_window" and bool(
+                    invest or _names(data.value("solve", solve, "realized_invest_periods"))
+                    or str(data.value("solve", solve, "stochastic_invest_method") or "none").strip().lower()
+                    not in ("", "none")))))
     return tuple(out)
 
 
-def _realization(raw: Any) -> str:
-    """The ``dispatch_realization_method`` as the engine reads it (lower-cased): absent or blank is deterministic;
-    an unrecognised value is refused by the engine and shown here as deterministic."""
+def _realization(raw: Any, investment: bool = False) -> str:
+    """The ``dispatch_realization_method`` as the engine reads it (lower-cased): absent or blank is deterministic on
+    a dispatch solve and within_solve on an *investment* solve (not rolling, with investment periods: the engine's
+    ``is_investment_solve``); an unrecognised value is refused by the engine and shown here as deterministic."""
     value = str(raw).strip().lower() if raw is not None else ""
+    if value == "" and investment:
+        return "within_solve"
     return value if value in ("within_solve", "separate_dispatch") else "deterministic"
 
 

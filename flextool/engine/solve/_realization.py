@@ -228,24 +228,12 @@ def _join_value(base: pl.DataFrame, param, name: str, default: float) -> pl.Data
     return base.join(vals, on=keys, how="left").with_columns(pl.col(name).fill_null(default))
 
 
-def solve_decides_investments(solve_cfg, solve: str) -> bool:
-    """Whether *solve* authors investment decisions: ``invest_periods`` or ``realized_invest_periods`` non-empty, or
-    ``stochastic_invest_method`` other than ``none`` (the test of the rolling-invest warning in
-    ``_recursive_solve``)."""
-    if (getattr(solve_cfg, "invest_periods", None) or {}).get(solve):
-        return True
-    if (getattr(solve_cfg, "realized_invest_periods", None) or {}).get(solve):
-        return True
-    method_for = getattr(solve_cfg, "stochastic_invest_method_for", None)
-    return method_for is not None and method_for(solve) != "none"
-
-
 def note_realization_inherits_nothing(d, solve: str, parent: str, parent_invests: bool) -> None:
     """Note (W-0588) when the realization solve *solve* keeps nothing its stochastic solve *parent* decided.
 
     A realization solve takes from its parent the units online of the processes whose ``startup_method`` is
     ``linear_fix_in_uc`` or ``integer_fix_in_uc`` (``p_fix_online``) and the investments (when *parent_invests*:
-    :func:`solve_decides_investments` of a parent that is not rolling; a roll builds no investment).  The note is given when there are neither: no such process
+    :func:`~flextool.engine.input._solve_config.is_investment_solve` of the parent; a roll builds no investment).  The note is given when there are neither: no such process
     has units online in the realization solve (``process_online_fix_in_uc`` ∩ its online processes, so that
     ``reduce_unit_detail_method`` *online* counts as none) and the parent decides no investments.  Processes with
     ``linear`` or ``integer`` are decided again with the realized data and do not prevent the note.  Nothing when a

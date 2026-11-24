@@ -3847,19 +3847,17 @@ def _drive_cascade(
             if complete_solve_name in (
                 getattr(self.state.solve, "realized_dispatch_parent", {}) or {}
             ):
+                from flextool.engine.input._solve_config import is_investment_solve
                 from flextool.engine.solve._realization import (
                     check_pinned_realization_feasible,
                     note_realization_inherits_nothing,
-                    solve_decides_investments,
                 )
                 check_pinned_realization_feasible(data, complete_solve_name)
                 _parent = self.state.solve.realized_dispatch_parent[complete_solve_name]
                 _base = re.sub(r"_roll_\d+$", "", _parent)
                 # The rolls of a rolling solve build no investment, whatever it authors (_recursive_solve warns).
                 note_realization_inherits_nothing(
-                    data, complete_solve_name, _parent,
-                    solve_decides_investments(self.state.solve, _base)
-                    and (getattr(self.state.solve, "solve_modes", None) or {}).get(_base) != "rolling_window")
+                    data, complete_solve_name, _parent, is_investment_solve(self.state.solve, _base))
             _window_check = getattr(self.state, "current_committed_window_check", None)
             if _window_check is not None:
                 from flextool.engine.solve._realization import check_committed_window_realized
