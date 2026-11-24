@@ -8,6 +8,7 @@ update_flextool, process_outputs, gui, tests) load when you work in that folder 
 - `docs/dev/architecture.md` (whole system, cross-cutting invariants) and `docs/dev/engine.md` (engine internals)
   start with a "Where to read" table: read the sections it names for your kind of task, not the whole file.
 - Large modules: `~/venv-spi/bin/python tools/code_index.py <file>` (or `--find <name>`), then read the line range.
+  The LSP tool (pyright) gives go-to-definition, find-references and hover without reading whole files.
 - `CONTRIBUTING.md`: dev setup, schema changes and migrations, the PR checklist.
 
 ## Tools
