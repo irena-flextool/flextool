@@ -550,9 +550,12 @@ def toy_invest_3d() -> FlexData:
 @pytest.fixture(scope="function")
 def toy_2branch_2d() -> FlexData:
     # Single timestep per "period"; each branch is its own period in
-    # the dt frame.  Anchor period: d2; siblings: d2_b1, d2_b2.
+    # the dt frame.  Anchor period: d2; siblings: d2_b1, d2_b2.  d2 is a
+    # period label (a self-row with forecast members), so it has period-level
+    # rows but no dispatch (d, t) rows: the steps are d1's and the forecasts'.
     periods = ["d1", "d2", "d2_b1", "d2_b2"]
-    dt = pl.DataFrame({"d": periods, "t": ["t01"]*4})
+    step_periods = ["d1", "d2_b1", "d2_b2"]
+    dt = pl.DataFrame({"d": step_periods, "t": ["t01"]*3})
     p_step = Param(("d", "t"), dt.with_columns(value=pl.lit(1.0)))
     p_rp = Param(("d", "t"), dt.with_columns(value=pl.lit(1.0)))
     p_infl = Param(("d",),
@@ -587,11 +590,11 @@ def toy_2branch_2d() -> FlexData:
         pl.DataFrame({"n": ["s"]*4, "d": periods, "value": [10.0]*4}))
     # dtttdt with cyclic in-period lag (single timestep per period self-loops).
     dtttdt = pl.DataFrame({
-        "d": periods, "t": ["t01"]*4,
-        "t_previous": ["t01"]*4,
-        "t_previous_within_timeset": ["t01"]*4,
-        "d_previous": periods,
-        "t_previous_within_solve": ["t01"]*4,
+        "d": step_periods, "t": ["t01"]*3,
+        "t_previous": ["t01"]*3,
+        "t_previous_within_timeset": ["t01"]*3,
+        "d_previous": step_periods,
+        "t_previous_within_solve": ["t01"]*3,
     })
 
     # Stochastic frames.  period_branch_full has anchor d → siblings.

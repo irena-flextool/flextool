@@ -305,7 +305,7 @@ CONSUMERS: dict[str, set[str]] = {
     "_balance_terms:balance_flow_values": {"min_load_efficiency"},
     "_group_slack:_eq_inertia": {"inertia"},
     "_group_slack:_eq_non_sync": {"min_load_efficiency"},
-    "_non_anticipativity:add_dispatch_constraints": {"non_anticipativity"},
+    "_non_anticipativity:_add_online_ties": {"non_anticipativity"},
     "_online:add_variables": {"online_model"},
     "_online:uc_classes": {"online_model"},
     "_online:_online_set": {"online_model"},

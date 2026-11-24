@@ -261,6 +261,7 @@ def test_field_lists_cover_the_unit_fields(tmp_path_factory) -> None:
         "ed_cumulative_min_capacity", "pd_group_cumulative_min_capacity",  # investment limits
         "process_piecewise_needs_online",  # a property of the curve (the efficiency rises from its first point)
         "process_online_fix_in_uc",  # a property of startup_method; its readers intersect it with the online sets
+        "na_online_fix_in_uc",  # a solve-level flag (the non-anticipativity role), not a unit field
     }
     cleared = set(RAMP_FIELDS + MIN_LOAD_FIELDS + MIN_TIME_FIELDS + ONLINE_FIELDS)
     pattern = re.compile(r"online|uptime|downtime|ramp|minload|min_load|exact|startup|min_capacity|mintime|integer")
