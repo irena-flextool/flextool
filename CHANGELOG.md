@@ -80,15 +80,18 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
   separate realization solve then dispatched the jump alone, without looking ahead. Results change: units online,
   storage levels and prices in the jump and, with timeset weights that are not equal, the costs reported for the
   jump (the jump's cost now uses the scale of the whole roll, as a deterministic rolling solve does). Such a solve
-  now needs a `realized: yes` branch and forecasts made at the end of each jump; without them the run stops with
-  an error naming the roll and the time step. The last roll, whose horizon ends with its jump, is solved with the
-  realized data only. A single `within_solve` solve keeps its separate realization solve. Note W-0635 names the
-  solves of an upgraded database that chose this method.
+  now needs a `realized: yes` branch and forecasts made at the end of each jump: without the branch the run stops
+  with an error naming the solve, without the forecasts with an error naming the roll and the time step. The last
+  roll, whose horizon ends with its jump, is solved with the realized data only. A single `within_solve` solve
+  keeps its separate realization solve. Note W-0635 names the solves of an upgraded database that chose this
+  method.
 - **A `separate_dispatch` realization looks ahead, and its first solve shares only the `_fix_in_uc` commitment.**
   With `dispatch_realization_method` `separate_dispatch`, rolling or single, the first, stochastic solve now shares
   across the forecasts only the units online of the units and connections with `startup_method`
-  `linear_fix_in_uc` or `integer_fix_in_uc`, the only decisions the realization keeps; before, it also shared the
-  other units online, the reserves and the storage use of the stochastic nodes. In a rolling solve the
+  `linear_fix_in_uc` or `integer_fix_in_uc`, the only decisions the realization keeps, and the start level of a
+  storage node that starts free (no fixed start and no state carried in: every forecast starts from the same
+  level); before, it also shared the other units online, the reserves and the storage use of the stochastic
+  nodes. In a rolling solve the
   realization solve then dispatches the jump with the `realized: yes` branch's data and looks ahead after it with
   each forecast made at the end of the jump, with its probability; before, it dispatched the jump alone. A single
   solve's realization still dispatches its realized periods only. Results change: units online, storage levels,
@@ -98,7 +101,15 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
 - **Rolling stochastic solves with delayed units keep the realization without look-ahead.** In a model with units
   that have a `delay`, a rolling `within_solve` or `separate_dispatch` solve still realizes each jump in a separate
   realization solve that does not look past the jump; note W-0594 names the delayed units, once per run. A rolling
-  stochastic solve followed by a realization solve you configure yourself also keeps its two solves.
+  stochastic solve followed by a realization solve you configure yourself also keeps its two solves, and so does a
+  rolling `separate_dispatch` solve with `stochastic_invest_method` `recourse` (a rolling `within_solve` recourse
+  solve gets no realization solve, as before). Note W-0636 is not given for these solves.
+- **A rolling `within_solve` solve whose jump ends inside one of its `invest_periods` stops with an error.** Its
+  rolls dispatch the jump under the period's own name, so the period's investment rows, such as its capacity
+  margin, would cover the jump only (with the margin's shortfall free of cost). Before, such a solve ran (a rolling
+  solve builds no investment). The error names the solve, the roll and the period: remove the period from the
+  solve's `invest_periods` (invest in a solve before it), use `separate_dispatch`, or set `rolling_solve_jump` so
+  that each jump ends at the end of a period.
 - **The repair tool keeps an `invest_method` default changed by hand.** On a W-0490 database, an `invest_method`
   default that reads `cumulative_limits` and was saved after the last upgrade is now kept when you press Enter
   (4.6.3 suggested `not_allowed`); its entities keep investing as before in the repaired copy. Type `e` to restore
