@@ -980,6 +980,37 @@ def _patch_rk_delay(data: dict) -> dict:
     return _rk_seam(data, "rk_delay", [["unit", "gas_plant", "delay", 2.0]])
 
 
+def _authored(data: dict, cls: str, ent, param: str, alt: str):
+    """The decoded value of *param* of *ent* in alternative *alt* of the fixture JSON."""
+    row = next(r for r in data["parameter_values"] if r[:3] == [cls, ent, param] and r[4] == alt)
+    return json.loads(base64.b64decode(row[3][0]))
+
+
+def _patch_rk_jump1(data: dict) -> dict:
+    """Jump 1 h, horizon 2 h on period1 cut to 4 h (t0001-t0004), hydro_reservoir bind_intraperiod_blocks: four
+    rolls, the last holding one step of the period in part (a chain start without a block lag, item 310).  Every
+    branch is made at each roll start t0001-t0004 (weights and realized flags as at t0001), each series made at
+    t000k covering t000k-t0004 with the values of the series made at t0001.  Today's LPs; the baseline of one-step
+    realization rolls."""
+    steps = [f"t{i:04d}" for i in range(1, 5)]
+    fan = _authored(data, "solve", _RK_WEEK, "stochastic_branches", _RK_WEEK)
+    for branch in fan["data"][0][1]["data"]:
+        first = branch[1]["data"][0][1]
+        branch[1]["data"] = [[at, first] for at in steps]
+    profile = _authored(data, "profile", "wind", "profile", _RK_WEEK)
+    for branch in profile["data"]:
+        series = dict(branch[1]["data"][0][1]["data"])
+        branch[1]["data"] = [[at, {"type": "map", **_pmap({t: series[t] for t in steps[k:]}, "time")}]
+                             for k, at in enumerate(steps)]
+    return _rk_seam(data, "rk_jump1",
+                    [["node", "hydro_reservoir", "storage_binding_method", "bind_intraperiod_blocks"],
+                     ["timeset", "1week", "timeset_duration", _pmap({"t0001": 4.0}, "time")],
+                     ["solve", _RK_WEEK, "rolling_solve_horizon", 2.0],
+                     ["solve", _RK_WEEK, "rolling_solve_jump", 1.0],
+                     ["solve", _RK_WEEK, "stochastic_branches", fan],
+                     ["profile", "wind", "profile", profile]])
+
+
 def _patch_capacity_margin_stoch(data: dict) -> dict:
     """Manual capacity margin (group cm_g = elec, margin 1e5 MW, penalty 1) on the recourse-invest fan (branch
     weights high 1 : low 3): each forecast branch period keeps its own slack, priced with its branch weight
@@ -2244,6 +2275,7 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "rk_storage_cycle": _patch_rk_storage_cycle,
     "rk_blocks": _patch_rk_blocks,
     "rk_delay": _patch_rk_delay,
+    "rk_jump1": _patch_rk_jump1,
 }
 
 
@@ -2471,6 +2503,7 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("rk_storage_cycle", _F + "stochastics.json"),
     ("rk_blocks", _F + "stochastics.json"),
     ("rk_delay", _F + "stochastics.json"),
+    ("rk_jump1", _F + "stochastics.json"),
 )
 
 FIXTURES: tuple[Fixture, ...] = (

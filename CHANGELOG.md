@@ -73,6 +73,13 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
   solves that relied on the default, so their results are unchanged. Tools and scripts that write stochastic
   solves must write `dispatch_realization_method` (`within_solve` or `separate_dispatch`) to solve the forecasts.
 
+### Fixes
+
+- **A rolling solve with a `bind_intraperiod_blocks` storage node no longer stops with "no timeset blocks in this
+  solve" when a roll holds only one time step of a period it holds in part** (e.g. the last roll with
+  `rolling_solve_jump` 1). That step is the start of the roll's block chain and continues from the level carried
+  from the previous roll (or from `fix_start` in the first roll).
+
 ## Release 4.6.3 (23.11.2026) — fixes: list-valued defaults kept when migrating FlexTool 3.x databases, Benders between regions, FlexTool 2.0 conversion in the GUI; repair tool for W-0490 databases; GUI message list
 
 Patch release: no new data version (input databases stay at 82). Requires `polar-high>=3.16.1`. Results change

@@ -334,6 +334,59 @@ def test_rolling_blocks_stochastic_follow_forward_only(tmp_path_factory) -> None
         assert row_terms(build(fd), "nodeBalanceBlock_eq", "hydro_reservoir,")
 
 
+def _jump1_spec() -> dict:
+    """One period p1 of four 1 h steps t01..t04 (one timeset block; factor 8760 / 4 = 2190), a deterministic rolling
+    solve with jump 1 and horizon 2.  Node ``elec``: demand 1 MW, 1 MWh of lossless bind_intraperiod_blocks storage,
+    fix_start 0.  ``gas`` 2 MW at 10 / 20 / 25 / 60 EUR/MWh in t01..t04, ``peak`` 10 MW at 100."""
+    from tests.engine import _solve_copy_models as scm
+    from tests.engine.realization_roll import test_split_roll_lp as sr
+
+    pack = scm.pack
+    steps = ("t01", "t02", "t03", "t04")
+    values = [*sr._node("elec", "storage", pack(-1.0, "float")),
+              ["node", "elec", "existing", pack(1.0, "float"), "init"],
+              ["node", "elec", "storage_start_end_method", pack("fix_start", "str"), "init"],
+              ["node", "elec", "storage_state_start", pack(0.0, "float"), "init"],
+              ["node", "elec", "storage_binding_method", pack("bind_intraperiod_blocks", "str"), "init"],
+              *sr._unit("gas", "elec", 2.0, dict(zip(steps, (10.0, 20.0, 25.0, 60.0)))),
+              *sr._unit("peak", "elec", 10.0, 100.0)]
+    spec = sr._model(steps, jump=1, horizon=2, fan=pack("", "str"),
+                     entities=[["node", "elec", None], ["unit", "gas", None], ["unit", "peak", None],
+                               ["unit__outputNode", ["gas", "elec"], None],
+                               ["unit__outputNode", ["peak", "elec"], None]],
+                     active=[("node", "elec"), ("unit", "gas"), ("unit", "peak")], values=values)
+    spec["parameter_values"] = [r for r in spec["parameter_values"] if not (
+        r[0] == "solve" and r[2] in ("stochastic_branches", "dispatch_realization_method"))]
+    return spec
+
+
+def test_rolling_blocks_jump_one_step(tmp_path) -> None:
+    """Item 310: jump 1, horizon 2 on p1 = t01..t04.  No roll holds p1 whole, so every roll chains its blocks
+    forward; the last roll R_3 holds one step (t04), a chain start with no block lag row (before, the run stopped
+    with "no timeset blocks in this solve").  Hand derivation (s = the stored energy at the end of a step):
+    * R_0 (t01-t02) begins the period: starts at fix_start 0, ends at least there.  Charging 1 MWh at 10 for t02
+      (20): 2 x 10 -> 43 800, s(t01) = 1.
+    * R_1 (t02-t03) continues from s = 1 and ends at least at it (the roll anchor): gas covers both steps, 20 + 25
+      -> 98 550 (emptying the store at t02 and refilling at t03 costs 2 x 25 = 50), s(t02) = 1.
+    * R_2 (t03-t04) holds the period's last step: it ends at the level the period started from, 0.  The store
+      covers t04 (60): 25 -> 54 750, s(t03) = 1.
+    * R_3 (t04) starts from the carried s = 1 and ends at 0: the store covers t04, 0 (without the carry 60 x 2190
+      = 131 400)."""
+    from tests.engine import _solve_copy_models as scm
+
+    built, steps = scm.run_spec(_jump1_spec(), tmp_path)
+    rolls = list(steps.values())
+    assert len(built) == 4
+    assert [s.solution.obj for s in rolls] == pytest.approx([43_800.0, 98_550.0, 54_750.0, 0.0], rel=1e-9,
+                                                            abs=1e-6)
+    last = rolls[-1].flex_data
+    assert last.dtttdt_block_lag is None
+    assert utf8(last.period_block_time).select("d", "t").rows() == [("p1", "t04")]
+    for k, t in ((0, "t01"), (1, "t02"), (2, "t03")):
+        state = rolls[k].solution.value("v_state").filter((pl.col("t").cast(pl.Utf8) == t))
+        assert state["value"].to_list() == pytest.approx([1.0], abs=1e-9), (k, t)
+
+
 def test_synthetic_subsolve_gets_blocks(tmp_path_factory) -> None:
     """Nested invest (5weeks, one solve per period) → storage (fullYear 6 h, single solve) with a
     bind_intraperiod_blocks battery: every sub-solve is a synthetic anchor ``<solve>_<period>`` and has the block

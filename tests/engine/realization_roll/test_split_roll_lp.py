@@ -338,37 +338,26 @@ def test_split_roll_with_bind_within_period_closes_each_path(tmp_path, monkeypat
     assert _value(first.solution.value("v_state"), n="elec", d="p1", t="t01") == pytest.approx(1.0, abs=1e-9)
 
 
-class _Stop(Exception):
-    pass
-
-
 def test_split_roll_with_blocks_loops_each_path(tmp_path, monkeypatch):
-    """T-w1 with bind_intraperiod_blocks: R_0 holds p1 whole on each path (t01 + t02), so its blocks loop per path
-    (the label's block continues from (p1_B, t02), the tails' from (p1, t01), p1_A's end tied to p1_B's), the loop
-    rows of p1 and of the tails in period_block_succ are null, and the build passes G1-G4.  The run is stopped at
-    R_1's build (p1 t02: one step the roll holds in part, its block continuing from the carry)."""
-    from flextool.engine.model import core
-
-    ts._live_plan(monkeypatch)
-    build, seen, mps = core.build_flextool, [], tmp_path / "r0.mps"
-
-    def first_only(m, d, *args, **kwargs):
-        if seen:
-            raise _Stop
-        seen.append(d)
-        out = build(m, d, *args, **kwargs)
-        m.write_mps(mps, emit_names=True)
-        return out
-
-    monkeypatch.setattr(core, "build_flextool", first_only)
-    with pytest.raises(_Stop):
-        scm.run_spec(_tw1(0.5, storage=_BLOCKS), tmp_path)
-    d = seen[0]
+    """T-w1 (w_B 0.5) with bind_intraperiod_blocks, jump 1: R_0 holds p1 whole on each path (t01 + t02), so its blocks
+    loop per path (the label's block continues from (p1_B, t02), the tails' from (p1, t01), p1_A's end tied to
+    p1_B's), the loop rows of p1 and of the tails in period_block_succ are null, and the build passes G1-G4.  R_1
+    (p1 t02, deterministic) holds one step of p1 in part: its block is a chain start with no block lag row (item 310),
+    continuing from the carry.  Hand values as with bind_within_period: R_0 charges s = 1 at 10 for B's t02 (0.5 x 30
+    > 10): 20 -> 87 600.  R_1 starts from s = 1 and, holding the period's last step, ends at the level the period
+    started from (0): the store covers t02, 0."""
+    built, steps, datas = _run(_tw1(0.5, storage=_BLOCKS), tmp_path, monkeypatch)
+    assert len(built) == 2
+    d = datas[0]
     assert d.period_block_chain is None
     assert ts._rows(d.dtttdt_block_lag) == [
         ("p1", "t01", "p1_B", "t02"), ("p1_A", "t02", "p1", "t01"), ("p1_B", "t02", "p1", "t01")]
     assert ts._rows(d.period_block_succ) == [("p1", "t01", "None"), ("p1_A", "t02", "None"), ("p1_B", "t02", "None")]
-    assert _rows_named(mps, "storage_split_path_end") == _PATH_END
+    assert _rows_named(built[0][1], "storage_split_path_end") == _PATH_END
+    assert datas[1].dtttdt_block_lag is None
+    assert _objectives(steps) == pytest.approx([87_600.0, 0.0], rel=1e-9, abs=1e-6)
+    first = list(steps.values())[0]
+    assert _value(first.solution.value("v_state"), n="elec", d="p1", t="t01") == pytest.approx(1.0, abs=1e-9)
 
 
 def test_split_roll_with_a_delay_is_refused(tmp_path, monkeypatch):

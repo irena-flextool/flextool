@@ -211,13 +211,14 @@ def state_links(d, *, has_rp: bool, has_nsb: bool) -> list[StateLink]:
         if lag is not None:
             links += _seam_split(StateLink("state_change_wp_carry", carried, lag, "t_previous_within_period", False,
                                            False))
-    if has_nsb and _has_rows(d.dtttdt_block_lag):
+    if has_nsb:
         # bind_intraperiod_blocks: t⁻ from dtttdt_block_lag (the blocks of a period form a loop; in a rolling solve
         # the blocks of a period the roll holds only in part chain forward, with no row at the solve's first step).
-        # The fix_start_end block nodes chain forward in every period (block_forward_lag).
+        # The fix_start_end block nodes chain forward in every period (block_forward_lag).  Each link is gated on
+        # its own lag: a roll whose only block step is the solve's first step has neither.
         forward = block_forward_nodes(d)
         looping = without_nodes(d.nodeStateBlock, forward)
-        if looping is not None:
+        if looping is not None and _has_rows(d.dtttdt_block_lag):
             links.append(StateLink("state_change_block", looping, d.dtttdt_block_lag,
                                    "t_previous_within_solve", True, False))
         forward_lag = block_forward_lag(d) if forward is not None else None

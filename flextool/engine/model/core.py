@@ -2784,7 +2784,9 @@ def _eq_block_coupling(b: _Build) -> None:
     nsb = d.nodeStateBlock
     v_state = b.v_state
     # nodeBalance_eq skips these nodes: without blocks they would have no energy balance at all.
-    if not (_has_rows(d.period_block) and _has_rows(d.period_block_time) and _has_rows(d.dtttdt_block_lag)):
+    # An empty dtttdt_block_lag is legitimate: a roll whose only block step is a chain start (a period held in
+    # part with one step at the solve's first step) has no lag row; that step starts from the open-start terms.
+    if not (_has_rows(d.period_block) and _has_rows(d.period_block_time)):
         names = ", ".join(sorted(str(n) for n in nsb["n"].to_list()))
         raise FlexToolConfigError(f"bind_intraperiod_blocks node(s) {names} have no timeset blocks in this solve")
 
