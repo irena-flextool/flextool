@@ -227,6 +227,9 @@ def emit_per_solve_sets(
                    ["period", "time"], provider=provider)
     _emit_singles(provider, "solve_data/period_in_use_set.csv", "period",
                   _periods_with_labels(_project_column(df, 0), branch_pairs))
+    # A period label with steps (a split realization roll's label: it dispatches its jump) has cells of its own:
+    # they are neither tied to the forecasts nor without ladder purchases.
+    label_steps_own = fan_period_labels(set(branch_pairs)) & set(_project_column(df, 0))
     _emit_singles(provider, "solve_data/time_in_use_set.csv", "time",
                   _project_column(df, 1))
 
@@ -403,7 +406,7 @@ def emit_per_solve_sets(
                          ["period", "time"], provider=provider)
         for src in (a_df, c_df, b_df):
             for d, t in zip(src["period"].to_list(), src["time"].to_list()):
-                if d and t and (d, t) not in dtna_seen:
+                if d and t and (d, t) not in dtna_seen and d not in label_steps_own:
                     dtna_seen[(d, t)] = None
     elif len(na_window) == 0:
         # Explicit empty window -> emit header-only (operations free
@@ -418,7 +421,7 @@ def emit_per_solve_sets(
             _read_csv(solve_data_dir / name, ["period", "time"], provider=provider).select(pl.all().cast(pl.Utf8))
             for name in ("steps_in_use.csv", "label_steps.csv")])
         for d, t in zip(su_df["period"].to_list(), su_df["time"].to_list()):
-            if d and t and d in na_periods and (d, t) not in dtna_seen:
+            if d and t and d in na_periods and (d, t) not in dtna_seen and d not in label_steps_own:
                 dtna_seen[(d, t)] = None
     _emit_tuples(provider, "solve_data/dt_non_anticipativity_set.csv",
                  ("period", "time"), list(dtna_seen.keys()))
@@ -443,8 +446,8 @@ def emit_per_solve_sets(
     ]
     pin_use_df = _read_csv(solve_data_dir / "period_in_use_set.csv",
                            ["period"], provider=provider)
-    # Ladder purchases are operational: a period label (no dispatch) has none.
-    fan_labels = fan_period_labels(set(branch_pairs))
+    # Ladder purchases are operational: a period label without steps (no dispatch) has none.
+    fan_labels = fan_period_labels(set(branch_pairs)) - label_steps_own
     pin_use = [v for v in pin_use_df["period"].to_list() if v and v not in fan_labels]
     with_ladder = frozenset(
         v for v in _read_csv(solve_data_dir / "commodity_with_ladder.csv",

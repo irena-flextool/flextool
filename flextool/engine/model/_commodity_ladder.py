@@ -601,8 +601,9 @@ def _branch_weight(d) -> Param | None:
     pdt_branch_weight (the weight of every other operational cost, in b.op_factor) reduced to one value
     per period.  The tiers are bought per period, so the weight must be the same for every t of a period.
     It is: reveals happen only at the first step of a period (create_stochastic_periods rejects anything
-    else), and every branch period copies its anchor's full active time, so all members of a sibling
-    cohort share the same t set and the weight denominator is the same for every t.  A change that breaks
+    else) or, in a split realization roll, at the end of the jump, where the label keeps the jump at weight 1
+    and every branch period gets the same rest of the period, so all members of a sibling cohort share the
+    same t set and the weight denominator is the same for every t.  A change that breaks
     this makes a period's weight vary over t, and the build raises instead of guessing a weight.  Ladder
     periods without dt rows (v_trade is 0 there) get 1.0.
     """

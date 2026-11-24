@@ -843,6 +843,10 @@ class StochasticSolver:
             # complete solve's.
             planned = plan_branch_rows(getattr(self.state, "solve", None), solve)
             info = planned if planned is not None else stochastic_branches[complete_solves[solve]]
+            # A split realization roll fans out at the end of its jump, inside the period: the period keeps its
+            # jump steps under its own name (its label has steps), the forecasts get the rest of it.
+            tail = (getattr(getattr(self.state, "solve", None), "roll_tail_plan", None) or {}).get(solve)
+            split_at = tail.tail_start if tail is not None and tail.shape == "split" else None
             active_time_list = active_time_lists[solve]
             realized_time_list = realized_time_lists[solve]
             fix_storage_time_list = fix_storage_time_lists[solve]
@@ -950,7 +954,7 @@ class StochasticSolver:
                         self.logger.error(message)
                         raise FlexToolConfigError(message)
             else:
-                if trig_step != active_time_list[trig_period][0].timestep:
+                if (trig_period, trig_step) != split_at and trig_step != active_time_list[trig_period][0].timestep:
                     message = (
                         "A stochastic branch must start at the FIRST step of "
                         "its branching period (period-boundary reveal). The "
@@ -1103,9 +1107,10 @@ class StochasticSolver:
                         if step.timestep in start_times.keys():
                             branched = True
                             branch_start_time_lists[solve] = (period, step.timestep)
+                            cut = active_time.index(step) if (period, step.timestep) == split_at else 0
 
-                            # Add active time for base period.
-                            new_active_time_list[period] = active_time
+                            # Add active time for base period (a split roll's label: its jump steps).
+                            new_active_time_list[period] = active_time[:cut] if cut else active_time
 
                             # Copy realized + fix_storage for base period only.
                             if period in realized_time_list:
@@ -1131,7 +1136,7 @@ class StochasticSolver:
                                     and branch__weight__real[2] != "yes"
                                 ):
                                     active_branches.append(branch)
-                                    new_active_time_list[solve_branch] = active_time[0:]
+                                    new_active_time_list[solve_branch] = active_time[cut:]
                                     solve_branch__time_branch_lists[solve].append(
                                         (solve_branch, branch)
                                     )
@@ -1140,7 +1145,7 @@ class StochasticSolver:
 
                                 # Track branched timesteps for downstream
                                 # disambiguation.  Mutates state.timeline.
-                                for i in active_time[0:]:
+                                for i in active_time[cut:]:
                                     self.state.timeline.stochastic_timesteps[solve].append(
                                         (solve_branch, i.timestep)
                                     )
@@ -1194,7 +1199,8 @@ class StochasticSolver:
             # A period label (the original name of a period that opens a fan) has no dispatch: drop it from
             # the active, realized and fix-storage lists.  Its pre-stochastic steps and committed cells are kept
             # aside for the bookkeeping emits (period set, non-anticipativity window).
-            labels = fan_period_labels(set(period__branch_lists[solve]))
+            # A split roll's label dispatches its jump: its cells are its own, not committed inside the fan.
+            labels = fan_period_labels(set(period__branch_lists[solve])) - ({split_at[0]} if split_at else set())
             fan_label_time_lists[solve] = FanLabelTimes(
                 labels=frozenset(labels),
                 active={p: v for p, v in new_active_time_list.items() if p in labels},

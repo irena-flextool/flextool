@@ -416,12 +416,14 @@ def _compute_first_and_last_periods(
     ]
 
     # The first active key may be a forecast branch period (a fan opening in the solve's first period, whose
-    # period label has no steps): list the members of its anchor that have steps, as for period_last.
+    # period label has no steps): list the members of its anchor that have steps, as for period_last.  A first
+    # period with steps (a split realization roll's label too: its forecasts start after its jump) is the only one.
     first_anchor = next((pb[0] for pb in period__branch_list if pb[1] == period_first_of_solve),
                         period_first_of_solve)
     period_first_of_solve_list = [
         pb[1] for pb in period__branch_list
         if pb[0] == first_anchor and pb[1] in active_time_list
+        and (first_anchor not in active_time_list or pb[1] == first_anchor)
     ]
     period_first = period__timesets_in_this_solve[0][0]
     period_first_list = [
@@ -808,18 +810,21 @@ def project_branch_time_start_rows(
     return [(d, step) for d, step in parent_rows if (d, d) in period_branch]
 
 
-def derive_branch_time_start(rows: list[tuple[str, str]], read_first: str = READ_FIRST_FAN) -> pl.DataFrame:
-    """Build the ``branch_time_start`` frame (period, step, read_first); header-only without a fan.
+def derive_branch_time_start(rows: list[tuple], read_first: str = READ_FIRST_FAN) -> pl.DataFrame:
+    """Build the ``branch_time_start`` frame (period, step, read_first); header-only without a fan.  A row
+    ``(period, step, read_first)`` names its own ``read_first`` (a realization roll has both kinds), a row
+    ``(period, step)`` takes *read_first*.
 
     ``read_first`` is ``fan`` on every row of a fan: a period from the fan onwards reads the forecast made at the
     fan's analysis time first, in a single solve and in a roll of a rolling solve alike (item 255); ``flat`` on the
     rows of a deterministic solve's flattened realized branch (one row per period and analysis time, nearest to the
     start first); see ``_pdt_lookup`` "Which forecast a branch period reads".
     """
-    return _to_utf8_frame(("period", "step", "read_first"), [(d, step, read_first) for d, step in rows])
+    return _to_utf8_frame(("period", "step", "read_first"), [(*row[:2], row[2] if len(row) > 2 else read_first)
+                                                             for row in rows])
 
 
-def emit_branch_time_start(rows: list[tuple[str, str]], *, read_first: str = READ_FIRST_FAN, provider) -> None:
+def emit_branch_time_start(rows: list[tuple], *, read_first: str = READ_FIRST_FAN, provider) -> None:
     """Emit ``solve_data/branch_time_start`` to the Provider."""
     _emit(provider, "solve_data/branch_time_start.csv", derive_branch_time_start(rows, read_first))
 

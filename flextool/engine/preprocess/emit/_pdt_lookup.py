@@ -529,12 +529,15 @@ def _check_pbt_branch_coverage(
     ``reserve``) names the entity in the message.
     """
     fan_for_d = fan_for_d or {}
+    flat = getattr(fan_for_d, "flat", frozenset())
     roster_by_ts: dict[str, frozenset[str]] = {}
     for anchor, members in anchor_members.items():
         tokens = frozenset(tb_for_d[m][0] for m in members if tb_for_d.get(m))
         if len(tokens) <= 1:
             continue
-        starts = dict.fromkeys([*ts_for_d.get(anchor, ()), *fan_for_d.get(anchor, ()),
+        # A label that reads the realized branch flattened (a split realization roll's jump) starts no cohort.
+        own = () if anchor in flat else (*ts_for_d.get(anchor, ()), *fan_for_d.get(anchor, ()))
+        starts = dict.fromkeys([*own,
                                 *(ts for m in members for ts in (*ts_for_d.get(m, ()), *fan_for_d.get(m, ())))])
         for ts in starts:
             roster_by_ts[ts] = tokens
@@ -750,9 +753,9 @@ def _check_pre_reveal_reads_have_forecast(
     the function returns at once.  *kind* (as for :func:`_check_pbt_branch_coverage`) names the entity in the
     message.
 
-    A period of a deterministic solve's flattened realized branch (``fan_for_d.flat``) reads every listed analysis
-    time (:func:`ts_tiers`): a step that none of their realized series covers is the same input error, worded for
-    the deterministic solve.
+    A period of a flattened realized branch (``fan_for_d.flat``: a deterministic solve, the jump of a realization
+    roll) reads every listed analysis time (:func:`ts_tiers`): a step that none of their realized series covers is
+    the same input error, worded for it.
     """
     if not pbt:
         return
@@ -773,7 +776,7 @@ def _check_pre_reveal_reads_have_forecast(
     solve = next(iter(_read_singles(solve_data_dir / "solve_current.csv", provider=provider)), None)
     solve_name = f"solve '{solve}'" if solve else "this solve"
     prefixes = sorted(dict.fromkeys(key[:n_ent + 1] for key in pbt))
-    has_fan = bool(fan_for_d) and not flat
+    has_fan = any(d not in flat for d in fan_for_d)  # a realization roll's tails fan out, its jump reads flat
     tiers = {d: [ts for tier in ts_tiers(d, ts_for_d, fan_for_d) for ts in tier] if d in flat
              else ts_tiers(d, ts_for_d, FanStarts(fan_for_d, start=start))[0] for d in pre}
     uncovered: dict[tuple, list[tuple[str, str]]] = {}
@@ -823,7 +826,8 @@ def _check_pre_reveal_reads_have_forecast(
         made = ", ".join(f"'{ts}'" for ts in dict.fromkeys(ts for d in periods for ts in tiers[d]))
         raise FlexToolConfigError(
             f"{_subject(kind, ent)}, parameter '{param}': {solve_name} has stochastic_branches and "
-            "dispatch_realization_method deterministic, so it reads the value of the realized: yes branch "
+            "dispatch_realization_method deterministic, or realizes a jump of a rolling within_solve or "
+            "separate_dispatch solve, so it reads the value of the realized: yes branch "
             f"({branches}) as one timeline.  No realized series covers time step{'s' if len(steps_shown) > 1 else ''} "
             f"{shown} (period{'s' if len(periods) > 1 else ''} {period_names}); the realized series start at "
             f"analysis_time {made}.  Give the realized: yes branch values that cover these time steps, or give "

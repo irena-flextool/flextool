@@ -7322,7 +7322,12 @@ def dtttdt_with_jump_from_source(source: "InputSource",
                 # of ``make_step_jump`` is pinned by the Step-0.5 parity
                 # guard.
                 p_anchor = branch_anchor.get(period)
-                if p_anchor is not None and p_anchor in period_order:
+                anchor_steps = per_period.get(p_anchor) or [] if p_anchor is not None else []
+                if p_anchor in period_order and anchor_steps and anchor_steps[-1][1] < steps[0][1]:
+                    # The anchor is a period label whose steps end before the copy's (a split realization roll:
+                    # it holds the jump): the copy continues from its last step.
+                    wrap_period = p_anchor
+                elif p_anchor is not None and p_anchor in period_order:
                     pos_anchor = period_order.index(p_anchor)
                     for qi in range(pos_anchor - 1, -1, -1):
                         if period_order[qi] in anchors_with_self:

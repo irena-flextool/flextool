@@ -6853,7 +6853,8 @@ def _committed_fan_online_cells(sd: Path, flex_data: "FlexData | None", *,
     """``(label, d_ref, t)`` Utf8, chronological: the cells a solve commits inside a forecasts-only fan on which
     units online are tied, each at the forecast whose value the tie holds (the first sorted forecast ``d_ref``).
 
-    Inside a fan the solve realizes no dispatch (``realized_dispatch`` holds no fan cell), but the families tied
+    Inside a fan the solve realizes no dispatch (``realized_dispatch`` holds no fan cell; a split realization
+    roll's label dispatches its jump under its own name and commits nothing in the fan), but the families tied
     across its forecasts are de facto realized on the tied cells, so the next solve continues its unit
     commitment from them (the committed-window check, ``solve._realization.check_committed_window_realized``,
     stops a run whose untied families would need the same).  ``None`` when the solve commits no cell in a fan

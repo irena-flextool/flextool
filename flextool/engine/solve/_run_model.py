@@ -1859,8 +1859,11 @@ def native_run_model(state, solver) -> int:
     realized_dispatch_parent = getattr(
         state.solve, "realized_dispatch_parent", {}
     ) or {}
+    # A planned realization roll (``roll_tail_plan``) gets its realized branch from its plan (3.8) and keeps the
+    # forecast rows of its tail.
+    _planned = getattr(state.solve, "roll_tail_plan", None) or {}
     for sibling, parent in realized_dispatch_parent.items():
-        if sibling not in solve_branch__time_branch_lists:
+        if sibling not in solve_branch__time_branch_lists or sibling in _planned:
             continue
         if (
             parent not in solve_branch__time_branch_lists
@@ -1897,7 +1900,15 @@ def native_run_model(state, solver) -> int:
     # first step is read; a step it does not cover is left to the coverage
     # check.
     deterministic_branches = getattr(state.solve, "deterministic_branches", None) or {}
-    flat_time_start_lists: dict[str, list[tuple[str, str]]] = {}
+    flat_time_start_lists: dict[str, list[tuple[str, str, str]]] = {}
+
+    def _read_realized_flat(s: str, periods: list, branch: str, times) -> None:
+        # Periods *periods* of sub-solve *s* read *branch* through one ``flat`` tier per analysis time of *times*.
+        solve_branch__time_branch_lists[s] = [
+            *(row for row in solve_branch__time_branch_lists[s] if row[0] not in periods),
+            *((d, branch) for d in periods)]
+        flat_time_start_lists[s] = [(d, ts, READ_FIRST_FLAT) for d in periods for ts in times]
+
     _det_timelines = _solve_timelines(state, all_solves, complete_solve, active_time_lists, deterministic_branches)
     for _s in all_solves:
         _info = deterministic_branches.get(complete_solve[_s])
@@ -1913,10 +1924,15 @@ def native_run_model(state, solver) -> int:
                 "periods, so it has no realized series to read. Give the realized: yes rows the analysis_time "
                 "of a time step of that timeline, or set dispatch_realization_method within_solve or "
                 "separate_dispatch.")
-        _branch = next(row[1] for row in _info if row[3] == "yes")
         branch_start_time_lists[_s] = None
-        solve_branch__time_branch_lists[_s] = [(_d, _branch) for _d in active_time_lists[_s]]
-        flat_time_start_lists[_s] = [(_d, _ts) for _d in active_time_lists[_s] for _ts in _times]
+        _read_realized_flat(_s, list(active_time_lists[_s]), next(row[1] for row in _info if row[3] == "yes"),
+                            _times)
+    # 3.8 A realization roll (``roll_tail_plan``) reads its realized branch flattened in the same way over its jump
+    # periods (every period of a ``deterministic`` roll): one source, the plan (``RollTail.realized`` /
+    # ``realized_times``).  Its tail keeps the forecast rows of the expansion.
+    for _s, _tail in (getattr(state.solve, "roll_tail_plan", None) or {}).items():
+        _read_realized_flat(_s, list(dict.fromkeys(_d for _d, _t in _tail.jump_steps)), _tail.realized,
+                            _tail.realized_times)
 
     # The fan start of each solve (``solve_data/branch_time_start``): a branch
     # period whose own first step authors no stochastic-time value for a cell
@@ -1929,7 +1945,7 @@ def native_run_model(state, solver) -> int:
         for s in period__branch_lists
     }
     for sibling, parent in realized_dispatch_parent.items():
-        if sibling not in branch_time_start_lists or parent not in branch_time_start_lists:
+        if sibling not in branch_time_start_lists or parent not in branch_time_start_lists or sibling in _planned:
             continue
         _sibling_periods = set(active_time_lists.get(sibling, {}))
         branch_time_start_lists[sibling] = [
@@ -1937,6 +1953,11 @@ def native_run_model(state, solver) -> int:
                 branch_time_start_lists[parent], period__branch_lists[parent])
             if row[0] in _sibling_periods
         ]
+    # The flat rows replace the fan rows of the periods that read the realized branch (3.7, 3.8).
+    for _s, _flat in flat_time_start_lists.items():
+        _periods = {row[0] for row in _flat}
+        branch_time_start_lists[_s] = [
+            *_flat, *(row for row in branch_time_start_lists.get(_s, []) if row[0] not in _periods)]
 
     for solve in active_time_lists.keys():
         for period in active_time_lists[solve]:
@@ -2474,14 +2495,11 @@ def native_run_model(state, solver) -> int:
         # fan's analysis time, in a single solve and in a roll alike, never a
         # forecast made later (``_pdt_lookup`` "Which forecast a branch
         # period reads").
-        if solve in flat_time_start_lists:
-            solve_writers.emit_branch_time_start(
-                flat_time_start_lists[solve], read_first=READ_FIRST_FLAT, provider=sub_solve_provider)
-        else:
-            solve_writers.emit_branch_time_start(
-                branch_time_start_lists.get(solve, []),
-                provider=sub_solve_provider,
-            )
+        # The periods that read a realized branch flattened (3.7, 3.8) have ``flat`` rows.
+        solve_writers.emit_branch_time_start(
+            branch_time_start_lists.get(solve, []),
+            provider=sub_solve_provider,
+        )
         solve_writers.emit_first_and_last_periods(
             active_time_lists[solve],
             state.solve.timesets_used_by_solves[complete_solve[solve]],

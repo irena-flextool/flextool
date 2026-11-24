@@ -1666,7 +1666,10 @@ class SolveConfig:
         for s in self.solves_in_run():
             rows = self.stochastic_branches.get(s) or []
             raw = self.dispatch_realization_method.get(s)
-            if not rows or str("" if raw is None else raw).strip().lower() not in ("", "deterministic"):
+            # A realization solve (realized_dispatch_parent) is skipped: its method is dropped, not chosen, and a
+            # realization roll's forecasts come from its plan (_realization_tail).
+            if (not rows or str("" if raw is None else raw).strip().lower() not in ("", "deterministic")
+                    or s in self.realized_dispatch_parent):
                 continue
             name = self.map2d_duplicate_of.get(s, (s,))[0]
             realized = list(dict.fromkeys(row[1] for row in rows if len(row) > 3 and row[3] == "yes"))

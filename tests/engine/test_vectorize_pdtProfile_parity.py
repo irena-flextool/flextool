@@ -35,7 +35,7 @@ from flextool.engine.preprocess.emit._period_params import (
     derive_pdtProfile,
     derive_pdtProfile_vectorized,
 )
-from tests.engine._fan_fold_fixture import FAN_CASES
+from tests.engine._fan_fold_fixture import FAN_CASES, SPLIT_CASES
 
 _KEY_COLS = ["profile", "period", "time"]
 
@@ -365,7 +365,7 @@ def test_vectorized_pdtProfile_synthetic_fold_and_cascade(tmp_path):
     print(f"\n[pdtProfile parity] synthetic fold+UNION: Tier {tier}")
 
 
-@pytest.mark.parametrize("case", FAN_CASES)
+@pytest.mark.parametrize("case", FAN_CASES + SPLIT_CASES)
 def test_vectorized_pdtProfile_fan_start_fallback(case, tmp_path):
     """Items 228 / 255: a non-empty ``fan_for_d`` (``branch_time_start``) -- each fold cell reads the forecast at
     the fan start (``read_first`` = ``fan``, as every solve writes it; a cell it does not cover that a later
@@ -375,7 +375,8 @@ def test_vectorized_pdtProfile_fan_start_fallback(case, tmp_path):
     :mod:`tests.engine._fan_fold_fixture` (profile ``X`` is stochastic through its process ``px``)."""
     from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
     from tests.engine._fan_fold_fixture import (
-        STEPS, expected_fold, fan_case, pbt_frame, put_fan_scaffold, uncovered_error)
+        EXPECTED_SPLIT, SPLIT_STEPS, STEPS, expected_fold, fan_case, pbt_frame, put_fan_scaffold,
+        put_split_scaffold, split_rows, split_uncovered_error, uncovered_error)
 
     provider = FlexDataProvider()
 
@@ -383,8 +384,10 @@ def test_vectorized_pdtProfile_fan_start_fallback(case, tmp_path):
         provider.put(f"{parent}/{stem}", df)
         provider.put(stem, df)
 
-    rolling, rows = fan_case(case)
-    put_fan_scaffold(put, rolling=rolling)
+    # A split realization roll (flat jump, fan tails) or one of the fans.
+    split = case in SPLIT_CASES
+    rolling, rows = (True, split_rows(case)) if split else fan_case(case)
+    put_split_scaffold(put) if split else put_fan_scaffold(put, rolling=rolling)
     put("solve_data", "pbt_profile", pbt_frame({"profile": "entity"}, rows=rows))
     put("input", "profile", pl.DataFrame({"profile": ["X", "Y"]}))
     put("input", "group__process", pl.DataFrame({"group": ["g"], "process": ["px"]}))
@@ -392,15 +395,17 @@ def test_vectorized_pdtProfile_fan_start_fallback(case, tmp_path):
         "process": ["px", "py"], "profile": ["X", "Y"], "method": ["upper_limit", "upper_limit"]}))
 
     inp, sdd = tmp_path / "input", tmp_path / "solve_data"
-    if case == "uncovered":
+    if case in ("uncovered", "split_uncovered"):
         for derive in (derive_pdtProfile, derive_pdtProfile_vectorized):
-            with pytest.raises(FlexToolConfigError, match=uncovered_error("profile 'Y'", "profile")):
+            with pytest.raises(FlexToolConfigError, match=(split_uncovered_error("profile 'X'", "profile") if split
+                                                    else uncovered_error("profile 'Y'", "profile"))):
                 derive(inp, sdd, provider=provider)
         return
     df_legacy = derive_pdtProfile(inp, sdd, provider=provider)
     df_vec = derive_pdtProfile_vectorized(inp, sdd, provider=provider)
     leg = {(r[0], r[1], r[2]): r[3] for r in df_legacy.iter_rows()}
     for e in ("X", "Y"):
-        for d, t in STEPS:
-            assert leg[(e, d, t)] == repr(expected_fold(rolling).get((e, d, t), 0.0)), (e, d, t, leg)
+        for d, t in (SPLIT_STEPS if split else STEPS):
+            want = EXPECTED_SPLIT if split else expected_fold(rolling)
+            assert leg[(e, d, t)] == repr(want.get((e, d, t), 0.0)), (e, d, t, leg)
     assert _assert_parity(df_legacy, df_vec, "fan fallback") == "A"

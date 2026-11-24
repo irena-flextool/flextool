@@ -572,8 +572,10 @@ def emit_branch_weights(input_dir: Path, solve_data_dir: Path,
     pdt_rows: list[tuple[str, str, float]] = []
     for d, t in dt_pairs:
         if d in phantom:
-            # Period-label operational weight → 0 (forecasts carry the mass).
-            pdt_rows.append((d, t, 0.0))
+            # A label's step that none of its forecasts has (a split realization roll: the label dispatches its
+            # jump on the realized data) is a cohort of one: weight 1; else the forecasts carry the mass: 0.
+            shared = any((d, b) in pb_set for b in branches_for_t.get(t, ()) if b != d)
+            pdt_rows.append((d, t, 0.0 if shared else 1.0))
             continue
         branches_with_t = branches_for_t.get(t, set())
         denom = 0.0
