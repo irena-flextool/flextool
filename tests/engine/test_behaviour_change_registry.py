@@ -79,5 +79,7 @@ def test_migration_markers_are_registered() -> None:
                                                               "rp_storage_chain_pinned",
                                                               "storage_end_matches_start",
                                                               "storage_reference_start",
-                                                              "minimum_time_method_written"}
+                                                              "minimum_time_method_written",
+                                                              db_migration.V83_WITHIN_SOLVE_MARKER,
+                                                              db_migration.V83_SEPARATE_DISPATCH_MARKER}
     assert written <= set(BEHAVIOUR_CHANGES)

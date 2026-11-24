@@ -12720,10 +12720,10 @@ def _v83_dispatch_realization_texts() -> dict[tuple[str, str], tuple[str, str]]:
         "and the solve uses the data of the realized: yes branch, with a warning (an error without that branch). "
         "within_solve: the forecasts are solved together; a rolling solve realizes each jump with the realized: yes "
         "branch and looks ahead with the forecasts made at the end of the jump; a single solve with a realized: yes "
-        "branch gets a separate realization solve. separate_dispatch: a first, stochastic solve fixes the units "
-        "online of _fix_in_uc units; a realization solve then dispatches the realized: yes branch over the jump (a "
-        "single solve: its realized periods) and looks ahead with the forecasts made at their end; needs a "
-        "realized: yes branch. Without stochastic_branches, deterministic and within_solve give the same model.")}
+        "branch gets a separate realization solve. separate_dispatch: a first, stochastic solve decides the units "
+        "online of _fix_in_uc units; a realization solve keeps them and dispatches the realized: yes branch over "
+        "the jump and, in a rolling solve, looks ahead with the forecasts made at the end of the jump (a single "
+        "solve realizes its realized periods only); needs a realized: yes branch. Without stochastic_branches, deterministic and within_solve give the same model.")}
 
 
 def plan_dispatch_realization_method(branches, methods, scenarios) -> tuple[tuple, tuple]:
@@ -12819,6 +12819,65 @@ def _v83_dispatch_realization_method(db) -> None:
     _replace_text_pairs(db, _v83_dispatch_realization_texts())
 
 
+#: Part 3 of v83: the behaviour-change markers of the realization changes (``{"since": 83, "solves": [...]}``).
+V83_WITHIN_SOLVE_MARKER = "rolling_within_solve_one_solve"
+V83_SEPARATE_DISPATCH_MARKER = "separate_dispatch_realization_looks_ahead"
+
+
+def plan_realization_notices(branches, modes, methods, scenarios) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The solves part 3 of v83 lists in the markers :data:`V83_WITHIN_SOLVE_MARKER` and
+    :data:`V83_SEPARATE_DISPATCH_MARKER` (plan §2a "Notices").  Pure: no database.
+
+    *branches* ``{(solve, alternative): the stochastic_branches value is non-empty}``, *modes* and *methods*
+    ``{(solve, alternative): parsed solve_mode / dispatch_realization_method, None for a null row}``, *scenarios*
+    ``{scenario: [alternative, ...]}`` lowest rank first.  In each scenario a solve is *stochastic* when its winning
+    ``stochastic_branches`` is non-empty (one forecast counts), *rolling* when its winning ``solve_mode`` is
+    ``rolling_window``, and its method is the winning explicit ``dispatch_realization_method`` (part 5's writes
+    included; no definition default is read: the engine reads none).  Listed for within_solve: rolling, stochastic
+    and ``within_solve`` in some scenario; for separate_dispatch: stochastic and ``separate_dispatch`` in some
+    scenario, rolling or single.  A solve that is not stochastic in the scenario where its method resolves is not
+    listed for it.  Returns ``(within_solve solves, separate_dispatch solves)``, sorted."""
+    within, separate = set(), set()
+    for solve in sorted({key[0] for key in branches}):
+        for alts in scenarios.values():
+            where = _v77_winner(alts, branches, solve)
+            if where is None or not branches[(solve, where)]:
+                continue
+            method = _v83_read(alts, methods, solve)[0]
+            if method == "separate_dispatch":
+                separate.add(solve)
+            elif method == _V83_WITHIN_SOLVE and _v83_read(alts, modes, solve)[0] == "rolling_window":
+                within.add(solve)
+    return tuple(sorted(within)), tuple(sorted(separate))
+
+
+def _v83_realization_notices(db) -> None:
+    """Part 3 of v83: rolling ``within_solve`` solves now realize each jump in one solve, and ``separate_dispatch``
+    realizations look ahead after the jump (their first solve shares only the units online of ``_fix_in_uc``
+    units).  Lists the solves whose results change (:func:`plan_realization_notices`) in the markers
+    ``rolling_within_solve_one_solve`` and ``separate_dispatch_realization_looks_ahead`` (``{"since": 83,
+    "solves": [...]}``, merged with a stored list).  Runs after part 5, whose writes count.  Metadata only;
+    idempotent; no commit."""
+    if not db.get_item("entity_class", name="solve"):
+        return
+    branches, methods, scenarios = _v83_solve_inputs(db)
+    modes = {(pv["entity_byname"][0], pv["alternative_name"]): pv["parsed_value"]
+             for pv in db.find_parameter_values(entity_class_name="solve", parameter_definition_name="solve_mode")}
+    for change_id, solves in zip((V83_WITHIN_SOLVE_MARKER, V83_SEPARATE_DISPATCH_MARKER),
+                                 plan_realization_notices(branches, modes, methods, scenarios)):
+        name = BEHAVIOUR_CHANGE_MARKER_PREFIX + change_id
+        stored: list = []
+        for md in db.get_items("metadata"):
+            if md["name"] == name:
+                try:
+                    stored = list(json.loads(md["value"]).get("solves") or [])
+                except (TypeError, ValueError, AttributeError):
+                    stored = []
+        merged = stored + [s for s in solves if s not in stored]
+        if merged:
+            _v77_set_marker(db, change_id, json.dumps({"since": 83, "solves": merged}))
+
+
 # --- Version 83: the batch ---------------------------------------------------------------------------------------
 
 #: The members v83 adds to each value list (parts 1, 2 and 5): what a database at 83 has on the lists it has.
@@ -12860,6 +12919,9 @@ def _migrate_v83_schema_batch(db) -> None:
     5. ``dispatch_realization_methods`` gets ``deterministic``, the new shipped default; ``within_solve`` is written
        on the stochastic solves that relied on the default (results unchanged;
        :func:`_v83_dispatch_realization_method`).
+    3. Rolling ``within_solve`` solves realize each jump in one solve and ``separate_dispatch`` realizations look
+       ahead: the solves whose results change are listed in two behaviour-change markers (after part 5, whose
+       writes count; :func:`_v83_realization_notices`).
 
     On a non-local URL the list defaults are not repaired before the step (item 279): a default still stored as its
     member's text reads as nothing, and a description written on its definition stores it as ``NULL``; it read as
@@ -12869,8 +12931,10 @@ def _migrate_v83_schema_batch(db) -> None:
     _v83_minimum_time_method(db)
     _v83_startup_method(db)
     _v83_dispatch_realization_method(db)
+    _v83_realization_notices(db)
     _commit_step(db, "v83: minimum_time_method decides the min up/down times, startup_method binary is "
-                     "integer_fix_in_uc, dispatch_realization_method deterministic is the default")
+                     "integer_fix_in_uc, dispatch_realization_method deterministic is the default, the "
+                     "realization of stochastic solves looks ahead")
 
 
 #: The schema step of the current data version.  The template sync reruns it on the master template, so that schema

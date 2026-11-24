@@ -28,7 +28,7 @@ from flextool.update_flextool import db_migration as m
 
 LIST = "dispatch_realization_methods"
 MEMBERS = ["within_solve", "separate_dispatch", "deterministic"]
-#: The texts, copied from plan §2a step 4.
+#: The texts: plan §2a step 4 (old) and its final form (MR rev 7.1 §6.3, the separate_dispatch clause).
 OLD_TEXT = ("[choice] How the committed part of a stochastic solve is realized. within_solve (default): a realized: "
             "yes branch gets a realization solve automatically. separate_dispatch: always runs a separate realized "
             "dispatch solve; needs a realized: yes branch (error otherwise).")
@@ -37,10 +37,10 @@ NEW_TEXT = ("[choice] How a solve with stochastic_branches is solved. determinis
             "branch). within_solve: the forecasts are solved together; a rolling solve realizes each jump with the "
             "realized: yes branch and looks ahead with the forecasts made at the end of the jump; a single solve with "
             "a realized: yes branch gets a separate realization solve. separate_dispatch: a first, stochastic solve "
-            "fixes the units online of _fix_in_uc units; a realization solve then dispatches the realized: yes branch "
-            "over the jump (a single solve: its realized periods) and looks ahead with the forecasts made at their "
-            "end; needs a realized: yes branch. Without stochastic_branches, deterministic and within_solve give "
-            "the same model.")
+            "decides the units online of _fix_in_uc units; a realization solve keeps them and dispatches the "
+            "realized: yes branch over the jump and, in a rolling solve, looks ahead with the forecasts made at the "
+            "end of the jump (a single solve realizes its realized periods only); needs a realized: yes branch. "
+            "Without stochastic_branches, deterministic and within_solve give the same model.")
 UNDECIDED_PRINT = ("v83: dispatch_realization_method not written for solve v: a value in alternative base would "
                    "replace your dispatch_realization_method in alternative E in scenario S1. In scenario S2 it now "
                    "runs deterministic: the forecasts are ignored (results change), or the run stops when there is "

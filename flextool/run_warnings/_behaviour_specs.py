@@ -409,6 +409,31 @@ BEHAVIOUR_TEXTS: dict[str, tuple[str, str, str, str]] = {
          "each run. Set minimum_time_method on them where the times should apply."),
         _delete_marker("minimum_time_method_written"),
     ),
+    "rolling_within_solve_one_solve": (
+        "W-0635", "rolling within_solve realizes the jump in one solve",
+        ("A rolling stochastic solve with dispatch_realization_method within_solve now solves each roll once. Over "
+         "the jump it dispatches the data of the realized: yes branch once, under the period's own name. After the "
+         "jump it looks ahead with each forecast made at the end of the jump, with its probability. Before, each "
+         "roll solved the forecasts made at its start, and a separate realization solve then dispatched the jump "
+         "alone, without looking ahead. Results change: units online, storage levels and prices in the jump, and, "
+         "with timeset weights that are not equal, the costs reported for the jump. Such a solve now needs a "
+         "realized: yes branch and forecasts made at the end of each jump; without them the run stops with an "
+         "error naming the roll."),
+        _delete_marker("rolling_within_solve_one_solve"),
+    ),
+    "separate_dispatch_realization_looks_ahead": (
+        "W-0636", "separate_dispatch realization looks ahead",
+        ("In a rolling stochastic solve with dispatch_realization_method separate_dispatch, the realization solve "
+         "now looks ahead after its jump with each forecast made at the end of the jump and its probability; "
+         "before, it dispatched the jump alone. In rolling and single solves, the first solve now shares across "
+         "the forecasts only the units online of units whose startup_method ends in _fix_in_uc, the only "
+         "decisions the realization keeps; before, it also shared the other units online, reserves and the "
+         "storage use of the stochastic nodes. Results change: units online, storage levels, prices and, with "
+         "timeset weights that are not equal, the costs reported for the jump. A rolling solve without forecasts "
+         "made at the start of each roll and at the end of each jump now stops with an error naming the roll and "
+         "the time step."),
+        _delete_marker("separate_dispatch_realization_looks_ahead"),
+    ),
 }
 
 BEHAVIOUR_SPECS: tuple[WarningSpec, ...] = tuple(

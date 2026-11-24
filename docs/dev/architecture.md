@@ -1588,7 +1588,14 @@ slack semantics.
      `test_dynamic_constraint_names_resolve`. Run autoscale-exercising
      tests with `FLEXTOOL_AUTOSCALE_STRICT=1` to turn the silent degrade
      into a loud failure (off in production so a gap never blocks a user
-     solve).
+     solve). Beside these, a new constraint family that is period-level
+     (one row per period) also goes in `PERIOD_ROW_KINDS` or
+     `REVIEWED_STEP_LEVEL` (`engine/model/_period_rows.py`, check G1), and
+     a new FlexData frame that links two steps goes in `STEP_RELATIONS`
+     (`engine/preprocess/_step_relations.py`, checks G3 / G4): a split
+     realization roll (engine.md "Realization rolls") turns a missed case
+     into an internal error, and the coverage tests refuse an unregistered
+     one.
    - **Layer 3 — HiGHS native** (polar-high `_layer3.py`). Picks the
      power-of-two `user_bound_scale` / `user_objective_scale` exponents
      from the post-Layer-2 readout (the *meaningful* bound / RHS pool:

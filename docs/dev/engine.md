@@ -1361,6 +1361,35 @@ sibling branches — there are four families covering `v_state`,
 sibling-branch variables via Var renaming (`d → b`) so the engine's
 join routes the same Var through two key columns at once.
 
+### Realization rolls
+
+A top-level rolling solve with `stochastic_branches` and an explicit
+`dispatch_realization_method` `within_solve` or `separate_dispatch`
+(`_realization_tail.realization_roll_method`; not with recourse, an
+author-declared realization solve, nested solves or delayed units) is
+solved as realization rolls R_k (`roll_tail_plan` → `RollTail`, keyed on the
+sub-solve). R_k dispatches its jump once with the `realized: yes` branch's
+data, read as one timeline (`realized_analysis_times`), under the period's
+own name (the label), and after the jump looks ahead with every forecast
+made at the end of the jump (`roll_branch_rows`): each forecast copy `p_f`
+holds the steps after the jump, so the path of forecast f is the jump plus
+`p_f` (the trunk). A roll whose horizon ends with its jump is
+`deterministic` (realized data only). `within_solve`: R_k is the only solve
+of the roll. `separate_dispatch`: solve (1) is the stochastic solve over the
+forecasts made at the roll start and ties only the units online of
+`process_online_fix_in_uc` (`solve_data/na_online_fix_in_uc`, na role
+`uc_only`); its realization solve is R_k with the pins over the jump. Single
+solves keep the realization solve over their realized periods.
+
+A split roll (a jump that ends inside a period) gives the base period both
+the jump steps and forecast copies after them, so per-period rows and
+step-pair relations must be path-aware. Four checks turn a missed case into
+an internal error, not a different LP: G1 (period-level rows,
+`PERIOD_ROW_KINDS` / `REVIEWED_STEP_LEVEL`), G2 (every `(d, t)` cell has a
+branch weight), G3 (no self-wrap) and G4 (the tail links to the jump end;
+both over `STEP_RELATIONS`). They do nothing without a period label with
+steps.
+
 ## Auto-scaling and the slack convention
 
 FlexTool's LP can accumulate coefficients spanning many decades —

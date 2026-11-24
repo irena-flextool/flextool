@@ -72,6 +72,33 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
   with an error naming the solve. Upgraded databases get `within_solve` written on the stochastic
   solves that relied on the default, so their results are unchanged. Tools and scripts that write stochastic
   solves must write `dispatch_realization_method` (`within_solve` or `separate_dispatch`) to solve the forecasts.
+- **A rolling `within_solve` solve realizes each jump in one solve.** Each roll of a rolling stochastic solve with
+  `dispatch_realization_method` `within_solve` is now solved once: over its jump it dispatches the data of the
+  `realized: yes` branch (one path, the same decisions in every forecast, reported under the period's own name),
+  and after the jump it looks ahead with each forecast made at the end of the jump, with its probability; the
+  next roll continues from the end of the jump. Before, each roll solved the forecasts made at its start, and a
+  separate realization solve then dispatched the jump alone, without looking ahead. Results change: units online,
+  storage levels and prices in the jump and, with timeset weights that are not equal, the costs reported for the
+  jump (the jump's cost now uses the scale of the whole roll, as a deterministic rolling solve does). Such a solve
+  now needs a `realized: yes` branch and forecasts made at the end of each jump; without them the run stops with
+  an error naming the roll and the time step. The last roll, whose horizon ends with its jump, is solved with the
+  realized data only. A single `within_solve` solve keeps its separate realization solve. Note W-0635 names the
+  solves of an upgraded database that chose this method.
+- **A `separate_dispatch` realization looks ahead, and its first solve shares only the `_fix_in_uc` commitment.**
+  With `dispatch_realization_method` `separate_dispatch`, rolling or single, the first, stochastic solve now shares
+  across the forecasts only the units online of the units and connections with `startup_method`
+  `linear_fix_in_uc` or `integer_fix_in_uc`, the only decisions the realization keeps; before, it also shared the
+  other units online, the reserves and the storage use of the stochastic nodes. In a rolling solve the
+  realization solve then dispatches the jump with the `realized: yes` branch's data and looks ahead after it with
+  each forecast made at the end of the jump, with its probability; before, it dispatched the jump alone. A single
+  solve's realization still dispatches its realized periods only. Results change: units online, storage levels,
+  prices and, with timeset weights that are not equal, the costs reported for the jump. A rolling solve without
+  forecasts made at the start of each roll and at the end of each jump now stops with an error naming the roll and
+  the time step. Note W-0636 names the solves of an upgraded database that chose this method.
+- **Rolling stochastic solves with delayed units keep the realization without look-ahead.** In a model with units
+  that have a `delay`, a rolling `within_solve` or `separate_dispatch` solve still realizes each jump in a separate
+  realization solve that does not look past the jump; note W-0594 names the delayed units, once per run. A rolling
+  stochastic solve followed by a realization solve you configure yourself also keeps its two solves.
 
 ### Fixes
 

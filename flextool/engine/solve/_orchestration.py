@@ -2250,10 +2250,16 @@ def _spawn_realized_dispatch_siblings(
         except Exception:  # noqa: BLE001
             reader_solves = set()
 
+    from flextool.engine import _behaviour_changes
     from flextool.engine.solve import _realization, _realization_tail
 
     def _is_rolling(solve: str) -> bool:
         return (getattr(solve_cfg, "solve_modes", None) or {}).get(solve) == "rolling_window"
+
+    def _realization_notice(change_id: str, solve: str) -> None:
+        # W-0635 / W-0636: the database upgrade listed the solve (v83 part 3) and it runs with the new realization.
+        if solve in (_behaviour_changes.marker_json(change_id).get("solves") or []):
+            _behaviour_changes.notice(change_id, "solves", [solve])
 
     # Spawn list: every separate_dispatch solve (authored), then every
     # designated solve (a ``realized: yes`` branch) without a configured realization solve.  Each
@@ -2269,6 +2275,7 @@ def _spawn_realized_dispatch_siblings(
         if roll_method == "within_solve":
             # Each roll of a rolling within_solve solve is its own realization roll (``_realization_tail``): it
             # realizes its jump and looks ahead after it, so no realization solve is added.
+            _realization_notice("rolling_within_solve_one_solve", p)
             continue
         delayed = _realization_tail.delay_gated_units(solve_cfg, p)
         if delayed:
@@ -2283,6 +2290,7 @@ def _spawn_realized_dispatch_siblings(
                     )
                 continue
             eligible.append((p, "dispatch_realization_method='separate_dispatch'"))
+            _realization_notice("separate_dispatch_realization_looks_ahead", p)
             continue
         configured = _realization.configured_realization_solve(solve_cfg, p)
         if configured is not None:
