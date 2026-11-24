@@ -11,6 +11,9 @@ needed.  The counted ones are ratchets: a count may fall (lower its baseline her
   ``schema_db_url``); a template ``.sqlite`` lags the schema and concurrent xdist opens of one file can hang Windows CI.
 * Value columns rendered with a cast in the vectorized emit (invariant 5): render with ``_render_value_column`` (the
   ``repr()`` loop); ``.cast(pl.Utf8)`` diverges on sci-notation padding and ``NaN``.
+* Module size: a module stays under ``MAX_MODULE_LINES``; the larger ones may not grow more than ``GROWTH_SLACK``
+  lines past their size when the ratchet was set.  Agents read and edit large modules badly; new code goes in a new,
+  cohesive module.
 """
 from __future__ import annotations
 
@@ -66,6 +69,55 @@ TEMPLATE_DB_READERS: frozenset[str] = frozenset({
     "tests/update_flextool/test_settings_param_sync.py",
 })
 
+MAX_MODULE_LINES = 1500
+GROWTH_SLACK = 150
+
+#: Lines of each module over MAX_MODULE_LINES when the ratchet was set (2026-11-24).  Lower an entry when the
+#: module shrinks; drop it when it is split under the limit.
+LARGE_MODULES: dict[str, int] = {
+    "flextool/assistant/chat_cli.py": 1592,
+    "flextool/assistant/session.py": 1948,
+    "flextool/engine/input/_param_shapes.py": 3850,
+    "flextool/engine/input/_solve_config.py": 1915,
+    "flextool/engine/input/_spinedb_reader.py": 1890,
+    "flextool/engine/input/_timeline.py": 1872,
+    "flextool/engine/model/_group_slack.py": 1570,
+    "flextool/engine/model/_reserve.py": 1897,
+    "flextool/engine/model/core.py": 7349,
+    "flextool/engine/preprocess/emit/_arc_unions.py": 1577,
+    "flextool/engine/preprocess/emit/_inflow_scaling.py": 1555,
+    "flextool/engine/preprocess/emit/_period_params.py": 2576,
+    "flextool/engine/preprocess/flex_data.py": 8356,
+    "flextool/engine/preprocess/params/_branch.py": 2119,
+    "flextool/engine/preprocess/params/_derived.py": 9944,
+    "flextool/engine/preprocess/params/_direct.py": 3243,
+    "flextool/engine/preprocess/params/_projection.py": 2206,
+    "flextool/engine/solve/_benders.py": 3657,
+    "flextool/engine/solve/_orchestration.py": 6019,
+    "flextool/engine/solve/_region_filter.py": 2874,
+    "flextool/engine/solve/_run_model.py": 3134,
+    "flextool/engine/solve/_solver_dispatch.py": 1874,
+    "flextool/engine/solve/_subprocess_solve.py": 2951,
+    "flextool/export_to_tabular/excel_writer.py": 3570,
+    "flextool/gui/dialogs/plot_settings_picker.py": 2215,
+    "flextool/gui/execution_manager.py": 2080,
+    "flextool/gui/main_window.py": 6943,
+    "flextool/gui/result_viewer.py": 4662,
+    "flextool/input_derivation/_validators.py": 3303,
+    "flextool/plot_outputs/plan.py": 1869,
+    "flextool/plot_outputs/plot_bars.py": 1543,
+    "flextool/process_inputs/read_tabular_with_specification.py": 1502,
+    "flextool/process_inputs/write_old_flextool_to_db.py": 4055,
+    "flextool/process_outputs/_output_meta.py": 2004,
+    "flextool/process_outputs/read_highs_solution.py": 2162,
+    "flextool/process_outputs/read_parameters.py": 2018,
+    "flextool/process_outputs/write_outputs.py": 1566,
+    "flextool/project_package.py": 1647,
+    "flextool/update_flextool/db_migration.py": 13190,
+    "tools/assistant_eval.py": 3531,
+    "tools/lp_snapshot.py": 3403,
+}
+
 _VALUE_CAST = re.compile(r"""col\(\s*["']value["']\s*\)\s*\.cast\(\s*(pl\.)?(Utf8|String)\b""")
 
 
@@ -111,3 +163,23 @@ def test_emit_renders_value_columns_without_a_cast():
         f"value column cast to a string in the vectorized emit: {hits}.  Render it with _render_value_column "
         "(flextool/engine/preprocess/emit/_vectorize.py, the repr() loop): .cast(pl.Utf8) diverges from the "
         "per-roll writer on sci-notation padding and NaN, which breaks byte parity.")
+
+
+def test_modules_do_not_grow_past_their_ratchet():
+    grown = {}
+    for folder in ("flextool", "tools"):
+        for rel, text in _sources(folder).items():
+            lines = text.count("\n")
+            limit = LARGE_MODULES[rel] + GROWTH_SLACK if rel in LARGE_MODULES else MAX_MODULE_LINES
+            if lines > limit:
+                grown[rel] = (limit, lines)
+    assert not grown, (
+        f"Modules over their size limit (limit, lines): {grown}.  Put the new code in a new module with one clear "
+        f"topic (a new module stays under {MAX_MODULE_LINES} lines) instead of growing a large one.  If the growth "
+        "really belongs there, raise the entry in LARGE_MODULES (tests/test_invariant_guards.py) and say why in the "
+        "commit message.")
+
+
+def test_large_module_list_has_no_stale_entries():
+    stale = sorted(rel for rel in LARGE_MODULES if not (ROOT / rel).exists())
+    assert not stale, f"Drop from LARGE_MODULES (the module no longer exists): {stale}"
