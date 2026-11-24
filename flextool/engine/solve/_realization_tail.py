@@ -116,6 +116,9 @@ def realization_roll_method(solve_cfg: Any, solve: str) -> RollMethod | None:
         return None
     if solve_cfg.stochastic_invest_method_for(solve) == "recourse":
         return None
+    # Nested solves get no plan (D11): only a contained solve has a storage-usage fix from its parent
+    # (node_storage_usage_fix_le / node_balance_fix_quantity_eq_lower), and its per-path cap is computed nowhere
+    # (_nested_end_rows stops at the jump end).  Lifting this needs that cap first.
     if solve not in _top_level_solves(solve_cfg) or solve in _contained_solves(solve_cfg):
         return None
     if (getattr(solve_cfg, "contains_solves", None) or {}).get(solve):

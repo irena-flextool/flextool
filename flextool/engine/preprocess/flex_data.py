@@ -2639,7 +2639,7 @@ def _load_co2_rolling_carry(sd: Path, *, provider: "object | None" = None):
     ``horizon_fraction_reached`` — ``Σ_d years_represented[d]·f_d_k[d] / Σ_d years_represented[d]``,
     over every period of the whole chain, each counted once: a stochastic fan's members are left out and its
     period label stands for the period (the f_d_k of its first member with steps: the realized share plus this
-    solve's share) (``solve_data/p_years_represented.csv``, the solve's static period→year map, not dt-pruned — the same un-pruned source the ladder's cumulative tier cap reads
+    solve's share; in a split realization roll the label holds the jump, which that f_d_k counts) (``solve_data/p_years_represented.csv``, the solve's static period→year map, not dt-pruned — the same un-pruned source the ladder's cumulative tier cap reads
     for its own carried weight, ``p_ladder_cum_weight``). The fraction of the chain's total represented
     years reached by the end of this roll — scales ``co2_max_total``'s fixed whole-horizon budget down
     to "allocated so far". ``1.0`` (the old, full-cap-every-roll behaviour) outside rolling / chained
@@ -2680,7 +2680,8 @@ def _load_co2_rolling_carry(sd: Path, *, provider: "object | None" = None):
         if pyr is not None and pyr.height > 0 and {"period", "p_years_represented"}.issubset(pyr.columns):
             # Each calendar period counts once.  The members of a stochastic fan are alternatives of their
             # period, not more calendar, so they are in neither sum; the period label (the original name of
-            # the period, no dispatch of its own) stands for the period: its share reached is the f_d_k of a
+            # the period, no dispatch of its own; in a split realization roll it holds the jump, which its first
+            # member's f_d_k counts) stands for the period: its share reached is the f_d_k of a
             # member with steps, which holds the label's realized hours from earlier solves plus this
             # solve's hours (every forecast has the same steps).  A label without such a member keeps its
             # own f_d_k (its realized share).

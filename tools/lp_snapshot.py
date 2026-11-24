@@ -915,6 +915,40 @@ def _patch_flowgroup_cum_stoch_rolling(data: dict) -> dict:
         values=[["flowGroup", "gas_fuel", "max_cumulative_flow", 1.0e6]])
 
 
+def _patch_rk_period_node(data: dict) -> dict:
+    """The period-level families a split realization roll sums over a path, on the rolling stochastic week (horizon
+    96 h, jump 24 h): co2_max_period on gas_market (2e6 t), the annual price ladder on coal (tier 1 at 14 up to 1e7
+    MWh/a, tier 2 at 18), max_cumulative_flow of period1 on coal_plant's output (1500 MW), a balance_within_period
+    node ``water`` (inflow 200 MW) feeding ``water_plant`` (300 MW) into demand_node.  No period_total user
+    constraint: the run refuses one that no solve enforces, and rolls that split a period never enforce it.
+    Today's LPs; the baseline of the realization rolls."""
+    ladder = {"index_type": "str", "rank": 2, "index_name": "tier",
+              "data": [["1", {"type": "map", "index_type": "str", "rank": 1,
+                               "data": [["price", 14.0], ["quantity", 1.0e7]]}],
+                       ["2", {"type": "map", "index_type": "str", "rank": 1,
+                              "data": [["price", 18.0], ["quantity", float("inf")]]}]]}
+    return _overlay(
+        data, name="rk_period_node", base="1_week_rolling_wind",
+        entities=[["group", "co2_limit"], ["group__node", ["co2_limit", "gas_market"]],
+                  ["flowGroup", "coal_out"],
+                  ["flowGroup__unit__node", ["coal_out", "coal_plant", "demand_node"]],
+                  ["node", "water"], ["unit", "water_plant"],
+                  ["unit__inputNode", ["water_plant", "water"]],
+                  ["unit__outputNode", ["water_plant", "demand_node"]]],
+        values=[["commodity", "gas", "co2_content", 0.2],
+                ["group", "co2_limit", "co2_method", "period"],
+                ["group", "co2_limit", "co2_max_period", _pmap({"period1": 2.0e6})],
+                ["commodity", "coal", "price_method", "price_ladder_annual"],
+                ["commodity", "coal", "price_ladder_annual", ladder],
+                ["flowGroup", "coal_out", "max_cumulative_flow", _pmap({"period1": 1500.0})],
+                ["node", "water", "node_type", "balance_within_period"],
+                ["node", "water", "inflow", 200.0],
+                ["node", "water", "penalty_up", 5000.0],
+                ["node", "water", "penalty_down", 5000.0],
+                ["unit", "water_plant", "efficiency", 1.0],
+                ["unit", "water_plant", "existing", 300.0]])
+
+
 def _patch_capacity_margin_stoch(data: dict) -> dict:
     """Manual capacity margin (group cm_g = elec, margin 1e5 MW, penalty 1) on the recourse-invest fan (branch
     weights high 1 : low 3): each forecast branch period keeps its own slack, priced with its branch weight
@@ -2175,6 +2209,7 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "ladder_cum_stoch_rolling": _patch_ladder_cum_stoch_rolling,
     "co2_total_stoch_rolling": _patch_co2_total_stoch_rolling,
     "flowgroup_cum_stoch_rolling": _patch_flowgroup_cum_stoch_rolling,
+    "rk_period_node": _patch_rk_period_node,
 }
 
 
@@ -2398,6 +2433,7 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("rp_stoch_midhorizon", _F + "lh2_three_region_rp_invest.json"),
     ("rp_stoch_first_period", _F + "lh2_three_region_rp_invest.json"),
     ("rsd_storage_reserve", _F + "rolling_separate_dispatch.json"),
+    ("rk_period_node", _F + "stochastics.json"),
 )
 
 FIXTURES: tuple[Fixture, ...] = (

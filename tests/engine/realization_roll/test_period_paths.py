@@ -14,6 +14,8 @@ value is derived by hand in the test's docstring.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from tests.engine import _solve_copy_models as scm
@@ -158,29 +160,133 @@ def test_period_balance_on_the_path(tmp_path, monkeypatch):
     assert sr._objectives(steps) == pytest.approx([43_800.0, 65_700.0], rel=1e-9)
 
 
+def _period_total() -> dict:
+    """User constraint ``c`` (period_total): coal_u's output <= 4380 per year (w = 8760 / 4 per MWh, so <= 2 MWh
+    over the period)."""
+    return _base(entities=[["constraint", "c", None]],
+                 values=[["constraint", "c", "sense", pack("less_than", "str"), "init"],
+                         ["constraint", "c", "constant", pack(4380.0, "float"), "init"],
+                         ["constraint", "c", "constraint_period_method", pack("period_total", "str"), "init"],
+                         ["unit__outputNode", ["coal_u", "elec"], "constraint_flow_coeff",
+                          pack(pmap([("c", 1.0)], index_name="constraint"), "map"), "init"]])
+
+
+def test_period_total_is_refused_when_rolls_split_the_period(tmp_path, monkeypatch):
+    """The rolls realize p1 in halves (jump 2 of 4 steps), so no solve of the run holds p1 whole and none enforces
+    a period_total row; with no other solve the run refuses ``c`` (``_recursive_solve._check_period_total_rolls``).
+    A split realization roll therefore never builds a period_total row."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    with pytest.raises(FlexToolConfigError, match=r"User constraints 'c' have constraint_period_method period_total, "
+                                                  r"but no solve of the run enforces them: the rolls of 'st'"):
+        sr._run(_period_total(), tmp_path, monkeypatch)
+
+
 def test_period_total_constraint_on_the_path(tmp_path, monkeypatch):
-    """User constraint ``c`` (period_total, coal_u's output <= 4380 per year: w = 8760 / 4 per MWh, so <= 2 MWh over
-    the period).  The rolls realize p1 in halves, so the run leaves period_total rows out; with that check forced to
-    enforce, the window fraction of a path is (2 + 2) / 4 = 1 and the tail rows hold the path: R_0 as T-pc, 109 500.
-    R_1 (p1 t03-t04, window fraction 0.5) has no row: coal only, 2 x 10 -> 43 800.  (Per name every fraction is
-    0.5: no row, R_0 = 10 x 2 + 0.5 x 20 = 30 -> 65 700.)"""
+    """The path form of the period_total rows (unreachable in a run, see the test above: here that check is
+    forced to enforce).  The window fraction of a path is (2 + 2) / 4 = 1, so the tail rows exist and hold the
+    path: R_0 as T-pc, 109 500.  (Per name every fraction is 0.5: no row, R_0 = 10 x 2 + 0.5 x 20 = 30 -> 65 700.)
+    R_1 (p1 t03-t04, window fraction 0.5) has no row and is not asserted: unconstrained, it burns 2 MWh more coal,
+    4 MWh in p1 against the 2 MWh limit, which is why the run turns period_total off for such solves."""
     from flextool.engine.solve import _recursive_solve
 
     def enforcing(self, solve, *args):
         self.state.solve.period_total_enforcing_solves.add(solve)
 
     monkeypatch.setattr(_recursive_solve.RecursiveSolveBuilder, "_check_period_total_rolls", enforcing)
-    spec = _base(entities=[["constraint", "c", None]],
-                 values=[["constraint", "c", "sense", pack("less_than", "str"), "init"],
-                         ["constraint", "c", "constant", pack(4380.0, "float"), "init"],
-                         ["constraint", "c", "constraint_period_method", pack("period_total", "str"), "init"],
-                         ["unit__outputNode", ["coal_u", "elec"], "constraint_flow_coeff",
-                          pack(pmap([("c", 1.0)], index_name="constraint"), "map"), "init"]])
-    built, steps, _datas = sr._run(spec, tmp_path, monkeypatch)
+    built, steps, _datas = sr._run(_period_total(), tmp_path, monkeypatch)
     assert sorted(_rows_named(built[0][1], "process_constraint_less_than_period_total")) == [
         "process_constraint_less_than_period_total[c,p1_A]", "process_constraint_less_than_period_total[c,p1_B]"]
     assert _rows_named(built[1][1], "process_constraint_less_than_period_total") == {}
-    assert sr._objectives(steps) == pytest.approx([109_500.0, 43_800.0], rel=1e-9)
+    assert sr._objectives(steps)[0] == pytest.approx(109_500.0, rel=1e-9)
+
+
+def test_f_d_k_twin_counts_the_jump():
+    """``p_f_d_k_from_source`` (the twin of the emitted f_d_k) on a split roll's sets: label p1 with the jump t01-t02,
+    forecasts p1_A / p1_B with t03-t04 (1 h steps), period share 4 / 8760, no realized hours.  f_d_k[p1] =
+    2 / 4 = 0.5; f_d_k[p1_A] = (0 + 2 jump h + 2 tail h) / 4 = 1 (without the jump: 0.5)."""
+    import polars as pl
+
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess.params._derived import p_f_d_k_from_source
+
+    provider = FlexDataProvider()
+    frames = {
+        "commodity_with_ladder.csv": {"commodity": ["coal"]},
+        "steps_in_use.csv": {"period": ["p1", "p1", "p1_A", "p1_A", "p1_B", "p1_B"],
+                             "step": ["t01", "t02", "t03", "t04", "t03", "t04"], "step_duration": ["1"] * 6},
+        "complete_period_share_of_year_calc.csv": {"period": ["p1", "p1_A", "p1_B"],
+                                                   "value": [str(4 / 8760)] * 3},
+        "period_in_use_set.csv": {"period": ["p1", "p1_A", "p1_B"]},
+        "period__branch.csv": {"period": ["p1", "p1", "p1"], "branch": ["p1", "p1_A", "p1_B"]},
+    }
+    for name, cols in frames.items():
+        provider.put(f"solve_data/{name}", pl.DataFrame(cols))
+    fdk = p_f_d_k_from_source(None, "st", Path("."), provider=provider)
+    got = {str(d): v for d, v in fdk.frame.select("d", "value").iter_rows()}
+    assert got == pytest.approx({"p1": 0.5, "p1_A": 1.0, "p1_B": 1.0}, rel=1e-12)
+
+
+def _nested_fix_usage(*, designated: bool) -> dict:
+    """``st`` nested in a single solve ``up`` that fixes the usage of storage ``res`` (10 MWh, start 0.5) for it
+    (``storage_nested_fix_method`` fix_usage); ``hyd`` (1 MW, no cost) discharges it into elec.  Forecasts A, B
+    (and R) are made at each roll start t01, t03, demand 1 on every branch; ``up`` (deterministic) reads the
+    realized branch R.  *designated*: R is realized: yes in ``st``'s fan (else a forecast like A and B)."""
+    made = {"t01": 0.5, "t03": 0.5}
+    fan = sr._fan([("A", made, "no"), ("B", made, "no"), ("R", made, "yes" if designated else "no")])
+    demand = sr._series({b: {"t01": {t: -1.0 for t in STEPS}, "t03": {"t03": -1.0, "t04": -1.0}}
+                         for b in ("R", "A", "B")})
+    spec = _base(entities=[["solve", "up", None], ["node", "res", None], ["unit", "hyd", None],
+                           ["unit__inputNode", ["hyd", "res"], None], ["unit__outputNode", ["hyd", "elec"], None]],
+                 active=[("node", "res"), ("unit", "hyd")],
+                 values=[*sr._node("res", "storage", pack(0.0, "float")),
+                         ["node", "res", "existing", pack(10.0, "float"), "init"],
+                         ["node", "res", "storage_state_start", pack(0.5, "float"), "init"],
+                         ["node", "res", "storage_nested_fix_method", pack("fix_usage", "str"), "init"],
+                         *sr._unit("hyd", "elec", 1.0, 0.0)])
+    pv = [r for r in spec["parameter_values"] if r[:3] not in (["model", "flextool", "solves"],
+                                                               ["solve", "st", "stochastic_branches"],
+                                                               ["node", "elec", "inflow"])]
+    up = [("solve_mode", pack("single_solve", "str")),
+          ("period_timeset", pack(pmap([("p1", "ts")], index_name="period"), "map")),
+          ("fix_storage_periods", scm.array(["p1"])),
+          ("years_represented", pack(pmap([("p1", 1.0)], index_name="period"), "map")),
+          ("contains_solves", pack("st", "str")),
+          ("stochastic_branches", sr._fan([("A", made, "no"), ("B", made, "no"), ("R", made, "yes")]))]
+    spec["parameter_values"] = [*pv, ["model", "flextool", "solves", scm.array(["up"]), "init"],
+                                ["node", "elec", "inflow", demand, "init"],
+                                ["solve", "st", "stochastic_branches", fan, "init"],
+                                *(["solve", "up", name, value, "init"] for name, value in up)]
+    return spec
+
+
+@pytest.mark.parametrize("designated", [True, False])
+def test_nested_fix_usage_gets_no_plan(tmp_path, monkeypatch, designated):
+    """D11: a solve nested in a storage-usage fix gets no realization-roll plan, even with the plan live, and keeps
+    today's behaviour.  Today a nested solve can realize nothing in its fan: a realized: yes designation there is
+    refused before any solve; without one, the first roll of ``st`` commits t01-t02 inside the forecasts-only fan
+    (forecasts at t01 cover the jump) and a later roll continues from its storage state, which is refused too."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+    from flextool.engine.solve import _run_model
+
+    sr.ts._live_plan(monkeypatch, suppress_spawn=False)  # the plan live, the realization solve spawned as today
+    live = _run_model._roll_tail_plans
+    plans: list = []
+
+    def recording(solve_cfg, rolls, timelines):
+        plans.append(live(solve_cfg, rolls, timelines))
+        return plans[-1]
+
+    monkeypatch.setattr(_run_model, "_roll_tail_plans", recording)
+    if designated:
+        match = r"Solve 'st' has a realized: yes designation .* nested inside another solve's contains_solves"
+    else:
+        match = r"Solve 'st_p1_roll_0' commits 2 step\(s\) inside a forecasts-only stochastic fan .*storage state"
+    with pytest.raises(FlexToolConfigError, match=match):
+        scm.run_spec(_nested_fix_usage(designated=designated), tmp_path)
+    assert all(plan == {} for plan in plans)
+    if not designated:
+        assert plans == [{}]
 
 
 def test_step_weights_one_scale_over_the_path(tmp_path, monkeypatch):

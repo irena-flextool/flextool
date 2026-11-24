@@ -5138,6 +5138,8 @@ def _eq_user_constraints_period_total(b: _Build, pt_cns: list[str], capacity_ter
     w = d.p_step_duration * d.p_timestep_weight / d.p_period_share
     w_frame = _collected(w.frame).sort("d", "t")
     hours = Param(("d",), w_frame.group_by("d", maintain_order=True).agg(pl.col("value").sum()))
+    # Path rows are unreachable while _recursive_solve._check_period_total_rolls holds: a split roll never realizes
+    # a period whole, so the run builds no period_total row in it.  Converted so that G1 never meets an unconverted one.
     path = d_period_path(b, *(name for _rows, _sense, name in rows_by_sense))
     if path is not None:
         hours = Param(("d",), path_values(hours.frame, (), path))

@@ -1101,6 +1101,9 @@ def p_timestep_weight_from_source(
          reproduce the trivial default 1.0 per step.
       4. Periods without a ``timeset_weights`` row keep the trivial
          default 1.0.
+      The scale is per period name.  A split realization roll is a
+      synthetic sub-solve (no derived pass), so its emitted weights, one
+      scale over the label's jump plus a tail, are the ones used.
 
     RP path (``representative_period_weights`` set):
       Representative-period weights are folded into
