@@ -64,7 +64,19 @@ STEP_RELATIONS: dict[str, StepRelation] = {
     "uptime_lookback": StepRelation(DERIVED, note="dt_ramp_link"),
     "downtime_lookback": StepRelation(DERIVED, note="dt_ramp_link"),
     "dtt_timeline_matching": StepRelation(EXEMPT, note="maps a lower solve's steps to the upper solve's steps"),
+    # Model-internal step pairs (not FlexData fields), reviewed: each pairs two one-step frames, never a step with
+    # its neighbour in the same period.
+    "online_successor_steps": StepRelation(DERIVED, note="dt_ramp_link"),   # _online._successor_steps, its inverse
+    "storage_state_end_match": StepRelation(
+        EXEMPT, note="nodeState_first_dt x nodeState_last_dt of period_last: a start and the model end"),
+    "storage_within_solve_path_end": StepRelation(
+        EXEMPT, note="nodeState_last_dt x nodeState_last_dt: the last step of each last period and of d*"),
+    "storage_state_fan_start": StepRelation(
+        EXEMPT, note="nodeState_first_dt x nodeState_first_dt: the first step of each root of a first-period fan"),
 }
+
+# The storage_roll_end kinds whose nodes read the scope ends (model.core._first_scope_ends).
+SCOPE_END_KINDS = ("scope_anchor", "scope_close")
 
 # Step columns: the synonyms of the step axis, the t_previous* / b_prev* families and the other step-valued columns.
 _STEP_NAMES = frozenset({k for k, v in _AXIS_SYNONYMS.items() if v == "t"}
@@ -94,7 +106,9 @@ def unregistered_step_frames(d) -> list[str]:
 
 def labels_with_steps(d) -> dict[str, list[str]]:
     """``{p: [p_f, ...]}``: the period labels of the build that have dt rows (L*) and their branch periods (B(L*)),
-    in ``period__branch`` order.  Empty without a split realization roll."""
+    in ``period__branch`` order.  Empty without a split realization roll.  A branch period is listed whether or not
+    it has dt rows: a split roll's tail without steps is a plan error, which the checks then raise (the timeline,
+    G4)."""
     pbf = d.period_branch_full
     if pbf is None or pbf.height == 0:
         return {}
@@ -109,12 +123,16 @@ def not_path_aware(what: str, period: str, solve: str | None) -> RuntimeError:
 
 
 def scope_end_pairs(d) -> pl.DataFrame | None:
-    """``(n, d, t, t_end)``, Utf8: each node's first step of the solve (nodeState_first_dt) and the step it wraps
-    to, the last step of its period (nodeState_last_dt).  None without rows."""
+    """``(n, d, t, t_end)``, Utf8: for each node with a ``SCOPE_END_KINDS`` row of storage_roll_end (the nodes whose
+    scope end the model reads), its first step of the solve (nodeState_first_dt) and the step it wraps to, the last
+    step of its period (nodeState_last_dt).  None without rows."""
     first, last = d.nodeState_first_dt, d.nodeState_last_dt
-    if first is None or last is None or first.height == 0 or last.height == 0:
+    sre = getattr(d, "storage_roll_end", None)
+    if first is None or last is None or sre is None or first.height == 0 or last.height == 0:
         return None
+    nodes = sre.filter(pl.col("kind").cast(pl.Utf8).is_in(SCOPE_END_KINDS)).select(pl.col("n").cast(pl.Utf8))
     out = (first.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
+           .join(nodes, on="n", how="semi")
            .join(last.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
                              pl.col("t").cast(pl.Utf8).alias("t_end")), on=["n", "d"], how="inner"))
     return out if out.height > 0 else None

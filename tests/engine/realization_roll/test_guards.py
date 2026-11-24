@@ -42,7 +42,7 @@ def _data(*, label_steps=True, **fields):
         dt=_frame(("d", "t"), [(p, t) for p, ts in periods.items() for t in ts]),
         period_branch_full=_frame(("d", "b"), [("p1", "p1"), ("p1", "p1_A"), ("p1", "p1_B")]),
         block_layout=layout, dtttdt=dtttdt, nodeState_first_dt=None, nodeState_last_dt=None,
-        pdt_branch_weight=None)
+        storage_roll_end=None, pdt_branch_weight=None)
     base.update(fields)
     return SimpleNamespace(**base)
 
@@ -179,13 +179,37 @@ def test_g3_delay_and_block_successors():
 
 
 def test_g3_scope_end_on_the_label():
-    # A node's first step of the roll (p1, t1) wraps to the last step of its own period, (p1, t2).
+    # A scope_anchor node's first step of the roll (p1, t1) wraps to the last step of its own period, (p1, t2).
     first = _frame(("n", "d", "t"), [("n1", "p1", "t1")])
     last = _frame(("n", "d", "t"), [("n1", "p1", "t2"), ("n1", "p1_A", "t4")])
+    sre = pl.DataFrame({"n": ["n1"], "kind": ["scope_anchor"], "value": [0.5]})
     with pytest.raises(RuntimeError, match="scope_ends on period 'p1'"):
-        sr.check_step_relations(_data(nodeState_first_dt=first, nodeState_last_dt=last), "s_roll_0")
-    assert sr.scope_end_pairs(_data(nodeState_first_dt=first, nodeState_last_dt=last)).rows() == [
-        ("n1", "p1", "t1", "t2")]
+        sr.check_step_relations(_data(nodeState_first_dt=first, nodeState_last_dt=last, storage_roll_end=sre),
+                                "s_roll_0")
+    assert sr.scope_end_pairs(_data(nodeState_first_dt=first, nodeState_last_dt=last, storage_roll_end=sre)).rows() \
+        == [("n1", "p1", "t1", "t2")]
+
+
+def test_g3_scope_end_only_of_the_nodes_whose_scope_end_the_model_reads():
+    # The same wrap of a node without a scope_anchor / scope_close row (no row reads it; here a roll-end match
+    # node, and a node without storage_roll_end rows): no scope end pair, so G3 passes.
+    first = _frame(("n", "d", "t"), [("n1", "p1", "t1")])
+    last = _frame(("n", "d", "t"), [("n1", "p1", "t2")])
+    for sre in (None, pl.DataFrame({"n": ["n1", "n2"], "kind": ["match_first", "scope_close"], "value": [1.0, 1.0]})):
+        d = _data(nodeState_first_dt=first, nodeState_last_dt=last, storage_roll_end=sre)
+        assert sr.scope_end_pairs(d) is None
+        sr.check_step_relations(d, "s_roll_0")
+
+
+def test_a_branch_period_without_steps_is_a_plan_error():
+    # B(L*) lists every branch period of a label with steps, with or without dt rows: a tail without steps has no
+    # timeline in the build, and the checks raise (labels_with_steps docstring).
+    layout = BlockLayout()
+    layout.per_block_timeline = {DEFAULT_BLOCK: {p: [(t, 1.0) for t in STEPS[p]] for p in ("p1", "p1_A")}}
+    d = _data(dt=_frame(("d", "t"), [(p, t) for p in ("p1", "p1_A") for t in STEPS[p]]), block_layout=layout)
+    assert sr.labels_with_steps(d) == {"p1": ["p1_A", "p1_B"]}
+    with pytest.raises(RuntimeError, match="the timeline on period 'p1_B'"):
+        sr.check_step_relations(d, "s_roll_0")
 
 
 # ── coverage ───────────────────────────────────────────────────────────────────────────────────────────────────

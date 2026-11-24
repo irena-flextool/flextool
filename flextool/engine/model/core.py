@@ -576,6 +576,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
     _period_rows.check_period_rows(b)
     _period_rows.check_branch_weights(b)
     check_step_relations(d, solve_name)
+    _period_rows.check_registry_pins(b)   # their registries, on this LP (FLEXTOOL_AUTOSCALE_STRICT=1 only)
     if scale_the_objective != 1.0:
         obj = obj * scale_the_objective
     m.set_objective(obj, sense="min")
@@ -5896,7 +5897,7 @@ def _first_scope_ends(b: _Build, nodes: pl.DataFrame) -> "pl.DataFrame | None":
     roll's first step would wrap to: the last step of the first period in the roll (bind_within_period, also
     bind_within_timeblock, which a rolling solve uses as bind_within_period, and bind_intraperiod_blocks).  None
     when there are none."""
-    pairs = scope_end_pairs(b.d)   # also checked by G3 (preprocess._step_relations)
+    pairs = scope_end_pairs(b.d)   # the pairs G3 checks (preprocess._step_relations)
     if pairs is None:
         return None
     names = nodes.select(pl.col("n").cast(pl.Utf8)).unique()

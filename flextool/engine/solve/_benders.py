@@ -946,8 +946,9 @@ class _BendersMaster:
                  *, master: str = "flextool", obj_scale: float = 1.0,
                  master_hosted_nodes: frozenset[str] = frozenset(),
                  region_membership: dict | None = None,
-                 solver_options: dict | None = None):
+                 solver_options: dict | None = None, solve_name: str | None = None):
         self.arcs = arcs
+        self._solve_name = solve_name
         # The solve's resolved user HiGHS options (highs.opt < solver_mip_gap <
         # solver_arguments < CLI flags), set on the master Problem before its
         # WarmProblem is built; log silencing stays on top.
@@ -1035,7 +1036,7 @@ class _BendersMaster:
         # then live at the same scale, so the cut row is homogeneous in s and
         # cut validity is preserved (an exact monotone re-expression).  For the
         # small fixtures s=1.0 ⇒ byte-identical to the un-scaled build.
-        _build_flextool(m, reduced, scale_the_objective=self._obj_scale)
+        _build_flextool(m, reduced, scale_the_objective=self._obj_scale, solve_name=self._solve_name)
         if self._solver_options:
             m.set_solver_options(self._solver_options)
 
@@ -2259,7 +2260,7 @@ def solve_benders(
 
     if build_problem is None:
         def build_problem(pb, d):
-            _build_flextool(pb, d, scale_the_objective=scale_the_objective)
+            _build_flextool(pb, d, scale_the_objective=scale_the_objective, solve_name=solve_name)
 
     _data_enums = getattr(data, "_axis_enums", None)
     _enums_token = None
@@ -2785,7 +2786,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         master=master_kind, obj_scale=obj_scale,
         master_hosted_nodes=master_hosted,
         region_membership=region_membership,
-        solver_options=master_options,
+        solver_options=master_options, solve_name=solve_name,
     )
     # Re-bind the region-meta forward tuples to the master-rewritten f col-ids.
     for rm in regions_meta:
