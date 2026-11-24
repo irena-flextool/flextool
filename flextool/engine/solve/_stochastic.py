@@ -62,7 +62,7 @@ from typing import Any, TYPE_CHECKING
 
 from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.input._timeline import make_step_jump
-from flextool.engine.solve._realization_tail import plan_branch_rows
+from flextool.engine.solve._realization_tail import plan_branch_rows, realization_roll_method
 from flextool.engine.preprocess.params._branch import fan_period_labels
 
 if TYPE_CHECKING:
@@ -613,6 +613,29 @@ class StochasticSolver:
         # Each (complete solve, period, analysis_time) once per run.
         run_warnings.warn_grouped("W-0508", list(details), per_run=True, details=details)
 
+    @staticmethod
+    def _realization_roll_switch_message(s: str, c: str, method: str, trig_period: str | None,
+                                         trig_step: str | None, items: str, n_rows: int, planned: bool) -> str:
+        """R1 for a roll of a solve with realization rolls (``_realization_tail.realization_roll_method``): its jumps
+        read one realized series (the ``realized: yes`` branch over every jump), so a row where no roll fans out
+        switches nothing; the rows belong at the solve's start and where a roll fans out (the end of a jump, the
+        start of the next roll).  The row can lie before the roll's own fan point."""
+        if not planned:
+            where = f"opens its stochastic fan at period {str(trig_period)!r} (analysis_time {str(trig_step)!r})"
+        elif trig_period is None:
+            where = "dispatches its jump with the realized data and has no look-ahead after it"
+        else:
+            where = (f"dispatches its jump with the realized data and fans out at the end of the jump, at period "
+                     f"{str(trig_period)!r} (analysis_time {str(trig_step)!r})")
+        marks, rows = ("a realized branch", "this row") if n_rows == 1 else ("realized branches", "these rows")
+        return (
+            f"Roll {str(s)!r} of rolling solve {str(c)!r} {where}. The stochastic_branches of solve {str(c)!r} also "
+            f"mark {marks} in its horizon where no roll fans out: {items}. A rolling solve with "
+            f"dispatch_realization_method {method} dispatches every jump with one realized series, that of the "
+            "realized: yes branch: give the realized: yes row only at the solve's start and where a roll fans out "
+            "(the end of each jump), always with the same branch, and change that branch's series to give the "
+            f"realization new data. Remove {rows}. Check stochastic_branches.")
+
     def _check_realized_switch(
         self,
         unfanned_realized: dict[str, tuple[str, str, bool, list]],
@@ -624,11 +647,11 @@ class StochasticSolver:
         """Raise when the ``realized: yes`` rows of a solve would switch its
         realization series (one realization series per solve).
 
-        R1: a fanned sub-solve reaches a later *realized-only* cohort (a
-        ``realized: yes`` row and no nonzero-weight forecast) that is not
-        the fan point of any sub-solve of its complete solve -- whatever
-        branch it names, such a row either switches the series or repeats
-        it.  A realization roll's fan point is the end of its jump; its
+        R1: a fanned sub-solve, or a realization roll without a tail, reaches a
+        later cohort with a ``realized: yes`` row (with or without forecasts,
+        which are ignored there) that is not the fan point of any sub-solve of
+        its complete solve -- whatever branch it names, such a row either
+        switches the series or repeats it.  A realization roll's fan point is the end of its jump; its
         jump reads the realized branch flattened over the analysis times
         of the ``realized: yes`` rows, which therefore lie at the solve's
         start or at fan points.  Checked for every sub-solve in ``solves`` order, the first
@@ -645,7 +668,7 @@ class StochasticSolver:
         Args:
             unfanned_realized: ``{solve: (trig_period, trig_step,
                 is_rolling_sub_solve, [(period, step, realized), ...])}``
-                -- the later realized-only cohorts reachable in each fanned
+                -- the later cohorts with a realized: yes row reachable in each fanned
                 sub-solve, in timeline order.
             solves: All sub-solves, in order.
             branch_start_time_lists: ``{solve: (period, step) | None}``.
@@ -678,6 +701,14 @@ class StochasticSolver:
                 for (p, t, r) in remaining
             )
             n_rows = sum(len(r) for (_p, _t, r) in remaining)
+            solve_cfg = getattr(self.state, "solve", None)
+            method = realization_roll_method(solve_cfg, c) if is_rolling and solve_cfg is not None else None
+            if method is not None:
+                message = self._realization_roll_switch_message(
+                    s, c, method, trig_period, trig_step, items, n_rows,
+                    plan_branch_rows(solve_cfg, s) is not None)
+                self.logger.error(message)
+                raise FlexToolConfigError(message)
             if n_rows == 1:
                 marks, row, rows, switch = (
                     "a realized branch", "This row", "this row",
@@ -812,8 +843,8 @@ class StochasticSolver:
                 ``stochastic_branches`` reaches no reveal in its horizon (every
                 roll needs a forecast made at its start or where it branches);
                 and, after every sub-solve is processed, when a fanned
-                sub-solve marks a ``realized: yes`` row
-                at a later reachable cohort without forecasts where no
+                sub-solve (or a realization roll without a tail) marks a
+                ``realized: yes`` row at a later reachable cohort where no
                 sub-solve fans out, or when the fan points of one roll
                 sequence mark different realized branches (one realization
                 series per solve; ``_check_realized_switch``).
@@ -826,8 +857,8 @@ class StochasticSolver:
         # Later forecast cohorts reachable in each fanned sub-solve; checked
         # after the loop, once every sub-solve's fan point is known.
         unfanned: dict[str, tuple[str, str, bool, list]] = dict()
-        # Later realized-only cohorts (realized: yes, no forecast) reachable
-        # in each fanned sub-solve; checked after the loop.
+        # Later cohorts with a realized: yes row reachable in each fanned
+        # sub-solve (and realization roll); checked after the loop.
         unfanned_realized: dict[str, tuple[str, str, bool, list]] = dict()
         # Per complete solve: the stochastic_branches rows grouped by cohort
         # (period, start_step), and the sorted forecast and realized
@@ -1012,8 +1043,10 @@ class StochasticSolver:
                             f"Stochastic branching period {str(period_k)!r}",
                         )
 
-                # Later forecast cohorts in this solve's horizon (collected
-                # from the pre-stochastic list; checked after the loop).
+            # Later forecast cohorts in this solve's horizon (collected from the pre-stochastic list; checked after
+            # the loop).  A realization roll without a tail (its horizon ends with its jump) fans out nowhere, but its
+            # realized: yes rows are still checked (R1).
+            if trig_period is not None or planned is not None:
                 order = list(active_time_list)
                 # A realization roll fans out at the end of its jump; the cohorts made inside its jump are read by
                 # no roll either, so its walk starts after the roll's first step (the start cohort of roll 0 is
@@ -1063,9 +1096,8 @@ class StochasticSolver:
                             forecasts_by_cohort[cohort] = forecasts
                         if forecasts:
                             candidates.append((period_c, step_c, forecasts))
-                            continue
-                        # A realization roll too: a realized: yes row where no roll fans out stops the run
-                        # (_check_realized_switch), as for solve (1) of a separate_dispatch roll.
+                        # A realized: yes row where no roll fans out stops the run (_check_realized_switch), also
+                        # at a cohort with forecasts (they are ignored there) and in a realization roll.
                         realized = realized_by_cohort.get(cohort)
                         if realized is None:
                             realized = sorted(
@@ -1078,7 +1110,7 @@ class StochasticSolver:
                             realized_by_cohort[cohort] = realized
                         if realized:
                             realized_later.append((period_c, step_c, realized))
-                if candidates:
+                if candidates and trig_period is not None:
                     unfanned[solve] = (
                         trig_period,
                         trig_step,

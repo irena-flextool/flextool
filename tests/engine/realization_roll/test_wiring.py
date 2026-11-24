@@ -167,12 +167,13 @@ def test_a_stopped_solve_gets_no_notice(tmp_path, monkeypatch):
         assert not got.names("W-0635") and not got.names("W-0636"), i
 
 
-def test_rolling_separate_dispatch_with_delays_gets_no_look_ahead_notice(tmp_path, monkeypatch):
+def test_rolling_separate_dispatch_with_delays_gets_the_notice_without_look_ahead(tmp_path, monkeypatch, coded_log):
     """A rolling ``separate_dispatch`` solve in a model with a delayed unit keeps today's realization (D12: no
-    realization roll, the jump is realized without look-ahead): note W-0594 names the unit, and W-0636, whose text
-    says the rolling realization now looks ahead, is not announced.  test_trunk_sites' model (jump 2, horizon 4,
-    forecasts and the realized row made at t01, t03, t05, the roll starts) with ``gen`` fed from ``fuel`` with a 1 h
-    delay, as ``test_split_roll_lp.test_a_delay_keeps_todays_realization``."""
+    realization roll, the jump is realized without look-ahead): note W-0594 names the unit.  Its solve (1) changed
+    (it shares only the ``_fix_in_uc`` commitment), so W-0636 names the solve, and its full notice says that this
+    solve's realization dispatches each jump alone.  test_trunk_sites' model (jump 2, horizon 4, forecasts and the
+    realized row made at t01, t03, t05, the roll starts) with ``gen`` fed from ``fuel`` with a 1 h delay, as
+    ``test_split_roll_lp.test_a_delay_keeps_todays_realization``."""
     from tests._support.coded_warnings import capture_coded
 
     _listed(monkeypatch)
@@ -182,7 +183,30 @@ def test_rolling_separate_dispatch_with_delays_gets_no_look_ahead_notice(tmp_pat
     spec["parameter_values"] += [*srl._node("fuel", "balance", pack(100.0, "float")),
                                  ["unit", "gen", "delay", pack(1.0, "float"), "init"]]
     _set_solve(spec, "dispatch_realization_method", pack("separate_dispatch", "str"))
+    coded_log.notices()
     with capture_coded() as got:
         built, _steps = scm.run_spec(spec, tmp_path)
     assert any("__realized_dispatch" in s for s, _, _ in built)
-    assert got.names("W-0594") == ["gen"] and not got.names("W-0636") and not got.names("W-0635")
+    assert got.names("W-0594") == ["gen"] and got.names("W-0636") == ["st"] and not got.names("W-0635")
+    (text,) = [n for n in coded_log.notices() if "separate_dispatch" in n]
+    assert ("Affected solves: st. Solve 'st' keeps the earlier realization: its realization solve dispatches each "
+            "jump alone, without the look-ahead; only its first solve changed.") in text
+
+
+def test_a_delayed_solve_stopped_before_its_realization_is_added_gets_no_w0594(tmp_path):
+    """The delayed-unit case above with ``fix_storage_periods``: the realization solve it needs would re-float the
+    pinned storage, so the run stops before the realization solve is added, and W-0594 (which says how that
+    realization solve dispatches) is not noted."""
+    from tests._support.coded_warnings import capture_coded
+
+    spec = ts._spec(real_at=ts.OVERLAP, forecast_at=ts.OVERLAP)
+    spec["entities"] += [["node", "fuel", None], ["unit__inputNode", ["gen", "fuel"], None]]
+    spec["entity_alternatives"].append(["node", ["fuel"], "init", True])
+    spec["parameter_values"] += [*srl._node("fuel", "balance", pack(100.0, "float")),
+                                 ["unit", "gen", "delay", pack(1.0, "float"), "init"]]
+    _set_solve(spec, "dispatch_realization_method", pack("separate_dispatch", "str"))
+    _set_solve(spec, "fix_storage_periods", scm.array(["p1"]))
+    with capture_coded() as got, pytest.raises(FlexToolConfigError, match=(
+            r"^Solve 'st' needs an engine-added realization solve .* but also authors fix_storage_periods")):
+        scm.run_spec(spec, tmp_path)
+    assert not got.names("W-0594")

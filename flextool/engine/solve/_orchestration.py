@@ -2043,22 +2043,43 @@ def _stochastic_invest_raw_guard(solve_cfg, base_name: str) -> None:
         )
 
 
-def _rolling_containing_error(solve: str) -> FlexToolConfigError:
-    """A rolling stochastic solve that contains other solves cannot have its jumps realized (4.7.0)."""
+def _rolling_realization_fix(separate_dispatch: bool, stochastic: bool) -> str:
+    """The way out of the nested / containing errors once the solves stay where they are: a ``separate_dispatch``
+    solve needs its ``realized: yes`` branch (removing it stops the run for that), so it changes the method; a
+    solve with a designation (no ``separate_dispatch``) can drop the designation."""
+    if not separate_dispatch:
+        return "remove its realized: yes branch"
+    if stochastic:
+        return ("set its dispatch_realization_method to deterministic (the solve then reads only its realized: yes "
+                "branch)")
+    return "set its dispatch_realization_method to deterministic"
+
+
+def _rolling_containing_error(solve: str, *, separate_dispatch: bool = False,
+                              stochastic: bool = True) -> FlexToolConfigError:
+    """A rolling stochastic solve that contains other solves cannot have its jumps realized (4.7.0).
+    *separate_dispatch*: the solve authors that method (the raw guard); *stochastic*: it has
+    ``stochastic_branches``."""
+    kind = "rolling stochastic solve" if stochastic else "rolling solve"
+    method = " with dispatch_realization_method separate_dispatch" if separate_dispatch else ""
     return FlexToolConfigError(
-        f"Solve '{solve}' is a rolling stochastic solve that contains other solves (contains_solves). "
-        f"FlexTool 4.7.0 cannot yet realize the jumps of a rolling stochastic solve that contains other "
-        f"solves. Move the solves it contains out of its contains_solves, or remove its realized: yes "
-        f"branch."
+        f"Solve '{solve}' is a {kind}{method} that contains other solves (contains_solves). "
+        f"FlexTool 4.7.0 cannot yet realize the jumps of a {kind} that contains other "
+        f"solves. Move the solves it contains out of its contains_solves, or "
+        f"{_rolling_realization_fix(separate_dispatch, stochastic)}."
     )
 
 
-def _rolling_nested_error(solve: str) -> FlexToolConfigError:
-    """A rolling stochastic solve nested in another solve cannot have its jumps realized (4.7.0)."""
+def _rolling_nested_error(solve: str, *, separate_dispatch: bool = False,
+                          stochastic: bool = True) -> FlexToolConfigError:
+    """A rolling stochastic solve nested in another solve cannot have its jumps realized (4.7.0).  Keywords as
+    :func:`_rolling_containing_error`."""
+    kind = "rolling stochastic solve" if stochastic else "rolling solve"
+    method = " with dispatch_realization_method separate_dispatch" if separate_dispatch else ""
     return FlexToolConfigError(
-        f"Solve '{solve}' is a rolling stochastic solve nested inside another solve's contains_solves. "
-        f"FlexTool 4.7.0 cannot yet realize the jumps of a nested rolling stochastic solve. Make it a "
-        f"top-level solve, or remove its realized: yes branch."
+        f"Solve '{solve}' is a {kind}{method} nested inside another solve's contains_solves. "
+        f"FlexTool 4.7.0 cannot yet realize the jumps of a nested {kind}. Make it a "
+        f"top-level solve, or {_rolling_realization_fix(separate_dispatch, stochastic)}."
     )
 
 
@@ -2116,10 +2137,11 @@ def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
         elif _children is not None:
             nested.add(_children)
     mode = solve_modes.get(base_name, "single_solve")
+    stochastic = bool((getattr(solve_cfg, "stochastic_branches", None) or {}).get(base_name))
     if mode == "rolling_window" and contains_solves.get(base_name):
-        raise _rolling_containing_error(base_name)
+        raise _rolling_containing_error(base_name, separate_dispatch=True, stochastic=stochastic)
     if mode == "rolling_window" and base_name in nested:
-        raise _rolling_nested_error(base_name)
+        raise _rolling_nested_error(base_name, separate_dispatch=True, stochastic=stochastic)
     reasons: list[str] = []
     if mode not in ("single_solve", "rolling_window"):
         reasons.append(
@@ -2278,15 +2300,17 @@ def _spawn_realized_dispatch_siblings(
         return (getattr(solve_cfg, "solve_modes", None) or {}).get(solve) == "rolling_window"
 
     def _add(solve: str, why: str, delayed: list[str]) -> None:
-        # W-0594 where the delayed units alone keep the added realization solve from looking ahead.
+        # W-0594 where the delayed units alone keep the added realization solve from looking ahead: noted once the
+        # realization solves are registered, so a solve stopped by the checks below never gets it.
         if delayed:
-            run_warnings.note("W-0594", delayed, solve=solve, per_run=True)
+            delayed_of[solve] = delayed
         eligible.append((solve, why))
 
     # Spawn list: every separate_dispatch solve (authored), then every
     # designated solve (a ``realized: yes`` branch) without a configured realization solve.  Each
     # entry carries the reason the error messages below name.
     eligible: list[tuple[str, str]] = []
+    delayed_of: dict[str, list[str]] = {}
     deterministic = getattr(solve_cfg, "deterministic_branches", None) or {}
     for p in sorted(top_level):
         if p in deterministic:
@@ -2452,6 +2476,9 @@ def _spawn_realized_dispatch_siblings(
         SolveConfig.check_derived_solves(solve_cfg, siblings)
         if cascade_solve_cfg is not None and cascade_solve_cfg is not solve_cfg:
             SolveConfig.check_derived_solves(cascade_solve_cfg, siblings)
+    for parent, _why in eligible:
+        if parent in delayed_of:
+            run_warnings.note("W-0594", delayed_of[parent], solve=parent, per_run=True)
 
 
 def _validate_model_solve(state: RunnerState) -> list[str]:
@@ -3819,9 +3846,12 @@ def _drive_cascade(
                 )
                 check_pinned_realization_feasible(data, complete_solve_name)
                 _parent = self.state.solve.realized_dispatch_parent[complete_solve_name]
+                _base = re.sub(r"_roll_\d+$", "", _parent)
+                # The rolls of a rolling solve build no investment, whatever it authors (_recursive_solve warns).
                 note_realization_inherits_nothing(
                     data, complete_solve_name, _parent,
-                    solve_decides_investments(self.state.solve, re.sub(r"_roll_\d+$", "", _parent)))
+                    solve_decides_investments(self.state.solve, _base)
+                    and (getattr(self.state.solve, "solve_modes", None) or {}).get(_base) != "rolling_window")
             _window_check = getattr(self.state, "current_committed_window_check", None)
             if _window_check is not None:
                 from flextool.engine.solve._realization import check_committed_window_realized

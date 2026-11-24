@@ -154,3 +154,22 @@ def test_a_realization_without_units_online_or_investment_is_noted(tmp_path_fact
         steps = _run_rolling(tmp_path_factory.mktemp("inherits_nothing"), _no_online)
     assert all(s.solution.optimal for s in steps.values())
     assert got.entityless("W-0588") and len(got.lines("W-0588")) == 1
+
+
+def test_a_rolling_recourse_realization_keeps_nothing_and_is_noted(tmp_path_factory) -> None:
+    """The case above with ``stochastic_invest_method`` *recourse* (no ``invest_periods``): a rolling solve builds no
+    investment in its rolls, so the authored investment intent does not make the realization keep anything; its
+    realization dispatches each jump without the look-ahead (the solves that keep the earlier realization) and
+    W-0588 says once that it keeps nothing.  Before, the recourse method alone silenced the note."""
+    def recourse(data: dict) -> dict:
+        data = _no_online(data)
+        data["parameter_values"].append(
+            ["solve", "1week_rolling", "stochastic_invest_method", _enc("recourse", "str"), "1week_rolling"])
+        return data
+
+    with capture_coded() as got:
+        steps = _run_rolling(tmp_path_factory.mktemp("inherits_nothing_recourse"), recourse)
+    assert list(steps) == ROLLS and all(s.solution.optimal for s in steps.values())
+    assert all(s.flex_data.pd_invest_set is None for s in steps.values())
+    assert got.entityless("W-0588") and len(got.lines("W-0588")) == 1
+    assert "'1week_rolling__realized_dispatch'" in got.lines("W-0588")[0]

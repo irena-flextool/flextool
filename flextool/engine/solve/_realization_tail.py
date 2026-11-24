@@ -159,9 +159,9 @@ def announce_realization_notices(solve_cfg: Any) -> None:
     checks: a solve stopped by a configuration error never gets the notice (its error explains the change).
 
     W-0635: a solve with ``within_solve`` realization rolls.  W-0636: a ``separate_dispatch`` solve with an
-    engine-added realization solve, when it is a single solve (its solve (1) changed) or has ``separate_dispatch``
-    realization rolls (its realization looks ahead); a rolling one without them (delayed units, recourse, a
-    realization solve the author declared) keeps the earlier realization, and the notice would say otherwise.
+    engine-added realization solve: its solve (1) changed, and with ``separate_dispatch`` realization rolls its
+    realization also looks ahead.  A rolling one without them (delayed units, recourse, a realization solve the
+    author declared) keeps the earlier realization; the full notice says so for it.
     """
     from flextool.engine import _behaviour_changes
 
@@ -170,15 +170,18 @@ def announce_realization_notices(solve_cfg: Any) -> None:
     modes = getattr(solve_cfg, "solve_modes", None) or {}
     for solve in sorted(_top_level_solves(solve_cfg)):
         method = realization_roll_method(solve_cfg, solve)
+        detail = ""
         if method == "within_solve":
             change = "rolling_within_solve_one_solve"
-        elif (solve in spawned and solve_cfg.dispatch_realization_method_for(solve) == "separate_dispatch"
-              and (modes.get(solve) != "rolling_window" or method == "separate_dispatch")):
+        elif solve in spawned and solve_cfg.dispatch_realization_method_for(solve) == "separate_dispatch":
             change = "separate_dispatch_realization_looks_ahead"
+            if modes.get(solve) == "rolling_window" and method != "separate_dispatch":
+                detail = (f"Solve '{solve}' keeps the earlier realization: its realization solve dispatches each "
+                          "jump alone, without the look-ahead; only its first solve changed.")
         else:
             continue
         if solve in (_behaviour_changes.marker_json(change).get("solves") or []):
-            _behaviour_changes.notice(change, "solves", [solve])
+            _behaviour_changes.notice(change, "solves", [solve], detail)
 
 
 def realization_rolls(

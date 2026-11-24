@@ -31,9 +31,11 @@ CLOSING = ("Each run names the affected entities in its Notes; delete a note's m
 UNDECIDED = ("Since the upgrade did not decide the minimum up/down methods for the following units, they are "
              "currently operated without those limits even though they have minimum up/down time parameter values. "
              "Please choose a method to activate the limits.")
-UNDECIDED_NODES = ("Since the upgrade did not decide the storage start and end methods for the following nodes, a run "
-                   "that uses them stops with an error: their storage_start_end_method fixes a start or an end without "
-                   "its value. Please set storage_state_start or storage_state_end, or choose another method.")
+UNDECIDED_NODES = ("The upgrade could not keep the results of the following nodes unchanged: their "
+                   "storage_start_end_method fixes the storage state at the start or end, but in some scenarios they "
+                   "have no storage_state_start or storage_state_end value. A run of such a scenario stops with an "
+                   "error. Please add the missing value, or set storage_start_end_method so that it leaves that state "
+                   "free (for example fix_nothing).")
 W0600 = "W-0600: storage starts free by default (fix_nothing)"
 W0601 = "W-0601: the upgrade rewrote storage_start_end_method"
 W0634 = "W-0634: the upgrade wrote minimum_time_method"
@@ -95,17 +97,17 @@ def test_g1_upgraded_text_lists_the_added_notices(branch):
     assert got.paragraphs == (first, RESULTS_HEADING, UNDECIDED, "coal_1, gas_2 (W-0231)", NEUTRAL_HEADING, W0634,
                               CLOSING)
     _check_style(got, max_sentences=5)
-    # Undecided storage nodes with only W-0601: the same, with their own paragraph and the code W-0601; with both
-    # lists the units come first.
+    # Undecided storage nodes with only W-0601: the same, with their own paragraph (the owner's text, three
+    # sentences: one more than the units' paragraph) and the code W-0601; with both lists the units come first.
     got = _msg({**facts, "notices": ["storage_fix_method_rewritten"], "undecided_nodes": ["s1", "s2"]})
     assert got.paragraphs == (first, RESULTS_HEADING, UNDECIDED_NODES, "s1, s2 (W-0601)", NEUTRAL_HEADING, W0601,
                               CLOSING)
-    _check_style(got, max_sentences=5)
+    _check_style(got, max_sentences=6)
     got = _msg({**facts, "notices": ["storage_fix_method_rewritten", "minimum_time_method_written"],
                 "undecided": ["coal_1"], "undecided_nodes": ["s1"]})
     assert got.paragraphs == (first, RESULTS_HEADING, UNDECIDED, "coal_1 (W-0231)", UNDECIDED_NODES, "s1 (W-0601)",
                               NEUTRAL_HEADING, f"{W0601}\n{W0634}", CLOSING)
-    _check_style(got, max_sentences=7)
+    _check_style(got, max_sentences=8)
     # Only unknown ids: nothing added.
     assert ms.upgraded_text({**facts, "notices": ["no_such_change"]}) == (title, (first,))
 

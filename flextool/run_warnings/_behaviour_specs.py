@@ -417,21 +417,23 @@ BEHAVIOUR_TEXTS: dict[str, tuple[str, str, str, str]] = {
          "roll solved the forecasts made at its start, and a separate realization solve then dispatched the jump "
          "alone, without looking ahead. Results change: units online, storage levels and prices in the jump, and, "
          "with timeset weights that are not equal, the costs reported for the jump. Such a solve now needs a "
-         "realized: yes branch and forecasts made at the end of each jump; without them the run stops with an "
-         "error naming the roll."),
+         "realized: yes branch and forecasts made at the end of each jump: without the branch the run stops with an "
+         "error naming the solve, without the forecasts with an error naming the roll and the time step."),
         _delete_marker("rolling_within_solve_one_solve"),
     ),
     "separate_dispatch_realization_looks_ahead": (
-        "W-0636", "separate_dispatch realization looks ahead",
-        ("In a rolling stochastic solve with dispatch_realization_method separate_dispatch, the realization solve "
-         "now looks ahead after its jump with each forecast made at the end of the jump and its probability; "
-         "before, it dispatched the jump alone. In rolling and single solves, the first solve now shares across "
-         "the forecasts only the units online of units whose startup_method ends in _fix_in_uc, the only "
-         "decisions the realization keeps, and the start level of a storage that starts free; before, it also "
-         "shared the other units online, reserves and the storage use of the stochastic nodes. Results change: units online, storage levels, prices and, with "
-         "timeset weights that are not equal, the costs reported for the jump. A rolling solve without forecasts "
-         "made at the start of each roll and at the end of each jump now stops with an error naming the roll and "
-         "the time step."),
+        "W-0636", "separate_dispatch: the first solve shares less across the forecasts",
+        ("In rolling and single solves with dispatch_realization_method separate_dispatch, the first solve now "
+         "shares across the forecasts only the units online of units whose startup_method ends in _fix_in_uc, the "
+         "only decisions the realization keeps, and the start level of a storage that starts free; before, it also "
+         "shared the other units online, reserves and the storage use of the stochastic nodes. In a rolling solve "
+         "the realization solve now also looks ahead after its jump with each forecast made at the end of the jump "
+         "and its probability; before, it dispatched the jump alone. The rolling solves that keep the earlier "
+         "realization (a model with delayed units, stochastic_invest_method recourse, or a realization solve you "
+         "configure) still dispatch the jump alone: only their first solve changed. Results change: units online, "
+         "storage levels, prices and, with timeset weights that are not equal, the costs reported for the jump. A "
+         "rolling solve whose realization looks ahead and that has no forecasts made at the start of each roll and "
+         "at the end of each jump now stops with an error naming the roll and the time step."),
         _delete_marker("separate_dispatch_realization_looks_ahead"),
     ),
 }

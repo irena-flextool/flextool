@@ -245,7 +245,7 @@ def note_realization_inherits_nothing(d, solve: str, parent: str, parent_invests
 
     A realization solve takes from its parent the units online of the processes whose ``startup_method`` is
     ``linear_fix_in_uc`` or ``integer_fix_in_uc`` (``p_fix_online``) and the investments (when *parent_invests*:
-    :func:`solve_decides_investments` of the parent).  The note is given when there are neither: no such process
+    :func:`solve_decides_investments` of a parent that is not rolling; a roll builds no investment).  The note is given when there are neither: no such process
     has units online in the realization solve (``process_online_fix_in_uc`` ∩ its online processes, so that
     ``reduce_unit_detail_method`` *online* counts as none) and the parent decides no investments.  Processes with
     ``linear`` or ``integer`` are decided again with the realized data and do not prevent the note.  Nothing when a

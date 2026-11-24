@@ -103,7 +103,14 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
   realization solve that does not look past the jump; note W-0594 names the delayed units, once per run. A rolling
   stochastic solve followed by a realization solve you configure yourself also keeps its two solves, and so does a
   rolling `separate_dispatch` solve with `stochastic_invest_method` `recourse` (a rolling `within_solve` recourse
-  solve gets no realization solve, as before). Note W-0636 is not given for these solves.
+  solve gets no realization solve, as before). Their first solve changes all the same (it shares only the
+  `_fix_in_uc` commitment, see above), so note W-0636 names the `separate_dispatch` ones; its full notice says
+  that their realization dispatches each jump alone.
+- **A `realized: yes` row where no solve or roll fans out stops the run in more cases.** The row was already an
+  error; now it is also one where forecasts are declared at the same point (they are ignored there, as before),
+  and in a roll whose horizon ends with its jump. A `realized: yes` row belongs at the solve's start and where the
+  solve or a roll fans out. For a rolling `within_solve` or `separate_dispatch` solve the error says that every jump
+  reads one realized series, so the row switches nothing and can be removed.
 - **A rolling solve builds no capacity margin.** Its rolls build no investment, so a capacity-margin group's rows
   could only add a shortfall penalty on capacity the roll cannot change. Before, a rolling solve with
   `invest_periods` built the margin in every roll and reported and paid its shortfall; now it has none, as a
@@ -133,8 +140,9 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
   W-0634: where the upgrade wrote a method, results stay the same; listed also when it only left entities
   undecided). The first group names the entities the upgrade left undecided (the first ten of each kind): units
   without a decided minimum up/down time method run without those limits until a `minimum_time_method` is chosen
-  (warning W-0231 names all at each run); storage nodes without a decided `storage_start_end_method` stop the run
-  with an error naming them. A database upgraded again before the message is dismissed keeps the earlier notes and
+  (warning W-0231 names all at each run); storage nodes whose `storage_start_end_method` fixes a start or end
+  state that some scenarios give no value for stop the run of such a scenario with an error naming them (add the
+  value, or choose a method that leaves that state free). A database upgraded again before the message is dismissed keeps the earlier notes and
   names in the new message, without checking whether those entities were decided since.
 - **The GUI message list's buttons are named "Dismiss message" and "Close dialog"** (before: "Dismiss" and "Close
   for now"). The close button keeps its label also when the list is empty.

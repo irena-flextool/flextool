@@ -162,10 +162,11 @@ UNDECIDED_SHOWN = 10
 _UNDECIDED = ("Since the upgrade did not decide the minimum up/down methods for the following units, they are "
               "currently operated without those limits even though they have minimum up/down time parameter "
               "values. Please choose a method to activate the limits.")
-_UNDECIDED_NODES = ("Since the upgrade did not decide the storage start and end methods for the following nodes, "
-                    "a run that uses them stops with an error: their storage_start_end_method fixes a start or an "
-                    "end without its value. Please set storage_state_start or storage_state_end, or choose another "
-                    "method.")
+_UNDECIDED_NODES = ("The upgrade could not keep the results of the following nodes unchanged: their "
+                    "storage_start_end_method fixes the storage state at the start or end, but in some scenarios "
+                    "they have no storage_state_start or storage_state_end value. A run of such a scenario stops "
+                    "with an error. Please add the missing value, or set storage_start_end_method so that it leaves "
+                    "that state free (for example fix_nothing).")
 #: The undecided lists of a ``database_upgraded`` event: (facts key, the code that names them all, paragraph).
 #: W-0231 names the units at each run; the nodes are named by the run's error, after the notice W-0601.
 _UNDECIDED_LISTS = (("undecided", "W-0231", _UNDECIDED), ("undecided_nodes", "W-0601", _UNDECIDED_NODES))
@@ -176,7 +177,8 @@ def _notice_paragraphs(ids: list[str], undecided: list[tuple[str, str, list[str]
     ones first, each group a heading and one line per notice (``<code>: <console text>``, in code order); each
     *undecided* list ``(paragraph, code, names)`` with names under the results heading, as its paragraph and the
     names (capped at :data:`UNDECIDED_SHOWN`) followed by the code.  ``()`` when there are none.  Headings end in
-    ":" and lines have no sentence end, so the group adds one sentence (plus two for each undecided list)."""
+    ":" and lines have no sentence end, so the group adds one sentence (plus the sentences of each undecided
+    list's paragraph: two for the units, three for the nodes)."""
     from flextool.run_warnings._behaviour_specs import BEHAVIOUR_TEXTS, RESULTS_UNCHANGED
 
     known = sorted((i for i in dict.fromkeys(ids) if i in BEHAVIOUR_TEXTS), key=lambda i: BEHAVIOUR_TEXTS[i][0])
