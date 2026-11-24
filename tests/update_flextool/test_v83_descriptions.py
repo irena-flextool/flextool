@@ -121,3 +121,77 @@ def test_old_texts_at_83_are_refreshed_once(schema_db_url: str, tmp_path: Path, 
     monkeypatch.setattr(importlib.import_module("flextool.update_flextool.migrate_before_run"), "migration_lock",
                         no_lock)
     _assert_second_refresh_commits_nothing(url, values_before)
+
+
+#: The descriptions that databases made from a release's shipped database or template (FlexTool 3.22.0-3.43.0) hold
+#: at 82, read from those databases (``tools/migration_sweep.py``; ``""``: no description written), written out here.
+RELEASE_OLD_TEXTS: dict[tuple[str, str], tuple[str, ...]] = {
+    ("unit", "minimum_time_method"): (
+        "[choice] Not functional yet. Choice between minimum up- and downtimes (<empty>, min_downtime, min_uptime, "
+        "both).",),
+    ("node", "penalty_up"): ("[CUR/MW] Penalty cost for decreasing consumption in the node. Constant, Period or Time.",),
+    ("node", "penalty_down"): (
+        "[CUR/MW] Penalty cost for increasing consumption in the node. Constant, Period or Time.",),
+    ("group", "penalty_inertia"): ("[CUR/MWs per hour] Penalty for violating the inertia constraint. Constant or period.",),
+    ("connection", "reactance"): ("",),
+    ("connection", "transfer_method"): ("[choice] Choice of transfer method",),
+    ("group", "transfer_method"): (
+        "[choice] Override transfer_method for all connections within this nodeGroup. Options: "
+        "use_connection_transfer_methods (default, no override), no_losses_no_variable_cost, regular, exact, "
+        "variable_cost_only, dc_power_flow_with_angles. When set to dc_power_flow_with_angles, connections between "
+        "member nodes use B-theta DC power flow (requires reactance parameter on connections).",),
+    ("commodity", "price_ladder_cumulative"): (
+        "[CUR/MWh; MWh]",
+        "[CUR/MWh; MWh] Stepped supply curve for price_method='price_ladder_cumulative'.  Structure: Map(tier -> "
+        "{price, quantity}).  1-based integer tier index.  quantity=inf marks an unbounded tail tier.  "
+        "Period-agnostic — the cap is a single total across the full model horizon."),
+}
+
+
+def _write_texts(url: str, texts: dict[tuple[str, str], str]) -> None:
+    with DatabaseMapping(url) as db:
+        for (cls, name), text in texts.items():
+            db.update_parameter_definition(id=_definition(db, cls, name)["id"], description=text or None)
+        db.commit_session("old texts")
+
+
+@pytest.mark.parametrize("which", [0, -1], ids=["first", "last"])
+def test_release_texts_at_82_become_the_shipped_ones(v82_schema_db_url: str, tmp_path: Path, which: int) -> None:
+    """Each old text a release database holds at 82 (the first and the last where a definition has two) is replaced
+    by the shipped text at 83; a second refresh commits nothing."""
+    url = _copy(v82_schema_db_url, tmp_path)
+    _write_texts(url, {key: olds[which] for key, olds in RELEASE_OLD_TEXTS.items()})
+    _migrate(url)
+    shipped = _shipped_texts()
+    with DatabaseMapping(url) as db:
+        held = {key: _definition(db, *key)["description"] for key in RELEASE_OLD_TEXTS}
+        values_before = _values(db)
+    assert held == {key: shipped[key] for key in RELEASE_OLD_TEXTS}
+    _assert_second_refresh_commits_nothing(url, values_before)
+
+
+def test_release_text_edited_by_the_user_is_kept(v82_schema_db_url: str, tmp_path: Path) -> None:
+    """A ``minimum_time_method`` description the user edited from the old release text is kept at 83."""
+    url = _copy(v82_schema_db_url, tmp_path)
+    edited = RELEASE_OLD_TEXTS[("unit", "minimum_time_method")][0] + " Mine."
+    _write_texts(url, {("unit", "minimum_time_method"): edited})
+    _migrate(url)
+    with DatabaseMapping(url) as db:
+        assert _definition(db, "unit", "minimum_time_method")["description"] == edited
+
+
+def test_release_text_at_83_is_refreshed(schema_db_url: str, tmp_path: Path) -> None:
+    """A database at 83 holding an old release text (``unit.minimum_time_method``; ``connection.reactance`` with no
+    description) is not current; one open writes the shipped texts and it is current."""
+    url = _copy(schema_db_url, tmp_path)
+    _write_texts(url, {("unit", "minimum_time_method"): RELEASE_OLD_TEXTS[("unit", "minimum_time_method")][0],
+                       ("connection", "reactance"): ""})
+    path = _path(url)
+    assert m._head_defaults_stale_ro(path)
+    _migrate(url)
+    shipped = _shipped_texts()
+    with DatabaseMapping(url) as db:
+        assert _definition(db, "unit", "minimum_time_method")["description"] == shipped[("unit", "minimum_time_method")]
+        assert _definition(db, "connection", "reactance")["description"] == shipped[("connection", "reactance")]
+    assert not m._head_defaults_stale_ro(path)
+    assert m._current_version_ro(path, None) == FLEXTOOL_DB_VERSION

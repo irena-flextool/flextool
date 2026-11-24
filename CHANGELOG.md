@@ -172,7 +172,11 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
   "Constant, Period or time." / "Constant, Period or Time." for `other_operational_cost`, "Constant, Period or
   Time." for `penalty_up` and `penalty_down`, "Constant, period or time." for `co2_price`, "Constant." for
   `storage_state_reference_value`), the old member name `no_method` in `group.co2_method`, and the `binary`
-  start-ups in `virtual_unitsize` (now `integer` or `integer_fix_in_uc`). A description you edited is kept. The
+  start-ups in `virtual_unitsize` (now `integer` or `integer_fix_in_uc`). Databases made from the shipped database
+  or template of FlexTool 3.22–3.43 also get the current descriptions of `unit.minimum_time_method` (it no longer
+  says "Not functional yet"), `node.penalty_up` and `penalty_down` (unit CUR/MWh, not CUR/MW),
+  `group.penalty_inertia`, `connection.reactance` (it had none), `connection.transfer_method`,
+  `group.transfer_method` and `commodity.price_ladder_cumulative`. A description you edited is kept. The
   unused value list `solver` (left over from before `solve.solver` moved to `solvers`) is deleted.
 
 ## Release 4.6.3 (23.11.2026) — fixes: list-valued defaults kept when migrating FlexTool 3.x databases, Benders between regions, FlexTool 2.0 conversion in the GUI; repair tool for W-0490 databases; GUI message list

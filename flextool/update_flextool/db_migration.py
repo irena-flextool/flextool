@@ -12962,6 +12962,70 @@ _V83_SHAPE_TEXTS: dict[tuple[str, str], tuple[str, str]] = {
 }
 
 
+#: Part 4 of v83 (item 278, D26): the descriptions that a database made from a release's shipped database or template
+#: (FlexTool 3.22.0-3.43.0) still holds at 82, because the step that rewrote the text ran before the release's data
+#: version: ``{(class, name): ((old texts...), new)}``.  The old texts are read from the shipped databases of those tags
+#: migrated to 82 (``""`` is a description that was never written); the new ones are the shipped schema's.  Kept apart
+#: from :data:`_V83_SHAPE_TEXTS`, whose single old text per definition is what the v25 template holds at 82.
+_V83_RELEASE_TEXTS: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
+    ("unit", "minimum_time_method"): (
+        ("[choice] Not functional yet. Choice between minimum up- and downtimes (<empty>, min_downtime, min_uptime, "
+         "both).",),
+        "[choice] Choice between minimum up- and downtimes (none, min_downtime, min_uptime, both). Setting this to "
+        "anything other than 'none' will activate online variables (at least linear) for the unit. Default: none (no "
+        "minimum time constraints)."),
+    ("node", "penalty_up"): (
+        ("[CUR/MW] Penalty cost for decreasing consumption in the node. Constant, Period or Time.",),
+        _V83_SHAPE_TEXTS[("node", "penalty_up")][1]),
+    ("node", "penalty_down"): (
+        ("[CUR/MW] Penalty cost for increasing consumption in the node. Constant, Period or Time.",),
+        _V83_SHAPE_TEXTS[("node", "penalty_down")][1]),
+    ("group", "penalty_inertia"): (
+        ("[CUR/MWs per hour] Penalty for violating the inertia constraint. Constant or period.",),
+        "[CUR/MWs per hour] Penalty for violating the inertia constraint. Cost scales with the duration of the "
+        "violation. Constant or period."),
+    ("connection", "reactance"): (
+        ("",),
+        "[p.u.] Per-unit reactance of the transmission line. Used for DC power flow when the connection is within a "
+        "nodeGroup that has transfer_method set to dc_power_flow_with_angles. The susceptance used in the flow "
+        "equation is base_MVA / reactance."),
+    ("connection", "transfer_method"): (
+        ("[choice] Choice of transfer method",),
+        "[choice] Choice of transfer method. Options: regular (default), no_losses_no_variable_cost, "
+        "variable_cost_only, exact, unidirectional. 'unidirectional' restricts flow to source → sink only (single "
+        "non-negative variable); 'regular'/'exact'/'variable_cost_only' are bidirectional two-variable variants; "
+        "'no_losses_no_variable_cost' is a single signed variable with no losses and no VOM."),
+    ("group", "transfer_method"): (
+        ("[choice] Override transfer_method for all connections within this nodeGroup. Options: "
+         "use_connection_transfer_methods (default, no override), no_losses_no_variable_cost, regular, exact, "
+         "variable_cost_only, dc_power_flow_with_angles. When set to dc_power_flow_with_angles, connections between "
+         "member nodes use B-theta DC power flow (requires reactance parameter on connections).",),
+        "[choice] Override transfer_method for all connections within this nodeGroup. Options: "
+        "use_connection_transfer_methods (default, no override), no_losses_no_variable_cost, regular, exact, "
+        "variable_cost_only, unidirectional, dc_power_flow_with_angles. Setting 'unidirectional' gates every member "
+        "connection to one-way flow (source → sink only). Setting 'dc_power_flow_with_angles' uses B-theta DC power "
+        "flow (requires reactance on connections)."),
+    ("commodity", "price_ladder_cumulative"): (
+        ("[CUR/MWh; MWh]",
+         "[CUR/MWh; MWh] Stepped supply curve for price_method='price_ladder_cumulative'.  Structure: Map(tier -> "
+         "{price, quantity}).  1-based integer tier index.  quantity=inf marks an unbounded tail tier.  "
+         "Period-agnostic — the cap is a single total across the full model horizon."),
+        "[CUR/MWh; MWh] Stepped supply curve for price_method='price_ladder_cumulative'.  2d map with rows "
+        "'tier,price,quantity' — one row per tier, giving the tier's unit price and its cumulative quantity cap.  "
+        "1-based integer tier index.  quantity=inf marks an unbounded tail tier.  Period-agnostic — the cap is a "
+        "single total across the full model horizon."),
+}
+
+
+def _replace_release_texts(db) -> None:
+    """The current description in place of each old shipped one of :data:`_V83_RELEASE_TEXTS` (exactly equal; a
+    description the user edited is kept).  Idempotent."""
+    for key, (olds, new) in _V83_RELEASE_TEXTS.items():
+        pdef = _pdef_or_none(db, *key)
+        if pdef is not None and (pdef["description"] or "") in olds:
+            db.update_parameter_definition(id=pdef["id"], description=new)
+
+
 def _v83_description_texts() -> dict[tuple[str, str], tuple[str, str]]:
     """``{(class, name): (old, new)}``: the descriptions part 4 of v83 replaces by text alone
     (:func:`_replace_superseded_texts`): the twelve of :data:`_V83_SHAPE_TEXTS` and ``virtual_unitsize`` of units
@@ -12976,10 +13040,11 @@ def _v83_description_texts() -> dict[tuple[str, str], tuple[str, str]]:
 
 def _v83_descriptions(db) -> None:
     """Part 4 of v83 (item 278): the current description in place of each old shipped one of
-    :func:`_v83_description_texts` (by text alone, whatever the default; a description the user edited is kept), and
-    the value list ``solver`` deleted when no definition is on it (``solve.solver`` is on ``solvers`` since v52; an
+    :func:`_v83_description_texts` and of :data:`_V83_RELEASE_TEXTS` (by text alone, whatever the default; a
+    description the user edited is kept), and the value list ``solver`` deleted when no definition is on it (``solve.solver`` is on ``solvers`` since v52; an
     older template can still hold the unused list).  Descriptions and an unused list only.  Idempotent."""
     _replace_text_pairs(db, _v83_description_texts())
+    _replace_release_texts(db)
     solver = db.get_item("parameter_value_list", name="solver")
     if solver and not any(pd["parameter_value_list_name"] == "solver" for pd in db.get_items("parameter_definition")):
         db.remove_item("parameter_value_list", solver["id"])
@@ -13022,7 +13087,8 @@ def _migrate_v83_schema_batch(db) -> None:
        ahead: the solves whose results change are listed in two behaviour-change markers (after part 5, whose
        writes count; :func:`_v83_realization_notices`).
     4. Item 278: the current description in place of fourteen old shipped ones (value shapes, ``no_method``,
-       ``binary`` startups), and the unused value list ``solver`` deleted (:func:`_v83_descriptions`).
+       ``binary`` startups) and of the older texts that databases made from a release still hold
+       (:data:`_V83_RELEASE_TEXTS`), and the unused value list ``solver`` deleted (:func:`_v83_descriptions`).
 
     On a non-local URL the list defaults are not repaired before the step (item 279): a default still stored as its
     member's text reads as nothing, and a description written on its definition stores it as ``NULL``; it read as
@@ -13116,17 +13182,18 @@ def _pair_is(old: tuple[object, str] | None, default, description: str | None) -
 
 def _head_defaults_stale_ro(path) -> bool:
     """Whether the database *path* (read read-only) has a definition with a superseded shipped default and
-    description (:func:`_is_superseded_pair`) or a superseded shipped description (:func:`_head_superseded_texts`,
-    by text alone; ``True`` when it cannot be read)."""
+    description (:func:`_is_superseded_pair`) or a superseded shipped description (:func:`_head_superseded_texts`
+    and :data:`_V83_RELEASE_TEXTS`, by text alone; ``True`` when it cannot be read)."""
     import sqlite3
 
     from flextool.update_flextool.frozen import _connect_ro
 
     superseded = _head_superseded()
     texts = {key: old for key, (old, _new) in _head_superseded_texts().items()}
-    if not superseded and not texts:
+    release = {key: olds for key, (olds, _new) in _V83_RELEASE_TEXTS.items()} if FLEXTOOL_DB_VERSION == 83 else {}
+    if not superseded and not texts and not release:
         return False
-    names = sorted({name for _cls, name in (*superseded, *texts)})
+    names = sorted({name for _cls, name in (*superseded, *texts, *release)})
     try:
         con = _connect_ro(path)
     except sqlite3.Error:
@@ -13153,8 +13220,8 @@ def _head_defaults_stale_ro(path) -> bool:
             return from_database(*member) if member is not None else None
         return from_database(value, typ)
 
-    return any(texts.get((cls, name)) == (desc or "") or _is_superseded_pair(cls, name, parsed(value, typ), desc)
-               for cls, name, value, typ, desc in rows)
+    return any(texts.get((cls, name)) == (desc or "") or (desc or "") in release.get((cls, name), ())
+               or _is_superseded_pair(cls, name, parsed(value, typ), desc) for cls, name, value, typ, desc in rows)
 
 
 def _v81_refresh(db, texts: dict[tuple[str, str], str]) -> None:
@@ -13195,8 +13262,8 @@ def _refresh_head_schema(db) -> None:
     """Bring a database at the current data version to the schema of its schema step: the v82 definitions it lacks
     (:func:`_v82_definitions_part`; an existing definition keeps its fields), the members v83 adds to the lists it
     has (:data:`_V83_NEW_MEMBERS`; no value is written, no member removed, no default changed: a database at 83 has
-    had step 83) and the current description in place of a superseded shipped one (:func:`_head_superseded_texts`,
-    by text alone).  A description the user edited, a default the user set and every value are kept; otherwise a
+    had step 83) and the current description in place of a superseded shipped one (:func:`_head_superseded_texts`
+    and :data:`_V83_RELEASE_TEXTS`, by text alone).  A description the user edited, a default the user set and every value are kept; otherwise a
     description is never rewritten.  Idempotent."""
     if FLEXTOOL_DB_VERSION == 83:
         _v82_definitions_part(db, update=False)
@@ -13204,6 +13271,7 @@ def _refresh_head_schema(db) -> None:
             if db.get_item("parameter_value_list", name=name):
                 _append_list_members(db, name, members)
         _replace_text_pairs(db, _head_superseded_texts())
+        _replace_release_texts(db)
 
 
 if __name__ == '__main__':
