@@ -255,14 +255,12 @@ def by_hand_refusal(a: Analysis) -> str:
 
 def all_suspects(a: Analysis) -> tuple:
     """Every suspect of the analysed snapshot in one list: part A (W-0490, ``value_list_suspects.suspects``), then
-    part B (``list_default_restore.part_b_suspects``: empty shipped defaults and storage nodes).  A definition that
-    is in both (an ``invest_method`` default on a W-0490 hit) is part A's only."""
+    part B (``list_default_restore.part_b_suspects``: empty method parameter defaults and storage nodes).  No
+    definition is in both: a part A default references R, a part B one is empty."""
     from flextool.update_flextool.list_default_restore import part_b_suspects
     from flextool.update_flextool.value_list_suspects import suspects
 
-    part_a = suspects(a)
-    seen = {s.item for s in part_a}
-    return part_a + tuple(s for s in part_b_suspects(a) if s.item not in seen)
+    return suspects(a) + part_b_suspects(a)
 
 
 def part_b_line(a: Analysis) -> str:

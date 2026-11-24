@@ -258,6 +258,33 @@ def test_part_b_only_file(tmp_path, schema_db_url) -> None:
         va.read_answers(path, b, found_b)
 
 
+def test_rows_of_defaults_not_asked_give_a_warning(tmp_path, schema_db_url) -> None:
+    """S5: an answers file whose key matches, with ``def:`` / ``sn:`` rows that are no suspect of this run, is not
+    refused: each such row gives a warning and is ignored, the other rows apply.  At the current data version
+    (an ``sn:`` row as a 4.6.3 run wrote it, no storage question here): "no longer asked".  The same file on the copy
+    at data version 82 (part B is off, so the empty ``unit.conversion_method`` default is not asked): "not asked in
+    this run"."""
+    case = make_hit(tmp_path, schema_db_url)
+    clear_defaults(case.path, ["unit.conversion_method"], None)
+    a, found = _analyse(case.path, tmp_path)
+    conv = next(s.item for s in found if s.part_b)
+    path = tmp_path / "old.csv"
+    va.write_answers(path, found, va.file_key(a), {s.item: va.Answer(va.KEEP) for s in found})
+    rows = _rows(path)
+    _save(path, rows + [["sn:1:1", rows[1][1], "storage", "node", "storage_start_end_method", "A", "base", "",
+                         "keep"]])
+    read = va.read_answers(path, a, found)
+    assert set(read.answers) == {s.item for s in found} and read.warnings == (f"sn:1:1: {va.NOT_ASKED}",)
+    sql(case.path, "UPDATE parameter_definition SET default_value = ?, default_type = 'float' WHERE name = 'version' "
+                   "AND entity_class_id = (SELECT id FROM entity_class WHERE name = 'model')", (b"82.0",))
+    old, found_old = _analyse(case.path, tmp_path, "snap_82")
+    assert old.version == 82 and va.file_key(old) == va.file_key(a)
+    read = va.read_answers(path, old, found_old)
+    assert set(read.answers) == {s.item for s in found_old} == {s.item for s in found} - {conv}
+    assert read.warnings == (f"{conv}: {va.NOT_ASKED_OLD}", f"sn:1:1: {va.NOT_ASKED_OLD}")
+    assert va.make_plan(old, found_old, read.answers).part_a_record is True
+
+
 def test_storage_default_held_while_a_storage_question_is_open(tmp_path, schema_db_url) -> None:
     """R2: the storage default answered ``set:`` but the storage node skipped → the default is not set, no part B
     record; the other default is set."""
@@ -285,22 +312,21 @@ def test_part_a_and_part_b_records_are_due_independently(tmp_path, schema_db_url
         assert (plan.part_a_record, plan.part_b_record) == due
 
 
-def test_part_b_record_waits_for_an_empty_part_a_default(tmp_path, schema_db_url) -> None:
-    """Review finding 7: a hit at v82 whose unit / connection / node ``invest_method`` defaults are ``NULL`` (part A
-    suspects only, but in the empty set the part B record's hash covers) and one empty part B default
-    (``unit.conversion_method``).  Part B answered, the unit default skipped → no part B record (nor part A);
-    the unit default answered too → both records."""
+def test_part_b_record_waits_for_empty_invest_defaults(tmp_path, schema_db_url) -> None:
+    """A hit at the current data version whose unit / connection / node ``invest_method`` defaults are ``NULL``, and
+    one more empty default (``unit.conversion_method``): the four are part B suspects (an empty default is not what
+    the bug changed), part A has none.  So the part A record is due without an answer; the part B record waits for
+    all four: three answered → none, the fourth (``keep``) too → the part B record."""
     case = make_hit(tmp_path, schema_db_url)
     clear_defaults(case.path, ["unit.invest_method", "connection.invest_method", "node.invest_method",
                                "unit.conversion_method"], None)
     a, found = _analyse(case.path, tmp_path)
+    assert all(s.part_b for s in found) and len(found) == 4
     (unit,) = [s.item for s in found if (s.cls, s.parameter) == ("unit", "invest_method")]
-    part_b = {s.item: va.Answer(va.SET, "constant_efficiency") for s in found if s.part_b}
-    part_a = {s.item: va.Answer(va.SET, "not_allowed") for s in found if not s.part_b and s.item != unit}
-    assert (len(part_a), len(part_b)) == (2, 1)
-    plan = va.make_plan(a, found, {**part_a, **part_b})
-    assert (plan.part_a_record, plan.part_b_record) == (False, False)
-    plan = va.make_plan(a, found, {**part_a, **part_b, unit: va.Answer(va.KEEP)})
+    three = {s.item: va.Answer(va.SET, s.suggestion.removeprefix("set:")) for s in found if s.item != unit}
+    plan = va.make_plan(a, found, three)
+    assert (plan.part_a_record, plan.part_b_record) == (True, False)
+    plan = va.make_plan(a, found, {**three, unit: va.Answer(va.KEEP)})
     assert (plan.part_a_record, plan.part_b_record) == (True, True)
 
 

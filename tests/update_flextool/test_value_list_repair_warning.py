@@ -35,7 +35,8 @@ HIT = vlh.Finding(22, ("invest_methods",), 21, 22, HIT_DATE)
 
 
 def _repaired(tmp_path: Path, schema_db_url: str):
-    """``(hit case, repaired copy)``: every suspect (the three class defaults) answered ``set:not_allowed``."""
+    """``(hit case, repaired copy)``: every suspect (the three method parameter defaults) answered
+    ``set:not_allowed``."""
     case = make_hit(tmp_path, schema_db_url)
     output = tmp_path / "out" / "hit_repaired.sqlite"
     output.parent.mkdir()

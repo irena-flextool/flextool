@@ -428,7 +428,7 @@ INPUT_SPECS: tuple[WarningSpec, ...] = (
        "the database, also after you have checked, until a repair is recorded in the database: only FlexTool's "
        "repair tool records one.\n\n"
        "For `invest_methods` (migration from data version 21 to 22): the list should contain `not_allowed`. If "
-       "it is missing, the class default of `invest_method` (unit, connection, node) and any value that was "
+       "it is missing, the method parameter default of `invest_method` (unit, connection, node) and any value that was "
        "`not_allowed` before that date now read `cumulative_limits`, which since FlexTool 4.4 lets those "
        "entities invest and retire without limit.\n\n"
        "**How to fix:** run the repair tool on the database, in a terminal:\n\n"
@@ -448,7 +448,7 @@ INPUT_SPECS: tuple[WarningSpec, ...] = (
        "and `cumulative_limits`).\n"
        "3. If a member is missing, add it to the list (at the end).\n"
        "4. For `invest_methods`, set the default value of `invest_method` of `unit`, `connection` and `node` "
-       "to `not_allowed` (the shipped default).\n"
+       "to `not_allowed` (FlexTool's default).\n"
        "5. Filter the parameter values by `invest_method` = `cumulative_limits`. For each one, decide whether it "
        "was meant: compare with a copy from before the migration date, your Excel input or your notes. An "
        "entity that has no `cumulative_max_capacity` and should not invest should be `not_allowed`.\n"
@@ -459,17 +459,18 @@ INPUT_SPECS: tuple[WarningSpec, ...] = (
        "value.\n\n"
        "If you copied data from this database into another one, check that one too."),
     # TODO(v5.0.0): remove W-0491 with the repair tool (flextool/update_flextool/list_default_restore.py).
-    _w("W-0491", "defaults emptied by an old upgrade", "Shipped defaults lost in an old upgrade", _DATABASE,
-       "An upgrade of this database before FlexTool 4.6.3 left some default values empty: an old Spine library "
-       "had stored them in a form the upgrade could not read. The line names them (up to three; the run log "
-       "lists all of them with their shipped values). An empty default works like the shipped one, because "
-       "FlexTool uses the shipped value when none is stored. Only `storage_start_end_method` can change results; "
+    _w("W-0491", "defaults emptied by an old upgrade", "Method parameter defaults lost in an old upgrade", _DATABASE,
+       "An upgrade of this database before FlexTool 4.6.3 left some method parameter defaults empty: an old Spine "
+       "library had stored them in a form the upgrade could not read. The line names them (up to three; the run "
+       "log lists all of them with FlexTool's defaults). An empty default works like FlexTool's default, because "
+       "FlexTool uses its default when none is stored. Only `storage_start_end_method` can change results; "
        "when the line names it, an unaffected database keeps the start of storage nodes with their own start "
-       "value fixed (`fix_start`), and this one leaves it free. The GUI lists a \"Shipped defaults lost in an "
-       "old upgrade\" message for it when it opens the project, with a button that copies the repair command.\n\n"
+       "value fixed (`fix_start`), and this one leaves it free. The GUI lists a \"Method parameter defaults lost "
+       "in an old upgrade\" message for it when it opens the project, with a button that copies the repair "
+       "command.\n\n"
        "**How to fix:** run the repair tool on the database: `flextool-repair-value-list \"<database>\"` (or "
        "`python -P -m flextool.cli.cmd_repair_value_list \"<database>\"`). It writes a repaired copy next to the "
-       "original, puts the shipped defaults back and asks about each such storage node. Then use the copy in "
+       "original, puts FlexTool's defaults back and lists each such storage node to check. Then use the copy in "
        "place of the original. The note stops once the database holds the tool's repair record. The steps are "
        "in [Repairing a value list](../terminal_workflow.md#repairing-a-value-list-w-0490).",
        severity=NOTE, examples=3),

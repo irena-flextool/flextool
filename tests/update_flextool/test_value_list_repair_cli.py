@@ -3,18 +3,19 @@
 Every database is a made-up copy of the schema database (``_value_list_cases``).  Oracles from the construction
 (written by hand, never from the tool's output):
 
-- ``_hit``: three default suspects (unit, connection, node ``invest_method`` point to R; three similarity groups,
-  in definition order), U1 written before the overwrite (certain, ``set:not_allowed``), U2 and U3 written after it
-  (no suggestion; same context, so one group).  The prompts come in that order: unit, connection, node defaults,
-  U1, then U2+U3.  Enter on the first four takes the suggestion; U2 ``set:invest_total`` and U3 ``keep`` give the
+- ``_hit``: three default suspects (unit, connection, node ``invest_method`` point to R; one block question),
+  U1 written before the overwrite (certain, ``set:not_allowed``), U2 and U3 written after it (no suggestion; same
+  context, so one group).  U4 has no ``invest_method`` value, so it relies on the unit default in ``s1``: Enter
+  changes results, and U4 is listed to check (no cumulative cap).  The prompts come in that order: the block, U1,
+  then U2+U3.  Enter on the block and on U1 takes the suggestions; U2 ``set:invest_total`` and U3 ``keep`` give the
   record ``set`` 5 (3 defaults + U1 + U2) and ``kept`` 1 (U3).
 - ``_restored``: as ``_hit`` without U2/U3, with ``not_allowed`` added back by hand (index 13, after the session)
   and the three defaults pointed to it: the defaults are the shipped default (no suspect), U1 is the only suspect
   and it is certain.
 - ``_lost`` (part B): ``unit.conversion_method``, ``solve.solve_mode`` and ``node.storage_start_end_method``
-  emptied by a migration step after the fingerprint (label "probably …", one group), one more reference default the
-  bug could not reach ("no sign", its own group), storage node A (start before the v77 commit) and B (start after
-  it): four prompts, defaults first.
+  emptied by a migration step after the fingerprint (label "probably …"), one more reference default the bug could
+  not reach ("no sign"), storage node A (start before the v77 commit) and B (start after it): one block question
+  (results change: storage nodes), defaults first, then A and B.
 """
 from __future__ import annotations
 
@@ -62,11 +63,11 @@ def _restored(tmp_path, schema_db_url, after=False):
     return case
 
 
-def _lost(tmp_path, schema_db_url):
+def _lost(tmp_path, schema_db_url, names=LOST):
     (extra,) = sorted(f"{c}.{p}" for c, p in ldr.reference().keys() - ldr.bug_reachable())[:1]
     folder = tmp_path / "lost"
     folder.mkdir()
-    return make_lost_defaults(folder, LOST + [extra], schema_db=schema_db_url,
+    return make_lost_defaults(folder, list(names) + [extra], schema_db=schema_db_url,
                               before=[("node", "A", "storage_state_start", "base", 0.5)],
                               after=[("node", "B", "storage_state_start", "base", 0.3)], scenarios={"s1": ["base"]})
 
@@ -152,7 +153,7 @@ def test_dry_run_answers_round_trip_and_refusals(tmp_path, schema_db_url, capsys
     assert exc.value.code == 2
 
 
-@pytest.mark.parametrize("replies", [(), ("", "", "", "", "e", "keep", "keep", "n")], ids=["eof", "no"])
+@pytest.mark.parametrize("replies", [(), ("", "", "e", "keep", "keep", "n")], ids=["eof", "no"])
 def test_quit_writes_partial_answers_only(tmp_path, schema_db_url, replies) -> None:
     """EOF at the first question, or "n" at the confirm: exit 1, the partial answers file, no database, no
     snapshot.  A second quit never overwrites the first file."""
@@ -169,17 +170,22 @@ def test_quit_writes_partial_answers_only(tmp_path, schema_db_url, replies) -> N
 
 
 def test_interactive_groups_rerun_and_part_a_record_kept(tmp_path, schema_db_url, capsys) -> None:
-    """Group-first prompt: Enter takes a suggestion, Enter on a group without one asks again, ``e`` drills down.
-    The rerun asks nothing.  A later run on the copy that restores an emptied default leaves the part A record row
-    as it was (P5's open gap) and adds the part B record."""
+    """Block first: a number there is no answer ("Type Enter, e, x or q."), Enter takes the suggestions and the block
+    lists U4 to check.  Then the groups: Enter takes a suggestion, Enter on a group without one asks again, ``e``
+    drills down.  The rerun asks nothing.  A later run on the copy that restores an emptied default leaves the part A
+    record row as it was (P5's open gap) and adds the part B record."""
     case = _hit(tmp_path, schema_db_url)
-    ask = _Ask("", "", "", "", "", "e", "set:invest_total", "k", "y")
+    ask = _Ask("1", "", "", "", "e", "set:invest_total", "k", "y")
     assert cli.main([str(case.path)], ask=ask) == 0
-    assert len(ask.prompts) == 9 and ask.prompts[-1].startswith("Write to ")
-    assert "No answer is suggested here" in capsys.readouterr().out
+    assert len(ask.prompts) == 8 and ask.prompts[-1].startswith("Write to ") and ask.prompts[0] == ask.prompts[1]
+    text = capsys.readouterr().out
+    assert "No answer is suggested here" in text and "  Type Enter, e, x or q." in text
+    assert "  unit.invest_method, no cumulative cap: U4 could invest and retire up to 1e6 MW until now" in text
     out = vw.default_output(case.path)
     assert vlh.read_record(out).value == {"v": 1, "step": 22, "end_commit": case.end_commit,
                                           "end_date": "2024-09-19", "set": 5, "kept": 1}
+    report = out.with_name(out.name + vw.SIDE_TXT).read_text(encoding="utf-8")
+    assert "\n  unit.invest_method, no cumulative cap: U4 could invest and retire up to 1e6 MW until now\n" in report
     sha = fz.sha256_of(out)
     ask = _Ask()
     assert cli.main([str(out)], ask=ask) == 0 and ask.prompts == []
@@ -225,39 +231,61 @@ def test_exit_codes(tmp_path, schema_db_url, capsys) -> None:
         assert fz.sha256_of(argv[0]) == sha and _files(Path(argv[0]).parent) == folder
 
 
+def _part_b_record(path: Path):
+    with contextlib.closing(fz._connect_ro(vw.default_output(path))) as con:
+        return ldr.parse_part_b_record(con)
+
+
 def test_part_b(tmp_path, schema_db_url, capsys) -> None:
     """A part B-only file: no terminal → 3 (also with ``--accept-certain``: defaults and storage questions are never
-    certain).  At the prompt Enter on a storage question asks again with "No answer is recommended"; A
-    ``fix_start`` (``1``, the only member offered), B kept → the copy with the part B record (storage 1)."""
+    certain); ``--dry-run`` prints the block.  The storage nodes make the block take the result-change closing,
+    listing A and B; Enter restores the four defaults and keeps both starts free, ``y`` → the part B record
+    ``(set, kept, storage) == (4, 2, 0)``, and the report lists A and B to check."""
     case = _lost(tmp_path, schema_db_url)
     for extra in ([], ["--accept-certain"]):
         assert cli.main([str(case.path), *extra]) == 3
         assert capsys.readouterr().out.count("  sn:") == 2
-    ask = _Ask("", "", "", "1", "k", "y")
+    a_line = "  node A [base] (scenarios: s1): an unaffected database fixes its start (fix_start); here it stays free"
+    b_line = "  node B [base] (scenarios: s1): start added after the upgrade; it stays free"
+    assert cli.main([str(case.path), "--dry-run"]) == 0
+    assert a_line in capsys.readouterr().out
+    ask = _Ask("", "y")
     assert cli.main([str(case.path)], ask=ask) == 0
-    assert len(ask.prompts) == 6
-    assert cli.NO_RECORD not in (text := capsys.readouterr().out)
-    assert text.count(ldr.STORAGE_NOTE) >= 3  # A's question, its repeat, B's question
-    out = vw.default_output(case.path)
-    with contextlib.closing(fz._connect_ro(out)) as con:
-        rec = ldr.parse_part_b_record(con)
-    assert (rec.set, rec.kept, rec.storage) == (4, 1, 1)
-
-
-def test_a_number_is_no_answer_where_no_members_are_listed(tmp_path, schema_db_url, capsys) -> None:
-    """Review finding 2: the three "probably" part B defaults have three different lists, so no member list is
-    shown and ``2`` would mean another member on each item: it is asked again with :data:`cli.NO_NUMBER`.  The
-    groups come in suspect order (sorted ``class.parameter``): ``commodity.price_method`` ("no sign") first, then the
-    "probably" group (node, solve, unit).  Enter, ``2`` (asked again), Enter, ``1`` for A, ``k`` for B, ``y``: 6
-    prompts and the record of ``test_part_b``."""
-    case = _lost(tmp_path, schema_db_url)
-    ask = _Ask("", "2", "", "1", "k", "y")
-    assert cli.main([str(case.path)], ask=ask) == 0
-    assert len(ask.prompts) == 6 and ask.prompts[1] == ask.prompts[2]
+    assert len(ask.prompts) == 2 and ask.prompts[0] == "  [Enter = restore; e = one by one; x = skip; q = quit] > "
     text = capsys.readouterr().out
-    assert text.count(cli.NO_NUMBER) == 1 and "solve.solve_mode (class default): empty -> single_solve" in text
-    with contextlib.closing(fz._connect_ro(vw.default_output(case.path))) as con:
-        rec = ldr.parse_part_b_record(con)
+    assert cli.NO_RECORD not in text and a_line in text and b_line in text
+    assert ldr.CHECK_INTRO.strip() in " ".join(text.split())  # the block is printed wrapped
+    rec = _part_b_record(case.path)
+    assert (rec.set, rec.kept, rec.storage) == (4, 2, 0)
+    out = vw.default_output(case.path)
+    report = out.with_name(out.name + vw.SIDE_TXT).read_text(encoding="utf-8")
+    assert a_line in report and b_line in report
+
+
+def test_part_b_without_storage_changes_no_result(tmp_path, schema_db_url, capsys) -> None:
+    """``_lost`` without ``node.storage_start_end_method``: no storage node, so the block says Enter changes no
+    result and offers no ``e``; Enter, ``y`` → three defaults set."""
+    case = _lost(tmp_path, schema_db_url, names=LOST[:2])
+    ask = _Ask("", "y")
+    assert cli.main([str(case.path)], ask=ask) == 0
+    assert ask.prompts[0] == "  [Enter = restore; x = skip; q = quit] > "
+    assert "FlexTool already uses these defaults when none is set." in " ".join(capsys.readouterr().out.split())
+    rec = _part_b_record(case.path)
+    assert (rec.set, rec.kept, rec.storage) == (3, 0, 0)
+
+
+def test_block_one_by_one(tmp_path, schema_db_url, capsys) -> None:
+    """At the block ``2`` is no answer ("Type Enter, e, x or q."), ``e`` goes through the items: the four defaults
+    (Enter each), A ``fix_start`` (``1``, the only member offered), B kept, ``y``: 9 prompts and the record
+    ``(4, 1, 1)``.  The summary names a default "(method parameter default)"."""
+    case = _lost(tmp_path, schema_db_url)
+    ask = _Ask("2", "e", "", "", "", "", "1", "k", "y")
+    assert cli.main([str(case.path)], ask=ask) == 0
+    assert len(ask.prompts) == 9 and ask.prompts[0] == ask.prompts[1]
+    text = capsys.readouterr().out
+    assert "  Type Enter, e, x or q." in text and "solve.solve_mode (method parameter default): empty -> single_solve" \
+        in text
+    rec = _part_b_record(case.path)
     assert (rec.set, rec.kept, rec.storage) == (4, 1, 1)
 
 

@@ -7,8 +7,8 @@ its messages, texts included, from current facts at every recompute.  No Tk here
   ``possible_value_list_overwrite_ro`` flags (:meth:`~flextool.gui.input_sources.InputSourceManager.value_list_findings`),
   with a "Copy repair command" button.  Not dismissable: a valid repair record (the repair tool) ends the finding,
   and with it the message.  TODO(v5.0.0): remove with W-0490.
-- ``list_defaults_lost`` (W-0491, package P7b): one message per input-source database whose shipped list defaults
-  an upgrade before 4.6.3 left empty
+- ``list_defaults_lost`` (W-0491, package P7b): one message per input-source database whose method parameter
+  defaults an upgrade before 4.6.3 left empty
   (:meth:`~flextool.gui.input_sources.InputSourceManager.list_defaults_findings`), with the same button.  Not
   dismissable and not attention (a note: it opens the list by itself at two project opens per set of empty
   defaults); only the repair tool's part B record ends it.  TODO(v5.0.0): remove with W-0491.
@@ -223,7 +223,7 @@ def repair_tooltip(os_name: str = os.name) -> str:
     return "Paste into PowerShell" if os_name == "nt" else "Paste into a terminal"
 
 
-LIST_DEFAULTS_TITLE = "Shipped defaults lost in an old upgrade"
+LIST_DEFAULTS_TITLE = "Method parameter defaults lost in an old upgrade"
 _STORAGE_DEFAULT = "node.storage_start_end_method"
 
 
@@ -231,15 +231,15 @@ def list_defaults_text(names: Iterable[str]) -> tuple[str, tuple[str, ...]]:
     """Title and paragraph of a ``list_defaults_lost`` message (W-0491) for the empty bug-reachable *names*: the
     storage sentence only when ``node.storage_start_end_method`` is among them (the one default that can change
     results)."""
-    first = "An earlier upgrade left some default values of this database empty."
+    first = "An earlier upgrade left some method parameter defaults of this database empty."
     stays = "This message stays until the repair is recorded."
     if _STORAGE_DEFAULT in set(names):
         return LIST_DEFAULTS_TITLE, (
             f"{first} Results can differ only in storage start and end handling (storage_start_end_method). The "
-            "repair tool makes a repaired copy and asks about those storage nodes: use \"Copy repair command\" "
+            "repair tool makes a repaired copy and lists those storage nodes to check: use \"Copy repair command\" "
             f"and paste it into a terminal. {stays}",)
     return LIST_DEFAULTS_TITLE, (
-        f"{first} Results do not change. The repair tool makes a repaired copy with the shipped defaults: use "
+        f"{first} Results do not change. The repair tool makes a repaired copy with FlexTool's defaults: use "
         f"\"Copy repair command\" and paste it into a terminal. {stays}",)
 
 

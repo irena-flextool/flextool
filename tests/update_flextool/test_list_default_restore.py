@@ -65,7 +65,7 @@ def test_three_empty_defaults_with_the_fingerprint(tmp_path, schema_db_url) -> N
         assert (s.label, s.current, s.reason, s.part_b, s.certain) == (ldr.PROBABLY, "", ldr.RESTORE_REASON, True,
                                                                         False)
         assert s.item.startswith("def:") and s.commit == case.emptied_commit
-    assert len(vs.groups(found)) == 1  # one question "restore 3 shipped defaults"
+    assert vs.defaults_block(found) == found and not vs.results_change(found)  # one question for all three
 
 
 def test_without_the_fingerprint_no_sign_of_the_bug(tmp_path, schema_db_url) -> None:
@@ -100,15 +100,16 @@ def test_other_member_other_list_and_user_definitions_are_not_suspects(tmp_path,
     assert found == ()
 
 
-def test_w0490_hit_invest_defaults_are_part_a_only(tmp_path, schema_db_url) -> None:
-    """A hit with NULL unit / connection / node ``invest_method`` defaults: each is one suspect, part A's label
-    (``value_list_suspects.SHIPPED``); the group default (``not_active`` in its own list) is no suspect."""
+def test_w0490_hit_empty_invest_defaults_are_part_b(tmp_path, schema_db_url) -> None:
+    """A hit with NULL unit / connection / node ``invest_method`` defaults: the bug did not make them read
+    ``cumulative_limits``, so part A leaves them; each is one part B suspect, "no sign of the bug" (``make_hit`` has
+    no fingerprint commit); the group default (``not_active`` in its own list) is no suspect."""
     case = make_hit(tmp_path, schema_db_url)
     clear_defaults(case.path, ["unit.invest_method", "connection.invest_method", "node.invest_method"], None)
     _, found = _all(case.path, tmp_path)
     assert len({s.item for s in found}) == len(found) == 3
     assert sorted((s.cls, s.label, s.suggestion, s.part_b) for s in found) == [
-        (cls, vs.SHIPPED, "set:not_allowed", False) for cls in ("connection", "node", "unit")]
+        (cls, ldr.NO_SIGN, "set:not_allowed", True) for cls in ("connection", "node", "unit")]
 
 
 def test_storage_suspects(tmp_path, schema_db_url) -> None:

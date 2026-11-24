@@ -1027,7 +1027,7 @@ def test_w0491_message_for_the_original_only_and_capped(schema_db_url, tmp_path)
         LIST_DEFAULTS, database_key(sources / "model.sqlite"), "model.sqlite",
         hashlib.sha1(empty.encode()).hexdigest()[:12])
     assert (LIST_DEFAULTS.dismissable, LIST_DEFAULTS.attention, LIST_DEFAULTS.docs) == (False, False, "W-0491")
-    assert msg.title == "Shipped defaults lost in an old upgrade"
+    assert msg.title == "Method parameter defaults lost in an old upgrade"
     assert "storage start and end handling (storage_start_end_method)" in msg.paragraphs[0]
     _check_style(msg)
     with pytest.raises(ValueError):

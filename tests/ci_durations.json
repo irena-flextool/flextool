@@ -569,5 +569,6 @@
  "tests/update_flextool/test_v74_construction_lead_time.py": 9.0,
  "tests/update_flextool/test_v75_rename_and_reserve_duration.py": 4.4,
  "tests/update_flextool/test_v76_dispatch_realization_method.py": 7.0,
- "tests/update_flextool/test_v77_schema_batch.py": 6.8
+ "tests/update_flextool/test_v77_schema_batch.py": 6.8,
+ "tests/update_flextool/test_value_list_repair_block.py": 6.0
 }

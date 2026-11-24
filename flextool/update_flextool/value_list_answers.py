@@ -10,7 +10,8 @@ Finnish locale saves ``;``), any other encoding refused ("save as CSV UTF-8").  
   file whose key differs was made for another copy of the database: refused.
 - Strict per row: ``kind``, ``class``, ``parameter``, ``current`` (the member the suspect reads now in its own
   list).  A mismatch makes the row stale: reported, not applied, no record.  An ``item`` that is no suspect is an
-  error (the file is refused).
+  error (the file is refused), except a ``def:`` or ``sn:`` row: a warning, and the row is ignored (a file of an
+  earlier run whose defaults are not asked in this one: :data:`NOT_ASKED_OLD`, :data:`NOT_ASKED`).
 - Lenient: ``entity`` / ``alternative`` that differ only the way Excel changes a value (surrounding spaces, or both
   parse as the same number, ``001`` vs ``1``, ``1.5`` vs ``1,5``) give a warning, and the row is applied.
 - ``answer``: ``keep``, ``set:<member>``, ``skip``, or empty (no answer), in any case.  ``set:`` must name a member
@@ -20,10 +21,9 @@ Finnish locale saves ``;``), any other encoding refused ("save as CSV UTF-8").  
 
 **Plan** (:func:`make_plan`): what the write sets, keeps and skips, and whether each record is due.  It counts only
 explicit answers; a ``set:`` to the member the item reads already counts as ``keep`` (with a warning).  A record is
-due when every suspect of its part has ``keep`` or ``set:`` (no skip, no stale row, no missing answer); for part B
-that includes a part A class default that is empty (an ``invest_method`` default on a W-0490 hit, which is part
-A's only but is in the empty set the part B record's hash covers).  While any storage question has no answer, the ``node.storage_start_end_method`` default is held
-back even if it is answered ``set:`` (it is what keeps those questions alive).
+due when every suspect of its part has ``keep`` or ``set:`` (no skip, no stale row, no missing answer).  While any
+storage question has no answer, the ``node.storage_start_end_method`` default is held back even if it is answered
+``set:`` (it is what keeps those questions alive).
 
 Standard library and the tool's own modules only; no database is written here.
 
@@ -47,6 +47,8 @@ COLUMNS = ("item", "file_key", "kind", "class", "parameter", "entity", "alternat
 _STRICT = ("kind", "class", "parameter", "current")
 KEEP, SET, SKIP = "keep", "set", "skip"
 STORAGE_HELD = "storage_start_end_method default left empty until every storage question has an answer"
+NOT_ASKED_OLD = "not asked in this run (empty defaults are asked after the upgrade)"
+NOT_ASKED = "no longer asked: left as it is"
 NOT_UTF8 = "{path} is not UTF-8 text: save it as \"CSV UTF-8\" (in Excel: Save As, CSV UTF-8) and try again."
 
 
@@ -126,8 +128,8 @@ def check_answer(s: vs.Suspect, text: str, allowed: tuple[str, ...]) -> Answer |
 
 
 def accept_certain(suspects) -> dict[str, Answer]:
-    """``--accept-certain``: the pre-selected answer of every "certain" suspect, as an explicit answer.  Class
-    defaults, part B and storage suspects are never certain, so they are never answered here."""
+    """``--accept-certain``: the pre-selected answer of every "certain" suspect, as an explicit answer.  Method
+    parameter defaults, part B and storage suspects are never certain, so they are never answered here."""
     return {s.item: Answer(SET, s.suggestion[4:]) for s in suspects
             if s.certain and not s.part_b and s.suggestion and s.suggestion.startswith("set:")}
 
@@ -185,6 +187,8 @@ def read_answers(path: str | Path, a: vr.Analysis, suspects) -> ReadAnswers:
         raise AnswersError(f"{path} has no 'item' column: it is not a value-list answers file.")
     if missing := [c for c in COLUMNS[:9] if c not in names[delim]]:
         raise AnswersError(f"{path} lacks the column(s) {', '.join(missing)}.")
+    from flextool.update_flextool import FLEXTOOL_DB_VERSION
+
     by_item = {s.item: s for s in suspects}
     key, allowed = file_key(a), choices(a, suspects)
     answers, stale, warnings, seen, bad = {}, [], [], set(), []
@@ -197,12 +201,15 @@ def read_answers(path: str | Path, a: vr.Analysis, suspects) -> ReadAnswers:
             raise AnswersError(f"{path} was made for another copy of the database (its key "
                                f"'{cells['file_key'].strip()}' is not this file's '{key}'): write a new one with "
                                "--dry-run --write-answers.")
-        s = by_item.get(item)
-        if s is None:
-            raise AnswersError(f"{path}: '{item}' is not an item of this database.")
         if item in seen:
             raise AnswersError(f"{path}: '{item}' appears twice.")
         seen.add(item)
+        s = by_item.get(item)
+        if s is None and item.startswith(("def:", "sn:")):
+            warnings.append(f"{item}: {NOT_ASKED_OLD if a.version < FLEXTOOL_DB_VERSION else NOT_ASKED}")
+            continue
+        if s is None:
+            raise AnswersError(f"{path}: '{item}' is not an item of this database.")
         now = {"kind": s.kind, "class": s.cls, "parameter": s.parameter, "current": s.current}
         changed = [c for c in _STRICT if cells[c] != now[c]]
         for col, value in (("entity", s.entity), ("alternative", s.alternative)):
@@ -294,7 +301,6 @@ def make_plan(a: vr.Analysis, suspects, answers, *, stale=(), warnings=(), key: 
     allowed = choices(a, suspects)
     stale_items = {item for item, _ in stale}
     decisions, warnings = [], list(warnings)
-    reference = ldr.reference()
     for s in suspects:
         ans = None if s.item in stale_items else answers.get(s.item)
         if ans is not None and ans.action == SET:  # check again: a prompt or a caller may pass any member
@@ -304,20 +310,14 @@ def make_plan(a: vr.Analysis, suspects, answers, *, stale=(), warnings=(), key: 
                 warnings.append(f"{s.item}: set:{s.current} is what it reads already; counted as keep")
         decisions.append(Decision(s, ans))
 
-    def empty_reference_default(s: vs.Suspect) -> bool:
-        """A part A class default that is in part B's empty set too (an ``invest_method`` default on a hit)."""
-        return s.kind == vs.DEFAULT and not s.current and (s.cls, s.parameter) in reference
-
     def done(part_b: bool) -> bool:
-        return all(d.action in (KEEP, SET) for d in decisions
-                   if d.suspect.part_b == part_b or (part_b and empty_reference_default(d.suspect)))
+        return all(d.action in (KEEP, SET) for d in decisions if d.suspect.part_b == part_b)
 
     storage_open = any(d.action not in (KEEP, SET) for d in decisions if d.suspect.kind == ldr.STORAGE_KIND)
     held = tuple(d.suspect.item for d in decisions if storage_open and d.action == SET and d.suspect.part_b
                  and d.suspect.kind == vs.DEFAULT and (d.suspect.cls, d.suspect.parameter) == ldr.STORAGE)
     part_a = a.finding is not None and (checked_by_hand or a.state in (vr.HIT, vr.HIT_UNANCHORED, vr.RENAMED_BACK,
                                                                          vr.NOT_HIT))
-    empty_default = any(s.part_b or empty_reference_default(s) for s in suspects)
-    part_b = a.version == FLEXTOOL_DB_VERSION and empty_default
+    part_b = a.version == FLEXTOOL_DB_VERSION and any(s.part_b for s in suspects)
     return Plan(key if key is not None else file_key(a), () if checked_by_hand else a.restore, tuple(decisions),
                 tuple(stale), tuple(warnings), held, part_a and done(False), part_b and done(True), checked_by_hand)

@@ -2067,8 +2067,7 @@ def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback,
             if int(version) == FLEXTOOL_DB_VERSION:
                 _refresh_unit_count_texts(db)
                 _refresh_head_schema(db)
-                _commit_step(db, "Refreshed existing / virtual_unitsize descriptions, added the current "
-                                 "version's new definitions and replaced its superseded defaults")
+                _commit_step(db, REFRESH_COMMIT)
             print(database_path+ " already up-to-date at version "+ str(version))
 
 def _float_values(db, entity_class_name: str, names) -> dict:
@@ -2135,6 +2134,10 @@ def _stage_version(db, version: int) -> None:
 
 #: The fixed start of the INFO record :func:`_already_applied` writes.
 ALREADY_APPLIED_PREFIX = "Migration step already applied:"
+#: The commit of the current-version refresh (``migrate_database`` on a current database); the repair tool does not
+#: count it as a hand edit (``list_default_restore.changed_by_hand``).
+REFRESH_COMMIT = ("Refreshed existing / virtual_unitsize descriptions, added the current version's new definitions "
+                  "and replaced its superseded defaults")
 
 
 def _already_applied(version: int, what: str) -> bool:
