@@ -103,12 +103,14 @@ from flextool.engine.model import _group_slack
 from flextool.engine.model import _lead_time
 from flextool.engine.model import _non_anticipativity
 from flextool.engine.model import _online
+from flextool.engine.model import _period_rows
 from flextool.engine.model import _reserve
 from flextool.engine.model import _extend
 from flextool.engine.model import _retire_built
 from flextool.engine.model import _self_discharge
 from flextool.engine.model import _unit_floors
 from flextool.engine.input._axis_enums import alias_to_axis, align_join_dtypes, join_aligned, rename_to_axis
+from flextool.engine.preprocess._step_relations import check_step_relations, scope_end_pairs
 from flextool.engine.model._common import (
     _availability_factor,
     _connection_procs,
@@ -467,6 +469,9 @@ class _Build:
     op_factor: Any = None                   # weight of operational cost terms, (d, t)
     ev_factor: Any = None                   # weight of event cost terms (start-ups, ramp changes), (d, t)
     self_discharge: Any = None              # _self_discharge.LossCoefficients, None without a loss
+    # The path / path_at_step families (_period_rows.PERIOD_ROW_KINDS) whose rows are built per path (base period
+    # + branch period); G1 accepts their rows on branch periods.
+    path_converted: set = field(default_factory=set)
 
 
 def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
@@ -567,6 +572,10 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         if term is not None:
             obj = term if obj is None else obj + term
 
+    # The realization-roll checks G1-G4 (no-ops without a period label with steps; G2 holds on every LP).
+    _period_rows.check_period_rows(b)
+    _period_rows.check_branch_weights(b)
+    check_step_relations(d, solve_name)
     if scale_the_objective != 1.0:
         obj = obj * scale_the_objective
     m.set_objective(obj, sense="min")
@@ -5887,16 +5896,11 @@ def _first_scope_ends(b: _Build, nodes: pl.DataFrame) -> "pl.DataFrame | None":
     roll's first step would wrap to: the last step of the first period in the roll (bind_within_period, also
     bind_within_timeblock, which a rolling solve uses as bind_within_period, and bind_intraperiod_blocks).  None
     when there are none."""
-    d = b.d
-    if not (_has_rows(d.nodeState_first_dt) and _has_rows(d.nodeState_last_dt)):
+    pairs = scope_end_pairs(b.d)   # also checked by G3 (preprocess._step_relations)
+    if pairs is None:
         return None
     names = nodes.select(pl.col("n").cast(pl.Utf8)).unique()
-    first = (d.nodeState_first_dt.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
-             .join(names, on="n", how="semi"))
-    if first.height == 0:
-        return None
-    last = d.nodeState_last_dt.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
-    utf = first.select("n", "d").join(last, on=["n", "d"], how="inner").unique()
+    utf = pairs.join(names, on="n", how="semi").select("n", "d", pl.col("t_end").alias("t")).unique()
     if utf.height == 0:
         return None
     over = (b.nodeState_dt

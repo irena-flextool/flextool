@@ -2550,9 +2550,18 @@ def _worker(json_name: str, scenario: str, patch: str, out_dir: Path, *,
     capture = {"on": False}  # off during a --dirty-with run
     model_mod = importlib.import_module(MODEL_MODULE)
     original = model_mod.build_flextool
+    from flextool.engine.model._period_rows import unclassified_period_families
+    from flextool.engine.preprocess._step_relations import unregistered_step_frames
+    pin_failures: list[str] = []
 
     def capturing_build_flextool(m, d, *args, **kwargs):
         result = original(m, d, *args, **kwargs)
+        # Pins of the realization-roll checks, per build: every period-level family (over with d, no step column)
+        # is in PERIOD_ROW_KINDS, every FlexData frame with two step columns is in STEP_RELATIONS.
+        for what, gaps in (("PERIOD_ROW_KINDS", unclassified_period_families(m)),
+                           ("STEP_RELATIONS", unregistered_step_frames(d))):
+            if gaps:
+                pin_failures.append(f"{_solve_name_from_stack()}: not in {what}: {gaps}")
         if not capture["on"]:
             return result
         solve = _solve_name_from_stack()
@@ -2619,6 +2628,9 @@ def _worker(json_name: str, scenario: str, patch: str, out_dir: Path, *,
         print("ERROR: no Problem was built through build_flextool",
               file=sys.stderr)
         return 2
+    if pin_failures:
+        print("ERROR: " + "\n".join(pin_failures), file=sys.stderr)
+        return 3
     (out_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=1) + "\n")
     return 0
