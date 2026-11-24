@@ -290,7 +290,7 @@ def _solve_objectives(csv_dir: Path) -> dict[str, float]:
     """``{solve: LP objective}`` from the ``Solve,Objective`` block of ``summary_solve.csv``."""
     out: dict[str, float] = {}
     in_block = False
-    with open(csv_dir / "summary_solve.csv") as f:
+    with open(csv_dir / "summary_solve.csv", encoding="utf-8") as f:
         for row in csv.reader(f):
             if row and row[0] == "Solve":
                 in_block = True
@@ -310,7 +310,7 @@ def _read_summary_solve(csv_dir: Path) -> dict:
     etc.  Values past the first comma-separated tokens are ignored.
     """
     rows = []
-    with open(csv_dir / "summary_solve.csv") as f:
+    with open(csv_dir / "summary_solve.csv", encoding="utf-8") as f:
         reader = csv.reader(f)
         for row in reader:
             if row:
@@ -376,7 +376,7 @@ def _read_slack_capacity_margin_d(csv_dir: Path) -> pd.DataFrame:
 
 def _read_co2_model_total(csv_dir: Path) -> float:
     """Read the ``model`` entity ``CO2`` total [Mt] from ``co2.csv``."""
-    with open(csv_dir / "co2.csv") as f:
+    with open(csv_dir / "co2.csv", encoding="utf-8") as f:
         reader = csv.reader(f)
         next(reader)  # header: param_CO2,model_wide
         row = next(reader)
@@ -1090,7 +1090,7 @@ def test_stochastic_branch_weight(
     # period label), otherwise the identity below is vacuous (deterministic runs
     # weight by 1.0 and trivially reconcile).
     weights: dict[str, float] = {}
-    with open(workdir / "solve_data" / "pd_branch_weight.csv") as f:
+    with open(workdir / "solve_data" / "pd_branch_weight.csv", encoding="utf-8") as f:
         next(f)  # header
         for row in csv.reader(f):
             if len(row) >= 2 and row[0]:

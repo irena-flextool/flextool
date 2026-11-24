@@ -239,7 +239,7 @@ def _summary(csv_dir: Path) -> tuple[float, float]:
     import csv
 
     objective = total = None
-    with open(csv_dir / "summary_solve.csv") as f:
+    with open(csv_dir / "summary_solve.csv", encoding="utf-8") as f:
         for row in csv.reader(f):
             if len(row) < 2:
                 continue

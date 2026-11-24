@@ -247,6 +247,15 @@ flextool-read-matpower = "flextool.cli.cmd_read_matpower:main"
 # protocol's stdout clean before ``import flextool`` (never a gui-script: it needs stdio).
 flextool-assistant = "flextool_assistant_entry:main"
 
+[tool.ruff.lint]
+# The defaults (E4, E7, E9, F) plus the bug classes that recur here: mutable / call
+# defaults, useless expressions, and text-mode open() without an encoding
+# (Windows reads the locale code page; CI runs Windows).  PLW1514 is a preview
+# rule; the explicit select keeps preview from widening the default set.
+select = ["E4", "E7", "E9", "F", "B006", "B008", "B018", "PLW1514"]
+preview = true
+explicit-preview-rules = true
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 # ``-n 8`` runs the suite across 8 worker processes by default (pytest-xdist,

@@ -1352,7 +1352,7 @@ def _overlay_steps(tmp_path_factory, fixture: Path, base: str, alt: str, values:
     from tests.db_utils import json_to_db
     from tests.engine.test_cyclic_fix_start import _lp_snapshot
 
-    data = _lp_snapshot()._overlay(json.loads(fixture.read_text()), name=alt, base=base, values=values,
+    data = _lp_snapshot()._overlay(json.loads(fixture.read_text(encoding="utf-8")), name=alt, base=base, values=values,
                                    entities=list(entities))
     work = tmp_path_factory.mktemp(alt)
     (work / "f.json").write_text(json.dumps(data))

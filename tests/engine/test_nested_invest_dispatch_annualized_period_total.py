@@ -272,7 +272,7 @@ def test_nested_invest_dispatch_annualized_period_total(tmp_path: Path) -> None:
     import csv
 
     tiu_values: list[str] = []
-    with open(csv_dir / "summary_solve.csv", newline="") as fh:
+    with open(csv_dir / "summary_solve.csv", encoding="utf-8", newline="") as fh:
         for row in csv.reader(fh):
             if row and row[0].strip() == "Time in use in years":
                 tiu_values = row[1:]

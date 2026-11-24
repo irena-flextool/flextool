@@ -84,7 +84,7 @@ def _read_csv_rows(path: Path) -> list[list[str]]:
     the file is empty)."""
     if not path.exists():
         return []
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         reader = csv.reader(f)
         next(reader, None)
         return [row for row in reader if row]
@@ -95,7 +95,7 @@ def _read_csv_dict(path: Path) -> list[dict[str, str]]:
     ...}]``.  Empty file → []."""
     if not path.exists():
         return []
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return list(csv.DictReader(f))
 
 

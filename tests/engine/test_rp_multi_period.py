@@ -34,7 +34,7 @@ def _run(tmp_path_factory, patch, json_path: Path = RP_JSON, scenario: str = "cu
     from flextool.update_flextool.db_migration import migrate_database
     from tests.db_utils import json_to_db
 
-    data = patch(json.loads(json_path.read_text()))
+    data = patch(json.loads(json_path.read_text(encoding="utf-8")))
     work = tmp_path_factory.mktemp("rp_multi_period")
     (work / "f.json").write_text(json.dumps(data))
     url = json_to_db(work / "f.json", work / "f.sqlite")

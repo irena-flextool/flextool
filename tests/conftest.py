@@ -39,6 +39,10 @@ os.environ.setdefault("FLEXTOOL_SKIP_SOLVER_PROBE", "1")
 # the thread budget set their own environment (monkeypatch / subprocess env).
 os.environ.setdefault("FLEXTOOL_THREADS", "1")
 os.environ.setdefault("POLARS_MAX_THREADS", "1")
+# A missing autoscale registry entry makes a solve fall back to the unscaled LP
+# silently; strict mode makes it an error, locally as in the CI Tests workflow.
+# Export FLEXTOOL_AUTOSCALE_STRICT=0 to see the lenient behaviour.
+os.environ.setdefault("FLEXTOOL_AUTOSCALE_STRICT", "1")
 
 import importlib.util
 import json

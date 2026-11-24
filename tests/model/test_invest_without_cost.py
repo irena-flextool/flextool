@@ -84,7 +84,7 @@ def _write_outputs(steps: dict, work: Path, monkeypatch) -> Path:
 
 def _summary_lines(csv_dir: Path) -> dict[str, float]:
     out: dict[str, float] = {}
-    with open(csv_dir / "summary_solve.csv") as f:
+    with open(csv_dir / "summary_solve.csv", encoding="utf-8") as f:
         for row in csv.reader(f):
             if len(row) >= 2 and row[0].endswith("(M CUR)"):
                 out[row[0]] = float(row[1])

@@ -2563,7 +2563,7 @@ def native_run_model(state, solver) -> int:
                 period__branch_lists[solve],
             )
             with open(
-                wf / "solve_data/timeline_matching_map.csv", "w", newline=""
+                wf / "solve_data/timeline_matching_map.csv", "w", encoding="utf-8", newline=""
             ) as realfile:
                 writer = csv.writer(realfile)
                 writer.writerow(["period", "step", "upper_step"])
@@ -2571,7 +2571,7 @@ def native_run_model(state, solver) -> int:
                     writer.writerow([period, step, upper_step])
                     matching_rows.append((str(period), str(step), str(upper_step)))
         else:
-            with open(wf / "solve_data/timeline_matching_map.csv", "w") as realfile:
+            with open(wf / "solve_data/timeline_matching_map.csv", "w", encoding="utf-8") as realfile:
                 realfile.write("period,step,upper_step\n")
         # The same rows in the Provider: the fix_price reference-price derive reads the Provider only (the disk file
         # stays for the csv dump); written every iter, the level Provider being shared by the iters of a level.
@@ -3040,7 +3040,7 @@ def native_run_model(state, solver) -> int:
             mod_phases_path = wf / "solve_data" / "mod_phases.csv"
             if mod_phases_path.exists():
                 try:
-                    with open(mod_phases_path) as _mp:
+                    with open(mod_phases_path, encoding="utf-8") as _mp:
                         _reader = csv.DictReader(_mp)
                         for _row in _reader:
                             try:

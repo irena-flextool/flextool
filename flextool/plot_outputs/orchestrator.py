@@ -949,7 +949,7 @@ def plot_data_wanted(write_plot_data: bool, color_path: Path | None) -> bool:
 
 
 def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
-        active_settings=['default'], plot_rows=(0, 167), delete_existing_plots=True,
+        active_settings=('default',), plot_rows=(0, 167), delete_existing_plots=True,
         plot_file_format='png', only_first_file=False,
         break_times: pd.MultiIndex | None = None,
         color_path: Path | None = None,
@@ -1200,7 +1200,7 @@ def compute_all_plot_plans(
             dir=str(plan_dir), prefix="_avail_", suffix=".tmp",
         )
         try:
-            with open(fd, "w") as f:
+            with open(fd, "w", encoding='utf-8') as f:
                 json.dump({"available": available}, f)
             Path(tmp_path).replace(avail_path)
         except BaseException:

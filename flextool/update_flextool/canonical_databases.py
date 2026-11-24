@@ -209,9 +209,9 @@ def _summarise_diff(committed: Path, regenerated: Path) -> str:
     Used by ``verify`` to surface drift without flooding the CI log.
     Mirrors :func:`flextool.update_flextool.test_fixtures._summarise_diff`.
     """
-    with open(committed) as f:
+    with open(committed, encoding="utf-8") as f:
         a = json.load(f)
-    with open(regenerated) as f:
+    with open(regenerated, encoding="utf-8") as f:
         b = json.load(f)
     keys = sorted(set(a) | set(b))
     lines = []
@@ -229,7 +229,7 @@ def _summarise_diff(committed: Path, regenerated: Path) -> str:
 def _compare(json_abs: Path, regenerated: Path, name: str) -> bool:
     with open(json_abs, encoding="utf-8") as f:
         committed_text = f.read()
-    with open(regenerated) as f:
+    with open(regenerated, encoding="utf-8") as f:
         regenerated_text = f.read()
     if committed_text == regenerated_text:
         print(f"ok: {name}")

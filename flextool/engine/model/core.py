@@ -163,7 +163,7 @@ def _build_prof(label: str) -> None:
     if os.environ.get("FLEXTOOL_BUILD_PROFILE") != "1":
         return
     try:
-        with open("/proc/self/status") as _f:
+        with open("/proc/self/status", encoding="utf-8") as _f:
             for _ln in _f:
                 if _ln.startswith("VmRSS:"):
                     sys.stderr.write(f"[build profile] step={label}\trss_gb={int(_ln.split()[1])/(1024*1024):.3f}\n")

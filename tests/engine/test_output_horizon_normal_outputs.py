@@ -156,7 +156,7 @@ def _canonical(df: pl.DataFrame) -> pl.DataFrame:
 def _manifest_files(path: Path) -> list[dict]:
     """The file entries of ``output_raw/manifest.json`` without the run's location (``bundle_root`` and
     ``generated_at`` are run-specific); the raw dump's entries are left out."""
-    files = json.loads(path.read_text())["files"]
+    files = json.loads(path.read_text(encoding="utf-8"))["files"]
     return [f for f in files if "horizon" not in Path(f.get("path", "")).parts]
 
 
@@ -191,7 +191,7 @@ def test_normal_outputs_independent_of_flag(runs, off, on) -> None:
 
 def _scenario_chain(fixture: Path, scenario: str) -> list[str]:
     """The alternatives of ``scenario`` in rank order."""
-    rows = [r for r in json.loads(fixture.read_text())["scenario_alternatives"] if r[0] == scenario]
+    rows = [r for r in json.loads(fixture.read_text(encoding="utf-8"))["scenario_alternatives"] if r[0] == scenario]
     nxt = {a: b for _, a, b in rows}
     alt = next(a for a in nxt if a not in set(nxt.values()))
     out = []

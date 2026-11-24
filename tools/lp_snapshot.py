@@ -2774,7 +2774,7 @@ class WorkMode:
 
 
 def _run_fixture(fx: Fixture, out_root: Path,
-                 mode: WorkMode = WorkMode(),
+                 mode: WorkMode = WorkMode(),  # noqa: B008 (frozen dataclass)
                  autoscale_plan: bool = False) -> tuple[str, int, float, str]:
     out_dir = out_root / fx.name
     if out_dir.exists():
@@ -2882,7 +2882,7 @@ def parse_mps(path: Path) -> MpsModel:
     obj_rhs = 0.0
     section = ""
     integer = False
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         for raw in fh:
             line = raw.rstrip("\n")
             if not line.strip() or line.startswith("*"):
@@ -3272,7 +3272,7 @@ def constraint_universe() -> dict[str, str]:
 def _row_families(mps: Path) -> set[str]:
     fams: set[str] = set()
     section = ""
-    with open(mps) as fh:
+    with open(mps, encoding="utf-8") as fh:
         for line in fh:
             if line and not line[0].isspace():
                 section = line.split()[0] if line.strip() else section

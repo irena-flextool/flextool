@@ -68,7 +68,7 @@ def _load_scenarios() -> list:
     must finish within the given budget. Catches large performance
     regressions in the writer/runner/post-process layers.
     """
-    with open(TEST_DIR / "scenarios.yaml") as f:
+    with open(TEST_DIR / "scenarios.yaml", encoding="utf-8") as f:
         entries = yaml.safe_load(f)
     params = []
     for e in entries:
@@ -103,7 +103,7 @@ def _parse_summary_solver_objective(summary_path: Path) -> float:
     solve (and roll).
     """
     total, in_block, rows = 0.0, False, 0
-    for raw in summary_path.read_text().splitlines():
+    for raw in summary_path.read_text(encoding="utf-8").splitlines():
         if raw.startswith('"Solve","Objective"'):
             in_block = True
             continue
@@ -140,7 +140,7 @@ def _solver_objectives_and_counted_total(summary_path: Path) -> tuple[list[float
     objectives: list[float] = []
     counted = None
     in_solves = False
-    with summary_path.open() as f:
+    with summary_path.open(encoding="utf-8") as f:
         for row in csv.reader(f):
             if not row:
                 continue
@@ -173,7 +173,7 @@ def _parse_summary_solve_objective(summary_path: Path) -> float:
     full horizon.
     """
     label = "Total cost (calculated) full horizon"
-    for raw in summary_path.read_text().splitlines():
+    for raw in summary_path.read_text(encoding="utf-8").splitlines():
         if label in raw:
             # Format: "<label> (M CUR)",<value>,...
             parts = raw.split(",")
@@ -235,7 +235,7 @@ def _header_row_count(path: Path) -> int:
     ``pd.read_csv`` + ``to_csv``.  A genuine data row never begins with
     either signal.
     """
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         first = f.readline()
         second = f.readline()
         third = f.readline()

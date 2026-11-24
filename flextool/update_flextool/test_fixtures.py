@@ -71,7 +71,7 @@ def fixture_paths(fixtures_dir: Path | None = None) -> list[Path]:
     fixtures = fixtures_dir if fixtures_dir is not None else _fixtures_dir()
     out = []
     for path in sorted(fixtures.glob("*.json")):
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             if "parameter_definitions" in json.load(f):
                 out.append(path)
     return out
@@ -112,7 +112,7 @@ def migrate_fixture(json_path: Path, out_path: Path | None = None) -> None:
             dump_fixture_json(sync_schema_sections(data, "packed"), source)
         staging = Path(tmp) / json_path.name
         _round_trip(source, staging)
-        with open(staging) as f:
+        with open(staging, encoding="utf-8") as f:
             data = json.load(f)
     dump_fixture_json(sync_schema_sections(data, "packed"), out_path)
 
@@ -143,9 +143,9 @@ def _summarise_diff(committed: Path, regenerated: Path) -> str:
 
     Used by ``verify`` to surface drift without flooding the CI log.
     """
-    with open(committed) as f:
+    with open(committed, encoding="utf-8") as f:
         a = json.load(f)
-    with open(regenerated) as f:
+    with open(regenerated, encoding="utf-8") as f:
         b = json.load(f)
     keys = sorted(set(a) | set(b))
     lines = []
@@ -166,9 +166,9 @@ def _summarise_diff(committed: Path, regenerated: Path) -> str:
 
 
 def _compare(src: Path, regenerated: Path) -> bool:
-    with open(src) as f:
+    with open(src, encoding="utf-8") as f:
         committed_text = f.read()
-    with open(regenerated) as f:
+    with open(regenerated, encoding="utf-8") as f:
         regenerated_text = f.read()
     if committed_text == regenerated_text:
         print(f"ok: {src.name}")

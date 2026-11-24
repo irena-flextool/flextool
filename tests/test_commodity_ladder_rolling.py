@@ -385,7 +385,7 @@ def _read_accumulator(workdir: Path) -> dict[tuple[str, int, str], float]:
     path = _ladder_csv_path(workdir, "ladder_cum_realized_mwh.csv")
     assert path.exists(), f"Accumulator CSV missing: {path}"
     out: dict[tuple[str, int, str], float] = {}
-    for row in csv.DictReader(open(path)):
+    for row in csv.DictReader(open(path, encoding="utf-8")):
         key = (row["commodity"], int(row["tier"]), row["period"])
         out[key] = float(row["p_ladder_cum_realized_mwh"])
     return out
@@ -395,7 +395,7 @@ def _read_sim_hours(workdir: Path) -> dict[str, float]:
     path = _ladder_csv_path(workdir, "ladder_cum_sim_hours.csv")
     assert path.exists(), f"Sim hours CSV missing: {path}"
     out: dict[str, float] = {}
-    for row in csv.DictReader(open(path)):
+    for row in csv.DictReader(open(path, encoding="utf-8")):
         out[row["period"]] = float(row["p_ladder_cum_sim_hours"])
     return out
 

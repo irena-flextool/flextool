@@ -43,7 +43,7 @@ def test_failure_message_has_three_plain_english_sections():
 def _failure_message_strings() -> list[tuple[str, int, str]]:
     """Every (kwarg, lineno, text) passed to a ``_benders_failure_message``
     call in the engine, with concatenated string-literal arguments joined."""
-    tree = ast.parse(_BENDERS_SRC.read_text())
+    tree = ast.parse(_BENDERS_SRC.read_text(encoding="utf-8"))
     out: list[tuple[str, int, str]] = []
     for node in ast.walk(tree):
         if (

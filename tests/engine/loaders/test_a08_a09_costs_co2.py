@@ -37,7 +37,7 @@ from tests._support.provider import provider_from_csv_dirs
 
 def _write(p: Path, text: str) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(text)
+    p.write_text(text, encoding="utf-8")
 
 
 def _make_dirs(tmp_path: Path) -> tuple[Path, Path]:

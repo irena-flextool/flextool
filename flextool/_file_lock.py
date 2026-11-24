@@ -129,7 +129,7 @@ def exclusive_file_lock(
     When the lock is not free at once, *on_wait* is called once before waiting.  *timeout* bounds the wait on
     Windows (see :func:`lock_exclusive`).
     """
-    with open(lock_path, "a") as lock_fh:
+    with open(lock_path, "a", encoding="utf-8") as lock_fh:
         if not try_lock_exclusive(lock_fh):
             if on_wait is not None:
                 on_wait()

@@ -1239,7 +1239,7 @@ class _MemoryRecorder:
         if self.enabled and self._path is not None:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             import csv as _csv
-            with open(self._path, "w", newline="") as f:
+            with open(self._path, "w", encoding="utf-8", newline="") as f:
                 _csv.writer(f).writerow(self._HEADER)
 
     @staticmethod
@@ -1265,7 +1265,7 @@ class _MemoryRecorder:
         anon_kb = 0.0
         swap_kb = 0.0
         try:
-            with open("/proc/self/status", "r") as f:
+            with open("/proc/self/status", "r", encoding="utf-8") as f:
                 for line in f:
                     if line.startswith("RssAnon:"):
                         parts = line.split()
@@ -1289,7 +1289,7 @@ class _MemoryRecorder:
         total_kb = 0.0
         free_kb = 0.0
         try:
-            with open("/proc/meminfo", "r") as f:
+            with open("/proc/meminfo", "r", encoding="utf-8") as f:
                 for line in f:
                     if line.startswith("SwapTotal:"):
                         parts = line.split()
@@ -1332,7 +1332,7 @@ class _MemoryRecorder:
         total_kb = 0.0
         avail_kb = 0.0
         try:
-            with open("/proc/meminfo", "r") as f:
+            with open("/proc/meminfo", "r", encoding="utf-8") as f:
                 for line in f:
                     if line.startswith("MemTotal:"):
                         parts = line.split()
@@ -1527,7 +1527,7 @@ class _MemoryRecorder:
             )
             import csv as _csv
             try:
-                with open(self._path, "a", newline="") as f:
+                with open(self._path, "a", encoding="utf-8", newline="") as f:
                     _csv.writer(f).writerow(row)
             except OSError:
                 pass
@@ -1700,7 +1700,7 @@ def _phase_prof(label: str) -> None:
     if os.environ.get("FLEXTOOL_PHASE_PROFILE") != "1":
         return
     try:
-        with open("/proc/self/status") as _f:
+        with open("/proc/self/status", encoding="utf-8") as _f:
             for _ln in _f:
                 if _ln.startswith("VmRSS:"):
                     sys.stderr.write(f"[phase profile] epoch={time.time():.3f}\tstep={label}\trss_gb={int(_ln.split()[1])/(1024*1024):.3f}\n")

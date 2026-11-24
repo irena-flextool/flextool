@@ -85,7 +85,7 @@ def _values(*, r: float = RATE, method: str = "reinvest_choice", life: float = 1
 def _summary(out) -> dict[str, float]:
     import csv
     rows: dict[str, float] = {}
-    with open(out / "summary_solve.csv") as f:
+    with open(out / "summary_solve.csv", encoding="utf-8") as f:
         for row in csv.reader(f):
             if len(row) >= 2:
                 try:

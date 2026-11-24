@@ -159,7 +159,7 @@ def region_c_dir(
 def _read_rows(path: Path) -> list[list[str]]:
     if not path.exists():
         return []
-    with path.open() as fh:
+    with path.open(encoding="utf-8") as fh:
         return [r for r in csv.reader(fh) if r]
 
 

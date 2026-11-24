@@ -35,7 +35,7 @@ import polars as pl
 def _read_csv_pairs(path: Path) -> list[tuple[str, str]]:
     if not path.exists():
         return []
-    with path.open() as fh:
+    with path.open(encoding="utf-8") as fh:
         reader = csv.reader(fh)
         next(reader, None)  # header
         return [(r[0], r[1]) for r in reader if len(r) >= 2 and r[0] and r[1]]

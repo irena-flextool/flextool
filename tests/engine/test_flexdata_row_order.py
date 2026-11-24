@@ -72,7 +72,7 @@ def _child(spec_path: str) -> None:
     import flextool
 
     print("flextool:", flextool.__file__, flush=True)
-    spec = json.loads(Path(spec_path).read_text())
+    spec = json.loads(Path(spec_path).read_text(encoding="utf-8"))
     out = Path(spec["out"])
     for rep in range(2):
         for scenario in spec["scenarios"]:

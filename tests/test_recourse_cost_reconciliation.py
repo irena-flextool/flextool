@@ -45,7 +45,7 @@ def _summary_row(csv_dir: Path, label: str) -> float:
     """Return the numeric value on the ``summary_solve.csv`` row whose
     first cell equals ``label`` (the file is an irregular, multi-shape
     CSV, so scan row-by-row)."""
-    with open(csv_dir / "summary_solve.csv", newline="") as f:
+    with open(csv_dir / "summary_solve.csv", encoding="utf-8", newline="") as f:
         for row in csv.reader(f):
             if row and row[0] == label:
                 return float(row[1])

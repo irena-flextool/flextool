@@ -468,7 +468,7 @@ def run(
             )
             import json as _json
             meta_path = os.path.join(comparison_parquet_dir, "_dispatch_metadata.json")
-            with open(meta_path, "w") as f:
+            with open(meta_path, "w", encoding="utf-8") as f:
                 _json.dump(dispatch_meta, f, indent=2)
             print(f"Wrote dispatch metadata to: {meta_path}")
         except Exception as exc:

@@ -660,7 +660,7 @@ def _read_dt_csv(path) -> dict:
     """``{(unit, node): {(period, time): value or None}}`` of a two-header-row ``*__dt.csv`` output."""
     import csv
 
-    with open(path, newline="") as fh:
+    with open(path, encoding="utf-8", newline="") as fh:
         rows = list(csv.reader(fh))
     cols = list(zip(rows[0][3:], rows[1][3:]))
     out: dict = {c: {} for c in cols}

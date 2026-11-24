@@ -53,7 +53,7 @@ def _write_csv(path: Path, header: list[str], rows: list[list[object]]) -> None:
     lines = [",".join(header)]
     for r in rows:
         lines.append(",".join(str(c) for c in r))
-    path.write_text("\n".join(lines) + "\n")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 @pytest.fixture
@@ -160,7 +160,7 @@ def test_lazy_field_without_provider_raises(workdir: Path) -> None:
     """A hand-built context without a provider cannot fall back to the CSVs on disk."""
     ctx = SolveContext(workdir=workdir)
     with pytest.raises(ValueError, match="requires a FlexDataProvider"):
-        ctx.period_in_use
+        _ = ctx.period_in_use
 
 
 def test_csv_on_disk_is_not_read(workdir: Path) -> None:
@@ -172,7 +172,7 @@ def test_csv_on_disk_is_not_read(workdir: Path) -> None:
     assert ctx.realized_periods == set()
     assert ctx.period_share_of_year.height == 0
     with pytest.raises(sc.FlexDataError):
-        ctx.period_in_use
+        _ = ctx.period_in_use
 
 
 def test_ctx_read_requires_provider(workdir: Path) -> None:

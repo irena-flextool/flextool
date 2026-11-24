@@ -80,7 +80,7 @@ def make_db(tmp_path_factory: pytest.TempPathFactory, *, alt: str,
     from flextool.update_flextool.db_migration import migrate_database
     from tests.db_utils import json_to_db
 
-    data = json.loads(Path(fixture_json).read_text())
+    data = json.loads(Path(fixture_json).read_text(encoding="utf-8"))
     scenario = add_override_alternative(data, alt, values, base_chain, entities)
     work = tmp_path_factory.mktemp(f"{alt}_db")
     json_path = work / f"{alt}.json"

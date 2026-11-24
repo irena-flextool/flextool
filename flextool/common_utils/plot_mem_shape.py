@@ -21,7 +21,7 @@ _FIELD = re.compile(r"(\w+)=([-+0-9.eE]+)")
 
 def parse(path):
     t, rss, priv = [], [], []
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         for line in fh:
             if not line.startswith("ts="):
                 continue

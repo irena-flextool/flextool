@@ -66,7 +66,7 @@ def test_one_example_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     assert code == 2, text  # ran fine, over the target, --strict
     assert text.startswith("Machine: ")
     assert any(line.startswith("! coal ") and line.rstrip().endswith("optimal") for line in text.splitlines())
-    with open(out_csv, newline="") as f:
+    with open(out_csv, encoding="utf-8", newline="") as f:
         (row,) = list(csv.DictReader(f))
     wall = float(row["wall_s"])
     assert row["scenario"] == "coal" and row["ok"] == "1" and row["over_target"] == "1"
