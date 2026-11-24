@@ -1,7 +1,11 @@
-## Unreleased (4.7.0)
+## Release 4.7.0 (24.11.2026) — stochastic realization: rolling `within_solve` realizes each jump in one solve, `separate_dispatch` realization looks ahead, `deterministic` default; `startup_method` `_fix_in_uc` members; `minimum_time_method` gates min up / down times; outages end carried obligations; rounded carried units online (schema v83)
 
 Input databases move to data version 83. The FlexTool window, the Spine Toolbox workflow and `flextool-run
---migrate` migrate them.
+--migrate` migrate them. Requires `polar-high>=3.16.1`. Results change for stochastic solves (see the
+realization entries below), for units whose minimum up or down time its `minimum_time_method` leaves out, for
+rolling solves with a capacity margin, and for databases without a `Base` alternative upgraded from data version
+55 or older; upgraded databases keep their results elsewhere, and the upgrade notes (W-0601, W-0634, W-0635,
+W-0636) name what changed.
 
 ### Behaviour changes — read before upgrading
 
@@ -186,6 +190,8 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
   `group.penalty_inertia`, `connection.reactance` (it had none), `connection.transfer_method`,
   `group.transfer_method` and `commodity.price_ladder_cumulative`. A description you edited is kept. The
   unused value list `solver` (left over from before `solve.solver` moved to `solvers`) is deleted.
+- **Note W-0508 also names forecasts made at the start of a roll whose previous roll has no look-ahead** (its
+  jump equals its horizon): nothing reads them. The first roll's start is still not reported.
 
 ## Release 4.6.3 (23.11.2026) — fixes: list-valued defaults kept when migrating FlexTool 3.x databases, Benders between regions, FlexTool 2.0 conversion in the GUI; repair tool for W-0490 databases; GUI message list
 
