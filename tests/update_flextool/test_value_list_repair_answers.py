@@ -261,9 +261,10 @@ def test_part_b_only_file(tmp_path, schema_db_url) -> None:
 def test_rows_of_defaults_not_asked_give_a_warning(tmp_path, schema_db_url) -> None:
     """S5: an answers file whose key matches, with ``def:`` / ``sn:`` rows that are no suspect of this run, is not
     refused: each such row gives a warning and is ignored, the other rows apply.  At the current data version
-    (an ``sn:`` row as a 4.6.3 run wrote it, no storage question here): "no longer asked".  The same file on the copy
-    at data version 82 (part B is off, so the empty ``unit.conversion_method`` default is not asked): "not asked in
-    this run"."""
+    (an ``sn:`` row as a 4.6.3 run wrote it, no storage question here; a ``def:`` row of ``solve.solve_mode``, whose
+    default is FlexTool's): "no longer asked".  The same file on the copy at data version 82 (part B is off): the
+    empty ``unit.conversion_method`` default "not asked in this run"; the ``sn:`` row (the storage default is not
+    empty) and ``solve.solve_mode`` still "no longer asked"."""
     case = make_hit(tmp_path, schema_db_url)
     clear_defaults(case.path, ["unit.conversion_method"], None)
     a, found = _analyse(case.path, tmp_path)
@@ -271,17 +272,21 @@ def test_rows_of_defaults_not_asked_give_a_warning(tmp_path, schema_db_url) -> N
     path = tmp_path / "old.csv"
     va.write_answers(path, found, va.file_key(a), {s.item: va.Answer(va.KEEP) for s in found})
     rows = _rows(path)
+    (mode,) = sql(case.path, "SELECT pd.id FROM parameter_definition pd JOIN entity_class ec ON ec.id = "
+                             "pd.entity_class_id WHERE ec.name = 'solve' AND pd.name = 'solve_mode'")[0]
     _save(path, rows + [["sn:1:1", rows[1][1], "storage", "node", "storage_start_end_method", "A", "base", "",
-                         "keep"]])
+                         "keep"], [f"def:{mode}", rows[1][1], "default", "solve", "solve_mode", "", "", "",
+                                   "set:single_solve"]])
     read = va.read_answers(path, a, found)
-    assert set(read.answers) == {s.item for s in found} and read.warnings == (f"sn:1:1: {va.NOT_ASKED}",)
+    assert set(read.answers) == {s.item for s in found}
+    assert read.warnings == (f"sn:1:1: {va.NOT_ASKED}", f"def:{mode}: {va.NOT_ASKED}")
     sql(case.path, "UPDATE parameter_definition SET default_value = ?, default_type = 'float' WHERE name = 'version' "
                    "AND entity_class_id = (SELECT id FROM entity_class WHERE name = 'model')", (b"82.0",))
     old, found_old = _analyse(case.path, tmp_path, "snap_82")
     assert old.version == 82 and va.file_key(old) == va.file_key(a)
     read = va.read_answers(path, old, found_old)
     assert set(read.answers) == {s.item for s in found_old} == {s.item for s in found} - {conv}
-    assert read.warnings == (f"{conv}: {va.NOT_ASKED_OLD}", f"sn:1:1: {va.NOT_ASKED_OLD}")
+    assert read.warnings == (f"{conv}: {va.NOT_ASKED_OLD}", f"sn:1:1: {va.NOT_ASKED}", f"def:{mode}: {va.NOT_ASKED}")
     assert va.make_plan(old, found_old, read.answers).part_a_record is True
 
 

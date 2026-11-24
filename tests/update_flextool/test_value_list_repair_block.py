@@ -92,6 +92,17 @@ def test_reliance_per_scenario_and_the_check_list(tmp_path, schema_db_url) -> No
     assert prompt == "  [Enter = restore; e = one by one; x = skip; q = quit] > "
 
 
+def test_a_scenario_without_alternatives_is_ignored(tmp_path, schema_db_url) -> None:
+    """U1 has its own value in ``base``; ``s1 = [base]`` and ``s0`` holds no alternative (it runs nothing): no
+    entity relies on the unit default, so Enter changes no result."""
+    case = make_hit(tmp_path, schema_db_url, before=[("unit", "U1", "base", "not_allowed")])
+    write_items(case.path, scenarios={"s1": ["base"], "s0": []})
+    _, found = _analyse(case.path, tmp_path)
+    unit = next(s for s in found if s.kind == vs.DEFAULT and s.cls == "unit")
+    assert (unit.context.relying, unit.context.relying_names) == (0, ())
+    assert vs.results_change(vs.defaults_block(found)) is False
+
+
 def test_a_default_changed_by_hand_is_kept(tmp_path, schema_db_url) -> None:
     """S1 pins.  An R default committed after the last version commit by the user: "changed by hand", ``keep``.  The
     same, then one more upgrade (a version commit): FlexTool's default again.  The same edit in FlexTool's refresh

@@ -16,6 +16,7 @@ import sqlite3
 import contextlib
 from pathlib import Path
 
+from flextool.update_flextool import list_default_restore as ldr
 from flextool.update_flextool import value_list_archive as va
 from flextool.update_flextool import value_list_history as vlh
 from flextool.update_flextool import value_list_repair as vr
@@ -220,6 +221,9 @@ def test_conflict_legacy_member_and_default(tmp_path, schema_db_url) -> None:
     assert (u1.label, u1.suggestion, u1.archive, u1.certain) == (va.CONFLICT, None, "invest_total", False)
     assert (default.suggestion, default.reason, default.archive_note) == (
         "set:not_allowed", vs.DEFAULT_REASON, "your old copy had invest_period")
+    block = vs.defaults_block(found.values())
+    assert "  unit.invest_method: 0 entities rely on the default, which reads cumulative_limits (FlexTool's default: " \
+        "not_allowed); your old copy had invest_period" in ldr.block_lines(block, vs.results_change(block))
 
     (tmp_path / "l").mkdir()
     legacy, legacy_archive = _hit(tmp_path / "l", schema_db_url, legacy=True, before=[("unit", "U1", "base", LEGACY)])

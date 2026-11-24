@@ -11,7 +11,8 @@ Finnish locale saves ``;``), any other encoding refused ("save as CSV UTF-8").  
 - Strict per row: ``kind``, ``class``, ``parameter``, ``current`` (the member the suspect reads now in its own
   list).  A mismatch makes the row stale: reported, not applied, no record.  An ``item`` that is no suspect is an
   error (the file is refused), except a ``def:`` or ``sn:`` row: a warning, and the row is ignored (a file of an
-  earlier run whose defaults are not asked in this one: :data:`NOT_ASKED_OLD`, :data:`NOT_ASKED`).
+  earlier run whose defaults are not asked in this one).  The warning is :data:`NOT_ASKED_OLD` for an empty
+  default (for ``sn:``: an empty storage default) at an older data version, else :data:`NOT_ASKED`.
 - Lenient: ``entity`` / ``alternative`` that differ only the way Excel changes a value (surrounding spaces, or both
   parse as the same number, ``001`` vs ``1``, ``1.5`` vs ``1,5``) give a warning, and the row is applied.
 - ``answer``: ``keep``, ``set:<member>``, ``skip``, or empty (no answer), in any case.  ``set:`` must name a member
@@ -188,9 +189,20 @@ def read_answers(path: str | Path, a: vr.Analysis, suspects) -> ReadAnswers:
     if missing := [c for c in COLUMNS[:9] if c not in names[delim]]:
         raise AnswersError(f"{path} lacks the column(s) {', '.join(missing)}.")
     from flextool.update_flextool import FLEXTOOL_DB_VERSION
+    from flextool.update_flextool.frozen import _connect_ro
 
     by_item = {s.item: s for s in suspects}
     key, allowed = file_key(a), choices(a, suspects)
+    with contextlib.closing(_connect_ro(a.path)) as con:
+        empty = ldr.empty_definition_ids(con)
+        storage = con.execute("SELECT pd.id FROM parameter_definition pd JOIN entity_class ec ON ec.id = "
+                              "pd.entity_class_id WHERE ec.name = ? AND pd.name = ?", ldr.STORAGE).fetchone()
+
+    def not_asked(item: str) -> str:
+        """Why a ``def:`` / ``sn:`` row is not asked: an empty default waits for the upgrade."""
+        kind, _, rest = item.partition(":")
+        def_id = (storage[0] if storage else None) if kind == "sn" else (int(rest) if rest.isdigit() else None)
+        return NOT_ASKED_OLD if a.version < FLEXTOOL_DB_VERSION and def_id in empty else NOT_ASKED
     answers, stale, warnings, seen, bad = {}, [], [], set(), []
     for row in csv.DictReader(io.StringIO(text, newline=""), delimiter=delim):
         cells = {k: (v or "") for k, v in row.items() if k is not None}
@@ -206,7 +218,7 @@ def read_answers(path: str | Path, a: vr.Analysis, suspects) -> ReadAnswers:
         seen.add(item)
         s = by_item.get(item)
         if s is None and item.startswith(("def:", "sn:")):
-            warnings.append(f"{item}: {NOT_ASKED_OLD if a.version < FLEXTOOL_DB_VERSION else NOT_ASKED}")
+            warnings.append(f"{item}: {not_asked(item)}")
             continue
         if s is None:
             raise AnswersError(f"{path}: '{item}' is not an item of this database.")

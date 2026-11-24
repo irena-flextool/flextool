@@ -123,6 +123,11 @@ def _gaps(con: sqlite3.Connection) -> list[tuple]:
     return sorted(out, key=lambda g: (g[1], g[2]))
 
 
+def empty_definition_ids(conn: sqlite3.Connection) -> set[int]:
+    """The definition ids of the full reference table whose default is empty (:func:`empty_shipped_defaults`)."""
+    return {g[0] for g in _gaps(conn)}
+
+
 def empty_shipped_defaults(conn: sqlite3.Connection) -> list[str]:
     """The sorted ``class.parameter`` names of the full reference table whose default is empty."""
     return [f"{g[1]}.{g[2]}" for g in _gaps(conn)]
@@ -388,9 +393,10 @@ def _default_line(s) -> str:
 
     head = f"  {s.cls}.{s.parameter}: {vs.rely(s.context.relying or 0)} on the default"
     if not s.part_b:
+        old = f"; {s.archive_note}" if s.archive_note else ""  # --archive: what the old copy had (R13)
         if s.suggestion == _KEEP:
-            return f"{head}, which reads {s.current}; changed by hand on {s.context.date}, so it is kept"
-        return f"{head}, which reads {s.current} (FlexTool's default: {vs.FLEXTOOL_DEFAULT})"
+            return f"{head}, which reads {s.current}; changed by hand on {s.context.date}, so it is kept{old}"
+        return f"{head}, which reads {s.current} (FlexTool's default: {vs.FLEXTOOL_DEFAULT}){old}"
     out = f"{head} ({reference()[(s.cls, s.parameter)][1]})"
     if s.suggestion == _KEEP:
         return f"{out}; {s.reason}, so it stays unset"

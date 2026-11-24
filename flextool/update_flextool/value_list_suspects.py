@@ -175,13 +175,12 @@ def results_change(block) -> bool:
 def relying_entities(con, class_id: int, def_id: int) -> list[tuple[int, str, bool]]:
     """``(id, name, capped)`` of the entities of class *class_id* that rely on the default of definition *def_id*,
     by name: with scenarios, an entity relies when at least one scenario has no value for it in any of its
-    alternatives; without scenarios, when it has no value in any alternative.  Entity activity is ignored (it can
-    only over-count).  *capped*: the entity has a cumulative cap value in some alternative."""
+    alternatives; without scenarios, when it has no value in any alternative.  A scenario with no alternatives is
+    ignored (it runs nothing).  Entity activity is ignored (it can only over-count).  *capped*: the entity has a
+    cumulative cap value in some alternative."""
     scenarios: dict[int, set[int]] = {}
     for scenario, alt in con.execute("SELECT scenario_id, alternative_id FROM scenario_alternative"):
         scenarios.setdefault(scenario, set()).add(alt)
-    for (scenario,) in con.execute("SELECT id FROM scenario"):
-        scenarios.setdefault(scenario, set())
     own: dict[int, set[int]] = {}
     for entity, alt in con.execute("SELECT entity_id, alternative_id FROM parameter_value WHERE "
                                    "parameter_definition_id = ?", (def_id,)):
