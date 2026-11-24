@@ -226,6 +226,56 @@ def test_outage_in_the_jump_on_a_pinned_unit(tmp_path):
     assert got.names("W-0592") == ["coal"]
 
 
+def _min_up_toy() -> dict:
+    """The toy's timeline, rolls and node with one ``coal`` unit of 10 MW (``virtual_unitsize`` 10, ``existing`` 1,
+    ``integer``, min load 0.5, ``minimum_time_method`` min_uptime, ``min_uptime`` 2 h, 20 EUR/MWh, no start-up cost),
+    ``peak`` 10 MW at 100 EUR/MWh and ``wind`` 10 MW: realized ``R`` 1, 0, 1, 1 at t01-t04 (made at t01);
+    forecasts ``upper`` (weight 1) / ``lower`` (weight 3) made at t02, t03, t04, 1.0 at every step they cover."""
+    entities = [["node", "elec", None], ["unit", "coal", None], ["unit", "peak", None], ["unit", "wind", None],
+                ["profile", "wp", None], ["unit__outputNode", ["coal", "elec"], None],
+                ["unit__outputNode", ["peak", "elec"], None], ["unit__outputNode", ["wind", "elec"], None],
+                ["group__unit", ["sg", "wind"], None], ["group__node", ["sg", "elec"], None],
+                ["unit__node__profile", ["wind", "elec", "wp"], None]]
+    active = [("node", "elec"), ("unit", "coal"), ("unit", "peak"), ("unit", "wind")]
+    series = {"R": {"t01": {"t01": 1.0, "t02": 0.0, "t03": 1.0, "t04": 1.0}}}
+    for b in ("upper", "lower"):
+        series[b] = {f"t0{k}": {t: 1.0 for t in STEPS[k - 1:]} for k in (2, 3, 4)}
+    values = [*srl._node("elec", "balance", pack(-10.0, "float")),
+              *srl._unit("coal", "elec", 1.0, 20.0), *srl._unit("peak", "elec", 10.0, 100.0),
+              *srl._unit("wind", "elec", 10.0, 0.0),
+              ["unit", "coal", "virtual_unitsize", pack(10.0, "float"), "init"],
+              ["unit", "coal", "startup_method", pack("integer", "str"), "init"],
+              ["unit", "coal", "min_load", pack(0.5, "float"), "init"],
+              ["unit", "coal", "minimum_time_method", pack("min_uptime", "str"), "init"],
+              ["unit", "coal", "min_uptime", pack(2.0, "float"), "init"],
+              ["unit__node__profile", ["wind", "elec", "wp"], "profile_method", pack("upper_limit", "str"), "init"],
+              ["profile", "wp", "profile", srl._series(series), "init"]]
+    fan = srl._fan([("upper", {f"t0{k}": 1.0 for k in (2, 3, 4)}, "no"),
+                    ("lower", {f"t0{k}": 3.0 for k in (2, 3, 4)}, "no"),
+                    ("R", {"t01": 0.0}, "yes")])
+    return srl._model(STEPS, jump=1, horizon=2, fan=fan, entities=entities, active=active, values=values)
+
+
+def test_within_solve_min_uptime_across_the_seam_and_into_the_next_roll(tmp_path):
+    """T-w2, minimum up-time (hand, factor 2190 per MWh-hour).  Roll 0: t01 on R (wind 10 MW covers demand), tails
+    t02 on the forecasts (wind 10): coal stays offline (online would force its 5 MW min load): 0.  Roll 1: jump t02
+    on R has no wind; coal (200 at 10 MWh) beats peak (1000), so coal starts at t02.  Its min up-time (2 h: a start
+    at t02 counts at t03, elapsed 1 h < 2 h, not at t04) reaches across the label into both tails ``p1_upper`` /
+    ``p1_lower`` at t03 (their predecessor is p1 t02): online 1 there at min load 5 MW (wind curtailed), 100 in each
+    tail, weights 0.25 / 0.75: 300 -> 657 000.  Roll 2: t03 on R (wind 10), the start at t02 carried from roll 1's
+    realized jump keeps coal online at t03 at min load: 100; tails t04: offline (2 h done): 219 000 (without the
+    carry: 0).  Roll 3: t04 on R, offline: 0."""
+    built, steps = scm.run_spec(_min_up_toy(), tmp_path)
+    assert len(built) == 4 and not any("realized_dispatch" in s for s, _, _ in built)
+    rolls = list(steps.values())
+    online = [_cells(s, "v_online_integer", "coal") for s in rolls]
+    assert online[1] == pytest.approx({("p1", "t02"): 1.0, ("p1_upper", "t03"): 1.0, ("p1_lower", "t03"): 1.0},
+                                      abs=1e-9)
+    assert online[2][("p1", "t03")] == pytest.approx(1.0, abs=1e-9)
+    assert _cells(rolls[2], "v_flow", "coal")[("p1", "t03")] == pytest.approx(0.5, abs=1e-9)  # 5 MW / unit size 10
+    assert srl._objectives(steps) == pytest.approx([0.0, 300 * FACTOR, 100 * FACTOR, 0.0], rel=1e-9, abs=1e-6)
+
+
 def _prices(folder, roll: str) -> dict[tuple[str, str], float]:
     """``{(d, t): price of elec}`` of *roll* from its ``v_dual_node_balance`` output (EUR/MWh)."""
     frame = pl.read_parquet(folder / "w" / "output_raw" / f"v_dual_node_balance__{roll}.parquet")
