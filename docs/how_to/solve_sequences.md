@@ -48,9 +48,9 @@ The results then show:
 
 - `slack__capacity_margin__d`: the shortfall [MW] of the period, also when a later dispatch solve realizes the
   period, and its penalty in the costs (`capacity margin penalty` in `costs_discounted__d`).
-- `capacity_margin__d`: the capacity margin of each solve with investment periods, under that solve's name, for
-  each group and investment period (look-ahead and forecast branch periods included) at its binding step (the time
-  step with the largest deficit): the margin, the demand, the requirement, what firm and VRE units, storage, other
+- `capacity_margin__d`: the capacity margin of each solve with investment periods (not of a rolling solve), under
+  that solve's name, for each group and investment period (look-ahead and forecast branch periods included) at its
+  binding step (the time step with the largest deficit): the margin, the demand, the requirement, what firm and VRE units, storage, other
   units, connections and consumption count, the shortfall, its penalty and the shadow price of the margin.
 - `capacity_margin_entity__d`: what each unit, connection and node counts at that step, to see which capacity is
   missing or does not count.

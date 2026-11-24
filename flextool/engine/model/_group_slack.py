@@ -670,10 +670,11 @@ def resolve_capacity_margin(d) -> None:
     The row, the group scaling, the Benders split and the outputs then read one MW value whatever the method.  A
     relative_of_peak_demand group whose share is positive but whose peak is 0 (no demand) gets a warning: its margin is 0.
     Rows of 0 are dropped (margin 0).  A share of -inf gives the margin -inf (no requirement in that period,
-    :func:`capacity_margin_rows`), whatever the peak.  Idempotent: a group's rows are replaced, not added to.
+    :func:`capacity_margin_rows`), whatever the peak.  Idempotent: a group's rows are replaced, not added to.  A roll
+    has no capacity margin (:func:`_capacity_margin_periods`): nothing is resolved and nothing is warned.
     """
     share = _param_frame(getattr(d, "pdGroup_capacity_margin_relative", None))
-    if share is None or share.height == 0:
+    if share is None or share.height == 0 or getattr(d, "solve_is_rolling", False):
         return
     peak = _param_frame(getattr(d, "pdGroup_peak_demand", None))
     share_u = share.select(pl.col("g").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),

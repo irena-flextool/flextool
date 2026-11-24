@@ -423,6 +423,23 @@ def test_relative_of_peak_demand_per_period_on_a_shared_timeline(tmp_path_factor
     assert peak == {"p2020": pytest.approx(first), "p2025": pytest.approx(1000.0)}
 
 
+def test_relative_margin_in_a_roll_is_not_resolved(coded_log) -> None:
+    """A roll has no capacity margin: a relative_of_peak_demand share without peak demand gives no W-0585 and no
+    margin there (the same share in a single solve: :func:`test_relative_margin_without_demand_is_one_coded_line`)."""
+    from types import SimpleNamespace
+
+    from flextool import run_warnings
+    from flextool.engine.model._group_slack import resolve_capacity_margin
+
+    run_warnings.start_run()
+    share = pl.DataFrame({"g": ["cm"], "d": ["p1"], "value": [0.1]})
+    d = SimpleNamespace(pdGroup_capacity_margin_relative=SimpleNamespace(frame=share), pdGroup_peak_demand=None,
+                        pdGroup_capacity_margin=None, solve_is_rolling=True)
+    resolve_capacity_margin(d)
+    assert "[W-0585]" not in coded_log()
+    assert d.pdGroup_capacity_margin is None
+
+
 def test_relative_margin_without_demand_is_one_coded_line(coded_log) -> None:
     """A relative_of_peak_demand group with a positive share but no peak demand in a period: its margin there is
     0, and W-0585 names the group once per run (the periods in the debug log); a share of -inf is no case."""

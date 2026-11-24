@@ -38,7 +38,7 @@ Flow aggregation (flow limits and aggregated flow outputs) lives on a separate [
 
 ### The capacity margin
 
-At every time step of an investment period, the capacity margin row of a group asks:
+At every time step of an investment period of a solve that is not rolling, the capacity margin row of a group asks:
 
 *firm capacity + VRE potential + what the group's other entities deliver or take at that step ≥ the group's demand + the margin.*
 
@@ -68,7 +68,7 @@ What this means in practice:
 - **Unserved energy is priced once.** Load the group does not serve leaves the row unchanged where firm capacity would have served it, and is priced by `penalty_up` only.
 - **The energy margin does not change the capacity margin.** The row uses the real demand. Storage and imports count with the power they deliver at the step, also when it serves the energy margin's added demand: that power is real capability at that step. Firm output that serves the added demand leaves the row unchanged.
 
-The margin of a *relative_of_peak_demand* group is `capacity_margin_relative` × the group's peak demand: the largest sum of the demand of the group's nodes over the period's full time series, on the period's original timeline (before representative periods and `new_stepduration`, and the same in every roll of a solve). If the representative periods leave the peak out, the margin still uses the real peak. When several investment periods of a solve use different parts of one timeline (a multi-year timeline, one block per period), each period's peak is over its own part: the time steps of its timeset blocks, or, with representative periods, of the base periods they stand for. A stochastic branch period has its own peak, from its own branch data.
+The margin of a *relative_of_peak_demand* group is `capacity_margin_relative` × the group's peak demand: the largest sum of the demand of the group's nodes over the period's full time series, on the period's original timeline (before representative periods and `new_stepduration`). If the representative periods leave the peak out, the margin still uses the real peak. When several investment periods of a solve use different parts of one timeline (a multi-year timeline, one block per period), each period's peak is over its own part: the time steps of its timeset blocks, or, with representative periods, of the base periods they stand for. A stochastic branch period has its own peak, from its own branch data.
 
 **Reading the result.** After each investment solve that leaves a shortfall, the run log prints `capacity margin shortfall: solve …, group …, period …: … MW at … (penalty … M CUR)`. The table [`capacity_margin__d`](../results.md#slack-and-penalty-values) has, per solve, group and investment period, the binding time step, the requirement, what each class above counts there and the shortfall; `capacity_margin_entity__d` has what each unit, connection and node counts, which shows which rule applies to it. `slack__capacity_margin__d` and the *capacity margin penalty* of the costs are those of the solve that decided the investments.
 

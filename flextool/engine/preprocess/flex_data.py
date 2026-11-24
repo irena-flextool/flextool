@@ -3785,7 +3785,6 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         period_block_succ = None,
         period_block_time = None,
         dtttdt_block_interior = None,
-        solve_is_rolling = False,
         period_block_chain = None,
         nodeState_rp = None,
         rp_base_period_set = None,
@@ -4059,18 +4058,15 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                                 (pl.col("period").cast(pl.Utf8) if "period" in sre.columns
                                  else pl.lit(None, dtype=pl.Utf8)).alias("period")))
 
-    # Rolling sub-solve: solve_data/roll_period_whole (period, whole) has a row per period of the roll
-    # (_run_model).  The bind_intraperiod_blocks blocks of a period the roll holds only in part chain forward.
+    # Rolling sub-solve: the bind_intraperiod_blocks blocks of a period the roll holds only in part chain forward.
     solve_is_rolling = False
     period_block_chain = None
-    rpw_path = sd / "roll_period_whole.csv"
-    if _provider_has(provider, "solve_data/roll_period_whole", rpw_path):
-        rpw = _provider_read(provider, "solve_data/roll_period_whole", rpw_path)
-        if rpw.height > 0:
-            solve_is_rolling = True
-            chained = rpw.filter(~pl.col("whole").cast(pl.Boolean)).pipe(rename_to_axis, {"period": "d"})
-            if chained.height > 0:
-                period_block_chain = chained.select("d").unique(maintain_order=True)
+    rpw = _load_roll_period_whole(sd, provider=provider)
+    if rpw is not None:
+        solve_is_rolling = True
+        chained = rpw.filter(~pl.col("whole").cast(pl.Boolean)).pipe(rename_to_axis, {"period": "d"})
+        if chained.height > 0:
+            period_block_chain = chained.select("d").unique(maintain_order=True)
 
     # node__storage_solve_horizon_method (.mod:663): nodes with method
     # ``use_reference_value`` get a v_state pin at the last timestep of
@@ -4514,7 +4510,6 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         period_block_succ = period_block_succ,
         period_block_time = period_block_time,
         dtttdt_block_interior = dtttdt_block_interior,
-        solve_is_rolling = solve_is_rolling,
         period_block_chain = period_block_chain,
         nodeState_rp = nodeState_rp,
         rp_base_period_set = rp_base_period_set,
@@ -4993,6 +4988,16 @@ def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame,
         period_in_use_set=period_in_use_set,
         label_steps=label_steps,
     )
+
+
+def _load_roll_period_whole(sd: Path, *, provider: "object | None" = None) -> pl.DataFrame | None:
+    """``solve_data/roll_period_whole`` (period, whole): a row per period of a rolling sub-solve (``_run_model``);
+    None when the solve is not a roll."""
+    path = sd / "roll_period_whole.csv"
+    if not _provider_has(provider, "solve_data/roll_period_whole", path):
+        return None
+    rpw = _provider_read(provider, "solve_data/roll_period_whole", path)
+    return rpw if rpw.height > 0 else None
 
 
 def _load_period_invest(sd: Path, *, provider: "object | None" = None) -> pl.DataFrame | None:
@@ -5573,6 +5578,9 @@ def load_flextool(source: "Path | str | FlexInputSource",
             **ladder_data,
             **stoch_data,
             period_invest=_load_period_invest(sd, provider=provider),
+            # Every roll, with or without storage nodes (the capacity margin, the recourse guard and the realized
+            # steps of a roll read it).
+            solve_is_rolling=_load_roll_period_whole(sd, provider=provider) is not None,
             # The per-solve BlockLayout loaded above (node -> group, group steps); the coarse-step frames are
             # derived from it at the end of the load (``_apply_coarse_frames``).
             block_layout = block_layout,
