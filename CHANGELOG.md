@@ -99,6 +99,10 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
   that have a `delay`, a rolling `within_solve` or `separate_dispatch` solve still realizes each jump in a separate
   realization solve that does not look past the jump; note W-0594 names the delayed units, once per run. A rolling
   stochastic solve followed by a realization solve you configure yourself also keeps its two solves.
+- **The repair tool keeps an `invest_method` default changed by hand.** On a W-0490 database, an `invest_method`
+  default that reads `cumulative_limits` and was saved after the last upgrade is now kept when you press Enter
+  (4.6.3 suggested `not_allowed`); its entities keep investing as before in the repaired copy. Type `e` to restore
+  `not_allowed`. A default set to another member is no longer asked about and stays as it is.
 
 ### New features
 
