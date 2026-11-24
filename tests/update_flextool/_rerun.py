@@ -59,22 +59,22 @@ def version_of(path: Path) -> float:
 
 
 @contextlib.contextmanager
-def kill_after_commit(n: int | None) -> Iterator[list[int]]:
-    """Count the commits of every ``DatabaseMapping`` while inside; raise :class:`Kill` right after the *n*-th
-    (``None``: never).  Yields a one-item list holding the count."""
+def kill_after_commit(n: int | None) -> Iterator[list[str]]:
+    """Record the commits of every ``DatabaseMapping`` while inside; raise :class:`Kill` right after the *n*-th
+    (``None``: never).  Yields the list of their messages."""
     real = DatabaseMapping.commit_session
-    count = [0]
+    messages: list[str] = []
 
     def counting(self, *args, **kwargs):
         result = real(self, *args, **kwargs)
-        count[0] += 1
-        if n is not None and count[0] == n:
+        messages.append(args[0] if args else kwargs.get("comment", ""))
+        if n is not None and len(messages) == n:
             raise Kill()
         return result
 
     DatabaseMapping.commit_session = counting
     try:
-        yield count
+        yield messages
     finally:
         DatabaseMapping.commit_session = real
 
@@ -100,6 +100,37 @@ def already_applied_records() -> Iterator[list[str]]:
     finally:
         root.removeHandler(handler)
         root.setLevel(level)
+
+
+def commit_messages(path: Path, up_to: int) -> list[str]:
+    """The messages of the commits migrating a copy of *path* to *up_to* makes (the last one is the version
+    commit)."""
+    probe = copy_db(path, path.with_name("probe.sqlite"))
+    with kill_after_commit(None) as messages:
+        migrate(probe, up_to=up_to)
+    probe.unlink()
+    return messages
+
+
+def kill_and_rerun(clean: dict, k: int, j: int, work: Path) -> list:
+    """Run step k on clean k-1, kill it right after its j-th commit, migrate to k again: the differences from clean
+    k (an error as one entry)."""
+    path = copy_db(clean[k - 1], work / f"k{k}_j{j}.sqlite")
+    try:
+        try:
+            with kill_after_commit(j):
+                migrate(path, up_to=k)
+            return [("not killed", j)]
+        except Kill:
+            pass
+        if version_of(path) != k - 1:
+            return [("stamp after the kill", version_of(path))]
+        migrate(path, up_to=k)
+        return diff(snapshot(clean[k]), snapshot(path))
+    except Exception as exc:  # noqa: BLE001 - reported as the case's result
+        return [("error", f"{type(exc).__name__}: {exc}")]
+    finally:
+        path.unlink(missing_ok=True)
 
 
 def _value(val, typ) -> str:

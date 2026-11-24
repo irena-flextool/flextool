@@ -9705,6 +9705,39 @@ def _v56_backfilled(db, entity_class_name: str, name: str, target: str, none_bef
     return _already_applied(56, f"{entity_class_name}.{name} default is {target}")
 
 
+def _v56_checked(db, item_type: str, **fields) -> None:
+    """``add_update_item`` that raises on the error it returns (a v56 ``Base`` write must not fail unseen)."""
+    error = db.add_update_item(item_type, **fields)[2]
+    if error:
+        raise SpineDBAPIError(f"v56: could not write the {item_type} {fields}: {error}")
+
+
+def _v56_ensure_base(db) -> None:
+    """Make alternative ``Base`` when the database has none (item 292: a database from the pre-v26 templates).
+
+    The new ``Base`` goes to the lowest rank of every scenario: one below the scenario's lowest (after the v38 floor),
+    rank 1 in a scenario without alternatives.  So the v56 values in it apply in every scenario and a value in any
+    other alternative wins.  A ``Base`` that exists is left as it is.  The rows ride on the calling step's commit.
+    """
+    if db.get_item("alternative", name="Base"):
+        return
+    _v56_checked(db, "alternative", name="Base", description=(
+        "Made by the upgrade to data version 56: holds the values that keep the behaviour of the entities made "
+        "before it. At the lowest rank of every scenario."))
+    lowest = {scenario["name"]: 2 for scenario in db.find_scenarios()}
+    for sa in db.find_scenario_alternatives():
+        lowest[sa["scenario_name"]] = min(lowest[sa["scenario_name"]], sa["rank"])
+    for name, rank in lowest.items():
+        _v56_checked(db, "scenario_alternative", scenario_name=name, alternative_name="Base", rank=rank - 1)
+
+
+def _v56_write_base(db, **value) -> None:
+    """Write the ``parameter_value`` *value* into ``Base`` (:func:`_v56_ensure_base` first): v56 D.1, D.2 and
+    Batch F keep there the older behaviour of the entities without a value."""
+    _v56_ensure_base(db)
+    _v56_checked(db, "parameter_value", alternative_name="Base", **value)
+
+
 def _migrate_v56_add_profile_and_ramp_method_none(db, none_before: frozenset[str] = frozenset()) -> None:
     """Batch D.1 — introduce a ``none`` off-member for the
     ``profile_methods`` and ``ramp_methods`` value-lists, set the four
@@ -9735,7 +9768,8 @@ def _migrate_v56_add_profile_and_ramp_method_none(db, none_before: frozenset[str
     Step (c) — backfill an explicit ``method = none`` row on every
     entity that owns one of the four classes and has zero
     ``parameter_value`` rows for the relevant method parameter (across
-    every alternative).  Writes to the ``Base`` alternative.
+    every alternative).  Writes to the ``Base`` alternative (made by
+    :func:`_v56_ensure_base` when the database has none).
 
     Sister migration :func:`_migrate_v56_set_unit_node_profile_default_upper_limit`
     handles ``unit__node__profile.profile_method`` separately because
@@ -9794,15 +9828,8 @@ def _migrate_v56_add_profile_and_ramp_method_none(db, none_before: frozenset[str
             byname = ent["entity_byname"]
             if byname in entities_with_value:
                 continue
-            db.add_update_item(
-                "parameter_value",
-                entity_class_name=entity_class_name,
-                entity_byname=byname,
-                parameter_definition_name=name,
-                alternative_name="Base",
-                value=none_value,
-                type=none_type,
-            )
+            _v56_write_base(db, entity_class_name=entity_class_name, entity_byname=byname,
+                            parameter_definition_name=name, value=none_value, type=none_type)
             backfilled_count += 1
 
     # ---- Verification ------------------------------------------------
@@ -9900,15 +9927,8 @@ def _migrate_v56_set_unit_node_profile_default_upper_limit(db, none_before: froz
         byname = ent["entity_byname"]
         if byname in entities_with_value:
             continue
-        db.add_update_item(
-            "parameter_value",
-            entity_class_name=entity_class_name,
-            entity_byname=byname,
-            parameter_definition_name=name,
-            alternative_name="Base",
-            value=none_value,
-            type=none_type,
-        )
+        _v56_write_base(db, entity_class_name=entity_class_name, entity_byname=byname,
+                        parameter_definition_name=name, value=none_value, type=none_type)
         backfilled_count += 1
 
     # ---- Verification ------------------------------------------------
@@ -10402,7 +10422,8 @@ def _migrate_v56_reactivate_is_enabled_parameter(db) -> None:
     (c) For each entity in the class that has no Base
         ``entity_alternative`` row pre-migration, write Base
         ``is_enabled="no"``.  Preserves the legacy semantic ``no
-        row → inactive`` across the default flip.  Constraint does
+        row → inactive`` across the default flip (``Base`` made by
+        :func:`_v56_ensure_base` when the database has none).  Constraint does
         NOT get this backfill — its ``active_by_default`` was already
         True, so the post-migration ``is_enabled`` default ``"yes"``
         matches.
@@ -10515,15 +10536,8 @@ def _migrate_v56_reactivate_is_enabled_parameter(db) -> None:
             byname = ent["entity_byname"]
             if tuple(byname) in covered:
                 continue
-            db.add_update_item(
-                "parameter_value",
-                entity_class_name=cls_name,
-                entity_byname=byname,
-                parameter_definition_name="is_enabled",
-                alternative_name="Base",
-                value=no_value,
-                type=no_type,
-            )
+            _v56_write_base(db, entity_class_name=cls_name, entity_byname=byname,
+                            parameter_definition_name="is_enabled", value=no_value, type=no_type)
             backfilled_count += 1
 
     # ---- Step 4: drop entity_alternative rows for the three classes --

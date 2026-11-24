@@ -25,8 +25,8 @@ from flextool.update_flextool.db_handle import open_database_mapping
 from flextool.update_flextool.fixture_schema import unpack_value
 from flextool.update_flextool.initialize_database import initialize_database
 
-from tests.update_flextool._rerun import (Kill, already_applied_records, copy_db, diff, kill_after_commit, migrate,
-                                          quiet, restamp_file, snapshot, url_of, version_of)
+from tests.update_flextool._rerun import (Kill, already_applied_records, commit_messages, copy_db, diff, kill_after_commit,
+                                          kill_and_rerun, migrate, quiet, restamp_file, snapshot, url_of, version_of)
 
 TEMPLATES = package_data_path("schemas/pre_v26")
 SEED75 = Path(__file__).parent / "data" / "v75_seed_stoch_two_period.json"
@@ -204,40 +204,10 @@ def test_a_rerun_keeps_the_definitions_v23_brought_back(v2_chain, tmp_path) -> N
         assert any("brought back" in r for r in records), records
 
 
-def _commits(path: Path, up_to: int) -> int:
-    """How many commits migrating a copy of *path* to *up_to* makes (the last one is the version commit)."""
-    probe = copy_db(path, path.with_name("probe.sqlite"))
-    with kill_after_commit(None) as count:
-        migrate(probe, up_to=up_to)
-    probe.unlink()
-    return count[0]
-
-
-def _kill_and_rerun(clean: dict, k: int, j: int, work: Path) -> list:
-    """Run step k on clean k-1, kill it right after its j-th commit, migrate to k again: the differences from clean
-    k (an error as one entry)."""
-    path = copy_db(clean[k - 1], work / f"k{k}_j{j}.sqlite")
-    try:
-        try:
-            with kill_after_commit(j):
-                migrate(path, up_to=k)
-            return [("not killed", j)]
-        except Kill:
-            pass
-        if version_of(path) != k - 1:
-            return [("stamp after the kill", version_of(path))]
-        migrate(path, up_to=k)
-        return diff(snapshot(clean[k]), snapshot(path))
-    except Exception as exc:  # noqa: BLE001 - reported as the case's result
-        return [("error", f"{type(exc).__name__}: {exc}")]
-    finally:
-        path.unlink(missing_ok=True)
-
-
 def test_v52_rerun_after_its_first_commit_converges(v2_chain, tmp_path) -> None:
     """v52 commits its value lists (the ``solver`` list already renamed ``solvers``) before its definitions."""
-    assert _commits(v2_chain[51], 52) == 3
-    assert _kill_and_rerun(v2_chain, 52, 1, tmp_path) == []
+    assert len(commit_messages(v2_chain[51], 52)) == 3
+    assert kill_and_rerun(v2_chain, 52, 1, tmp_path) == []
 
 
 @pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="needs /proc to list the open files")
@@ -268,7 +238,7 @@ def test_the_helpers_and_a_killed_migration_release_the_file(v2_chain, tmp_path)
 
 def test_a_kill_in_a_step_leaves_the_previous_steps_stamp(v2_chain, tmp_path) -> None:
     """Step 81's stamp rides on step 82's first commit: a kill right after it leaves the file at 81, not at 80."""
-    step_81 = _commits(v2_chain[80], 81) - 1
+    step_81 = len(commit_messages(v2_chain[80], 81)) - 1
     path = copy_db(v2_chain[80], tmp_path / "db.sqlite")
     with pytest.raises(Kill), kill_after_commit(step_81 + 1):
         migrate(path, up_to=82)
@@ -285,8 +255,8 @@ def test_every_kill_inside_a_step_converges(v2_chain, v75_chain, tmp_path) -> No
     failures = []
     for chain, first in ((v2_chain, 12), (v75_chain, 76)):
         for k in range(first, FLEXTOOL_DB_VERSION + 1):
-            for j in range(1, _commits(chain[k - 1], k)):
-                result = _kill_and_rerun(chain, k, j, tmp_path)
+            for j in range(1, len(commit_messages(chain[k - 1], k))):
+                result = kill_and_rerun(chain, k, j, tmp_path)
                 if result:
                     failures.append((first, k, j, result[:3]))
     assert failures == []

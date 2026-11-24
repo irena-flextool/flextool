@@ -576,6 +576,7 @@
  "tests/update_flextool/test_fixture_schema.py": 7.7,
  "tests/update_flextool/test_fixture_schema_drift.py": 4.5,
  "tests/update_flextool/test_settings_param_sync.py": 1.7,
+ "tests/update_flextool/test_v56_ensure_base.py": 40.0,
  "tests/update_flextool/test_v58_flowgroup_carveout.py": 4.1,
  "tests/update_flextool/test_v71_stochastic_invest_method.py": 4.9,
  "tests/update_flextool/test_v72_non_anticipativity_periods.py": 4.5,
