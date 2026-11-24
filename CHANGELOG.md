@@ -103,11 +103,13 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
 ### New features
 
 - **The GUI's "This database was upgraded" message lists the behaviour notes the upgrade added**, in two groups: the
-  changes that affect the results of the model (with the note codes, e.g. W-0635) and the notes about values the
-  upgrade wrote so that results stay the same (W-0601, W-0634). When the upgrade could not decide the minimum
-  up/down time method of some units, the message names them (the first ten; warning W-0231 names all at each run):
-  they run without those limits until a `minimum_time_method` is chosen. A database upgraded again before the
-  message is dismissed keeps the earlier notes in the new message.
+  changes that affect the results of the model (with the note codes, e.g. W-0635) and the other notes (W-0601,
+  W-0634: where the upgrade wrote a method, results stay the same; listed also when it only left entities
+  undecided). The first group names the entities the upgrade left undecided (the first ten of each kind): units
+  without a decided minimum up/down time method run without those limits until a `minimum_time_method` is chosen
+  (warning W-0231 names all at each run); storage nodes without a decided `storage_start_end_method` stop the run
+  with an error naming them. A database upgraded again before the message is dismissed keeps the earlier notes and
+  names in the new message, without checking whether those entities were decided since.
 - **The GUI message list's buttons are named "Dismiss message" and "Close dialog"** (before: "Dismiss" and "Close
   for now"). The close button keeps its label also when the list is empty.
 - **The repair tool asks about method parameter defaults in one question**: it says once why, lists each default
@@ -124,8 +126,9 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
   `rolling_solve_jump` 1). That step is the start of the roll's block chain and continues from the level carried
   from the previous roll (or from `fix_start` in the first roll).
 - **Parameter descriptions brought up to date in older databases.** The upgrade to data version 83 replaces old
-  shipped descriptions that named too few value shapes (e.g. "Constant or time" for `availability`,
-  `other_operational_cost`, `penalty_up`, `penalty_down`, `co2_price`, `reservation` and
+  shipped descriptions that named too few value shapes ("Constant or time." for `availability` and `reservation`,
+  "Constant, Period or time." / "Constant, Period or Time." for `other_operational_cost`, "Constant, Period or
+  Time." for `penalty_up` and `penalty_down`, "Constant, period or time." for `co2_price`, "Constant." for
   `storage_state_reference_value`), the old member name `no_method` in `group.co2_method`, and the `binary`
   start-ups in `virtual_unitsize` (now `integer` or `integer_fix_in_uc`). A description you edited is kept. The
   unused value list `solver` (left over from before `solve.solver` moved to `solvers`) is deleted.
