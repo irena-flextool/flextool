@@ -64,7 +64,8 @@ Equation families, in emit order (module in brackets when not model/core.py):
   Emissions & user    co2_max_period, co2_max_total; process_constraint_{equal,less_than,greater_than}[_period]
   Storage state       maxState; profile_state_{upper_limit,lower_limit,fixed};
                       storage_state_start_binding_cyclic_period; storage_within_solve_path_end,
-                      storage_state_fan_start (stochastic fans); storage_state_end_binding;
+                      storage_state_fan_start (stochastic fans); storage_split_path_end (split realization
+                      rolls); storage_state_end_binding;
                       storage_state_roll_{anchor,close}[_share] (rolling cyclic storage, per instance or
                       period); storage_state_roll_match (rolling forward chains);
                       storage_state_end_match[_share] (forward chains whose start the solve decides);
@@ -110,7 +111,7 @@ from flextool.engine.model import _retire_built
 from flextool.engine.model import _self_discharge
 from flextool.engine.model import _unit_floors
 from flextool.engine.input._axis_enums import alias_to_axis, align_join_dtypes, join_aligned, rename_to_axis
-from flextool.engine.preprocess._step_relations import check_step_relations, scope_end_pairs
+from flextool.engine.preprocess._step_relations import check_step_relations, labels_with_steps, scope_end_pairs
 from flextool.engine.model._common import (
     _availability_factor,
     _connection_procs,
@@ -541,6 +542,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _eq_state_profiles,
         _eq_storage_start_binding_cyclic,
         _eq_storage_within_solve_path_end,
+        _eq_storage_split_path_end,
         _eq_storage_state_fan_start,
         _eq_storage_end_binding,
         _eq_storage_roll_end,
@@ -5592,7 +5594,6 @@ def _eq_storage_within_solve_path_end(b: _Build) -> None:
     last_periods = sorted(set(str(x) for x in d.period_last["d"].to_list()))
     if len(last_periods) < 2:
         return
-    m = b.m
 
     # ─── EQ. ─── storage_within_solve_path_end ───────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
@@ -5629,6 +5630,23 @@ def _eq_storage_within_solve_path_end(b: _Build) -> None:
     over = (ends.filter(pl.col("d") != d_star)
             .join(star_ends, on="n", how="inner")
             .select("n", "d", "t", "d_end", "t_end"))
+    over = _path_end_rows(b, over)
+    if over is None:
+        return
+    b.m.add_cstr(
+        "storage_within_solve_path_end",
+        over      = over,
+        sense     = "==",
+        lhs_terms = _path_end_terms(b),
+        rhs_terms = {},
+    )
+    _notice_stochastic_storage_paths(over["n"].to_list())
+
+
+def _path_end_rows(b: _Build, over: pl.DataFrame) -> "pl.DataFrame | None":
+    """The rows (n, d, t, d_end, t_end; Utf8) of a path-end tie, less those whose both ends are already set (a step
+    storage_state_start_binding_cyclic_period pins or node_balance_fix_quantity_eq_lower fixes), on v_state's
+    dtypes; None when none are left."""
     set_parts = [_utf8_cells(f) for f in (_cyclic_start_pin_steps(b), _fix_quantity_target(b)) if f is not None]
     if set_parts and over.height > 0:
         already = pl.concat(set_parts, how="vertical").unique()
@@ -5636,14 +5654,61 @@ def _eq_storage_within_solve_path_end(b: _Build) -> None:
                 .join(already.rename({"d": "d_end", "t": "t_end"}), on=["n", "d_end", "t_end"], how="semi"))
         over = over.join(both, on=list(over.columns), how="anti")
     if over.height == 0:
+        return None
+    return _state_cells_typed(b, over.sort("n", "d"), {"d_end": "d", "t_end": "t"})
+
+
+def _path_end_terms(b: _Build) -> dict:
+    """v_state[n,d,t] − v_state[n,d_end,t_end]: the LHS of a path-end tie."""
+    return {"state": b.v_state, "state_end": -_var_view(b.v_state, "__path_end", {"d": "d_end", "t": "t_end"})}
+
+
+def _eq_storage_split_path_end(b: _Build) -> None:
+    """bind_within_period and looping bind_intraperiod_blocks in a split realization roll: the period's part in the
+    roll closes once per path."""
+    d = b.d
+    if not (b.has_storage and _has_rows(d.nodeState_last_dt)):
         return
-    over = _state_cells_typed(b, over.sort("n", "d"), {"d_end": "d", "t_end": "t"})
-    m.add_cstr(
-        "storage_within_solve_path_end",
+    lab = labels_with_steps(d)
+    if not lab:
+        return
+
+    # ─── EQ. ─── storage_split_path_end ──────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state[n,p_f,t_last(p_f)] − v_state[n,d*,t_last(d*)] = 0
+    #   ∀ n ∈ bind_within_period ∪ looping nodeStateBlock, p ∈ L* (a period label with steps: a split realization
+    #     roll), p_f ∈ B(p), p_f ≠ d*, whose first step of p wraps to (d*, t_last(d*)) (the seam lag,
+    #     _self_discharge.state_links), (n,p_f,t_last(p_f)) ∈ nodeState_last_dt; unless both ends are already set
+    #     (pinned by storage_state_start_binding_cyclic_period or fixed by node_balance_fix_quantity_eq_lower)
+    #   d* = the last branch period of p in name order
+    # A split realization roll holds the period p as one path per forecast: p's jump steps, then the steps of one
+    # branch period p_f.  The state cycles within the period's part in the roll, so each path closes on itself: the
+    # first step of p continues from the end of every path.  The lag is single-valued (each p_f's first step
+    # continues from p's last jump step, and p's first step from the end of d*), so this row ends every other path
+    # at the level d* ends at: every path's end is the level p starts from.  A roll that continues the period
+    # from the carry has no wrap at p's first step (scope_carry) and closes or anchors each path's end instead
+    # (storage_state_roll_close / storage_state_roll_anchor at each p_f's last step).
+    links = [link for link in _self_discharge.state_links(d, has_rp=b.has_rp, has_nsb=b.has_nsb)
+             if link.key in ("state_change_wp_seam", "state_change_block")]
+    if not links:
+        return
+    branch = pl.DataFrame([(p, f) for p, fs in lab.items() for f in fs], schema={"d": pl.Utf8, "d_prev": pl.Utf8},
+                          orient="row")
+    wraps = _self_discharge.previous_steps(links).join(branch, on=["d", "d_prev"], how="semi")
+    ends = _utf8_cells(d.nodeState_last_dt)
+    over = (wraps.select("n", "d", pl.col("d_prev").alias("d_end"), pl.col("t_prev").alias("t_end"))
+            .join(branch.rename({"d_prev": "f"}), on="d", how="inner")
+            .filter(pl.col("f") != pl.col("d_end"))
+            .join(ends.rename({"d": "f"}), on=["n", "f"], how="inner")
+            .select("n", pl.col("f").alias("d"), "t", "d_end", "t_end").unique())
+    over = _path_end_rows(b, over)
+    if over is None:
+        return
+    b.m.add_cstr(
+        "storage_split_path_end",
         over      = over,
         sense     = "==",
-        lhs_terms = {"state": b.v_state,
-                     "state_end": -_var_view(b.v_state, "__path_end", {"d": "d_end", "t": "t_end"})},
+        lhs_terms = _path_end_terms(b),
         rhs_terms = {},
     )
     _notice_stochastic_storage_paths(over["n"].to_list())
@@ -5939,13 +6004,14 @@ def _roll_horizon_ends(b: _Build, nodes: pl.DataFrame) -> "pl.DataFrame | None":
 def _first_scope_ends(b: _Build, nodes: pl.DataFrame) -> "pl.DataFrame | None":
     """``(n, d, t)`` of ``nodes`` (n): where the first scope of a rolling roll ends within the roll — the step the
     roll's first step would wrap to: the last step of the first period in the roll (bind_within_period, also
-    bind_within_timeblock, which a rolling solve uses as bind_within_period, and bind_intraperiod_blocks).  None
-    when there are none."""
+    bind_within_timeblock, which a rolling solve uses as bind_within_period, and bind_intraperiod_blocks); in a
+    split realization roll the last step of each path (each branch period of the label).  None when there are
+    none."""
     pairs = scope_end_pairs(b.d)   # the pairs G3 checks (preprocess._step_relations)
     if pairs is None:
         return None
     names = nodes.select(pl.col("n").cast(pl.Utf8)).unique()
-    utf = pairs.join(names, on="n", how="semi").select("n", "d", pl.col("t_end").alias("t")).unique()
+    utf = pairs.join(names, on="n", how="semi").select("n", d="d_end", t="t_end").unique()
     if utf.height == 0:
         return None
     over = (b.nodeState_dt
@@ -6058,7 +6124,8 @@ def _eq_storage_roll_end(b: _Build) -> None:
     # v_state[n,d,t]·state_unitsize[n] ≥ min(carry[n], hold[n,d,t])
     #   ∀ n ∈ storage_roll_end(anchor), (n,d,t) ∈ nodeState_last_dt, d ∈ period_last;
     #     n ∈ storage_roll_end(scope_anchor), (n,d,t) = the end of the roll's first scope (_first_scope_ends: the
-    #     last step of the first period in the roll);
+    #     last step of the first period in the roll; in a split realization roll the last step of each path, i.e. of
+    #     each branch period of the label);
     #     (n,d,t) ∉ the steps an upper-level solve fixes (fix_quantity, fix_usage, fix_price),
     #     (n,d,t) ∉ the steps storage_state_end_binding pins
     #   carry = the level the roll starts from (MWh, roll_continue_state); hold = the level reached from it by doing

@@ -47,7 +47,7 @@ STEP_RELATIONS: dict[str, StepRelation] = {
     "dtttdt_forward_only": StepRelation(CHECKED, _DTTTDT),
     "dtttdt_within_solve": StepRelation(CHECKED, _DTTTDT),
     "dtttdt_block_interior": StepRelation(CHECKED, ((None, "t_previous", BEFORE),)),
-    "dtttdt_within_period": StepRelation(CHECKED, ((None, "t_previous_within_period", BEFORE),)),
+    "dtttdt_within_period": StepRelation(CHECKED, (("d_previous", "t_previous_within_period", BEFORE),)),
     "dt_online_wrap": StepRelation(CHECKED, _LINK),
     "dt_ramp_link": StepRelation(CHECKED, _LINK),
     "dt_ramp_carry": StepRelation(CHECKED, _LINK),
@@ -60,7 +60,7 @@ STEP_RELATIONS: dict[str, StepRelation] = {
     "node_coarse_step": StepRelation(CHECKED, ((None, "b_first", AT_OR_BEFORE),)),
     "process_coarse_step": StepRelation(CHECKED, ((None, "b_first", AT_OR_BEFORE),)),
     # Not a FlexData field: the pairs of model.core._first_scope_ends (scope_end_pairs).
-    "scope_ends": StepRelation(CHECKED, ((None, "t_end", BEFORE),)),
+    "scope_ends": StepRelation(CHECKED, (("d_end", "t_end", BEFORE),)),
     "uptime_lookback": StepRelation(DERIVED, note="dt_ramp_link"),
     "downtime_lookback": StepRelation(DERIVED, note="dt_ramp_link"),
     "dtt_timeline_matching": StepRelation(EXEMPT, note="maps a lower solve's steps to the upper solve's steps"),
@@ -71,6 +71,8 @@ STEP_RELATIONS: dict[str, StepRelation] = {
         EXEMPT, note="nodeState_first_dt x nodeState_last_dt of period_last: a start and the model end"),
     "storage_within_solve_path_end": StepRelation(
         EXEMPT, note="nodeState_last_dt x nodeState_last_dt: the last step of each last period and of d*"),
+    "storage_split_path_end": StepRelation(
+        EXEMPT, note="nodeState_last_dt x nodeState_last_dt: the last step of each branch period and of d*"),
     "storage_state_fan_start": StepRelation(
         EXEMPT, note="nodeState_first_dt x nodeState_first_dt: the first step of each root of a first-period fan"),
 }
@@ -136,8 +138,8 @@ def split_first_steps(period_branch: pl.DataFrame | None, steps: pl.DataFrame | 
 
 
 def null_split_placeholders(frame: pl.DataFrame | None, firsts: pl.DataFrame,
-                            columns: tuple[str, ...]) -> pl.DataFrame | None:
-    """``frame`` with ``columns`` null on its rows at ``firsts`` (``split_first_steps``).
+                            columns: tuple[str, ...], step: str = "t") -> pl.DataFrame | None:
+    """``frame`` with ``columns`` null on its rows whose (``d``, ``step``) is at ``firsts`` (``split_first_steps``).
 
     Under a split realization roll the label and its branch periods are no periods on a path, so the period-cyclic
     placeholders at their first steps (``dtttdt`` ``t_previous`` / ``t_previous_within_timeset``: the period's
@@ -146,10 +148,20 @@ def null_split_placeholders(frame: pl.DataFrame | None, firsts: pl.DataFrame,
     predecessors), so they are null, and the frames derived from ``frame`` inherit that."""
     if frame is None or frame.height == 0 or firsts.height == 0:
         return frame
-    hit = (frame.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+    hit = (frame.select(pl.col("d").cast(pl.Utf8), pl.col(step).cast(pl.Utf8).alias("t"))
            .join(firsts.with_columns(__hit=pl.lit(True)), on=["d", "t"], how="left", maintain_order="left")
            ["__hit"].fill_null(False))
     return frame.with_columns(pl.when(pl.lit(hit)).then(None).otherwise(pl.col(c)).alias(c) for c in columns)
+
+
+def null_split_block_wraps(succ: pl.DataFrame | None, period_branch: pl.DataFrame | None,
+                           steps: pl.DataFrame | None) -> pl.DataFrame | None:
+    """``period_block_succ`` (d, b_first, b_next) with ``b_next`` null on the row of each split label's and branch
+    period's last block, whose successor is the period's own first block (the loop of a period).  Under a split
+    realization roll the label's last block continues in each branch period and a branch period's last block (where
+    the path loops) in the label's first block: those successors lie in another period, in ``dtttdt_block_lag``
+    (the state lag the model reads; nothing reads ``period_block_succ``).  Unchanged without a label with steps."""
+    return null_split_placeholders(succ, split_first_steps(period_branch, steps), ("b_next",), step="b_next")
 
 
 def not_path_aware(what: str, period: str, solve: str | None) -> RuntimeError:
@@ -158,18 +170,24 @@ def not_path_aware(what: str, period: str, solve: str | None) -> RuntimeError:
 
 
 def scope_end_pairs(d) -> pl.DataFrame | None:
-    """``(n, d, t, t_end)``, Utf8: for each node with a ``SCOPE_END_KINDS`` row of storage_roll_end (the nodes whose
-    scope end the model reads), its first step of the solve (nodeState_first_dt) and the step it wraps to, the last
-    step of its period (nodeState_last_dt).  None without rows."""
+    """``(n, d, t, d_end, t_end)``, Utf8: for each node with a ``SCOPE_END_KINDS`` row of storage_roll_end (the nodes
+    whose scope end the model reads), its first step of the solve (nodeState_first_dt) and the step it wraps to, the
+    last step of its period (nodeState_last_dt).  In a split realization roll a first step on a label with steps
+    has one scope end per path: the last step of each of its branch periods.  None without rows."""
     first, last = d.nodeState_first_dt, d.nodeState_last_dt
     sre = getattr(d, "storage_roll_end", None)
     if first is None or last is None or sre is None or first.height == 0 or last.height == 0:
         return None
     nodes = sre.filter(pl.col("kind").cast(pl.Utf8).is_in(SCOPE_END_KINDS)).select(pl.col("n").cast(pl.Utf8))
+    ends = last.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8).alias("d_end"),
+                       pl.col("t").cast(pl.Utf8).alias("t_end"))
+    lab = labels_with_steps(d)
+    route = pl.DataFrame([(p, f) for p in ends["d_end"].unique().sort().to_list() for f in lab.get(p) or [p]],
+                         schema={"d": pl.Utf8, "d_end": pl.Utf8}, orient="row")
     out = (first.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
            .join(nodes, on="n", how="semi")
-           .join(last.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
-                             pl.col("t").cast(pl.Utf8).alias("t_end")), on=["n", "d"], how="inner"))
+           .join(route, on="d", how="inner")
+           .join(ends, on=["n", "d_end"], how="inner"))
     return out if out.height > 0 else None
 
 
@@ -185,7 +203,8 @@ def _period_steps(d, periods, solve: str | None) -> dict[str, list[str]]:
 
 
 def check_step_relations(d, solve: str | None) -> None:
-    """G4: the dtttdt row of each branch period's first step links to (p, p's last jump step).  G3: no ``checked``
+    """G4: the dtttdt row of each branch period's first step links to (p, p's last jump step), and the label's first
+    step links to an earlier period or wraps to the last step of a leaf (one wrap that closes every path).  G3: no ``checked``
     relation links a step of a label with steps or of its branch periods to a step of the same period on the wrong
     side (a self-wrap; a linked step outside the period's steps of this build cannot be a wrap).  No-op without a
     label with steps."""
@@ -196,11 +215,22 @@ def check_step_relations(d, solve: str | None) -> None:
     links = (pl.DataFrame(schema={"d": pl.Utf8, "t": pl.Utf8, "d_previous": pl.Utf8, "t_previous_within_solve": pl.Utf8})
              if d.dtttdt is None else d.dtttdt.select(pl.col(c).cast(pl.Utf8) for c in
                                                       ("d", "t", "d_previous", "t_previous_within_solve")))
+    order = {k: i for i, k in enumerate(dict.fromkeys(links["d"].to_list()))}   # solve order (dtttdt's rows)
+    wraps = {(p, steps[p][0]) for p in lab}
+    leaves = set(order) - {dp for dd, tt, dp, _ in links.rows() if dp != dd and (dd, tt) not in wraps}
     for p, branches in lab.items():
         for f in branches:
             row = links.filter((pl.col("d") == f) & (pl.col("t") == steps[f][0]))
             if row.rows() != [(f, steps[f][0], p, steps[p][-1])]:
                 raise not_path_aware("dtttdt", f, solve)
+        # The label's first step: its within-solve link is the step before it (an earlier period of the solve, or
+        # the previous roll), or the bind_within_solve wrap of the solve's first step.  A wrap closes every path
+        # only when it lands on the last step of a leaf (storage_within_solve_path_end ties the other leaves' ends
+        # to it): a wrap to a later period that is no leaf, or to a step before a leaf's end, closes one path only.
+        for _, _, dp, tp in links.filter((pl.col("d") == p) & (pl.col("t") == steps[p][0])).rows():
+            later = dp in order and order[dp] > order[p]
+            if (dp in leaves and tp != _period_steps(d, [dp], solve)[dp][-1]) or (later and dp not in leaves):
+                raise not_path_aware("dtttdt", p, solve)
     pos = pl.DataFrame([(p, t, i) for p, ts in steps.items() for i, t in enumerate(ts)],
                        schema={"_d": pl.Utf8, "_t": pl.Utf8, "_i": pl.Int64}, orient="row")
     for name, rel in STEP_RELATIONS.items():

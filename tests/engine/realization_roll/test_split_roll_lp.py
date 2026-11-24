@@ -5,8 +5,8 @@ Each test forces the live plan through the seam and suppresses the realization s
 realization roll R_k: the label ``p1`` dispatches the jump on the realized branch, the forecasts ``p1_<f>`` the
 rest of the horizon from the jump end on.  The period-cyclic placeholders at the first steps of ``p1`` and of
 each ``p1_<f>`` are null (``_step_relations.null_split_placeholders``), so the build passes G1-G4 and solves.
-These models have no cyclic storage, no blocks and no delays: a split roll with one of those is still refused by
-G3 (the per-path rows are the next package's).
+bind_within_period and bind_intraperiod_blocks close per path (``test_seam_steps``); a split roll with a unit
+delay is still refused by G3.
 
 Every expected value is derived by hand in the test's docstring.  The objective of a roll is in EUR: the operating
 cost of its steps (branch-weighted) times 8760 h / the period's timeset hours (``years_represented`` 1).
@@ -303,19 +303,77 @@ def test_label_cells_cost_at_weight_one(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Still refused: cyclic storage, blocks and delays need per-path rows (the next package's).
+# Cyclic storage and blocks close per path (test_seam_steps has the multi-roll cases); a delay is still refused.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize(("storage", "delay", "frame"), [
-    ([["node", "elec", "storage_binding_method", pack("bind_within_period", "str"), "init"]], False,
-     "dtttdt_within_period"),
-    ([["node", "elec", "storage_binding_method", pack("bind_intraperiod_blocks", "str"), "init"]], False,
-     "period_block_succ"),
-    (None, True, "dtt__delay_duration")], ids=["bind_within_period", "bind_intraperiod_blocks", "delay"])
-def test_split_roll_with_a_cycle_or_delay_is_refused(tmp_path, monkeypatch, storage, delay, frame):
-    """T-w1 with cyclic storage, intraperiod blocks or a 1 h unit delay: G3 refuses roll 0, not a different LP.  The
-    within-period lag of the label's first step wraps to its own last step (t01 -> t01), the block of a tail
-    succeeds itself, and the delay wraps the flow of p1's only step back into p1 (it must reach each tail)."""
-    with pytest.raises(RuntimeError, match=rf"Internal error: {frame} on period '\w+' of roll '\w+' is not "
-                                           r"path-aware"):
-        _run(_tw1(0.5, storage=storage, delay=delay), tmp_path, monkeypatch)
+_WITHIN_PERIOD = [["node", "elec", "storage_binding_method", pack("bind_within_period", "str"), "init"]]
+_BLOCKS = [["node", "elec", "storage_binding_method", pack("bind_intraperiod_blocks", "str"), "init"]]
+_PATH_END = {"storage_split_path_end[elec,p1_A,t02,p1_B,t02]": {"v_state[elec,p1_A,t02]": 1.0,
+                                                                "v_state[elec,p1_B,t02]": -1.0}}
+
+
+def _rows_named(path, prefix: str) -> dict:
+    lp = scm.lp_snapshot().parse_mps(path)
+    out: dict = {}
+    for (row, col), v in lp.coefs.items():
+        if row.startswith(prefix):
+            out.setdefault(row, {})[col] = v
+    return out
+
+
+def test_split_roll_with_bind_within_period_closes_each_path(tmp_path, monkeypatch):
+    """T-w1 (w_B 0.5) with bind_within_period.  R_0's period part is one path per forecast (p1 t01 + p1_f t02): each
+    tail's first step continues from (p1, t01), p1's first step wraps to (p1_B, t02), where the fix_start pin 0 sits,
+    and p1_A's end is tied to it.  Gas covers t01 and charges s at 10; under B (wind 0) s saves 30 at t02, under A
+    the store empties into the curtailed wind: 0.5 x 30 > 10, s = 1, cost 20 -> 87 600.  R_1 (p1 t02) continues the
+    period from s = 1 and closes it at its start level 0: 0.  (Each name cycling on itself: no store across the
+    seam, 10 + 0.5 x 30 = 25 -> 109 500.)"""
+    built, steps, datas = _run(_tw1(0.5, storage=_WITHIN_PERIOD), tmp_path, monkeypatch)
+    assert len(built) == 2
+    assert ts._rows(datas[0].dtttdt_within_period) == [
+        ("p1", "t01", "p1_B", "t02"), ("p1_A", "t02", "p1", "t01"), ("p1_B", "t02", "p1", "t01")]
+    assert _rows_named(built[0][1], "storage_split_path_end") == _PATH_END
+    assert _objectives(steps) == pytest.approx([87_600.0, 0.0], rel=1e-9, abs=1e-6)
+    first = list(steps.values())[0]
+    assert _value(first.solution.value("v_state"), n="elec", d="p1", t="t01") == pytest.approx(1.0, abs=1e-9)
+
+
+class _Stop(Exception):
+    pass
+
+
+def test_split_roll_with_blocks_loops_each_path(tmp_path, monkeypatch):
+    """T-w1 with bind_intraperiod_blocks: R_0 holds p1 whole on each path (t01 + t02), so its blocks loop per path
+    (the label's block continues from (p1_B, t02), the tails' from (p1, t01), p1_A's end tied to p1_B's), the loop
+    rows of p1 and of the tails in period_block_succ are null, and the build passes G1-G4.  The run is stopped at
+    R_1's build (p1 t02: one step the roll holds in part, its block continuing from the carry)."""
+    from flextool.engine.model import core
+
+    ts._live_plan(monkeypatch)
+    build, seen, mps = core.build_flextool, [], tmp_path / "r0.mps"
+
+    def first_only(m, d, *args, **kwargs):
+        if seen:
+            raise _Stop
+        seen.append(d)
+        out = build(m, d, *args, **kwargs)
+        m.write_mps(mps, emit_names=True)
+        return out
+
+    monkeypatch.setattr(core, "build_flextool", first_only)
+    with pytest.raises(_Stop):
+        scm.run_spec(_tw1(0.5, storage=_BLOCKS), tmp_path)
+    d = seen[0]
+    assert d.period_block_chain is None
+    assert ts._rows(d.dtttdt_block_lag) == [
+        ("p1", "t01", "p1_B", "t02"), ("p1_A", "t02", "p1", "t01"), ("p1_B", "t02", "p1", "t01")]
+    assert ts._rows(d.period_block_succ) == [("p1", "t01", "None"), ("p1_A", "t02", "None"), ("p1_B", "t02", "None")]
+    assert _rows_named(mps, "storage_split_path_end") == _PATH_END
+
+
+def test_split_roll_with_a_delay_is_refused(tmp_path, monkeypatch):
+    """T-w1 with a 1 h unit delay: G3 refuses roll 0, not a different LP.  The delay wraps the flow of p1's only step
+    back into p1 (it must reach each tail)."""
+    with pytest.raises(RuntimeError, match=r"Internal error: dtt__delay_duration on period '\w+' of roll '\w+' is "
+                                           r"not path-aware"):
+        _run(_tw1(0.5, delay=True), tmp_path, monkeypatch)

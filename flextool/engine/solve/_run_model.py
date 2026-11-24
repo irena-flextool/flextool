@@ -153,14 +153,30 @@ def _roll_period_whole(active_time_list: dict, complete_active_time_list: dict,
 
     The ``bind_intraperiod_blocks`` blocks of a whole period loop within the roll, as in a solve that is not rolling;
     the blocks of a period the roll holds in part chain forward and carry the storage level from roll to roll
-    (owner decision Q-c15e-A).
+    (owner decision Q-c15e-A).  In a split realization roll the label keeps the jump steps and each branch period
+    the rest of the period: a path (the label's steps, then one branch period's) is compared, so the label and its
+    branch periods are whole together.
     """
     anchor = {b: p for p, b in period_branch if b != p}
     rows: list[tuple[str, bool]] = []
     for period, steps in active_time_list.items():
-        full = complete_active_time_list.get(anchor.get(period, period)) or []
-        rows.append((str(period), bool(steps) and [s.timestep for s in steps] == [s.timestep for s in full]))
+        base = anchor.get(period, period)
+        full = complete_active_time_list.get(base) or []
+        names = _path_steps(active_time_list, period_branch, period)
+        rows.append((str(period), bool(steps) and names == [s.timestep for s in full]))
     return pl.DataFrame(rows, schema={"period": pl.Utf8, "whole": pl.Boolean}, orient="row")
+
+
+def _path_steps(active_time_list: dict, period_branch: list, period: str) -> list:
+    """The step names of ``period`` in the roll, on its path through a split realization roll: a branch period after
+    its label's (jump) steps, a label before the steps of its first branch period (every branch period holds the same
+    steps).  Elsewhere the period's own steps."""
+    own = [s.timestep for s in active_time_list.get(period) or []]
+    label = next((p for p, b in period_branch if b == period and p != period), None)
+    if label is not None and active_time_list.get(label):
+        return [s.timestep for s in active_time_list[label]] + own
+    branch = next((b for p, b in period_branch if p == period and b != period and active_time_list.get(b)), None)
+    return own + [s.timestep for s in active_time_list[branch]] if branch is not None and own else own
 
 
 def _warn_rolling_blocks_chained(state, complete_solve_name: str, solve: str, active_time_list: dict,
@@ -425,7 +441,7 @@ def _first_scope(active_time_list: dict, complete_active_time_list: dict,
     if s0 not in names:
         return None
     start, end = 0, len(full) - 1
-    held = {str(e.timestep) for e in steps}
+    held = {str(t) for t in _path_steps(active_time_list, period_branch, period)}
     return (base, names[start]), names[start] != s0, names[end] in held
 
 

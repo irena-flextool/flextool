@@ -147,12 +147,19 @@ def test_g4_tail_starts_from_the_last_jump_step():
 
 def test_g3_self_wrapping_tail_lag():
     # The within-period lag of p1_A's first step wraps to p1_A's own last step t4.
-    lag = _frame(("d", "t", "t_previous_within_period"),
-                 [("p1", "t1", "t0"), ("p1", "t2", "t1"), ("p1_A", "t3", "t4"), ("p1_A", "t4", "t3")])
+    lag = _frame(("d", "t", "d_previous", "t_previous_within_period"),
+                 [("p1", "t1", "p1", "t0"), ("p1", "t2", "p1", "t1"), ("p1_A", "t3", "p1_A", "t4"),
+                  ("p1_A", "t4", "p1_A", "t3")])
     with pytest.raises(RuntimeError, match="dtttdt_within_period on period 'p1_A'"):
         sr.check_step_relations(_data(dtttdt_within_period=lag), "s_roll_0")
+    # Across the seam (p1_A's first step from p1's last jump step) it passes.
+    seam = lag.with_columns(d_previous=pl.when(pl.col("t") == "t3").then(pl.lit("p1")).otherwise("d_previous"),
+                            t_previous_within_period=pl.when(pl.col("t") == "t3").then(pl.lit("t2"))
+                            .otherwise("t_previous_within_period"))
+    sr.check_step_relations(_data(dtttdt_within_period=seam), "s_roll_0")
     # The same lag on the label's own first step (t1 -> t2).
-    lag = _frame(("d", "t", "t_previous_within_period"), [("p1", "t1", "t2"), ("p1", "t2", "t1")])
+    lag = _frame(("d", "t", "d_previous", "t_previous_within_period"),
+                 [("p1", "t1", "p1", "t2"), ("p1", "t2", "p1", "t1")])
     with pytest.raises(RuntimeError, match="dtttdt_within_period on period 'p1'"):
         sr.check_step_relations(_data(dtttdt_within_period=lag), "s_roll_0")
     # Not checked without a label with steps.
@@ -180,15 +187,17 @@ def test_g3_delay_and_block_successors():
 
 
 def test_g3_scope_end_on_the_label():
-    # A scope_anchor node's first step of the roll (p1, t1) wraps to the last step of its own period, (p1, t2).
+    # A scope_anchor node's first step of the roll (p1, t1): its scope ends at the end of each path, the last step
+    # of each branch period, not at the last step of its own period (p1, t2).
     first = _frame(("n", "d", "t"), [("n1", "p1", "t1")])
-    last = _frame(("n", "d", "t"), [("n1", "p1", "t2"), ("n1", "p1_A", "t4")])
+    last = _frame(("n", "d", "t"), [("n1", "p1", "t2"), ("n1", "p1_A", "t4"), ("n1", "p1_B", "t4")])
     sre = pl.DataFrame({"n": ["n1"], "kind": ["scope_anchor"], "value": [0.5]})
-    with pytest.raises(RuntimeError, match="scope_ends on period 'p1'"):
-        sr.check_step_relations(_data(nodeState_first_dt=first, nodeState_last_dt=last, storage_roll_end=sre),
-                                "s_roll_0")
-    assert sr.scope_end_pairs(_data(nodeState_first_dt=first, nodeState_last_dt=last, storage_roll_end=sre)).rows() \
-        == [("n1", "p1", "t1", "t2")]
+    d = _data(nodeState_first_dt=first, nodeState_last_dt=last, storage_roll_end=sre)
+    assert sorted(sr.scope_end_pairs(d).rows()) == [("n1", "p1", "t1", "p1_A", "t4"), ("n1", "p1", "t1", "p1_B", "t4")]
+    sr.check_step_relations(d, "s_roll_0")
+    # Without the label's steps (today's fan) it is the own period's last step.
+    plain = _data(label_steps=False, nodeState_first_dt=first, nodeState_last_dt=last, storage_roll_end=sre)
+    assert sr.scope_end_pairs(plain).rows() == [("n1", "p1", "t1", "p1", "t2")]
 
 
 def test_g3_scope_end_only_of_the_nodes_whose_scope_end_the_model_reads():
@@ -224,7 +233,7 @@ FRAME_COLUMNS = {
                             "t_previous_within_solve"),
     "dtttdt_within_solve": ("d", "t", "t_previous", "t_previous_within_timeset", "d_previous",
                             "t_previous_within_solve"),
-    "dtttdt_within_period": ("d", "t", "t_previous_within_period"),
+    "dtttdt_within_period": ("d", "t", "d_previous", "t_previous_within_period"),
     "dtttdt_block_interior": ("d", "t", "t_previous"),
     "dtttdt_block_lag": ("d", "t", "d_previous", "t_previous_within_solve"),
     "dt_ramp_link": ("d", "t", "d_previous", "t_previous"),

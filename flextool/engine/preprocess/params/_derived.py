@@ -8112,6 +8112,7 @@ def dtttdt_block_interior_from_dtttdt(dtttdt: pl.DataFrame | None,
 def dtttdt_block_lag_from_dtttdt(dtttdt: pl.DataFrame | None,
                                  period_block_time: pl.DataFrame | None,
                                  chained: pl.DataFrame | None = None,
+                                 period_branch: pl.DataFrame | None = None,
                                  ) -> pl.DataFrame | None:
     """``(d, t, d_previous, t_previous_within_solve)``: the step each step of a ``bind_intraperiod_blocks`` block
     continues from (the state change of ``nodeBalanceBlock_eq``).
@@ -8122,17 +8123,17 @@ def dtttdt_block_lag_from_dtttdt(dtttdt: pl.DataFrame | None,
     holds only in part) chain forward instead: their rows are the bind_forward_only lag
     (:func:`dtttdt_forward_only_from_dtttdt`), so a period's first step continues from the previous step of the
     solve and the solve's first step has no row (its start is the fix_start state or the roll carry).  Restricted to
-    the steps of *period_block_time*.
+    the steps of *period_block_time*.  *period_branch* ``(d, b)``: in a split realization roll a looping period is
+    one loop per path (the label's jump and one branch period's tail), as the within-period lag gives it.
     """
     if dtttdt is None or dtttdt.height == 0 or period_block_time is None or period_block_time.height == 0:
         return None
     from flextool.engine.preprocess.flex_data import _within_period_lag
 
-    lag = _within_period_lag(dtttdt)
+    lag = _within_period_lag(dtttdt, period_branch)
     if lag is None:
         return None
-    loop = lag.select("d", "t", pl.col("d").alias("d_previous"),
-                      pl.col("t_previous_within_period").alias("t_previous_within_solve"))
+    loop = lag.select("d", "t", "d_previous", pl.col("t_previous_within_period").alias("t_previous_within_solve"))
     if chained is not None and chained.height > 0:
         names = [str(x) for x in chained["d"].to_list()]
         loop = loop.filter(~pl.col("d").cast(pl.Utf8).is_in(names))

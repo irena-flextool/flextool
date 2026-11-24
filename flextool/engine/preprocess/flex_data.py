@@ -989,14 +989,21 @@ def _roll_end_tied_nodes(roll_end: "pl.DataFrame | None") -> "pl.DataFrame | Non
     return out if out.height > 0 else None
 
 
-def _within_period_lag(dtttdt: pl.DataFrame) -> "pl.DataFrame | None":
-    """``(d, t, t_previous_within_period)``: the bind_within_period predecessor of every step of ``dtttdt``.
+def _within_period_lag(dtttdt: pl.DataFrame,
+                       period_branch: "pl.DataFrame | None" = None) -> "pl.DataFrame | None":
+    """``(d, t, d_previous, t_previous_within_period)``: the bind_within_period predecessor of every step of ``dtttdt``.
 
     Inside a period it is the step's ``t_previous`` (across block boundaries too: blocks chain inside the
     period).  The first step of a period wraps to the period's OWN last step — the state cycles within each
     period.  ``dtttdt``'s first step of a period continues from another period (``d_previous`` ≠ ``d``) or, for
     a period that wraps onto itself, already points at its own last step.  A period's last step is the step
-    no same-period step follows.
+    no same-period step follows.  ``d_previous`` is ``d`` on these rows.
+
+    A split realization roll (``period_branch`` (d, b) with a label that has steps, ``_step_relations``) splits a
+    period into paths: the label's jump steps and one branch period's tail each.  The period's part in the roll is
+    one path, so the lag crosses the seam: each branch period's first step continues from the label's last jump
+    step, and the label's first step wraps to the last step of its last branch period in name order, d* (the
+    model ties every other branch period's end to d*'s, ``core._eq_storage_split_path_end``).
     """
     t_dtype = dtttdt.schema["t"]
     frame = (dtttdt.select("d", "t", "t_previous", "d_previous")
@@ -1014,9 +1021,20 @@ def _within_period_lag(dtttdt: pl.DataFrame) -> "pl.DataFrame | None":
             "bind_within_period: the steps of period(s) "
             f"{sorted(str(x) for x in multi['d'].to_list())} do not form one chain in step_previous "
             "(more than one last step)")
+    first = first.select("d", "t").join(last, on="d", how="inner").with_columns(d_previous=pl.col("d"))
+    from flextool.engine.preprocess._step_relations import _split_labels
+    lab = {} if period_branch is None or period_branch.height == 0 else _split_labels(period_branch, frame)
+    if lab:
+        ends = dict(last.select(pl.col("d").cast(pl.Utf8), pl.col("t_previous_within_period").cast(pl.Utf8)).rows())
+        seam = {**{f: p for p, fs in lab.items() for f in fs}, **{p: max(fs) for p, fs in lab.items() if fs}}
+        src = pl.col("d").cast(pl.Utf8).replace_strict(seam, default=None)
+        first = first.with_columns(
+            d_previous=pl.coalesce(src, pl.col("d").cast(pl.Utf8)).cast(frame.schema["d"]),
+            t_previous_within_period=pl.coalesce(src.replace_strict(ends, default=None),
+                                                 pl.col("t_previous_within_period").cast(pl.Utf8)).cast(t_dtype))
     out = pl.concat([
-        inner.select("d", "t", pl.col("t_previous").alias("t_previous_within_period")),
-        first.select("d", "t").join(last, on="d", how="inner"),
+        inner.select("d", "t", pl.col("d").alias("d_previous"), pl.col("t_previous").alias("t_previous_within_period")),
+        first.select("d", "t", "d_previous", "t_previous_within_period"),
     ], how="vertical")
     return out.sort("d", "t") if out.height > 0 else None
 
@@ -3981,7 +3999,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
 
     dtttdt_within_period_df = None
     if binding_within_period is not None and dtttdt is not None and dtttdt.height > 0:
-        dtttdt_within_period_df = _within_period_lag(dtttdt)
+        dtttdt_within_period_df = _within_period_lag(dtttdt, _split_period_branch(sd, provider))
 
     # node__storage_start_end_method is read by .mod from input/
     # (flextool.mod:662) — that's the canonical user-input source.
@@ -6325,14 +6343,16 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
                 realized=_drv._rolling_realized_steps(flex_data, workdir_path, provider))
             if family is None:
                 return
+            from flextool.engine.preprocess._step_relations import null_split_block_wraps
+            pbf = getattr(flex_data, "period_branch_full", None)
             flex_data.period_block = family["period_block"]
-            flex_data.period_block_succ = family["period_block_succ"]
+            flex_data.period_block_succ = null_split_block_wraps(family["period_block_succ"], pbf, flex_data.dt)
             flex_data.period_block_time = family["period_block_time"]
             flex_data.dtttdt_block_interior = _drv.dtttdt_block_interior_from_dtttdt(
                 getattr(flex_data, "dtttdt", None), family["period_block_time"])
             flex_data.dtttdt_block_lag = _drv.dtttdt_block_lag_from_dtttdt(
                 getattr(flex_data, "dtttdt", None), family["period_block_time"],
-                getattr(flex_data, "period_block_chain", None))
+                getattr(flex_data, "period_block_chain", None), pbf)
         _loadflex_prof("apply_db_overrides:pass_synthetic_blocks")
         _timed("c.synth blocks", _wire_blocks_for_synthetic_solve)
 
