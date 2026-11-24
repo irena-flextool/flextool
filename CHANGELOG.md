@@ -117,14 +117,15 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
 - **Databases without a `Base` alternative keep their reserves and profiles through the upgrade.** The upgrade to
   data version 56 keeps the older behaviour of reserve provisions and profiles by writing values into the `Base`
   alternative: `is_enabled` `no` on the reserve provisions that were inactive by default, `profile_method` and
-  `ramp_method` `none` where no method was set (so a `unit__node__profile` does not become `upper_limit`). In a
-  database without `Base`, such as one made from FlexTool's templates of data version 25 or older, nothing was
-  written: after the upgrade those reserve provisions were active and those unit profiles capped the flow.
-  The upgrade now makes a `Base` alternative there, adds it to every scenario at the lowest rank (below every
-  other alternative, so any value of yours wins) and writes the values in it. A lower-case `base` is a different
-  alternative and is left as it is. Results change only for databases without `Base` upgraded from data version 55
-  or older; a database already upgraded past 56 without `Base` is not repaired (check its reserve provisions and
-  `unit__node__profile` methods by hand).
+  `ramp_method` `none` on the entities without a method in any alternative (so such a `unit__node__profile` does
+  not become `upper_limit`). In a database without `Base`, such as one made from FlexTool's templates of data
+  version 25 or older, or with an empty `Base` that no scenario uses, nothing reached the scenarios: after the
+  upgrade those reserve provisions were active and those unit profiles capped the flow. The upgrade now makes
+  `Base` there (or uses the empty one), adds it to every scenario at the lowest rank (below every other
+  alternative, so any value of yours wins) and writes the values in it. A lower-case `base` is a different
+  alternative and is left as it is. Include `Base` at the bottom of the scenarios you make after the upgrade. Results
+  change only for such databases upgraded from data version 55 or older; one already upgraded past 56 is not
+  repaired (check its reserve provisions and `unit__node__profile` methods by hand).
 
 ### New features
 

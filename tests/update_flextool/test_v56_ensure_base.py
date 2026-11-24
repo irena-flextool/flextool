@@ -169,6 +169,45 @@ def test_step_56_rerun_on_its_own_result_converges(chain, tmp_path) -> None:
     assert diff(snapshot(chain[56]), snapshot(path)) == []
 
 
+def test_an_empty_base_in_no_scenario_is_put_at_the_bottom(tmp_path) -> None:
+    """A ``Base`` without values that no scenario uses (spinedb_api makes one next to the template's ``base``) gets
+    the same ranks and values as a new one, and keeps its description."""
+    path = tmp_path / "db.sqlite"
+    _seed(path)
+    with open_database_mapping(url_of(path)) as db:
+        db.add_alternative(name="Base", description="Base alternative")
+        db.commit_session("an unused Base")
+    migrate(path, up_to=56)
+    with open_database_mapping(url_of(path)) as db:
+        assert db.get_item("alternative", name="Base")["description"] == "Base alternative"
+        provisions = {tuple(v["entity_byname"]): v["parsed_value"] for v in db.find_parameter_values(
+            entity_class_name="reserve__upDown__unit__node", parameter_definition_name="is_enabled",
+            alternative_name="Base")}
+    assert provisions == {PROVISION_ACTIVE: "no", PROVISION_INACTIVE: "no"}
+    assert _ranks(path) == {
+        "s1": [(-1, "Base"), (0, FLOOR), (1, "a1")],
+        "s2": [(-1, "Base"), (0, FLOOR), (1, "base"), (2, "a1")],
+        "s_base": [(-1, "Base"), (0, FLOOR), (1, "base")],
+        "s_empty": [(1, "Base")],
+    }
+
+
+def test_nothing_to_backfill_makes_no_base(tmp_path) -> None:
+    """A database without entities of the v56 classes gets no ``Base``: v56 has nothing to write into it."""
+    path = tmp_path / "db.sqlite"
+    quiet(initialize_database, str(TEMPLATES / "flextool_template_v25.json"), str(path))
+    with open_database_mapping(url_of(path)) as db:
+        db.add_scenario(name="s1")
+        db.add_scenario_alternative(scenario_name="s1", alternative_name="base", rank=1)
+        db.commit_session("a scenario")
+    migrate(path, up_to=56)
+    with open_database_mapping(url_of(path)) as db:
+        # The v38 floor is made also without nodes.
+        assert sorted(a["name"] for a in db.get_items("alternative")) == ["base", FLOOR]
+        assert sorted((a["alternative_name"], a["rank"]) for a in db.get_items("scenario_alternative")) == [
+            ("base", 1), (FLOOR, 0)]
+
+
 def test_a_kill_after_a_base_write_converges(chain, tmp_path) -> None:
     """A kill right after the commit that makes ``Base`` (D.1), after D.2 and after Batch F, and right before D.1:
     the rerun of step 56 equals the clean step."""

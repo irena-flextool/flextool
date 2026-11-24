@@ -9713,17 +9713,23 @@ def _v56_checked(db, item_type: str, **fields) -> None:
 
 
 def _v56_ensure_base(db) -> None:
-    """Make alternative ``Base`` when the database has none (item 292: a database from the pre-v26 templates).
+    """Make alternative ``Base`` when the database has none (item 292: a database from the pre-v26 templates), or
+    put an empty ``Base`` that no scenario uses into the scenarios (the one spinedb_api makes next to a template's
+    ``base``): either way the v56 values written into it would apply in no scenario.
 
-    The new ``Base`` goes to the lowest rank of every scenario: one below the scenario's lowest (after the v38 floor),
-    rank 1 in a scenario without alternatives.  So the v56 values in it apply in every scenario and a value in any
-    other alternative wins.  A ``Base`` that exists is left as it is.  The rows ride on the calling step's commit.
+    ``Base`` goes to the lowest rank of every scenario: one below the scenario's lowest (after the v38 floor), rank 1
+    in a scenario without alternatives.  So the v56 values in it apply in every scenario and a value in any other
+    alternative wins.  A ``Base`` with values, entity_alternative rows or a scenario is left as it is (adding it to
+    a scenario would change the results of its own values).  The rows ride on the calling step's commit.
     """
     if db.get_item("alternative", name="Base"):
-        return
-    _v56_checked(db, "alternative", name="Base", description=(
-        "Made by the upgrade to data version 56: holds the values that keep the behaviour of the entities made "
-        "before it. At the lowest rank of every scenario."))
+        if (db.find_scenario_alternatives(alternative_name="Base") or db.find_parameter_values(alternative_name="Base")
+                or db.find_entity_alternatives(alternative_name="Base")):
+            return
+    else:
+        _v56_checked(db, "alternative", name="Base", description=(
+            "Made by the upgrade to data version 56: holds the values that keep the behaviour of the entities made "
+            "before it. At the lowest rank of every scenario."))
     lowest = {scenario["name"]: 2 for scenario in db.find_scenarios()}
     for sa in db.find_scenario_alternatives():
         lowest[sa["scenario_name"]] = min(lowest[sa["scenario_name"]], sa["rank"])
