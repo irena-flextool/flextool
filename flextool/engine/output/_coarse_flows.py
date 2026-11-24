@@ -121,6 +121,13 @@ def var_values(sol, flex_data, name: str) -> "pl.DataFrame | None":
     return expand_coarse(frame, flex_data, mode=COARSE_VARS[name], p=frame.columns[0], name=name)
 
 
+def var_is_integer(sol, name: str) -> bool:
+    """True when the solution's variable *name* has integer columns (False when it has none or is continuous, as
+    ``v_online_integer`` is in a solve that relaxes integers)."""
+    var = getattr(sol, "_vars", {}).get(name) if sol is not None else None
+    return bool(var is not None and var.integer)
+
+
 def var_values_at(sol, flex_data, name: str, d: str, t: str) -> "pl.DataFrame | None":
     """:func:`var_values` on the one fine step ``(d, t)`` alone: reads only the LP columns at ``(d, t)`` and, of a
     coarse entity, at the first fine step of its coarse step holding ``(d, t)``, and expands just that step (the

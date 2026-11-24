@@ -5116,7 +5116,7 @@ def online_mintime_carry_from_source(source: "InputSource", flex_data: object, p
     carry = (carry.join(online_in, on="p", how="left", maintain_order="left")
              .with_columns(pl.when(pl.col("__c") < pl.col("value")).then(pl.col("__c"))
                            .otherwise(pl.col("value")).alias("value"))
-             .filter(pl.col("value").abs() > 1e-12)
+             .filter(pl.col("value") != 0.0)
              .select(carry.columns))
     return carry if carry.height > 0 else None
 

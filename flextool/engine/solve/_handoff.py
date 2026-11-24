@@ -186,7 +186,9 @@ class SolveHandoff:
     # also with relaxed integers): the units online of linear and integer
     # processes are not pinned, the realization re-decides them.
     # Producer: parent's committed v_online_linear / v_online_integer of the
-    # process_online_fix_in_uc processes over the jump.
+    # process_online_fix_in_uc processes over the jump, rounded
+    # (``flex_data.snap_carried_online``: integer columns to whole units,
+    # continuous ones near 0 to 0), as are roll_end_online and online_history.
     # Consumer: sibling's ``p_fix_online`` overlay (``online_fix_eq``).
     # Schema: ``[process, period, step, value]``.  No file equivalent.
     fix_online: pl.DataFrame | None = None

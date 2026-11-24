@@ -151,6 +151,7 @@
  "tests/engine/test_capacity_existing_baseline.py": 9.4,
  "tests/engine/test_capacity_margin_projection.py": 0.1,
  "tests/engine/test_capacity_margin_stochastic.py": 5.7,
+ "tests/engine/test_carried_online_rounding.py": 60.0,
  "tests/engine/test_carry_routing.py": 0.0,
  "tests/engine/test_cascade_reader_required.py": 2.7,
  "tests/engine/test_chain_co2_rolling_handoff.py": 39.3,

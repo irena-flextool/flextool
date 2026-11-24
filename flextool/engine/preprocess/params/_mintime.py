@@ -260,7 +260,7 @@ def mintime_roll_carry(dt: "pl.DataFrame | None", step_duration: "object | None"
     out = (reach.select("i", "elapsed").join(hist, how="cross")
            .filter(pl.col("elapsed") + pl.col("hours_to_end") < pl.col("L"))
            .group_by("p", "i").agg(pl.col("value").sum())
-           .filter(pl.col("value").abs() > 1e-12)
+           .filter(pl.col("value") != 0.0)
            .join(steps.select("i", "d", "t"), on="i", how="inner")
            .select("p", "d", "t", "value")
            .sort("p", "d", "t"))
