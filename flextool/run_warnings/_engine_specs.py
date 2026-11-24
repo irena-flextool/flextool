@@ -1120,4 +1120,22 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "the forecasts."
         ),
     ),
+    WarningSpec(
+        code="W-0594",
+        message="solve '{solve}' has delayed units: each jump is realized without look-ahead",
+        title="Realization without look-ahead: delayed units",
+        topic=_SOLVES,
+        severity=NOTE,
+        body=(
+            "The solve is a rolling solve with `stochastic_branches` and `dispatch_realization_method` "
+            "`within_solve` or `separate_dispatch`, and the model has units with a `delay`. Such a solve realizes "
+            "each jump in a realization solve that dispatches it on the realized data, continuing from the "
+            "previous realization and keeping what it inherits from the roll's stochastic solve (note W-0588): the "
+            "realization itself does not look past the jump with the forecasts made at its end. The look-ahead "
+            "is not available with delays: within the roll a delay wraps the last time steps' flows back to its "
+            "first ones, and the forecasts that follow the jump would all wrap into the same first time steps. The "
+            "note names the delayed units and is printed once per run.\n\n"
+            "**How to fix:** nothing, if that is meant. For the look-ahead, model the units without `delay`."
+        ),
+    ),
 ) + BEHAVIOUR_SPECS

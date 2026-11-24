@@ -191,9 +191,14 @@ def scope_end_pairs(d) -> pl.DataFrame | None:
     return out if out.height > 0 else None
 
 
+def _solve_timeline(d) -> dict:
+    """``{period: [(step, duration), ...]}``: the solve's timeline (``d.block_layout``), periods in solve order."""
+    return {} if d.block_layout is None else d.block_layout.per_block_timeline.get(DEFAULT_BLOCK, {})
+
+
 def _period_steps(d, periods, solve: str | None) -> dict[str, list[str]]:
     """The steps of each of ``periods`` in timeline order (the solve's timeline in ``d.block_layout``)."""
-    timeline = {} if d.block_layout is None else d.block_layout.per_block_timeline.get(DEFAULT_BLOCK, {})
+    timeline = _solve_timeline(d)
     out = {}
     for p in periods:
         if not timeline.get(p):
@@ -215,9 +220,9 @@ def check_step_relations(d, solve: str | None) -> None:
     links = (pl.DataFrame(schema={"d": pl.Utf8, "t": pl.Utf8, "d_previous": pl.Utf8, "t_previous_within_solve": pl.Utf8})
              if d.dtttdt is None else d.dtttdt.select(pl.col(c).cast(pl.Utf8) for c in
                                                       ("d", "t", "d_previous", "t_previous_within_solve")))
-    order = {k: i for i, k in enumerate(dict.fromkeys(links["d"].to_list()))}   # solve order (dtttdt's rows)
+    order = {k: i for i, k in enumerate(_solve_timeline(d))}   # the solve's period order (its timeline), not dtttdt's rows
     wraps = {(p, steps[p][0]) for p in lab}
-    leaves = set(order) - {dp for dd, tt, dp, _ in links.rows() if dp != dd and (dd, tt) not in wraps}
+    leaves = set(links["d"].to_list()) - {dp for dd, tt, dp, _ in links.rows() if dp != dd and (dd, tt) not in wraps}
     for p, branches in lab.items():
         for f in branches:
             row = links.filter((pl.col("d") == f) & (pl.col("t") == steps[f][0]))

@@ -8307,7 +8307,7 @@ def apply_derived_e(
             dtttdt_db, period_block_time_for_arc)
         flex_data.dtttdt_block_lag = dtttdt_block_lag_from_dtttdt(
             getattr(flex_data, "dtttdt", None), period_block_time_for_arc,
-            getattr(flex_data, "period_block_chain", None))
+            getattr(flex_data, "period_block_chain", None), getattr(flex_data, "period_branch_full", None))
 
     # 3. nodeStateBlock = the bind_intraperiod_blocks nodes (storage-only) -
     nsb_db = None

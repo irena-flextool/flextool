@@ -6,7 +6,8 @@ realizes each jump ``[s_k, s_{k+1})`` on its ``realized: yes`` branch, read as o
 the roll ``k`` of the engine-added realization solve, after the roll's fully stochastic solve (1).
 
 * :func:`realization_roll_method` is the gate: the one predicate that says whether a solve has realization rolls
-  (also read by ``_orchestration._spawn_realized_dispatch_siblings``).
+  (also read by ``_orchestration._spawn_realized_dispatch_siblings``, which notes a solve the delayed units alone
+  keep from them, :func:`delay_gated_units`).
 * :func:`roll_tail_plan` makes the :class:`RollTail` of each roll of a gated solve from the authored
   ``stochastic_branches`` rows (never changed) and raises the configuration errors of a missing forecast or a
   missing, ambiguous or unreachable ``realized: yes`` branch.
@@ -86,7 +87,12 @@ def _contained_solves(solve_cfg: Any) -> set[str]:
     return contained
 
 
-def realization_roll_method(solve_cfg: Any, solve: str) -> RollMethod | None:
+def delayed_units(solve_cfg: Any) -> list[str]:
+    """The units of the model with a ``delay`` (``SolveConfig.delay_durations``), sorted."""
+    return sorted(str(u) for u in (getattr(solve_cfg, "delay_durations", None) or {}))
+
+
+def realization_roll_method(solve_cfg: Any, solve: str, *, ignore_delays: bool = False) -> RollMethod | None:
     """``"within_solve"`` or ``"separate_dispatch"`` when *solve* has realization rolls, else ``None``.
 
     True only for a top-level solve (in ``model.solves``, neither nested in nor containing other solves) with an
@@ -97,7 +103,8 @@ def realization_roll_method(solve_cfg: Any, solve: str) -> RollMethod | None:
     ``deterministic`` (absent or explicit; such a solve has no ``stochastic_branches`` left,
     ``SolveConfig.apply_deterministic_realization``) and single solves get ``None``.  The engine-added realization
     solve of a ``separate_dispatch`` solve (``realized_dispatch_parent``) takes its parent's answer.  Pass a solve,
-    not a roll: a roll name is in no ``model.solves`` and gets ``None``.
+    not a roll: a roll name is in no ``model.solves`` and gets ``None``.  A model with delayed units
+    (:func:`delayed_units`) gets ``None`` for every solve unless *ignore_delays* (:func:`delay_gated_units`).
     """
     from flextool.engine.solve import _realization
 
@@ -105,7 +112,7 @@ def realization_roll_method(solve_cfg: Any, solve: str) -> RollMethod | None:
     if parent is not None:
         if solve not in (getattr(solve_cfg, "derived_solves", None) or {}):
             return None  # an author-declared realization solve
-        method = realization_roll_method(solve_cfg, parent)
+        method = realization_roll_method(solve_cfg, parent, ignore_delays=ignore_delays)
         return method if method == "separate_dispatch" else None
     if (getattr(solve_cfg, "solve_modes", None) or {}).get(solve) != "rolling_window":
         return None
@@ -123,10 +130,26 @@ def realization_roll_method(solve_cfg: Any, solve: str) -> RollMethod | None:
         return None
     if (getattr(solve_cfg, "contains_solves", None) or {}).get(solve):
         return None
+    # Delayed units get no plan (D12): where a forecast tail's last delayed flows wrap to (the label's first steps,
+    # one cell that every path of a split roll shares) is not decided, and whether a roll splits is known only from
+    # its time lists, after the realization solve is spawned.  So any delayed unit in the model keeps today's
+    # realization (W-0594 names the solve).
+    if not ignore_delays and delayed_units(solve_cfg):
+        return None
     configured = _realization.configured_realization_solve(solve_cfg, solve)
     if configured is not None and configured not in (getattr(solve_cfg, "derived_solves", None) or {}):
         return None
     return method
+
+
+def delay_gated_units(solve_cfg: Any, solve: str) -> list[str]:
+    """The delayed units that alone keep *solve* from realization rolls (:func:`realization_roll_method` gates it
+    only for them), else ``[]``."""
+    if realization_roll_method(solve_cfg, solve) is not None:
+        return []
+    if realization_roll_method(solve_cfg, solve, ignore_delays=True) is None:
+        return []
+    return delayed_units(solve_cfg)
 
 
 def realization_rolls(
@@ -299,6 +322,8 @@ __all__ = [
     "RollTail",
     "RollWindow",
     "check_tail_weights",
+    "delay_gated_units",
+    "delayed_units",
     "plan_branch_rows",
     "realization_roll_method",
     "realization_rolls",

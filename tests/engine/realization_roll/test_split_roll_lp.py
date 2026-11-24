@@ -5,8 +5,8 @@ Each test forces the live plan through the seam and suppresses the realization s
 realization roll R_k: the label ``p1`` dispatches the jump on the realized branch, the forecasts ``p1_<f>`` the
 rest of the horizon from the jump end on.  The period-cyclic placeholders at the first steps of ``p1`` and of
 each ``p1_<f>`` are null (``_step_relations.null_split_placeholders``), so the build passes G1-G4 and solves.
-bind_within_period and bind_intraperiod_blocks close per path (``test_seam_steps``); a split roll with a unit
-delay is still refused by G3.
+bind_within_period and bind_intraperiod_blocks close per path (``test_seam_steps``).  A model with a delayed unit
+gets no plan (D12) and keeps today's realization; with that gate lifted, G3 refuses a split roll with a delay.
 
 Every expected value is derived by hand in the test's docstring.  The objective of a roll is in EUR: the operating
 cost of its steps (branch-weighted) times 8760 h / the period's timeset hours (``years_represented`` 1).
@@ -303,7 +303,7 @@ def test_label_cells_cost_at_weight_one(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Cyclic storage and blocks close per path (test_seam_steps has the multi-roll cases); a delay is still refused.
+# Cyclic storage and blocks close per path (test_seam_steps has the multi-roll cases); a delay gets no plan.
 # ---------------------------------------------------------------------------
 
 _WITHIN_PERIOD = [["node", "elec", "storage_binding_method", pack("bind_within_period", "str"), "init"]]
@@ -372,8 +372,44 @@ def test_split_roll_with_blocks_loops_each_path(tmp_path, monkeypatch):
 
 
 def test_split_roll_with_a_delay_is_refused(tmp_path, monkeypatch):
-    """T-w1 with a 1 h unit delay: G3 refuses roll 0, not a different LP.  The delay wraps the flow of p1's only step
-    back into p1 (it must reach each tail)."""
+    """T-w1 with a 1 h unit delay and the D12 gate lifted (``delayed_units`` empty): G3 refuses roll 0, not a
+    different LP.  The delay wraps the flow of p1's only step back into p1 (it must reach each tail)."""
+    from flextool.engine.solve import _realization_tail
+
+    monkeypatch.setattr(_realization_tail, "delayed_units", lambda solve_cfg: [])
     with pytest.raises(RuntimeError, match=r"Internal error: dtt__delay_duration on period '\w+' of roll '\w+' is "
                                            r"not path-aware"):
         _run(_tw1(0.5, delay=True), tmp_path, monkeypatch)
+
+
+def test_a_delay_keeps_todays_realization(tmp_path, monkeypatch, caplog):
+    """D12: a model with a delayed unit gives no solve a realization-roll plan, even with the plan live, so the
+    rolling ``within_solve`` solve keeps today's realization solve (``st__realized_dispatch`` after each roll), and
+    note W-0594 names the solve and the unit once.  test_trunk_sites' model (jump 2, horizon 4, forecasts made at
+    t01, t03, t05, which today's fans need) with ``gen`` taking its input from node ``fuel`` with a 1 h delay."""
+    import logging
+
+    from flextool.engine.solve import _run_model
+
+    spec = ts._spec(real_at=ts.OVERLAP, forecast_at=ts.OVERLAP)
+    spec["entities"] += [["node", "fuel", None], ["unit__inputNode", ["gen", "fuel"], None]]
+    spec["entity_alternatives"].append(["node", ["fuel"], "init", True])
+    spec["parameter_values"] += [*_node("fuel", "balance", pack(100.0, "float")),
+                                 ["unit", "gen", "delay", pack(1.0, "float"), "init"]]
+    ts._live_plan(monkeypatch, suppress_spawn=False)
+    live = _run_model._roll_tail_plans
+    plans: list = []
+
+    def recording(solve_cfg, rolls, timelines):
+        plans.append((dict(rolls), live(solve_cfg, rolls, timelines)))
+        return plans[-1][1]
+
+    monkeypatch.setattr(_run_model, "_roll_tail_plans", recording)
+    caplog.set_level(logging.INFO)
+    built, steps = scm.run_spec(spec, tmp_path)
+    assert plans == [({}, {})]
+    names = [s for s, _, _ in built]
+    assert any("__realized_dispatch" in s for s in names) and any("__realized_dispatch" not in s for s in names)
+    notes = [r.getMessage() for r in caplog.records if "[W-0594]" in r.getMessage()]
+    assert notes == ["Note: solve 'st' has delayed units: each jump is realized without look-ahead ('gen') "
+                     "[W-0594]"], notes

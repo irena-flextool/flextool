@@ -2268,6 +2268,9 @@ def _spawn_realized_dispatch_siblings(
             # A solve with realization rolls (the gate the roll plans read): its realization solve is added as
             # before, while the realization roll is not wired (``_run_model._roll_tail_plans``).
             logger.debug("solve '%s' has realization rolls (dispatch_realization_method %s)", p, roll_method)
+        delayed = _realization_tail.delay_gated_units(solve_cfg, p)
+        if delayed:
+            run_warnings.note("W-0594", delayed, solve=p, per_run=True)
         if solve_cfg.dispatch_realization_method_for(p) == "separate_dispatch":
             if not (getattr(solve_cfg, "realized_periods", None) or {}).get(p):
                 # Nothing to realize (an invest-only solve): no realization solve.

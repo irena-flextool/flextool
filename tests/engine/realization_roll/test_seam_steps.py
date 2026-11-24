@@ -204,3 +204,32 @@ def test_g4_label_wrap_must_land_on_a_leaf_end():
         else:
             with pytest.raises(RuntimeError, match="dtttdt on period 'p1' of roll 's_roll_0'"):
                 rel.check_step_relations(d, "s_roll_0")
+
+
+# ---------------------------------------------------------------------------
+# Coarse steps (design §2.1, §8.1 T-st coarse): cut at the jump end, no error with jump 1.
+# ---------------------------------------------------------------------------
+
+def test_coarse_steps_are_cut_at_the_jump_end(tmp_path, monkeypatch):
+    """T-st coarse: test_split_roll_lp's T-cw model (p1 = t01..t03, jump 1, horizon 3, factor 8760 / 3 = 2920; demand
+    R 1, forecasts made at t02 A (0.25) 1 and B (0.75) 2, made at t03 A / B (0.5) 1) with ``elec`` in a 2 h
+    new_stepduration group and gas at 10 / 30 / 10 EUR/MWh.  The coarse steps are cut per period name, so the label's
+    last coarse step ends at the jump end and each tail's first one starts after it: R_0 = label [t01] + tails
+    [t02, t03]; R_1 = label [t02] + tails [t03]; R_2 = [t03].  gas is coarse with its node: one flow over a coarse step
+    at the mean cost of its steps.  R_0: 10 + 0.25 x 2 x 20 + 0.75 x 4 x 20 = 80 -> 233 600; R_1: 30 + 0.5 x 10 +
+    0.5 x 10 = 40 -> 116 800; R_2: 10 -> 29 200."""
+    spec = sr._tcw()
+    spec["entities"] += [["group", "coarse", None], ["group__node", ["coarse", "elec"], None]]
+    cost = ["unit__outputNode", ["gas", "elec"], "other_operational_cost"]
+    spec["parameter_values"] = [r for r in spec["parameter_values"] if r[:3] != cost]
+    spec["parameter_values"] += [
+        ["group", "coarse", "new_stepduration", pack(2.0, "float"), "init"],
+        [*cost, pack(scm.pmap([("t01", 10.0), ("t02", 30.0), ("t03", 10.0)], index_name="time"), "map"), "init"]]
+    built, steps, datas = sr._run(spec, tmp_path, monkeypatch)
+    assert len(built) == 3
+    assert [ts._rows(d.node_coarse_step) for d in datas] == [
+        [("elec", "p1", "t01", "t01"), ("elec", "p1_A", "t02", "t02"), ("elec", "p1_A", "t02", "t03"),
+         ("elec", "p1_B", "t02", "t02"), ("elec", "p1_B", "t02", "t03")],
+        [("elec", "p1", "t02", "t02"), ("elec", "p1_A", "t03", "t03"), ("elec", "p1_B", "t03", "t03")],
+        [("elec", "p1", "t03", "t03")]]
+    assert sr._objectives(steps) == pytest.approx([233_600.0, 116_800.0, 29_200.0], rel=1e-9)

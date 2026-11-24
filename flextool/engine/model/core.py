@@ -2134,7 +2134,7 @@ def _eq_node_balance(b: _Build) -> None:
     #   − Σ_{(p,n) ∈ startup_to_balance} v_startup[p,d,t]·startup_energy[p,n,d]·unitsize[p]   (no Δt: an event)
     #   + back-flow terms of two-way one-variable arcs
     #   + (vq_state_up[n,d,t] − vq_state_down[n,d,t])·Δt
-    #   + (v_state[n,d,t⁻] − v_state[n,d,t])·state_unitsize[n]
+    #   + (v_state[n,d′,t⁻] − v_state[n,d,t])·state_unitsize[n]
     #   − (α[n,d,t]·v_state[n,d,t] + β[n,d,t]·S⁻[n,d,t])·state_unitsize[n]
     #   h = Δt·ln(1 + self_discharge_loss[n,d,t]),  α = h/(1 − e^{−h}) − 1,  β = 1 − h/(e^{h} − 1)
     #   S⁻ = the state the step starts from: v_state[n,d′,t⁻] by the binding method, v_state_rp_start at a
@@ -2295,9 +2295,11 @@ def _state_change_terms(b: _Build) -> dict:
     _validate_storage_binding_disjoint): bind_within_timeblock wraps within the timeblock, bind_forward_only crosses
     period boundaries and has no state change at the solve's first step, bind_within_solve wraps the solve's first
     step to its last (with a stochastic fan in the first period, each root forecast's first step to the last step of
-    its own path: dtttdt_within_solve), bind_within_period wraps each period's first step to the period's own last step,
-    bind_intraperiod_blocks (nodeStateBlock) follows dtttdt_block_lag (these terms reach nodeBalanceBlock_eq only,
-    which sums them over each block), and the blended-weights nodes chain inside each representative block whose
+    its own path: dtttdt_within_solve), bind_within_period wraps each period's first step to the period's own last
+    step (in a split realization roll the lag crosses the seam: each branch period's first step continues from the
+    label's last jump step, the label's first step from the last step of one branch period), bind_intraperiod_blocks
+    (nodeStateBlock) follows dtttdt_block_lag (these terms reach nodeBalanceBlock_eq only, which sums them over
+    each block), and the blended-weights nodes chain inside each representative block whose
     first step starts from the free state v_state_rp_start.
     """
     d, v_state = b.d, b.v_state
@@ -5711,7 +5713,6 @@ def _eq_storage_split_path_end(b: _Build) -> None:
         lhs_terms = _path_end_terms(b),
         rhs_terms = {},
     )
-    _notice_stochastic_storage_paths(over["n"].to_list())
 
 
 def _eq_storage_state_fan_start(b: _Build) -> None:

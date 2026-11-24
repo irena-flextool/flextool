@@ -949,6 +949,37 @@ def _patch_rk_period_node(data: dict) -> dict:
                 ["unit", "water_plant", "existing", 300.0]])
 
 
+def _rk_seam(data: dict, name: str, values: list) -> dict:
+    """The rolling stochastic week (``1_week_rolling_wind``) with *values* on top: the realization-roll seam patches."""
+    return _overlay(data, name=name, base="1_week_rolling_wind", values=values)
+
+
+_RK_WEEK = "1week_rolling"
+
+
+def _patch_rk_storage_cycle(data: dict) -> dict:
+    """hydro_reservoir bind_within_period on the rolling stochastic week (horizon 96 h, jump 24 h): every roll holds
+    period1 in part, so its part in the roll cycles and closes per scope.  Today's LPs; the baseline of the
+    realization rolls (each path closes its period part)."""
+    return _rk_seam(data, "rk_storage_cycle",
+                    [["node", "hydro_reservoir", "storage_binding_method", "bind_within_period"]])
+
+
+def _patch_rk_blocks(data: dict) -> dict:
+    """hydro_reservoir bind_intraperiod_blocks with period1 cut to 96 h (one timeset block t0001-t0096): roll 0
+    (horizon 96 h) holds the period whole, so its blocks loop; rolls 1-3 hold it in part and chain forward.  Today's
+    LPs; the baseline of the realization rolls (the loop closes per path)."""
+    return _rk_seam(data, "rk_blocks",
+                    [["node", "hydro_reservoir", "storage_binding_method", "bind_intraperiod_blocks"],
+                     ["timeset", "1week", "timeset_duration", _pmap({"t0001": 96.0}, "time")]])
+
+
+def _patch_rk_delay(data: dict) -> dict:
+    """gas_plant with a 2 h delay on the rolling stochastic week: the delayed flows of each roll wrap within its
+    period part.  Today's LPs (a model with a delayed unit keeps today's realization)."""
+    return _rk_seam(data, "rk_delay", [["unit", "gas_plant", "delay", 2.0]])
+
+
 def _patch_capacity_margin_stoch(data: dict) -> dict:
     """Manual capacity margin (group cm_g = elec, margin 1e5 MW, penalty 1) on the recourse-invest fan (branch
     weights high 1 : low 3): each forecast branch period keeps its own slack, priced with its branch weight
@@ -2210,6 +2241,9 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "co2_total_stoch_rolling": _patch_co2_total_stoch_rolling,
     "flowgroup_cum_stoch_rolling": _patch_flowgroup_cum_stoch_rolling,
     "rk_period_node": _patch_rk_period_node,
+    "rk_storage_cycle": _patch_rk_storage_cycle,
+    "rk_blocks": _patch_rk_blocks,
+    "rk_delay": _patch_rk_delay,
 }
 
 
@@ -2434,6 +2468,9 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("rp_stoch_first_period", _F + "lh2_three_region_rp_invest.json"),
     ("rsd_storage_reserve", _F + "rolling_separate_dispatch.json"),
     ("rk_period_node", _F + "stochastics.json"),
+    ("rk_storage_cycle", _F + "stochastics.json"),
+    ("rk_blocks", _F + "stochastics.json"),
+    ("rk_delay", _F + "stochastics.json"),
 )
 
 FIXTURES: tuple[Fixture, ...] = (
