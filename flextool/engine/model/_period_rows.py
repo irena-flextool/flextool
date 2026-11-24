@@ -7,8 +7,8 @@ instead of a different LP (default-deny):
 
 * a row on a label with steps of a ``path``, ``path_at_step``, ``invest``, ``rp`` or unclassified period-level
   family;
-* a row on a branch period of such a label of a ``path`` / ``path_at_step`` family that the path helper has not
-  converted (``_Build.path_converted``).
+* a row on a branch period of such a label of an unclassified period-level family, or of a ``path`` /
+  ``path_at_step`` family that the path helper has not converted (``_Build.path_converted``).
 
 A family is period-level when its ``over`` has ``d`` and no step column, or when ``PERIOD_ROW_KINDS`` names it,
 whatever its columns.  G2: every (d, t) cell of the LP has a branch weight > 0.  Without a label with steps (every
@@ -209,7 +209,7 @@ def check_period_rows(b) -> None:
             continue
         periods = set(over["d"].cast(pl.Utf8).unique().to_list())
         hit = sorted(periods.intersection(lab)) if kind != FRAGMENT else []
-        if kind in (PATH, PATH_AT_STEP) and name not in b.path_converted:
+        if kind is None or (kind in (PATH, PATH_AT_STEP) and name not in b.path_converted):
             hit += sorted(periods & branches)
         if hit:
             raise not_path_aware(name, hit[0], b.solve_name)

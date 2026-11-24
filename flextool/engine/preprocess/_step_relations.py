@@ -112,9 +112,44 @@ def labels_with_steps(d) -> dict[str, list[str]]:
     pbf = d.period_branch_full
     if pbf is None or pbf.height == 0:
         return {}
-    pairs = list(zip(pbf["d"].cast(pl.Utf8).to_list(), pbf["b"].cast(pl.Utf8).to_list()))
-    labels = fan_period_labels(set(pairs)) & set(d.dt["d"].cast(pl.Utf8).unique().to_list())
+    return _split_labels(pbf, d.dt)
+
+
+def _split_labels(period_branch: pl.DataFrame, steps: pl.DataFrame) -> dict[str, list[str]]:
+    """``labels_with_steps`` from ``period_branch`` (d, b) and the build's steps ``steps`` (d, t)."""
+    pairs = list(zip(period_branch["d"].cast(pl.Utf8).to_list(), period_branch["b"].cast(pl.Utf8).to_list()))
+    labels = fan_period_labels(set(pairs)) & set(steps["d"].cast(pl.Utf8).unique().to_list())
     return {p: [b for a, b in pairs if a == p and b != p] for p in sorted(labels)}
+
+
+def split_first_steps(period_branch: pl.DataFrame | None, steps: pl.DataFrame | None) -> pl.DataFrame:
+    """``(d, t)`` Utf8: the first step (in the row order of ``steps``, solve order) of each label with steps and
+    of each of its branch periods (L* and B(L*)).  Empty without a split realization roll."""
+    empty = pl.DataFrame(schema={"d": pl.Utf8, "t": pl.Utf8})
+    if period_branch is None or period_branch.height == 0 or steps is None or steps.height == 0:
+        return empty
+    lab = _split_labels(period_branch, steps)
+    periods = [*lab, *(f for fs in lab.values() for f in fs)]
+    return (steps.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)).with_row_index("__i")
+            .filter(pl.col("d").is_in(periods))
+            .group_by("d", maintain_order=True).agg(pl.col("t").sort_by("__i").first()))
+
+
+def null_split_placeholders(frame: pl.DataFrame | None, firsts: pl.DataFrame,
+                            columns: tuple[str, ...]) -> pl.DataFrame | None:
+    """``frame`` with ``columns`` null on its rows at ``firsts`` (``split_first_steps``).
+
+    Under a split realization roll the label and its branch periods are no periods on a path, so the period-cyclic
+    placeholders at their first steps (``dtttdt`` ``t_previous`` / ``t_previous_within_timeset``: the period's
+    own last step; the ``dt_online_wrap`` free-start row) have no same-name predecessor.  No row reads them there
+    (the seam link ``(d_previous, t_previous_within_solve)``, ``dt_ramp_link`` and the roll carry give the real
+    predecessors), so they are null, and the frames derived from ``frame`` inherit that."""
+    if frame is None or frame.height == 0 or firsts.height == 0:
+        return frame
+    hit = (frame.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+           .join(firsts.with_columns(__hit=pl.lit(True)), on=["d", "t"], how="left", maintain_order="left")
+           ["__hit"].fill_null(False))
+    return frame.with_columns(pl.when(pl.lit(hit)).then(None).otherwise(pl.col(c)).alias(c) for c in columns)
 
 
 def not_path_aware(what: str, period: str, solve: str | None) -> RuntimeError:
@@ -188,3 +223,11 @@ def check_step_relations(d, solve: str | None) -> None:
             bad = pairs.filter(wrong)
             if bad.height > 0:
                 raise not_path_aware(name, bad["_d"][0], solve)
+
+
+def null_split_dtttdt(dtttdt: pl.DataFrame | None, period_branch: pl.DataFrame | None) -> pl.DataFrame | None:
+    """``dtttdt`` with ``t_previous`` / ``t_previous_within_timeset`` null at the first steps of a split
+    realization roll's label and branch periods (``null_split_placeholders``); unchanged otherwise.  ``dtttdt``
+    holds one row per step of the solve in solve order, so its own rows give the first steps."""
+    cols = tuple(c for c in ("t_previous", "t_previous_within_timeset") if dtttdt is not None and c in dtttdt.columns)
+    return null_split_placeholders(dtttdt, split_first_steps(period_branch, dtttdt), cols)

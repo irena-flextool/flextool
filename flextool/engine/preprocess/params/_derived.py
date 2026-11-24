@@ -8240,12 +8240,19 @@ def apply_derived_e(
                                                step_duration=getattr(flex_data, "p_step_duration", None))
     dtttdt_db = None if dtttdt_jump is None else dtttdt_jump.drop("jump")
     if dtttdt_db is not None:
+        # A split realization roll: the placeholders at its label's and branch periods' first steps are null
+        # (before the 1b frames below are derived from dtttdt), as in the seed (flex_data._read_step_previous).
+        from flextool.engine.preprocess._step_relations import null_split_dtttdt
+        from flextool.engine.preprocess.params._branch import period_branch_full_df
+        split_pb = period_branch_full_df(workdir, provider=provider) if workdir is not None else None
+        dtttdt_db = null_split_dtttdt(dtttdt_db, split_pb)
         flex_data.dtttdt = dtttdt_db
         # Ramp predecessors: the adjacent (jump == 1) rows, without representative-block starts; the online
         # stretch wrap is derived from them (ramp_link_fields sets both).
         from flextool.engine.preprocess.params._ramp_links import ramp_link_fields, ramp_link_from_jump
+        rp_first = _rp_block_first_utf8(workdir, provider)
         for _name, _value in ramp_link_fields(
-                flex_data.dt, ramp_link_from_jump(dtttdt_jump, _rp_block_first_utf8(workdir, provider))).items():
+                flex_data.dt, ramp_link_from_jump(dtttdt_jump, rp_first), split_pb, rp_first).items():
             setattr(flex_data, _name, _value)
     # Minimum up/down-time look-backs along the final ramp predecessor links (the seed links when the source
     # timeline walk gives none).

@@ -107,11 +107,28 @@ def online_free_start_cells(dt: "pl.DataFrame | None", wrap: "pl.DataFrame | Non
     return cells
 
 
-def ramp_link_fields(dt: "pl.DataFrame | None", link: "pl.DataFrame | None") -> dict:
+def ramp_link_fields(dt: "pl.DataFrame | None", link: "pl.DataFrame | None",
+                     period_branch: "pl.DataFrame | None" = None,
+                     rp_block_first: "pl.DataFrame | None" = None) -> dict:
     """The FlexData fields derived from the ramp predecessor links: ``dt_ramp_link`` (*link*) and
     ``dt_online_wrap`` (:func:`online_stretch_wrap` of ``dt`` and *link*).  Every setter of ``dt_ramp_link`` sets
-    both through this function, so the two never disagree."""
-    return {"dt_ramp_link": link, "dt_online_wrap": online_stretch_wrap(dt, link)}
+    both through this function, so the two never disagree.
+
+    Under a split realization roll (*period_branch* ``(d, b)`` with a label that has steps) the wrap row at the
+    first step of the label is a free-start marker only (``online_free_start_cells``): its predecessor is null
+    (``_step_relations.null_split_placeholders``).  A nulled row that is no free start is an internal error."""
+    from flextool.engine.preprocess._step_relations import null_split_placeholders, split_first_steps
+
+    wrap = online_stretch_wrap(dt, link)
+    firsts = split_first_steps(period_branch, dt)
+    if wrap is not None and firsts.height > 0:
+        cells = wrap.select("d", "t").join(firsts, on=["d", "t"], how="semi")
+        bad = cells.join(online_free_start_cells(dt, wrap, rp_block_first), on=["d", "t"], how="anti")
+        if bad.height > 0:
+            raise RuntimeError(f"Internal error: dt_online_wrap at the first step of period '{bad['d'][0]}' of a "
+                               "split realization roll is not a free start. Please report this.")
+        wrap = null_split_placeholders(wrap, firsts, ("d_previous", "t_previous"))
+    return {"dt_ramp_link": link, "dt_online_wrap": wrap}
 
 
 def _with_fan_members(hit: pl.DataFrame, anchors: pl.DataFrame, firsts: pl.DataFrame,

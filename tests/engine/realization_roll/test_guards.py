@@ -67,8 +67,9 @@ def test_g1_unclassified_period_family_on_the_label():
     with pytest.raises(RuntimeError, match="Internal error: test_family on period 'p1' of roll 's_roll_0' is not "
                                            "path-aware. Please report this."):
         pr.check_period_rows(_build({"test_family": _gd("p1")}))
-    # On the branch periods only it is no label row; with a step column it is no period row.
-    pr.check_period_rows(_build({"test_family": _gd("p1_A", "p1_B")}))
+    # On the branch periods only it sums a tail only: default-deny there too; with a step column it is no period row.
+    with pytest.raises(RuntimeError, match="test_family on period 'p1_A'"):
+        pr.check_period_rows(_build({"test_family": _gd("p1_A", "p1_B")}))
     pr.check_period_rows(_build({"test_family": _gd("p1").with_columns(t=pl.lit("t1"))}))
 
 

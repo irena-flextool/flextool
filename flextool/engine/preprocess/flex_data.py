@@ -1042,7 +1042,14 @@ def _read_step_previous(path: Path,
     }
     out = df.pipe(rename_to_axis, {k: v for k, v in rename.items() if k in df.columns})
     keep = [v for v in rename.values() if v in out.columns]
-    return out.select(keep)
+    from flextool.engine.preprocess._step_relations import null_split_dtttdt
+    return null_split_dtttdt(out.select(keep), _split_period_branch(path.parent, provider))
+
+
+def _split_period_branch(sd: Path, provider: "object | None") -> pl.DataFrame | None:
+    """``solve_data/period__branch`` as ``(d, b)``, for the split-roll placeholders; None without it."""
+    from flextool.engine.preprocess.params._branch import period_branch_full_df
+    return period_branch_full_df(sd.parent, provider=provider)
 
 
 # ---------------------------------------------------------------------------
@@ -3264,7 +3271,8 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
         p_ramp_speed_down_sink=None,
         p_ramp_speed_up_source=None,
         p_ramp_speed_down_source=None,
-        **ramp_link_fields(dt, _read_ramp_link(sd, provider=provider)),
+        **ramp_link_fields(dt, _read_ramp_link(sd, provider=provider), _split_period_branch(sd, provider),
+                           _read_rp_block_first_utf8(sd, provider=provider)),
         dt_ramp_carry=None,
         p_roll_continue_flow=None,
         p_roll_continue_flow_duration=None,

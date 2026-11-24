@@ -2,11 +2,10 @@
 
 ``_run_model._roll_tail_plans`` returns ``{}`` until the realization roll is wired, so each test replaces it with the
 live plan (``_realization_tail.roll_tail_plan`` of every gated solve) and suppresses the realization solve that the
-spawn still adds for ``within_solve`` today (owner decision D6).  A split roll's LP does not build yet: the
-same-period wraps at the first steps of the label and of its forecasts (``dtttdt`` ``t_previous``,
-``dt_online_wrap``) are refused by G3, so the split-roll tests stop at the first build and check the data the
-build would read (FlexData and ``solve_data``).  Rolls whose horizon is their jump (``deterministic`` plans: no
-label with steps) build and solve end to end and pass G1-G4.
+spawn still adds for ``within_solve`` today (owner decision D6).  The split-roll tests here stop at the first build
+and check the data the build reads (FlexData and ``solve_data``); ``test_split_roll_lp.py`` builds and solves split
+rolls end to end.  Rolls whose horizon is their jump (``deterministic`` plans: no label with steps) build and solve
+end to end and pass G1-G4.
 
 Model (``test_deterministic_realization._spec``): one node ``elec`` (demand 100 MW), ``gen`` (10 EUR/MWh) and ``wind``
 (100 MW, upper-limit profile ``wp``, stochastic), one period ``p1`` on 1 h steps t01..t06.  Forecasts ``high``
