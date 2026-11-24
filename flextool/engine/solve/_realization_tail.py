@@ -99,8 +99,8 @@ def realization_roll_method(solve_cfg: Any, solve: str, *, ignore_delays: bool =
 
     True only for a top-level solve (in ``model.solves``, neither nested in nor containing other solves) with an
     explicit ``solve_mode`` ``rolling_window``, a non-empty ``stochastic_branches`` and
-    ``dispatch_realization_method`` ``within_solve`` or ``separate_dispatch``, whose investments do not branch
-    (``SolveConfig.recourse_invest``) and has no author-declared realization solve
+    ``dispatch_realization_method`` ``within_solve`` or ``separate_dispatch``, that has no author-declared
+    realization solve
     (``_realization.configured_realization_solve``; the engine-added one is not author-declared).
     ``deterministic`` (absent or explicit; such a solve has no ``stochastic_branches`` left,
     ``SolveConfig.apply_deterministic_realization``) and single solves get ``None``.  The engine-added realization
@@ -122,8 +122,6 @@ def realization_roll_method(solve_cfg: Any, solve: str, *, ignore_delays: bool =
         return None
     method = solve_cfg.dispatch_realization_method_for(solve)
     if method not in ("within_solve", "separate_dispatch"):
-        return None
-    if solve_cfg.recourse_invest(solve):
         return None
     # Nested solves get no plan (D11): only a contained solve has a storage-usage fix from its parent
     # (node_storage_usage_fix_le / node_balance_fix_quantity_eq_lower), and its per-path cap is computed nowhere

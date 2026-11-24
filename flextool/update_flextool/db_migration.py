@@ -13219,12 +13219,14 @@ class BranchingPlan:
     """What v84 writes.  ``writes``: ``(solve, alternative, method)`` of ``invest_solve_branching_method``;
     ``converted``: ``(solve, alternative, text)`` of each written ``recourse`` row, the text naming the
     ``shared_invest_periods`` of each scenario where ``recourse`` wins;
-    ``within_solve``: ``(solve, alternative)`` rows of ``dispatch_realization_method`` ``separate_dispatch`` that
-    become ``within_solve`` (the solve is an investment solve in every scenario where the row wins);
+    ``removed``: ``(solve, alternative)`` rows of ``dispatch_realization_method`` ``separate_dispatch`` that are
+    removed (the solve is an investment solve in every scenario where the row wins); ``within_solve``: such rows
+    that become ``within_solve`` instead, because removing them would let a lower-ranked value win;
     ``undecided``: ``(solve, reason)``, nothing written for the solve's branching; ``listed``: ``{solve:
     reason}`` for the marker."""
     writes: tuple = ()
     converted: tuple = ()
+    removed: tuple = ()
     within_solve: tuple = ()
     undecided: tuple = ()
     listed: dict = field(default_factory=dict)
@@ -13249,10 +13251,12 @@ def plan_branching_methods(values, scenarios) -> BranchingPlan:
       invested on its own from the reveal period).
     * ``shared_operation_periods``: listed for a stochastic investment solve where it is unset or a list (its
       forecasts were tied, now they are free) and for a stochastic dispatch solve where it is set (no longer read).
-    * ``dispatch_realization_method`` ``separate_dispatch``: a row that wins only in scenarios where the solve is a
-      investment solve becomes ``within_solve`` (on an investment solve the same as no method; the
-      engine refuses ``separate_dispatch`` there) and the solve is listed; a row that also wins where the solve is
-      a dispatch solve is kept (undecided).
+    * ``dispatch_realization_method`` ``separate_dispatch``: a row that wins only in scenarios where the solve is an
+      investment solve (the engine refuses ``separate_dispatch`` there, and an investment solve reads no other
+      value but an explicit ``deterministic``) is removed and the solve listed.  Where removing the rows would
+      let a lower-ranked value other than ``within_solve`` win in such a scenario (an explicit ``deterministic``
+      would flatten the solve), the row becomes ``within_solve`` instead, which reads as no value.  A row that also
+      wins where the solve is a dispatch solve is kept (undecided).
     """
     def table(name):
         return values.get(name, {})
@@ -13261,7 +13265,7 @@ def plan_branching_methods(values, scenarios) -> BranchingPlan:
         return _v83_read(alts, table(name), solve)
 
     solves = sorted({key[0] for name in values for key in values[name]})
-    writes, converted, within, undecided, listed = [], [], [], [], {}
+    writes, converted, removed, within, undecided, listed = [], [], [], [], [], {}
 
     def add_reason(solve, text):
         listed[solve] = f"{listed[solve]}; {text}" if solve in listed else text
@@ -13320,19 +13324,33 @@ def plan_branching_methods(values, scenarios) -> BranchingPlan:
         if untied_dispatch:
             add_reason(solve, f"dispatch solve with shared_operation_periods ({_v83_scenarios_text(untied_dispatch)}):"
                               " no longer read, its forecasts are tied over its realized_periods")
-        for alt, v in sorted((a, v) for (e, a), v in table("dispatch_realization_method").items() if e == solve):
+        methods = table("dispatch_realization_method")
+        candidates, win_scenarios = [], {}
+        for alt, v in sorted((a, v) for (e, a), v in methods.items() if e == solve):
             if str(v or "").strip().lower() != "separate_dispatch":
                 continue
             wins = [s for s, alts in sorted(scenarios.items()) if read("dispatch_realization_method", solve, alts)[1]
                     == alt]
             if wins and all(states[s][0] for s in wins):
-                within.append((solve, alt))
-                add_reason(solve, f"dispatch_realization_method separate_dispatch in alternative {alt} became "
-                                  "within_solve (refused on an investment solve)")
+                candidates.append(alt)
+                win_scenarios[alt] = wins
             elif any(states[s][0] for s in wins):
                 undecided.append((solve, f"dispatch_realization_method separate_dispatch in alternative {alt} wins "
                                          "where the solve is an investment solve and where it is a dispatch solve"))
-    return BranchingPlan(tuple(writes), tuple(converted), tuple(within), tuple(undecided), listed)
+        without = {k: v for k, v in methods.items() if not (k[0] == solve and k[1] in candidates)}
+        for alt in candidates:
+            surfaced = {str(_v83_read(scenarios[s], without, solve)[0] or "").strip().lower()
+                        for s in win_scenarios[alt]}
+            if surfaced <= {"", _V83_WITHIN_SOLVE}:
+                removed.append((solve, alt))
+                add_reason(solve, f"dispatch_realization_method separate_dispatch in alternative {alt} removed "
+                                  "(refused on an investment solve)")
+            else:
+                within.append((solve, alt))
+                add_reason(solve, f"dispatch_realization_method separate_dispatch in alternative {alt} became "
+                                  "within_solve (refused on an investment solve; removing it would expose a "
+                                  "lower-ranked value)")
+    return BranchingPlan(tuple(writes), tuple(converted), tuple(removed), tuple(within), tuple(undecided), listed)
 
 
 def _v84_inputs(db) -> dict:
@@ -13348,7 +13366,8 @@ def _v84_inputs(db) -> dict:
 
 def _v84_branching(db) -> None:
     """Part 2 of v84: ``invest_solve_branching_method`` written from ``stochastic_invest_method``
-    (:func:`plan_branching_methods`), the ``separate_dispatch`` of investment solves made ``within_solve`` (and
+    (:func:`plan_branching_methods`), the ``separate_dispatch`` of investment solves removed (or made
+    ``within_solve`` where a lower-ranked value would win; and
     those solves dropped from the v83 marker ``separate_dispatch_realization_looks_ahead``), the solves whose
     results change listed in the marker ``stochastic_invest_controls_rewritten`` (``{"since": 84, "solves": [...],
     "reasons": {solve: text}}``, merged with a stored one), and the three old parameters and the value list
@@ -13364,6 +13383,12 @@ def _v84_branching(db) -> None:
         _v83_write_values(db, "solve", "invest_solve_branching_method", plan.writes)
         _v83_write_values(db, "solve", "dispatch_realization_method",
                           [(solve, alt, _V83_WITHIN_SOLVE) for solve, alt in plan.within_solve])
+        if plan.removed:
+            gone = set(plan.removed)
+            db.remove_items("parameter_value", *[
+                pv["id"] for pv in db.find_parameter_values(entity_class_name="solve",
+                                                            parameter_definition_name="dispatch_realization_method")
+                if (pv["entity_byname"][0], pv["alternative_name"]) in gone])
         if plan.converted:
             print("v84: stochastic_invest_method recourse became invest_solve_branching_method "
                   "investments_after_reveal_period (the reveal period's investment is shared by the branches; the "
@@ -13377,17 +13402,22 @@ def _v84_branching(db) -> None:
                   "investments_at_reveal_period shares only the periods before it, operations_only (the default) "
                   "shares every period; dispatch_realization_method separate_dispatch is refused on an investment "
                   "solve.")
+        for solve, alt in plan.removed:
+            print(f"v84: solve {solve} [{alt}]: dispatch_realization_method separate_dispatch removed (refused on an "
+                  "investment solve; with a realized: yes branch the solve gets a realization dispatch of its own, "
+                  "results change; for a stochastic dispatch after the investments, add a dispatch solve after it)")
         for solve, alt in plan.within_solve:
             print(f"v84: solve {solve} [{alt}]: dispatch_realization_method separate_dispatch became within_solve "
-                  "(refused on an investment solve; with a realized: yes branch the solve gets a realization "
-                  "dispatch of its own, results change)")
+                  "(refused on an investment solve; removing it would let a lower-ranked value win; with a "
+                  "realized: yes branch the solve gets a realization dispatch of its own, results change)")
         for solve, reason in plan.listed.items():
             if "dispatch solve with shared_operation_periods" in reason:
                 print(f"v84: solve {solve}: shared_operation_periods is no longer read; its forecasts are tied over "
                       "its committed window, the realized_periods (results change). To leave a period untied, "
                       "leave it out of realized_periods.")
-        if plan.within_solve:
-            _v84_drop_from_marker(db, V83_SEPARATE_DISPATCH_MARKER, {s for s, _a in plan.within_solve})
+        if plan.removed or plan.within_solve:
+            _v84_drop_from_marker(db, V83_SEPARATE_DISPATCH_MARKER,
+                                  {s for s, _a in plan.removed + plan.within_solve})
         if plan.listed:
             name = BEHAVIOUR_CHANGE_MARKER_PREFIX + V84_MARKER
             stored: dict = {}
