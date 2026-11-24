@@ -62,7 +62,7 @@ from typing import Any, TYPE_CHECKING
 
 from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.input._timeline import make_step_jump
-from flextool.engine.solve._realization_tail import plan_branch_rows, realization_roll_method
+from flextool.engine.solve._realization_tail import plan_branch_rows
 from flextool.engine.preprocess.params._branch import fan_period_labels
 
 if TYPE_CHECKING:
@@ -630,7 +630,7 @@ class StochasticSolver:
         the fan point of any sub-solve of its complete solve -- whatever
         branch it names, nothing reads such a row: the realization reads the
         realized branch made at the fan.  Not for a solve with realization
-        rolls (``_realization_tail.realization_roll_method``, D24): each of its
+        rolls (planned rolls in ``roll_tail_plan``, D24): each of its
         jumps reads the realized branch flattened over the analysis times of
         all its ``realized: yes`` rows (``RollTail.realized_times``), so every
         such row is read.  Checked for every sub-solve in ``solves`` order, the first
@@ -659,6 +659,14 @@ class StochasticSolver:
                 period, the analysis time and the branch.
         """
         triggers = self._fan_points(solves, branch_start_time_lists, complete_solves)
+        # The complete solves whose jumps realization rolls realize: a planned roll (``roll_tail_plan``) of the solve
+        # itself (within_solve) or of its engine-added realization solve (separate_dispatch).  A solve that
+        # realization_roll_method gates but that gets no realization roll (a rolling separate_dispatch solve whose
+        # realization solve is not added, e.g. without realized_periods) reads no such tier.
+        solve_cfg = getattr(self.state, "solve", None)
+        rdp = getattr(solve_cfg, "realized_dispatch_parent", None) or {}
+        planned_complete = {complete_solves.get(x, x) for x in (getattr(solve_cfg, "roll_tail_plan", None) or {})}
+        planned_solves = planned_complete | {rdp[x] for x in planned_complete if x in rdp}
         for s in solves:
             if s not in unfanned_realized:
                 continue
@@ -669,8 +677,7 @@ class StochasticSolver:
             ]
             if not remaining:
                 continue
-            solve_cfg = getattr(self.state, "solve", None)
-            if is_rolling and solve_cfg is not None and realization_roll_method(solve_cfg, c) is not None:
+            if is_rolling and c in planned_solves:
                 # D24: every jump of a solve with realization rolls reads each realized: yes row of the solve as one
                 # more tier of its realized series (RollTail.realized_times), so such a row is read, not refused.
                 continue
@@ -843,6 +850,8 @@ class StochasticSolver:
         cohort_rows: dict[str, dict[tuple[str, str], list]] = dict()
         cohort_forecasts: dict[str, dict[tuple[str, str], list[str]]] = dict()
         cohort_realized: dict[str, dict[tuple[str, str], list[str]]] = dict()
+        # The first planned (realization) roll of each complete solve, in run order.
+        first_planned_roll: dict[str, str] = dict()
         self._warn_branches_named_like_periods(
             stochastic_branches, solves, complete_solves, active_time_lists, realized_time_lists)
 
@@ -1025,14 +1034,20 @@ class StochasticSolver:
             if trig_period is not None or planned is not None:
                 order = list(active_time_list)
                 # A realization roll fans out at the end of its jump; the cohorts made inside its jump are read by
-                # no roll either, so its walk starts after the roll's first step (the start cohort of roll 0 is
-                # read by no roll of a rolling within_solve solve and is not reported).
+                # no roll either, so its walk covers its whole horizon.  Its start cohort is read where the roll
+                # before it fans out (the end of that roll's jump); after a roll without look-ahead nothing reads
+                # it, and the triggers check reports it.  The start cohort of the first roll is read by no roll of a
+                # rolling within_solve solve and is not reported.
+                complete = complete_solves[solve]
                 walk_period = order[0] if planned is not None else trig_period
                 walk_step = active_time_list[walk_period][0].timestep if planned is not None else trig_step
                 trig_index = order.index(walk_period)
                 trig_steps = [e.timestep for e in active_time_list[walk_period]]
                 trig_step_index = trig_steps.index(walk_step)
-                complete = complete_solves[solve]
+                if planned is not None:
+                    if complete in first_planned_roll and first_planned_roll[complete] != solve:
+                        trig_step_index = -1
+                    first_planned_roll.setdefault(complete, solve)
                 if complete not in cohort_rows:
                     rows_by_cohort: defaultdict[tuple[str, str], list] = (
                         defaultdict(list)

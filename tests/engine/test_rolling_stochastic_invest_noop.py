@@ -281,6 +281,25 @@ def test_within_solve_with_invest_periods_runs_without_margin(tmp_path_factory, 
     assert len(_invest_warnings(runs[True])) == 1
 
 
+@pytest.mark.parametrize("realization", ["within_solve", "separate_dispatch"])
+def test_rolling_recourse_without_storage_runs_with_the_rolling_invest_warning(tmp_path_factory,
+                                                                             test_solver_config_dir, realization):
+    """The recourse vehicle without a storage node (``hydro_reservoir`` a commodity node): every roll is recognised
+    as a roll without storage data, so the nested-sub-solve recourse guard (which a roll is exempt from) does not
+    stop it; the solve runs, builds no investment and warns once (the rolling-invest warning).  With storage the
+    within_solve case stops on its unrealized storage state
+    (:func:`test_rolling_recourse_designation_without_realization_raises`)."""
+    spec = _build_invest_spec("recourse", realization=realization)
+    spec["parameter_values"].append(["node", "hydro_reservoir", "node_type", _pack("commodity", "str"), "invest"])
+    work = tmp_path_factory.mktemp(f"rolling_recourse_no_storage_{realization}")
+    result = _run_collecting(_db_url(spec, work), work / "w", test_solver_config_dir)
+    assert result["error"] is None, result["error"]
+    steps = result["steps"]
+    assert all(s.flex_data.solve_is_rolling for s in steps.values())
+    assert all(s.flex_data.pd_invest_set is None for s in steps.values())
+    assert len(_invest_warnings(result)) == 1
+
+
 def test_rolling_invest_all_rolls_optimal(rolling_invest_result):
     """(1) The solve is SAFE: every roll reaches a strict optimum, no raise."""
     steps = _steps(rolling_invest_result)

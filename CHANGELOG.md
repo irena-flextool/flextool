@@ -163,6 +163,10 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
 
 ### Fixes
 
+- **A rolling solve without storage nodes and with `stochastic_invest_method` `recourse` no longer stops with
+  "recourse in nested sub-solve ... is not supported".** Its rolls were not recognised as rolls when the model had
+  no storage node. It now runs like the same solve with storage: its rolls build no investment, and a warning says
+  so (invest in a solve before the rolling solve).
 - **A rolling solve with a `bind_intraperiod_blocks` storage node no longer stops with "no timeset blocks in this
   solve" when a roll holds only one time step of a period it holds in part** (e.g. the last roll with
   `rolling_solve_jump` 1). That step is the start of the roll's block chain and continues from the level carried

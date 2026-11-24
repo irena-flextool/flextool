@@ -6,8 +6,8 @@ realizes each jump ``[s_k, s_{k+1})`` on its ``realized: yes`` branch, read as o
 the roll ``k`` of the engine-added realization solve, after the roll's fully stochastic solve (1).
 
 * :func:`realization_roll_method` is the gate: the one predicate that says whether a solve has realization rolls
-  (also read by ``_orchestration._spawn_realized_dispatch_siblings``, which notes a solve the delayed units alone
-  keep from them, :func:`delay_gated_units`).
+  (also read by ``_orchestration._spawn_realized_dispatch_siblings``).  :func:`delay_gated_units` names the delayed
+  units that alone keep a solve from them.
 * :func:`roll_tail_plan` makes the :class:`RollTail` of each roll of a gated solve from the authored
   ``stochastic_branches`` rows (never changed) and raises the configuration errors of a missing forecast or a
   missing, ambiguous or unreachable ``realized: yes`` branch.
@@ -15,7 +15,8 @@ the roll ``k`` of the engine-added realization solve, after the roll's fully sto
   stochastic expansion and the branch-weight emit through :func:`plan_branch_rows` (no plan: the complete solve's
   rows, as before).  The realized branch of the jump comes from the plan (``RollTail.realized``), not from rows.
 * :func:`check_tail_weights` (G2b): every forecast of a planned roll has its own branch weight.
-* :func:`announce_realization_notices`: W-0635 / W-0636, once the plans and the expansion have passed their checks.
+* :func:`announce_realization_notices`: W-0635 / W-0636 and W-0594, once the plans and the expansion have passed
+  their checks.
 
 The plans are made in ``native_run_model`` through the seam ``_run_model._roll_tail_plans``.
 """

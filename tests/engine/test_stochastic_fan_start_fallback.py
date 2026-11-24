@@ -78,13 +78,15 @@ def _forecast(ats: dict[str, dict[str, float]], branches=("high", "low")) -> api
 
 def _run(tmp_path_factory, *, n_periods: int, fans: list[tuple[str, str, str, str, float]],
          profile=None, inflow=-1.0, unit_grouped: bool = True, node_grouped: bool = False,
-         rolling: "tuple[float, float] | None" = None, extra_values=(), method: str = "within_solve"):
+         rolling: "tuple[float, float] | None" = None, extra_values=(), method: str = "within_solve",
+         with_realized_periods: bool = True):
     """Build the fixture DB and run it; return ``{solve name: OrchestrationStep}``.
 
     *fans* are ``stochastic_branches`` rows ``(period, branch, analysis_time, realized, weight)``; *method* the
-    ``dispatch_realization_method``.  Since 4.7.0 a rolling ``within_solve`` roll realizes its jump on the realized
-    branch and branches at the end of its jump; the first solve of each roll of a rolling ``separate_dispatch``
-    solve still branches at the roll's start (the rule the rolling cases of item 228 pin).
+    ``dispatch_realization_method``; without *with_realized_periods* the solve has no ``realized_periods``.  Since
+    4.7.0 a rolling ``within_solve`` roll realizes its jump on the realized branch and branches at the end of its
+    jump; the first solve of each roll of a rolling ``separate_dispatch`` solve still branches at the roll's start
+    (the rule the rolling cases of item 228 pin).
     """
     from flextool.engine import run_chain_from_db
     from flextool.update_flextool.db_handle import open_database_mapping
@@ -120,13 +122,14 @@ def _run(tmp_path_factory, *, n_periods: int, fans: list[tuple[str, str, str, st
         ("group", "g", "include_stochastics", "yes"),
         ("solve", "sol", "solve_mode", "rolling_window" if rolling else "single_solve"),
         ("solve", "sol", "period_timeset", _m({f"p{k}": f"ts{k}" for k in range(1, n_periods + 1)}, "period")),
-        ("solve", "sol", "realized_periods", api.Array([f"p{k}" for k in range(1, n_periods + 1)])),
         ("solve", "sol", "years_represented", _m({f"p{k}": 1.0 for k in range(1, n_periods + 1)}, "period")),
         ("solve", "sol", "stochastic_branches", branch_map),
         # The forecasts are solved: deterministic, the default since 4.7.0, would ignore them.
         ("solve", "sol", "dispatch_realization_method", method),
         *extra_values,
     ]
+    if with_realized_periods:
+        values.append(("solve", "sol", "realized_periods", api.Array([f"p{k}" for k in range(1, n_periods + 1)])))
     if rolling:
         values += [("solve", "sol", "rolling_solve_jump", rolling[0]),
                    ("solve", "sol", "rolling_solve_horizon", rolling[1])]
@@ -457,6 +460,8 @@ def _two_realized(first: str, second: str) -> str:
 
 
 _RECOURSE = (("solve", "sol", "stochastic_invest_method", "recourse"),)
+#: invest_periods without realized_periods: the solve realizes nothing, so no realization solve is added.
+_INVEST_ONLY = (("solve", "sol", "invest_periods", api.Array(["p1"])),)
 
 
 @pytest.mark.parametrize(("method", "rolling", "extra", "fans", "expected"), [
@@ -471,6 +476,10 @@ _RECOURSE = (("solve", "sol", "stochastic_invest_method", "recourse"),)
                                                                ("p2", "real", "t0005", "yes", 0.0)],
                  "^" + re.escape(_not_fanned_error("Roll 'sol_roll_0' of rolling solve 'sol'")) + "$",
                  id="same-branch-not-fan-keeps-the-old-realization"),
+    pytest.param("separate_dispatch", (8.0, 12.0), _INVEST_ONLY, [*_realized_rolls("real"),
+                                                                  ("p2", "real", "t0005", "yes", 0.0)],
+                 "^" + re.escape(_not_fanned_error("Roll 'sol_roll_0' of rolling solve 'sol'")) + "$",
+                 id="same-branch-not-fan-no-realization-solve"),
     pytest.param("within_solve", (8.0, 12.0), (), _realized_rolls("obs"), _two_realized("real", "obs"),
                  id="fan-point-other-branch"),
     pytest.param("separate_dispatch", (8.0, 12.0), (), _realized_rolls("obs"), _two_realized("real", "obs"),
@@ -488,13 +497,18 @@ def test_realized_row_where_no_roll_fans_out_or_switching_branch(tmp_path_factor
     as one more tier of the realized series (D24), so it is valid with either method.  Where the realization reads
     the realized branch made at the fan, nothing reads the row and the item-248b error names the roll that fans:
     a rolling ``separate_dispatch`` recourse solve (it keeps the earlier realization; solve (1) of roll 0 fans at
-    p1/t0001).  (A single solve refuses such a row earlier: each of its cohorts needs a forecast.)"""
+    p1/t0001), and a rolling ``separate_dispatch`` solve with ``invest_periods`` and no ``realized_periods`` (no
+    realization solve is added, so no realization roll reads the row).  (A single solve refuses such a row earlier:
+    each of its cohorts needs a forecast.)"""
+    with_realized_periods = extra is not _INVEST_ONLY
     if expected is None:
-        steps = _run(tmp_path_factory, n_periods=3, fans=fans, rolling=rolling, method=method, extra_values=extra)
+        steps = _run(tmp_path_factory, n_periods=3, fans=fans, rolling=rolling, method=method, extra_values=extra,
+                     with_realized_periods=with_realized_periods)
         assert [s for s in steps if s.startswith("sol_roll_")] == ["sol_roll_0", "sol_roll_1"]
         return
     with pytest.raises(FlexToolConfigError, match=expected):
-        _run(tmp_path_factory, n_periods=3, fans=fans, rolling=rolling, method=method, extra_values=extra)
+        _run(tmp_path_factory, n_periods=3, fans=fans, rolling=rolling, method=method, extra_values=extra,
+             with_realized_periods=with_realized_periods)
 
 
 def test_realized_row_at_ignored_forecasts_is_a_realized_tier(tmp_path_factory, coded_log) -> None:
@@ -531,6 +545,19 @@ def test_a_roll_without_look_ahead_reads_a_later_realized_tier(tmp_path_factory,
         "Warning: stochastic_branches forecasts where no solve or roll fans out; ignored ('sol, p3, t0011') [W-0508]",
         "W-0508 sol, p3, t0011: forecast branches 'high', 'low', in the horizon of roll 'sol_roll_1', which has no "
         "look-ahead after its jump"]
+
+
+def test_forecasts_at_a_roll_start_after_a_roll_without_look_ahead_are_reported(tmp_path_factory, coded_log) -> None:
+    """Rolling ``within_solve`` jump 4 = horizon 4, NP=3: every roll (t0001, t0005, t0009) is its jump only, so no
+    roll fans out.  Forecasts high / low made at t0001 and at p2/t0005, the start of roll 1: roll 0 has no
+    look-ahead, so nothing reads the ones at t0005 and W-0508 names them, reached by roll 1 (the ones at t0001, the
+    start of the first roll, are not reported)."""
+    fans = [*_two_forecasts("p1", "t0001", realized="real"), *_two_forecasts("p2", "t0005")]
+    steps = _run(tmp_path_factory, n_periods=3, fans=fans, rolling=(4.0, 4.0))
+    assert list(steps) == ["sol_roll_0", "sol_roll_1", "sol_roll_2"]
+    assert _warnings(coded_log()) == [
+        _IGNORED, "W-0508 sol, p2, t0005: forecast branches 'high', 'low', in the horizon of roll 'sol_roll_1', "
+        "which has no look-ahead after its jump"]
 
 
 # ── 5: realized: yes — the realization sibling and ungrouped users ─────
