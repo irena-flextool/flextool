@@ -183,7 +183,13 @@ When the FlexTool database schema needs to change (new parameters, renamed entit
    CI runs `python -m flextool.update_flextool.generate_canonical --verify`
    to catch drift on the generated files.
 
-7. **Commit all files together** — the migration code, the regenerated master template, and any canonical-database / test-fixture JSON diffs should land in the same commit or pull request.
+7. **Sweep the release tags** (before a release that bumps the data version):
+   `python tools/migration_sweep.py --large` migrates the shipped schema of every release tag of your clone to the
+   new version and must report no error, drift or already-applied record; it also lists the descriptions that differ
+   from `spinedb_schema.json`.  `python tools/make_release_seeds.py --check` confirms that the committed release
+   seeds of the migration tests (`tests/update_flextool/data/release_seeds/`) still match their tags.
+
+8. **Commit all files together** — the migration code, the regenerated master template, and any canonical-database / test-fixture JSON diffs should land in the same commit or pull request.
 
 ### Adding a new scenario via YAML delta
 

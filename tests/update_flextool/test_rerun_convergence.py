@@ -180,17 +180,20 @@ ONLINE_STAGES = (11, 80, 82)
 @pytest.fixture(scope="module")
 def online_chain(tmp_path_factory) -> dict:
     """``{k: path}``: the v2 template with the seed data, ``Base`` and the online seed data (:func:`_online_data`,
-    each later part added right after the step of its version), migrated one step at a time."""
+    each later part added right after the step of its version), migrated one step at a time.  ``"step only"``:
+    ``{k: path}`` of step k's own result at the versions where data comes after it (the oracle of a rerun of step
+    k)."""
     folder = tmp_path_factory.mktemp("online_chain")
     current = folder / "current.sqlite"
     quiet(initialize_database, str(TEMPLATES / "flextool_template_v2.json"), str(current))
     _seed_data(current, base=True)
     _online_data(current, 0)
-    chain = {0: copy_db(current, folder / "k0.sqlite")}
+    chain = {0: copy_db(current, folder / "k0.sqlite"), "step only": {}}
     with already_applied_records() as records:
         for k in range(1, FLEXTOOL_DB_VERSION + 1):
             migrate(current, up_to=k)
             if k in ONLINE_STAGES:
+                chain["step only"][k] = copy_db(current, folder / f"k{k}_step.sqlite")
                 _online_data(current, k)
             chain[k] = copy_db(current, folder / f"k{k}.sqlite")
     chain["records"] = records
@@ -199,13 +202,14 @@ def online_chain(tmp_path_factory) -> dict:
 
 @pytest.fixture(scope="module")
 def v25_one_shot(tmp_path_factory) -> dict:
-    """``{55: path, 56: path}``: the v25 template with the seed data (no ``Base``) migrated to 55, then to 56."""
+    """``{k: path}`` for k 55, 56, 82, current: the v25 template with the seed data (no ``Base``) migrated to each
+    in turn."""
     folder = tmp_path_factory.mktemp("v25_one_shot")
     current = folder / "current.sqlite"
     quiet(initialize_database, str(TEMPLATES / "flextool_template_v25.json"), str(current))
     _seed_data(current, base=False)
     out = {}
-    for k in (55, 56):
+    for k in (55, 56, FLEXTOOL_DB_VERSION - 1, FLEXTOOL_DB_VERSION):
         migrate(current, up_to=k)
         out[k] = copy_db(current, folder / f"k{k}.sqlite")
     return out
@@ -285,7 +289,7 @@ V83_LISTS = {
 }
 
 
-@pytest.mark.parametrize("chain", ("v2_chain", "v75_chain", "online_chain"))
+@pytest.mark.parametrize("chain", ("v2_chain", "v25_one_shot", "v75_chain", "online_chain"))
 def test_every_chain_ends_with_the_v83_lists(request, chain: str) -> None:
     after = snapshot(request.getfixturevalue(chain)[FLEXTOOL_DB_VERSION])
     assert {name: tuple(m for _index, m in sorted(after["list_values"][name])) for name in V83_LISTS} == {
@@ -293,7 +297,7 @@ def test_every_chain_ends_with_the_v83_lists(request, chain: str) -> None:
     assert "solver" not in after["lists"]
 
 
-@pytest.mark.parametrize("chain", ("v2_chain", "v75_chain", "online_chain"))
+@pytest.mark.parametrize("chain", ("v2_chain", "v25_one_shot", "v75_chain", "online_chain"))
 def test_v83_rerun_on_its_own_result_converges(request, tmp_path, chain: str) -> None:
     """Content 83 under stamp 82 (a hand edit, or a kill after the v83 commit with its stamp lost) migrated to 83
     equals content 83, markers included."""
@@ -466,8 +470,9 @@ def test_every_kill_inside_a_step_converges(v2_chain, v25_chain, v75_chain, onli
     for name, chain, steps in (("v2", v2_chain, range(12, last)), ("v75", v75_chain, range(76, last)),
                                ("online", online_chain, range(76, last)), ("v25", v25_chain, (56, last - 1))):
         for k in steps:
+            clean = {**chain, **chain.get("step only", {})} if k in chain.get("step only", {}) else chain
             for j in range(1, len(commit_messages(chain[k - 1], k))):
-                result = kill_and_rerun(chain, k, j, tmp_path)
+                result = kill_and_rerun(clean, k, j, tmp_path)
                 if result:
                     failures.append((name, k, j, result[:3]))
     assert failures == []

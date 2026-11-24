@@ -66,6 +66,8 @@ TEMPLATE_DB_READERS: frozenset[str] = frozenset({
     "tests/test_open_results_db.py",
     "tests/test_safe_names.py",
     "tests/update_flextool/test_ensure_runtime_files.py",
+    # names the schema sources of old release tags as git paths; opens no file
+    "tests/update_flextool/test_migration_sweep_sources.py",
     "tests/update_flextool/test_settings_param_sync.py",
 })
 

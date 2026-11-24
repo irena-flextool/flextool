@@ -4,7 +4,9 @@ For each release tag of the local clone (``v3.0.0`` .. the newest) the schema so
 (:func:`pick_sources`) are built definitions-only in a temporary folder: a shipped ``.sqlite`` through the raw-row
 builder of ``tests/update_flextool/_raw_seed.py`` (entities and values dropped), a template JSON through
 ``initialize_database``, a canonical examples JSON cut to its definitions first.  Each one is migrated as it is and
-with the synthetic seed data of ``test_rerun_convergence._seed_data`` (and ``Base`` where it has none).  Sources that are the same git
+with data: a shipped ``.sqlite`` with its own example data kept (nothing opens it before the migration, as for a
+user's file), a JSON source with the synthetic seed data of ``test_rerun_convergence._seed_data`` (and ``Base``
+where it has none).  Sources that are the same git
 blob in several tags are run once.
 
 Reported per source: an error; *drift*, the differences between the one-shot migration and the step-by-step one;
@@ -108,8 +110,9 @@ def tag_sources(tag: str) -> list[tuple[Source, str]]:
 
 # --- one source --------------------------------------------------------------------------------------------------
 
-def _build(tag: str, source: Source, folder: Path) -> Path:
-    """The definitions-only database of *source* at *tag* in *folder*."""
+def _build(tag: str, source: Source, folder: Path, *, keep_data: bool = False) -> Path:
+    """The database of *source* at *tag* in *folder*: definitions only, or a shipped ``.sqlite`` with its data
+    (*keep_data*)."""
     from flextool.update_flextool.initialize_database import initialize_database
 
     from tests.update_flextool._raw_seed import build, git_show, seed_from_git
@@ -117,7 +120,7 @@ def _build(tag: str, source: Source, folder: Path) -> Path:
 
     target = folder / "seed.sqlite"
     if source.kind == "sqlite":
-        return build(seed_from_git(ROOT, tag, source.path, folder), target)
+        return build(seed_from_git(ROOT, tag, source.path, folder, keep_data=keep_data), target)
     data = json.loads(git_show(ROOT, tag, source.path).decode("utf-8"))
     if source.kind == "examples":
         data = {key: value for key, value in data.items() if key not in EXAMPLES_DATA_KEYS}
@@ -166,12 +169,11 @@ def run_source(job: tuple) -> dict:
     the first of *tags* ships it (the others ship the same blob)."""
     tags, source, with_data, triangle = job
     tag = tags[0]
-    logging.disable(logging.WARNING)
+    logging.getLogger().setLevel(logging.WARNING)  # quiet; the INFO records of _already_applied are still collected
     from flextool.update_flextool import FLEXTOOL_DB_VERSION
 
     from flextool.update_flextool.db_handle import open_database_mapping
     from flextool.update_flextool.frozen import read_db_version_ro
-    from flextool.update_flextool.list_default_repair import repair_list_defaults
 
     from tests.update_flextool._rerun import (already_applied_records, copy_db, diff, migrate, snapshot, url_of,
                                               version_of)
@@ -181,13 +183,10 @@ def run_source(job: tuple) -> dict:
     with tempfile.TemporaryDirectory() as work:
         folder = Path(work)
         try:
-            seed = _build(tag, source, folder)
+            seed = _build(tag, source, folder, keep_data=with_data)
             result["from"] = read_db_version_ro(seed) if _has_version(seed) else None
-            if with_data:
-                # As migrate_database does before its first SpineDB open: list defaults stored as text (item 279)
-                # repaired; the data is added through the current spinedb_api, which upgrades an older SpineDB schema.
-                repair_list_defaults(seed)
-                with open_database_mapping(url_of(seed), upgrade=True) as db:
+            if with_data and source.kind != "sqlite":
+                with open_database_mapping(url_of(seed)) as db:
                     has_base = bool(db.get_item("alternative", name="Base"))
                 _seed_data(seed, base=not has_base)
             one_shot = copy_db(seed, folder / "one_shot.sqlite")

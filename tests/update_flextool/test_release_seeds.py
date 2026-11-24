@@ -16,7 +16,7 @@ import base64
 from pathlib import Path
 
 import pytest
-from spinedb_api import DatabaseMapping, to_database
+from spinedb_api import to_database
 
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool.db_handle import open_database_mapping
@@ -38,7 +38,9 @@ TRAITS = {
     "v3_33_0": (b"51", 227, True, False),
 }
 #: seed -> (list defaults stored as their member's text, list defaults lost (``NULL``), how ``unit.startup_method``'s
-#: default is stored): the plan §5 table, from the shipped files.
+#: default is stored).  Text and the v3.33.0 lost counts: the plan §5 table.  The other lost counts were read from
+#: the shipped files with sqlite3 (``parameter_value_list_id IS NOT NULL AND default_value IS NULL``): v3.0.0 18 of
+#: its 39 list-bound definitions, v3.10.0 9 of 54, v3.22.0 10 of 54.
 LIST_DEFAULTS = {
     "v3_0_0": (0, 18, "member id"),
     "v3_10_0": (31, 9, "text"),
@@ -137,7 +139,8 @@ def test_a_clean_migration_reaches_the_current_lists(release) -> None:
         assert bool(db.get_item("alternative", name="Base")) == TRAITS[release["name"]][2]
         held = {r["scenario_name"] for r in db.get_items("scenario_alternative", alternative_name="Base")}
         assert not db.find_parameter_values(alternative_name="Base")
-    assert held == _scenarios_holding(release["seed"], "Base")
+    assert held == set()  # v3.33.0 ships its Base in no scenario (plan §5; V5: nothing is backfilled here)
+    assert _scenarios_holding(release["seed"], "Base") == set()
 
 
 def test_minimum_time_methods_at_82(release) -> None:
@@ -185,7 +188,7 @@ def _m1_row(k82: Path, folder: Path, row: str) -> list:
     values, scenarios, defaults, writes, undecided, _db = CASES[row]
     path = copy_db(k82, folder / f"{row}.sqlite")
     _with_base_alternative(path)
-    with DatabaseMapping(url_of(path)) as db:
+    with open_database_mapping(url_of(path)) as db:
         _fill(db, {"u": values}, scenarios, defaults)
         own = _methods(db)
         startups = _startups(db)
@@ -193,7 +196,7 @@ def _m1_row(k82: Path, folder: Path, row: str) -> list:
     migrate(path)
     expected = {"since": 83, "writes": [["u", a, method] for a, method in sorted(writes.items())],
                 "undecided": [] if undecided is None else [["u", undecided[0], list(undecided[1])]]}
-    with DatabaseMapping(url_of(path)) as db:
+    with open_database_mapping(url_of(path)) as db:
         found = (_methods(db), _marker(db), _startups(db))
     wanted = (own | {("u", a): method for a, method in writes.items()}, expected if writes or undecided else None,
               startups)
@@ -220,7 +223,7 @@ def test_a_stochastic_solve_without_a_method_gets_within_solve(release, tmp_path
     ``base``; the definition default becomes ``deterministic``."""
     path = copy_db(release[82], tmp_path / "db.sqlite")
     _with_base_alternative(path)
-    with DatabaseMapping(url_of(path)) as db:
+    with open_database_mapping(url_of(path)) as db:
         db.add_item("scenario", name="S")
         db.add_item("scenario_alternative", scenario_name="S", alternative_name="base", rank=1)
         db.add_item("entity", entity_class_name="solve", name="st")
@@ -229,7 +232,7 @@ def test_a_stochastic_solve_without_a_method_gets_within_solve(release, tmp_path
                     parameter_definition_name="stochastic_branches", alternative_name="base", value=raw, type=typ)
         db.commit_session("stochastic solve")
     migrate(path)
-    with DatabaseMapping(url_of(path)) as db:
+    with open_database_mapping(url_of(path)) as db:
         assert {(pv["entity_byname"][0], pv["alternative_name"]): pv["parsed_value"] for pv in db.find_parameter_values(
             entity_class_name="solve", parameter_definition_name="dispatch_realization_method")} == {
             ("st", "base"): "within_solve"}

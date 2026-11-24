@@ -1,5 +1,6 @@
 {
 "source": "v3.0.0:Init.sqlite",
+"user_version": 0,
 "schema": [
 "CREATE TABLE \"commit\" (\n\tid INTEGER NOT NULL, \n\tcomment VARCHAR(255) NOT NULL, \n\tdate DATETIME NOT NULL, \n\tuser VARCHAR(45), \n\tCONSTRAINT pk_commit PRIMARY KEY (id)\n)",
 "CREATE TABLE alembic_version (\n\tversion_num VARCHAR(32) NOT NULL, \n\tCONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)\n)",

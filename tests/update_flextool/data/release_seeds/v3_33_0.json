@@ -1,5 +1,6 @@
 {
 "source": "v3.33.0:templates/examples.sqlite",
+"user_version": 0,
 "schema": [
 "CREATE TABLE \"commit\" (\n\tid INTEGER NOT NULL, \n\tcomment VARCHAR(255) NOT NULL, \n\tdate DATETIME NOT NULL, \n\tuser VARCHAR(45), \n\tCONSTRAINT pk_commit PRIMARY KEY (id)\n)",
 "CREATE TABLE entity_class (\n\tid INTEGER NOT NULL, \n\tname VARCHAR(255) NOT NULL, \n\tdescription TEXT DEFAULT NULL, \n\tdisplay_order INTEGER DEFAULT '99', \n\tdisplay_icon BIGINT DEFAULT NULL, \n\thidden INTEGER DEFAULT '0', \n\tactive_by_default BOOLEAN DEFAULT 1 NOT NULL, \n\tCONSTRAINT pk_entity_class PRIMARY KEY (id), \n\tCONSTRAINT uq_entity_class_name UNIQUE (name)\n)",
