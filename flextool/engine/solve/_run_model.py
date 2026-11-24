@@ -1939,7 +1939,9 @@ def native_run_model(state, solver) -> int:
     # reads the forecast authored at the fan start.  A realization-dispatch
     # sibling reads the parent's realized branch, so it takes the parent's
     # rows of the real period names.
-    branch_time_start_lists: dict[str, list[tuple[str, str]]] = {
+    # Rows (period, time) here; the flat merge below adds (period, time, read_first) triples, so the W4c projection
+    # (which unpacks pairs) runs before it.
+    branch_time_start_lists: dict[str, list[tuple[str, str] | tuple[str, str, str]]] = {
         s: solve_writers.branch_time_start_rows(
             period__branch_lists[s], branch_start_time_lists.get(s))
         for s in period__branch_lists

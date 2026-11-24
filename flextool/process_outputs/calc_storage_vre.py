@@ -8,9 +8,14 @@ from flextool.process_outputs._annualize import annualize_dt_to_d
 _logger = logging.getLogger(__name__)
 
 
-def node_state_change_dt(s, v, unitsize) -> pd.DataFrame:
+def node_state_change_dt(s, v, unitsize, start=None) -> pd.DataFrame:
     """``(v_state[t] − v_state[t⁻]) · unitsize`` per storage node over ``s.dt_realize_dispatch``; t⁻ is the
-    state-change lag of the node's storage_binding_method in the model (``_self_discharge.state_links``)."""
+    state-change lag of the node's storage_binding_method in the model (``_self_discharge.state_links``).
+
+    A bind_forward_only / bind_within_solve step whose t⁻ is not a realized step (a split realization roll: the
+    label's first step keeps the solve's wrap to the last forecast's last step, which the outputs drop) starts from
+    the level its solve starts it from (``start``, ``par.node_state_start`` in MWh: the storage start or the roll
+    carry).  A step with neither stays NaN."""
     current_idx = s.dtt.droplevel('t_previous')
     # bind_within_period: the previous step in the same period, the first step wrapping to the period's own
     # last step (the model's lag; dtttdt's t_previous of a period's first step may point into another period).
@@ -80,6 +85,9 @@ def node_state_change_dt(s, v, unitsize) -> pd.DataFrame:
         v_prev_period = pd.Series(v.state[n].squeeze().reindex(prev_period_idx).values, index=current_idx)
         v_prev_timeblock = pd.Series(v.state[n].squeeze().reindex(prev_timeset_idx).values, index=current_idx)
         v_forward = pd.Series(v.state[n].squeeze().reindex(prev_forward_only_idx).values, index=current_idx)
+        v_start = None
+        if start is not None and n in start.columns:
+            v_start = pd.Series(start[n].reindex(current_idx).to_numpy(dtype=float) / unitsize[n], index=current_idx)
 
         # After the single-valued migration (v54), each node appears in
         # ``s.node__storage_binding_method`` with exactly one method string,
@@ -91,13 +99,16 @@ def node_state_change_dt(s, v, unitsize) -> pd.DataFrame:
         # semantics.
         if (n, 'bind_forward_only') in s.node__storage_binding_method:
             mask = ~current_idx.isin(exclude_idx)
-            state_change += ((v_current - v_forward) * unitsize[n]).where(mask, 0)
+            v_prev = v_forward if v_start is None else v_forward.fillna(v_start)
+            state_change += ((v_current - v_prev) * unitsize[n]).where(mask, 0)
 
         if (n, 'bind_within_solve') in s.node__storage_binding_method:
             v_within_solve = v_forward
             if ws_prev_idx is not None:
                 v_within_solve = v_forward.copy()
                 v_within_solve[ws_relinked] = v.state[n].squeeze().reindex(ws_prev_idx).to_numpy()
+            if v_start is not None:
+                v_within_solve = v_within_solve.fillna(v_start)
             state_change += (v_current - v_within_solve) * unitsize[n]
 
         if (n, 'bind_within_period') in s.node__storage_binding_method:
@@ -116,8 +127,17 @@ def compute_storage_and_vre(par, s, v, r) -> None:
     step_duration = par.step_duration
     unitsize = par.entity_unitsize
 
-    r.node_state_change_dt = node_state_change_dt(s, v, unitsize)
-    r.node_state_change_d = r.node_state_change_dt.groupby(level='period').sum()
+    r.node_state_change_dt = node_state_change_dt(s, v, unitsize, getattr(par, "node_state_start", None))
+    # A step whose start is unknown (NaN) makes its period total NaN instead of being skipped by the sum.
+    unknown = r.node_state_change_dt.isna()
+    if unknown.to_numpy().any():
+        cells = unknown.stack()
+        _logger.warning(
+            "The storage state change is not known at %s: the step continues from a step that is not in the "
+            "results, and its solve gives no start level for it.  The period total of the node is left empty.",
+            ", ".join(f"node {n} {d}/{t}" for (d, t, n), x in cells.items() if x))
+    r.node_state_change_d = r.node_state_change_dt.groupby(level='period').sum().mask(
+        unknown.groupby(level='period').any())
 
     # self_discharge_loss — the loss the balance rows used, per step in MWh (v.self_discharge, written by the
     # engine writer write_v_self_discharge from each solve's own solution).  The dt column is MW (÷ step

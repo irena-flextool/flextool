@@ -6676,9 +6676,10 @@ def _dt_period_active_steps_from_workdir(
         if d and d not in seen:
             period_order.append(d)
             seen.add(d)
-    # A period label is in period_in_use_set for the period-level bookkeeping but has no active steps.
+    # A period label is in period_in_use_set for the period-level bookkeeping but has no active steps (except the
+    # label of a split realization roll, which holds the jump).
     pb_wd = period_branch_pairs_lf(workdir, ctx=ctx, provider=provider).collect()
-    labels = _labels_of_pairs(pb_wd["d"].to_list(), pb_wd["b"].to_list())
+    labels = _labels_of_pairs(pb_wd["d"].to_list(), pb_wd["b"].to_list()) - set(siu["d"].cast(pl.Utf8).to_list())
     period_order = [d for d in period_order if str(d) not in labels]
     if not period_order:
         return None
@@ -8252,7 +8253,8 @@ def apply_derived_e(
         from flextool.engine.preprocess.params._ramp_links import ramp_link_fields, ramp_link_from_jump
         rp_first = _rp_block_first_utf8(workdir, provider)
         for _name, _value in ramp_link_fields(
-                flex_data.dt, ramp_link_from_jump(dtttdt_jump, rp_first), split_pb, rp_first).items():
+                flex_data.dt, ramp_link_from_jump(dtttdt_jump, rp_first), split_pb, rp_first,
+                solve=active_solve).items():
             setattr(flex_data, _name, _value)
     # Minimum up/down-time look-backs along the final ramp predecessor links (the seed links when the source
     # timeline walk gives none).

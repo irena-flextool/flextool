@@ -210,7 +210,11 @@ def test_forecasts_continue_from_the_last_jump_step(tmp_path, monkeypatch, w_b, 
     storage level s at the end of t01 is what both tails start from.  R_0: gas covers t01 (1 MWh) and charges s at
     10; under B (wind 0) s saves 30 EUR/MWh at t02, under A nothing.  w_B = 0.5: 15 > 10, s = 1 (gas 2 MW), cost
     20 -> 87 600; R_1 starts from s = 1 and covers its 1 MWh from storage: 0.  w_B = 0.25: 7.5 < 10, s = 0, cost
-    10 + 0.25 x 30 = 17.5 -> 76 650; R_1 buys 1 MWh at 30 -> 131 400.  Realized cost 20 or 10 + 30 = 40."""
+    10 + 0.25 x 30 = 17.5 -> 76 650; R_1 buys 1 MWh at 30 -> 131 400.  Realized cost 20 or 10 + 30 = 40.
+
+    Reported storage state change at (p1, t01): s minus the fix_start level 0 (storage_state_start 0 x 1 MWh), so
+    1 or 0; the label's lag predecessor there is a forecast cell the outputs drop, and the period total counts
+    the step (not NaN)."""
     built, steps, datas = _run(_tw1(w_b), tmp_path, monkeypatch)
     assert len(built) == 2
     d = datas[0]
@@ -222,6 +226,22 @@ def test_forecasts_continue_from_the_last_jump_step(tmp_path, monkeypatch, w_b, 
     assert _value(first.solution.value("v_state"), n="elec", d="p1", t="t01") == pytest.approx(state, abs=1e-9)
     assert _value(first.handoff.roll_end_state, node="elec") == pytest.approx(state, abs=1e-9)
     assert _objectives(steps) == pytest.approx(objectives, rel=1e-9, abs=1e-6)
+    change = _storage_change(steps, tmp_path)
+    assert change.node_state_change_dt.loc[("p1", "t01"), "elec"] == pytest.approx(state, abs=1e-9)
+    assert not change.node_state_change_d["elec"].isna().any()
+
+
+def _storage_change(steps, folder):
+    """The post-processed results (``r``) of a captured run (the multi-solve output path)."""
+    from flextool.process_outputs.process_results import post_process_results
+    from flextool.process_outputs.write_outputs import _read_outputs
+
+    last = list(steps.values())[-1]
+    par, sets, v = _read_outputs(
+        str(folder / "w" / "output_raw"), flex_data=last.flex_data, solution=last.solution,
+        solve_name=last.solve_name, flex_data_provider=last.flex_data_provider,
+        solve_steps=[(st.solve_name, st.flex_data, st.effective_solution) for st in steps.values()])
+    return post_process_results(par, sets, v)
 
 
 def test_g4_refuses_a_tail_that_does_not_continue_from_the_jump(tmp_path, monkeypatch):

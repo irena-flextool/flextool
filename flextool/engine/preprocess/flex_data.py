@@ -1046,6 +1046,14 @@ def _read_step_previous(path: Path,
     return null_split_dtttdt(out.select(keep), _split_period_branch(path.parent, provider))
 
 
+def _active_solve_name(sd: Path, provider: "object | None") -> str | None:
+    """The active solve (``solve_data/solve_current``), for messages; None without a provider or the frame."""
+    if provider is None:
+        return None
+    from flextool.engine.preprocess.params._derived import _read_active_solve
+    return _read_active_solve(sd.parent, provider=provider)
+
+
 def _split_period_branch(sd: Path, provider: "object | None") -> pl.DataFrame | None:
     """``solve_data/period__branch`` as ``(d, b)``, for the split-roll placeholders; None without it."""
     from flextool.engine.preprocess.params._branch import period_branch_full_df
@@ -3272,7 +3280,7 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
         p_ramp_speed_up_source=None,
         p_ramp_speed_down_source=None,
         **ramp_link_fields(dt, _read_ramp_link(sd, provider=provider), _split_period_branch(sd, provider),
-                           _read_rp_block_first_utf8(sd, provider=provider)),
+                           _read_rp_block_first_utf8(sd, provider=provider), solve=_active_solve_name(sd, provider)),
         dt_ramp_carry=None,
         p_roll_continue_flow=None,
         p_roll_continue_flow_duration=None,

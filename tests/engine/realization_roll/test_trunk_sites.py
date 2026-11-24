@@ -259,26 +259,6 @@ def test_separate_dispatch_realization_roll_reads_its_plan(tmp_path_factory, mon
         [("period1", t, "flat") for t in ("t0049", "t0025", "t0001")]]
 
 
-def test_realization_solve_is_not_made_deterministic():
-    """§2.7 item 5: ``apply_deterministic_realization`` leaves a realization solve (``realized_dispatch_parent``) alone,
-    even with rows and no method (its method is dropped: its forecasts come from a plan)."""
-    from flextool.engine.input._solve_config import SolveConfig
-
-    rows = [("p1", "real", "t01", "yes", 0.0), ("p1", "high", "t01", "no", 1.0)]
-    sc = object.__new__(SolveConfig)
-    sc.stochastic_branches = {"st": list(rows), "st__realized_dispatch": list(rows)}
-    sc.dispatch_realization_method = {}
-    sc.realized_dispatch_parent = {"st__realized_dispatch": "st"}
-    sc.deterministic_branches = {}
-    sc.stochastic_invest_method = {}
-    sc.map2d_duplicate_of = {}
-    sc.solves_in_run = lambda: ["st", "st__realized_dispatch"]
-    sc.apply_deterministic_realization()
-    assert list(sc.deterministic_branches) == ["st"]
-    assert sc.stochastic_branches == {"st__realized_dispatch": rows}
-
-
-
 def test_label_first_step_starts_no_cohort():
     """S7: a split roll's label reads the realized branch flattened, so the analysis times of its own rows (its first
     step t01, the flat tiers) start no cohort: a value that only ``high`` authors at t01 is not a partial cohort;

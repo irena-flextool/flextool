@@ -305,3 +305,49 @@ def test_dtttdt_raises_when_time_branch_map_missing() -> None:
     with pytest.raises(ValueError, match="solve_branch__time_branch"):
         dtttdt_from_source(StubSource(TL), "mp", WD,
                            provider=StubProvider(frames))
+
+
+# ---------------------------------------------------------------------------
+# A split realization roll: the label holds the jump, its branch periods the rest of the horizon
+# ---------------------------------------------------------------------------
+
+SPLIT_ATL = {"p": P1[:2], "p_b": _ats([("t0003", 2), ("t0004", 3)]), "p_c": _ats([("t0003", 2), ("t0004", 3)])}
+SPLIT_PB = [("p", "p"), ("p", "p_b"), ("p", "p_c")]
+SPLIT_SBTB = [("p_b", "b"), ("p_c", "c"), ("p", "r")]
+
+
+def test_split_roll_lags_agree_on_both_paths() -> None:
+    """Label p t0001-t0002, branch periods p_b / p_c t0003-t0004 (design rev 7.1 S2, design note G3 wraps D9).
+
+    Hand-derived (make_step_jump): each branch's first step continues from the label's last jump step (p, t0002),
+    jump 1; the label's first step keeps the first-period wrap to the last key's last step (p_c, t0004), jump
+    0 − 3; every first step's t_previous / t_previous_within_timeset is the period's own last step.  After the D9
+    null (null_split_dtttdt) those two columns are null at (p, t0001), (p_b, t0003), (p_c, t0003), and the mirror
+    dtttdt_from_source (the non-synthetic path, apply_derived_e) gives the same frame: its own placeholders at
+    those cells (the cross-period predecessor, a pre-existing divergence) are nulled too."""
+    from flextool.engine.preprocess._step_relations import null_split_dtttdt
+
+    rows = make_step_jump(SPLIT_ATL, SPLIT_PB, SPLIT_SBTB)
+    assert rows == [
+        ("p", "t0001", "t0002", "t0002", "p_c", "t0004", -3),
+        ("p", "t0002", "t0001", "t0001", "p", "t0001", 1),
+        ("p_b", "t0003", "t0004", "t0004", "p", "t0002", 1),
+        ("p_b", "t0004", "t0003", "t0003", "p_b", "t0003", 1),
+        ("p_c", "t0003", "t0004", "t0004", "p", "t0002", 1),
+        ("p_c", "t0004", "t0003", "t0003", "p_c", "t0003", 1),
+    ]
+    pb = pl.DataFrame({"d": [a for a, _ in SPLIT_PB], "b": [b for _, b in SPLIT_PB]})
+    cols = ["d", "t", "t_previous", "t_previous_within_timeset", "d_previous", "t_previous_within_solve"]
+    seed = null_split_dtttdt(pl.DataFrame([r[:6] for r in rows], schema=cols, orient="row"), pb)
+    frames = _frames(_steps(SPLIT_ATL), ["p", "p_b", "p_c"], SPLIT_PB, SPLIT_SBTB)
+    mirror = null_split_dtttdt(dtttdt_from_source(StubSource(TL), "split", WD, provider=StubProvider(frames)), pb)
+    expected = [
+        ("p", "t0001", None, None, "p_c", "t0004"),
+        ("p", "t0002", "t0001", "t0001", "p", "t0001"),
+        ("p_b", "t0003", None, None, "p", "t0002"),
+        ("p_b", "t0004", "t0003", "t0003", "p_b", "t0003"),
+        ("p_c", "t0003", None, None, "p", "t0002"),
+        ("p_c", "t0004", "t0003", "t0003", "p_c", "t0003"),
+    ]
+    assert seed.rows() == expected
+    assert mirror.select(cols).rows() == expected
