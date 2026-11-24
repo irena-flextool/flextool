@@ -8,7 +8,9 @@ This static test (no solve, no DB) puts every field in exactly one route:
 2. **in the dump through the run's input CSVs** that the dump folder carries (``copy_runner_meta``), computed:
    fields ``load_flextool`` builds from those CSVs without a DB reader (the ``FlexData(...)`` call, the dicts its
    ``_load_*`` / ``load_data`` helpers return, the ``flex_data.<f> =`` writes outside the ``db_reader`` /
-   ``handoff`` branches) and the existing ``SEEDED_FIELDS`` (each reads a run CSV).
+   ``handoff`` branches) and the existing ``SEEDED_FIELDS`` (each reads a run CSV).  ``SEEDED_FIELDS`` is read
+   from the source of ``_csv_reload/_field_seeds.py``: nothing outside the shelved package imports it
+   (``test_csv_reload_is_a_leaf``).
 3. **not dumped**: :data:`NOT_DUMPED` (this module), with the reason per group.
 
 Adding a field: add a ``DIRECT_WRITES`` / slice entry in ``_dump_csvs.py``, or a :data:`NOT_DUMPED` entry with
@@ -22,12 +24,12 @@ import re
 from functools import cache
 from pathlib import Path
 
-from flextool.engine._csv_reload._field_seeds import SEEDED_FIELDS
 from flextool.engine.output import _dump_csvs
 from flextool.engine.preprocess.flex_data import FlexData
 
 _ENGINE = Path(__file__).resolve().parents[2] / "flextool" / "engine"
 _FLEX_DATA = _ENGINE / "preprocess" / "flex_data.py"
+_FIELD_SEEDS = _ENGINE / "_csv_reload" / "_field_seeds.py"
 FIELDS: frozenset[str] = frozenset(f.name for f in dataclasses.fields(FlexData))
 
 #: Branches of ``load_flextool`` that need a DB reader or a handoff (not built from the run CSVs).
@@ -47,6 +49,34 @@ def _resolve(func: ast.expr) -> ast.FunctionDef | None:
         path = _ENGINE / "model" / f"{func.value.id}.py"
         return _functions(path).get(func.attr) if path.exists() else None
     return None
+
+
+@cache
+def seeded_fields() -> frozenset[str]:
+    """``SEEDED_FIELDS`` of ``_field_seeds.py``, read from its source: a tuple of strings and ``*<name>`` of the
+    module's own string tuples."""
+    tuples: dict[str, ast.expr] = {}
+    for n in ast.parse(_FIELD_SEEDS.read_text(encoding="utf-8")).body:
+        if isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.value is not None:
+            tuples[n.target.id] = n.value
+        elif isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
+            tuples[n.targets[0].id] = n.value
+
+    def strings(node: ast.expr) -> list[str]:
+        assert isinstance(node, ast.Tuple), f"{_FIELD_SEEDS.name}: expected a tuple, got {ast.unparse(node)}"
+        out: list[str] = []
+        for e in node.elts:
+            if isinstance(e, ast.Constant) and isinstance(e.value, str):
+                out.append(e.value)
+            elif isinstance(e, ast.Starred) and isinstance(e.value, ast.Name) and e.value.id in tuples:
+                out.extend(strings(tuples[e.value.id]))
+            else:
+                raise AssertionError(f"{_FIELD_SEEDS.name}: SEEDED_FIELDS element {ast.unparse(e)} is not a "
+                                     "string or *<module string tuple>")
+        return out
+
+    assert "SEEDED_FIELDS" in tuples, f"{_FIELD_SEEDS.name} no longer defines SEEDED_FIELDS"
+    return frozenset(strings(tuples["SEEDED_FIELDS"]))
 
 
 def _is_none(node: ast.expr | None) -> bool:
@@ -216,7 +246,7 @@ NOT_DUMPED: dict[str, tuple[str, ...]] = {
 def _routes() -> dict[str, set[str]]:
     return {
         "written by the dump": set(dumped()),
-        "in the run's input CSVs": set((loader_writes() | set(SEEDED_FIELDS)) - dumped()),
+        "in the run's input CSVs": set((loader_writes() | seeded_fields()) - dumped()),
         "NOT_DUMPED": {f for names in NOT_DUMPED.values() for f in names},
     }
 
@@ -243,5 +273,5 @@ def test_no_field_in_two_routes():
 
 def test_no_stale_names():
     """Every name NOT_DUMPED, the dump or SEEDED_FIELDS lists is a FlexData field."""
-    named = {f for names in NOT_DUMPED.values() for f in names} | dumped() | set(SEEDED_FIELDS)
+    named = {f for names in NOT_DUMPED.values() for f in names} | dumped() | seeded_fields()
     assert not named - FIELDS, sorted(named - FIELDS)

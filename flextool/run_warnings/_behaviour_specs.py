@@ -422,7 +422,7 @@ BEHAVIOUR_TEXTS: dict[str, tuple[str, str, str, str]] = {
         _delete_marker("rolling_within_solve_one_solve"),
     ),
     "separate_dispatch_realization_looks_ahead": (
-        "W-0636", "separate_dispatch: the first solve shares less across the forecasts",
+        "W-0636", "separate_dispatch: first solve shares less across forecasts",
         ("In rolling and single solves with dispatch_realization_method separate_dispatch, the first solve now "
          "shares across the forecasts only the units online of units whose startup_method ends in _fix_in_uc, the "
          "only decisions the realization keeps, and the start level of a storage that starts free; before, it also "
