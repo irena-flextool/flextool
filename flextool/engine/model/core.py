@@ -5733,6 +5733,7 @@ def _eq_storage_state_fan_start(b: _Build) -> None:
     #   ∀ n ∈ bind_forward_only, (n,d,t_first(d)) and (n,d″,t_first(d″)) ∈ nodeState_first_dt with no start term
     #     (n ∉ storage_fix_start ∪ carried), d = the first root (sorted), d″ ∈ the other roots, one row
     #     per group of roots that non_anticipativity_storage_state_first does not already tie to d's group
+    #     (role uc_only: that row is absent, one row per other root)
     #   roots = the periods of nodeState_first_dt (built from period_first_of_solve): the forecast branch periods
     #     of a fan in the solve's first period; one root without a fan: no rows
     # The first step of a bind_forward_only node has no state change (dtttdt_forward_only): without fix_start or a
@@ -5741,7 +5742,8 @@ def _eq_storage_state_fan_start(b: _Build) -> None:
     # the same.  A fix_start or carried node starts every root from the same value already (_fix_start_terms,
     # the roll carry).  For a node of an include_stochastics group, non_anticipativity_storage_state_first may tie
     # the first step of a root to its reference forecast already (a tie window shorter than the root period):
-    # those pairs are left out, read from that row's domain.
+    # those pairs are left out, read from that row's domain.  Solve (1) of separate_dispatch (the uc_only role,
+    # _non_anticipativity.na_role) has no such rows: every root pair of a free start is tied here.
     first = (_utf8_cells(d.nodeState_first_dt)
              .join(_utf8_cells(d.storage_bind_forward_only, ("n",)), on="n", how="semi"))
     for started in (_self_discharge.fix_start_first(d), _self_discharge.carried_nodes(d)):

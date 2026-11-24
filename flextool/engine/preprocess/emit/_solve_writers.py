@@ -387,6 +387,20 @@ def emit_stochastic_invest_method(
                _to_utf8_frame(("method",), [(method,)]))
 
 
+def emit_na_online_fix_in_uc(uc_only: bool, *, provider) -> None:
+    """Emit ``solve_data/na_online_fix_in_uc``: one ``value`` row ``yes`` when the solve is solve (1) of
+    ``dispatch_realization_method`` ``separate_dispatch`` (single or rolling, the stochastic solve a realization solve
+    follows), header-only otherwise.
+
+    The non-anticipativity role of the solve (``model._non_anticipativity.na_role``): ``yes`` ties across the
+    forecasts only the units online of the ``_fix_in_uc`` units, the decisions the realization solve takes over.
+    Emitted for every solve, so a Provider shared by the sub-solves of a level never keeps a previous solve's
+    marker.
+    """
+    _emit(provider, "solve_data/na_online_fix_in_uc.csv",
+          _to_utf8_frame(("value",), [("yes",)] if uc_only else []))
+
+
 def _compute_first_and_last_periods(
     active_time_list: dict[str, list[tuple[str, ...]]],
     period__timesets_in_this_solve: list[tuple[str, str]],

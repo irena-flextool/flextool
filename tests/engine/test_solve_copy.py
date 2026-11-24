@@ -121,8 +121,12 @@ CASES = [
     pytest.param(lambda mode: scm.model_a_ladder(mode, {par: {"first": ["p1"], "second": ["p2"]}
                                                         for par in scm.SPLIT_PARAMS}),
                  {"inv_first": 43_838_210.76, "inv_second": 43_800_000.0}, id="row-names"),
+    # Solve (1) of separate_dispatch ties only _fix_in_uc units online, so its linear peaker is free per forecast:
+    # high (wind 80 MW) runs it at 20 MW, low (no wind) at 100 MW, 0.5 x 10 EUR/MWh x 2920 h x (20 + 100) x 3 =
+    # 5 256 000 (the 2 x 50 MW units at min_load 0.5 need 0.4..0.8 units for 20 MW, no start-up after the free
+    # first step).  The realization: 50 MW of peaker x 10 x 2920 x 3 = 4 380 000.
     pytest.param(_separate_dispatch,
-                 {"stoch_rd_p2035": 6_570_000.0, "stoch_rd_p2035__realized_dispatch": 4_380_000.0},
+                 {"stoch_rd_p2035": 5_256_000.0, "stoch_rd_p2035__realized_dispatch": 4_380_000.0},
                  id="separate_dispatch"),
     # Item 243: before, the hand-written inv_p1 stood for both periods it looks ahead to, so ``disp`` kept its
     # name under it (steps inv_p1, disp, inv_p2, disp_p2) and the hand-written examples' ladder stopped.

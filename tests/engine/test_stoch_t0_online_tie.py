@@ -4,7 +4,11 @@ sibling v_online PIN.
 Unit commitment on the committed/realized section (the "jump") is here-and-
 now: it is chosen before the scenario is known, so ``v_online`` is tied EQUAL
 across the forecast branches over the whole jump.  The dispatch sibling then
-FIXES that committed ``v_online`` over the jump while flows realize.
+FIXES that committed ``v_online`` over the jump while flows realize.  Solve (1)
+of ``separate_dispatch`` ties only what the sibling takes over: the units online
+of the ``_fix_in_uc`` units (the ``uc_only`` role,
+``_non_anticipativity.na_role``); a ``linear`` peaker is decided per forecast
+there, and again by the sibling.
 
 Mechanism (``_non_anticipativity.add_dispatch_constraints``): the online non-
 anticipativity families join the tied steps ``dt_non_anticipativity``, ELSE
@@ -28,14 +32,19 @@ min_load 0.5, startup_cost 1, other_operational_cost 10 CUR/MWh) backs up
 against 100 MW demand.
 
 Hand-calc (H = 8760/3 = 2920 h/step):
-  * PARENT ``stoch_rd``: ``low`` has no wind -> peaker covers the full 100 MW
-    -> v_online = 2.0 every step.  The jump tie forces ``high`` to the same
-    2.0 (hedge); min_load floors high's output at 0.5*2.0*50 = 50 MW.  The
-    ``rlz`` branch is the realized designation, not a forecast: the period
-    label p2035 has no dispatch.  Objective = Σ_branch w * 10 * 2920 * Σ_t output
-      = 0.5*10*2920*(50*3)  [high]  = 2 190 000
-      + 0.5*10*2920*(100*3) [low]   = 4 380 000  ->  6 570 000.
-    (t0001 is a free start in both forecasts and the commitment is constant -> no start-up.)
+  * PARENT ``stoch_rd`` (linear peaker, ``sep_chain``): its units online are
+    not tied (not ``_fix_in_uc``).  ``low`` has no wind -> peaker covers the
+    full 100 MW -> v_online = 2.0 every step.  ``high`` has wind 80 MW, so the
+    peaker serves 20 MW with 0.4 <= v_online <= 0.8 (min_load 0.5*v*50 <= 20 <=
+    v*50).  The ``rlz`` branch is the realized designation, not a forecast: the
+    period label p2035 has no dispatch.  Objective = Σ_branch w * 10 * 2920 * Σ_t output
+      = 0.5*10*2920*(20*3)  [high]  =   876 000
+      + 0.5*10*2920*(100*3) [low]   = 4 380 000  ->  5 256 000.
+    (t0001 is a free start in both forecasts; nothing gains from a start-up later.)
+  * PARENT with an ``integer_fix_in_uc`` peaker and high wind CF 1.0
+    (``integer_chain``) or ``within_solve`` (``plain_chain``, every tie): the
+    jump tie forces ``high`` to low's 2 units (hedge); min_load floors high's
+    output at 0.5*2*50 = 50 MW: 0.5*10*2920*(50*3) + 4 380 000 = 6 570 000.
   * SIBLING ``stoch_rd__realized_dispatch``: dispatches the realized rlz wind
     0.5 -> wind 50, peaker 50.  The peaker is linear, so its units online are
     not pinned: the sibling decides them again, anywhere in [1, 2] (50 MW needs
@@ -67,7 +76,8 @@ LOW = "p2035_low"
 STEPS = ("t0001", "t0002", "t0003")
 
 TIED_COMMIT = 2.0           # low needs the full 2 units -> the tied value
-PARENT_OBJECTIVE = 6_570_000.0
+PARENT_OBJECTIVE = 5_256_000.0      # sep_chain: the linear peaker untied (module docstring)
+TIED_PARENT_OBJECTIVE = 6_570_000.0  # integer_chain / plain_chain: the peaker tied to low's 2 units
 SIBLING_OBJECTIVE = 4_380_000.0
 
 
@@ -196,18 +206,15 @@ def integer_chain(tmp_path_factory):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.solver
-def test_parent_v_online_tied_over_jump(sep_chain):
-    """The parent's committed v_online is EQUAL across the forecast branches
-    over the WHOLE jump (all steps), driven to the non-degenerate hedge value
-    (low's full 2 units) — NOT the degenerate realized branch."""
+def test_parent_linear_v_online_not_tied(sep_chain):
+    """Solve (1) of separate_dispatch does not tie a linear peaker's units
+    online (the sibling decides them again): ``low`` commits its 2 units,
+    ``high`` only what its 20 MW need (0.4..0.8 units, module docstring), at
+    every step of the jump."""
     fr = _online(sep_chain, PARENT, "v_online_linear")
     for t in STEPS:
-        high = _at(fr, HIGH, t)
-        low = _at(fr, LOW, t)
-        assert high == pytest.approx(low, abs=1e-9), f"not tied at {t}"
-        assert high == pytest.approx(TIED_COMMIT, abs=1e-9), (
-            f"tied value at {t} = {high}, expected {TIED_COMMIT}"
-        )
+        assert _at(fr, LOW, t) == pytest.approx(TIED_COMMIT, abs=1e-9), t
+        assert 0.4 - 1e-9 <= _at(fr, HIGH, t) <= 0.8 + 1e-9, t
 
 
 @pytest.mark.solver
@@ -224,22 +231,35 @@ def test_parent_realized_branch_excluded(sep_chain):
 @pytest.mark.solver
 def test_first_step_is_a_free_start_in_every_forecast(sep_chain):
     """The fan starts at the solve's first step: t0001 is a free start in each forecast (no online_change row,
-    start-up and shut-down 0) and its units online are tied there (2.0, the hedge).  The realization's first step
-    is a free start too."""
+    start-up and shut-down 0).  The realization's first step is a free start too."""
     for solve, periods in ((PARENT, (HIGH, LOW)), (SIBLING, (REALIZED,))):
         for var in ("v_startup_linear", "v_shutdown_linear"):
             fr = _online(sep_chain, solve, var)
             for d in periods:
                 assert _at(fr, d, "t0001") == 0.0, (solve, var, d)
-    fr = _online(sep_chain, PARENT, "v_online_linear")
-    assert _at(fr, HIGH, "t0001") == pytest.approx(_at(fr, LOW, "t0001"), abs=1e-9)
 
 
 @pytest.mark.solver
 def test_parent_objective(sep_chain):
-    """Hand-calc parent objective (operational only; no start-up: a free first step, constant commitment)."""
+    """Hand-calc parent objective (operational only; no start-up: a free first step): high's peaker untied."""
     _, wf = sep_chain
     assert _obj(wf, PARENT) == pytest.approx(PARENT_OBJECTIVE, rel=1e-6)
+
+
+@pytest.mark.solver
+def test_tied_parent_objectives(integer_chain, plain_chain):
+    """An integer_fix_in_uc peaker stays tied in solve (1) of separate_dispatch, and within_solve keeps every tie:
+    both parents hedge high to low's 2 units (6 570 000, module docstring)."""
+    for chain in (integer_chain, plain_chain):
+        _, wf = chain
+        assert _obj(wf, PARENT) == pytest.approx(TIED_PARENT_OBJECTIVE, rel=1e-6)
+
+
+@pytest.mark.solver
+def test_integer_sibling_objective(integer_chain):
+    """The pinned sibling runs both units at min_load: 50 MW = the realized residual demand (4 380 000)."""
+    _, wf = integer_chain
+    assert _obj(wf, SIBLING) == pytest.approx(SIBLING_OBJECTIVE, rel=1e-6)
 
 
 # ---------------------------------------------------------------------------

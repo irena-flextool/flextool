@@ -670,8 +670,9 @@ def coarse_tie_straddles(flex_data: "FlexData", steps: pl.DataFrame) -> set[str]
     the tied steps the forecasts could no longer differ after it, although nothing is committed there.  A tie row
     pairs the column of a forecast's coarse step with the reference forecast's column at the same step, which is
     one value per step only where both forecasts cut the tied steps into the same coarse steps.  Such a process
-    keeps the solve's step."""
-    from flextool.engine.model._non_anticipativity import reference_forecasts
+    keeps the solve's step.  Under the ``uc_only`` role (solve (1) of separate_dispatch,
+    ``_non_anticipativity.na_role``) only the units online of the ``_fix_in_uc`` processes are tied."""
+    from flextool.engine.model._non_anticipativity import na_role, reference_forecasts
 
     d = flex_data
     pss, tie = d.process_source_sink, d.dt_non_anticipativity
@@ -680,10 +681,13 @@ def coarse_tie_straddles(flex_data: "FlexData", steps: pl.DataFrame) -> set[str]
     forecasts = [(a, f) for a, f in reference_forecasts(d) if len(f) >= 2]
     if not forecasts:
         return set()
-    procs = _frame_values(d.process_online, "p") | _frame_values(
-        getattr(d, "process_reserve_upDown_node_active", None), "p")
+    if na_role(d) == "uc_only":
+        procs = _frame_values(d.process_online, "p") & _frame_values(d.process_online_fix_in_uc, "p")
+    else:
+        procs = _frame_values(d.process_online, "p") | _frame_values(
+            getattr(d, "process_reserve_upDown_node_active", None), "p")
     gn, gs = d.group_node, d.groupStochastic
-    if all(f is not None and f.height > 0 for f in (gn, gs, d.nodeBalance)):
+    if na_role(d) != "uc_only" and all(f is not None and f.height > 0 for f in (gn, gs, d.nodeBalance)):
         nodes = (_frame_values(gn.join(gs.select("g").unique(), on="g", how="semi"), "n")
                  & _frame_values(d.nodeBalance, "n"))
         arcs = pss.select(*(pl.col(c).cast(pl.Utf8) for c in ("p", "source", "sink")))
@@ -1439,9 +1443,12 @@ class FlexData:
     process_online_integer: pl.DataFrame | None = None       # set: (p,)
     # The processes whose startup_method is linear_fix_in_uc or integer_fix_in_uc (params._projection
     # .process_online_fix_in_uc), online or not in this solve: a separate realization solve keeps their units online
-    # at the stochastic solve's value (the fix_online handoff, build_handoff_from_solution).  Read only there and by
-    # solve._realization; no model term reads it.
+    # at the stochastic solve's value (the fix_online handoff, build_handoff_from_solution).  Read there, by
+    # solve._realization and by the units-online ties of a solve whose na_online_fix_in_uc is set.
     process_online_fix_in_uc: pl.DataFrame | None = None     # set: (p,)
+    # True in solve (1) of separate_dispatch (``solve_data/na_online_fix_in_uc``): across the forecasts only the
+    # units online of process_online_fix_in_uc are tied (model._non_anticipativity.na_role "uc_only").
+    na_online_fix_in_uc: bool = False
     # True when the solve's reduce_unit_detail_method relaxes integers (preprocess._reduce_detail): v_online_integer
     # and v_exact_forward are then declared continuous.  False (default): integer as authored.
     relax_integrality: bool = False
@@ -5601,6 +5608,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
                     [str(v) for v in rip["period"].to_list() if v is not None] if "period" in rip.columns else [])
             except pl.exceptions.NoDataError:
                 flex_data.realized_invest_periods = []
+        flex_data.na_online_fix_in_uc = _na_online_fix_in_uc(sd, provider=provider)
         # ``node__storage_nested_fix_method`` lives in solve_data/ for
         # cascade solves; fall back to input/ if not yet copied.  Explicit
         # ``is None`` chain (DataFrame is non-truthy in polars).
@@ -6883,6 +6891,20 @@ def _last_realized_step(sd: Path, flex_data: "FlexData | None", *,
     if not emitted:
         pairs = pairs.unique().sort(["d", "t"])
     return pairs["d"][-1], pairs["t"][-1]
+
+
+def _na_online_fix_in_uc(sd: Path, *, provider: "object | None" = None) -> bool:
+    """True when ``solve_data/na_online_fix_in_uc`` holds a ``yes`` row (``emit_na_online_fix_in_uc``: solve (1) of
+    separate_dispatch); False when it is absent or header-only."""
+    path = sd / "na_online_fix_in_uc.csv"
+    if not _provider_has(provider, "solve_data/na_online_fix_in_uc", path):
+        return False
+    try:
+        frame = _provider_read(provider, "solve_data/na_online_fix_in_uc", path)
+    except pl.exceptions.NoDataError:
+        return False
+    return (frame is not None and "value" in frame.columns
+            and "yes" in frame["value"].cast(pl.Utf8).to_list())
 
 
 def _committed_fan_online_cells(sd: Path, flex_data: "FlexData | None", *,

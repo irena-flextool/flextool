@@ -13,9 +13,12 @@ and ``low`` (CF 0.0), w 0.5 each, and ``rlz`` the ``realized: yes`` branch.  Dem
 value) and ``rlz`` CF 0.8 (the realized wind can cover 80 MW).
 
 Hand derivation (oracle; not read from a run):
-* Stochastic solve: in ``low`` the peaker must make 100 MW, so v_online = 2; the units online are tied across the
-  forecasts over the committed window, so ``high`` (the reference forecast, first in sorted order) also has 2 at
-  t0001-t0003 and curtails its wind to 0.
+* Stochastic solve: in ``low`` the peaker must make 100 MW, so v_online = 2.  Where the units online are tied across
+  the forecasts over the committed window (``within_solve``, and a ``_fix_in_uc`` peaker under
+  ``separate_dispatch``), ``high`` (the reference forecast, first in sorted order) also has 2 at t0001-t0003 and
+  curtails its wind to 0.  Solve (1) of ``separate_dispatch`` does not tie a plain ``linear`` / ``integer`` peaker
+  (its realization decides it again): ``high`` (wind CF 0.8, the same as ``rlz``) then takes the re-decided values
+  below, v_online 0.4 (linear) / 1 (integer).
 * Realization pinned (``_fix_in_uc``): v_online = 2 at every step, peaker 100 MW, wind 0: objective
   100 · 10 · 2920 · 3 = 8 760 000.
 * Realization ``linear``: peaker 50 · v, wind 100 − 50 · v ≤ 80, so v ≥ 0.4; the cost 10 · 50 · v rises with v, so
@@ -31,8 +34,8 @@ Connection variant (the pin of a connection, ``separate_dispatch``): ``peaker`` 
 units of 50 MW, lossless, no cost of its own; one direction, so no flow can circulate).  Connections have no min
 load, so the user constraint ``c_full`` (50 · v_online(link) − flow(link) ≤ 0) does the work of ``min_load`` 1.0:
 with flow ≤ 50 · v_online the link's flow is exactly 50 · v_online.  Every number above then holds with ``link`` for ``peaker``: the parent's ``low`` needs 100 MW over
-the link (v_online 2, tied to ``high``); ``integer_fix_in_uc`` pins v_online 2, objective 8 760 000; ``integer``
-re-decides v_online 1, objective 4 380 000.
+the link (v_online 2, tied to ``high``; an untied ``integer`` link: ``high`` has v_online 1); ``integer_fix_in_uc``
+pins v_online 2, objective 8 760 000; ``integer`` re-decides v_online 1, objective 4 380 000.
 """
 from __future__ import annotations
 
@@ -165,12 +168,16 @@ def _online(step, kind: str, d: str, process: str = "peaker") -> list[float]:
 def test_single_solve_realization_by_startup_method(tmp_path_factory, startup, method) -> None:
     """``_fix_in_uc``: the realization's units online equal the reference forecast's over the realized period
     (one ``online_fix_eq_*`` row per step).  Plain: no pin row, the units online and the objective are the
-    re-decided optimum of the module docstring, below the pinned objective."""
+    re-decided optimum of the module docstring, below the pinned objective.  The stochastic solve's ``high`` is tied
+    to ``low``'s 2 units except for a plain peaker under ``separate_dispatch`` (module docstring)."""
     kind = "linear" if startup.startswith("linear") else "integer"
     steps, work = _run(tmp_path_factory.mktemp(f"{startup}_{method}"), _variant(startup, method))
     assert all(s.solution.optimal for s in steps.values())
     parent, real = steps[PARENT], steps[REALIZATION]
-    assert _online(parent, kind, "p2035_high") == pytest.approx([PINNED_ONLINE] * 3, abs=1e-9)
+    tied = method == "within_solve" or startup.endswith("_fix_in_uc")
+    high = PINNED_ONLINE if tied else REDECIDED[kind][0]
+    assert _online(parent, kind, "p2035_low") == pytest.approx([PINNED_ONLINE] * 3, abs=1e-9)
+    assert _online(parent, kind, "p2035_high") == pytest.approx([high] * 3, abs=1e-6)
     rows = row_terms(build(real.flex_data), f"online_fix_eq_{kind}")
     if startup.endswith("_fix_in_uc"):
         assert sorted(rows) == [f"online_fix_eq_{kind}[peaker,p2035,{t}]" for t in STEPS]
@@ -187,11 +194,14 @@ def test_single_solve_realization_by_startup_method(tmp_path_factory, startup, m
 @pytest.mark.parametrize("startup", ["integer", "integer_fix_in_uc"])
 def test_connection_realization_by_startup_method(tmp_path_factory, startup) -> None:
     """A connection's units online: ``integer_fix_in_uc`` pins them in the realization to the reference
-    forecast's (one ``online_fix_eq_integer`` row per step); ``integer`` decides them again (module docstring)."""
+    forecast's (one ``online_fix_eq_integer`` row per step); ``integer`` decides them again (module docstring),
+    and is not tied in the stochastic solve (``high`` 1 unit, ``low`` 2)."""
     steps, work = _run(tmp_path_factory.mktemp(f"link_{startup}"), _connection_variant(startup))
     assert all(s.solution.optimal for s in steps.values())
     parent, real = steps[PARENT], steps[REALIZATION]
-    assert _online(parent, "integer", "p2035_high", "link") == pytest.approx([PINNED_ONLINE] * 3, abs=1e-9)
+    high = PINNED_ONLINE if startup == "integer_fix_in_uc" else REDECIDED["integer"][0]
+    assert _online(parent, "integer", "p2035_low", "link") == pytest.approx([PINNED_ONLINE] * 3, abs=1e-9)
+    assert _online(parent, "integer", "p2035_high", "link") == pytest.approx([high] * 3, abs=1e-6)
     rows = row_terms(build(real.flex_data), "online_fix_eq_integer")
     if startup == "integer_fix_in_uc":
         assert sorted(rows) == [f"online_fix_eq_integer[link,p2035,{t}]" for t in STEPS]

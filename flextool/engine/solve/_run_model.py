@@ -2471,6 +2471,14 @@ def native_run_model(state, solver) -> int:
             label_step_frames.get(solve),
             provider=sub_solve_provider,
         )
+        # Solve (1) of separate_dispatch (single or rolling: the stochastic solve a realization solve follows) ties
+        # across its forecasts only the units online of the _fix_in_uc units (``_non_anticipativity.na_role``).
+        _plan = realization_plans.get(solve)
+        solve_writers.emit_na_online_fix_in_uc(
+            _plan is not None and _plan.realization_solve is not None
+            and state.solve.dispatch_realization_method_for(complete_solve[solve]) == "separate_dispatch",
+            provider=sub_solve_provider,
+        )
         solve_writers.emit_fix_storage_timesteps(
             fix_storage_time_lists[solve],
             complete_solve[solve],

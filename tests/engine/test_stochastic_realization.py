@@ -183,14 +183,32 @@ def test_designation_adds_the_realization_solve(designated) -> None:
 
 
 @pytest.mark.solver
-def test_auto_spawned_realization_solve_equals_separate_dispatch(designated, separate) -> None:
-    """The auto-spawned realization solve builds the same LP as the one separate_dispatch adds, and the stochastic
-    solve's LP does not depend on which of the two added it."""
+def test_auto_spawned_realization_solve_equals_separate_dispatch(designated, separate, tmp_path) -> None:
+    """The auto-spawned realization solve builds the same LP as the one separate_dispatch adds.  The stochastic
+    solve differs only by its role: under separate_dispatch (solve (1)) it ties across the forecasts only the units
+    online of _fix_in_uc units, so the linear peaker loses its non_anticipativity_online_linear rows, one per tied
+    step: the forecast pair (high, low) x the 3 committed steps = 3 rows.  Every other row, column and bound is
+    the same."""
+    from tests.engine import _solve_copy_models as scm
+
     _, mps_auto = designated
     _, mps_sep = separate
     assert set(mps_auto) == set(mps_sep) == {PARENT, SIBLING}
     assert mps_auto[SIBLING] == mps_sep[SIBLING]
-    assert mps_auto[PARENT] == mps_sep[PARENT]
+    lps = scm.lp_snapshot()
+    parsed = {}
+    for name, raw in (("auto", mps_auto[PARENT]), ("sep", mps_sep[PARENT])):
+        (tmp_path / f"{name}.mps").write_bytes(raw)
+        parsed[name] = lps.parse_mps(tmp_path / f"{name}.mps")
+    auto, sep = parsed["auto"], parsed["sep"]
+    only_auto = sorted(auto.rows.keys() - sep.rows.keys())
+    assert len(only_auto) == 3 and {lps.family_of(r) for r in only_auto} == {"non_anticipativity_online_linear"}
+    assert not sep.rows.keys() - auto.rows.keys()
+    for r in only_auto:
+        del auto.rows[r]
+        auto.rhs.pop(r, None)
+    auto.coefs = {k: v for k, v in auto.coefs.items() if k[0] not in only_auto}
+    assert lps.canonical_diff(auto, sep, 0.0, 0.0, 0.0) == []
 
 
 @pytest.mark.solver
