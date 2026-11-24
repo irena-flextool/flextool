@@ -68,7 +68,8 @@ class UpgradeResult:
     *before* / *after*: the data version read before and after (``None`` when it could not be read); *copy_of*:
     the frozen file's name when *path* is its upgraded copy; *messages*: those of ``check_and_upgrade_database``;
     *notices*: the behaviour-change ids whose markers the upgrade added; *undecided*: the units the upgrade could
-    not decide a ``minimum_time_method`` for.
+    not decide a ``minimum_time_method`` for; *undecided_nodes*: the storage nodes it could not decide a
+    ``storage_start_end_method`` for.
     """
     name: str
     path: Path
@@ -80,15 +81,16 @@ class UpgradeResult:
     messages: list[str] = field(default_factory=list)
     notices: tuple[str, ...] = ()
     undecided: tuple[str, ...] = ()
+    undecided_nodes: tuple[str, ...] = ()
 
 
 def post_upgrades(center: MessageCenter | None, results: Iterable[UpgradeResult], run: str) -> None:
     """Post a ``database_upgraded`` event for every file that was upgraded and did not fail (*run*: the start of
     the migration run, which makes each event a new message).  Nothing without a center.
 
-    The facts hold the added notices' ids (the texts are rebuilt at each recompute) and the undecided units; an
-    event still pending for the file (not dismissed) gives its notices and units to the new one, so an earlier
-    upgrade's list is not lost."""
+    The facts hold the added notices' ids (the texts are rebuilt at each recompute) and the undecided units and
+    nodes; an event still pending for the file (not dismissed) gives its notices and names to the new one, so an
+    earlier upgrade's list is not lost (the earlier names are not checked again)."""
     if center is None:
         return
     pending = center.store.pending("database_upgraded")
@@ -100,12 +102,10 @@ def post_upgrades(center: MessageCenter | None, results: Iterable[UpgradeResult]
         if r.before is not None and r.before == r.after:
             facts["schema"] = True
         old = (pending.get(key) or {}).get("facts") or {}
-        notices = list(dict.fromkeys([*_str_list(old.get("notices")), *r.notices]))
-        undecided = list(dict.fromkeys([*_str_list(old.get("undecided")), *r.undecided]))
-        if notices:
-            facts["notices"] = notices
-        if undecided:
-            facts["undecided"] = undecided
+        for fact, new in (("notices", r.notices), ("undecided", r.undecided), ("undecided_nodes", r.undecided_nodes)):
+            merged = list(dict.fromkeys([*_str_list(old.get(fact)), *new]))
+            if merged:
+                facts[fact] = merged
         center.post_event("database_upgraded", key, Path(r.path).name, run=run, facts=facts)
 
 
@@ -143,7 +143,8 @@ def upgraded_text(facts: dict) -> tuple[str, tuple[str, ...]]:
         versions = f"from data version {before} to {after}"
     else:
         versions = f"to data version {after}" if after is not None else "to the current data version"
-    notes = _notice_paragraphs(_str_list(facts.get("notices")), _str_list(facts.get("undecided")))
+    notes = _notice_paragraphs(_str_list(facts.get("notices")),
+                               [(text, code, _str_list(facts.get(key))) for key, code, text in _UNDECIDED_LISTS])
     if copy_of:
         return "An upgraded copy was added", (
             f"This is an upgraded copy of the frozen database {copy_of} ({versions}), added as a new input "
@@ -156,18 +157,26 @@ def upgraded_text(facts: dict) -> tuple[str, tuple[str, ...]]:
         f"FlexTool upgraded it {versions} so that this FlexTool can run it. {_OLDER_FLEXTOOL}", *notes)
 
 
-#: How many undecided units the upgrade message names (the run's W-0231 names them all).
+#: How many undecided units (or nodes) the upgrade message names (the code after the list names them all).
 UNDECIDED_SHOWN = 10
 _UNDECIDED = ("Since the upgrade did not decide the minimum up/down methods for the following units, they are "
               "currently operated without those limits even though they have minimum up/down time parameter "
               "values. Please choose a method to activate the limits.")
+_UNDECIDED_NODES = ("Since the upgrade did not decide the storage start and end methods for the following nodes, "
+                    "a run that uses them stops with an error: their storage_start_end_method fixes a start or an "
+                    "end without its value. Please set storage_state_start or storage_state_end, or choose another "
+                    "method.")
+#: The undecided lists of a ``database_upgraded`` event: (facts key, the code that names them all, paragraph).
+#: W-0231 names the units at each run; the nodes are named by the run's error, after the notice W-0601.
+_UNDECIDED_LISTS = (("undecided", "W-0231", _UNDECIDED), ("undecided_nodes", "W-0601", _UNDECIDED_NODES))
 
 
-def _notice_paragraphs(ids: list[str], undecided: list[str]) -> tuple[str, ...]:
+def _notice_paragraphs(ids: list[str], undecided: list[tuple[str, str, list[str]]]) -> tuple[str, ...]:
     """The paragraphs naming the behaviour notices an upgrade added (*ids*; unknown ids skipped), results-changing
-    ones first, each group a heading and one line per notice (``<code>: <console text>``, in code order); the
-    *undecided* units (capped at :data:`UNDECIDED_SHOWN`) under the results heading.  ``()`` when there are none.
-    Headings end in ":" and lines have no sentence end, so the group adds one sentence (plus two for the units)."""
+    ones first, each group a heading and one line per notice (``<code>: <console text>``, in code order); each
+    *undecided* list ``(paragraph, code, names)`` with names under the results heading, as its paragraph and the
+    names (capped at :data:`UNDECIDED_SHOWN`) followed by the code.  ``()`` when there are none.  Headings end in
+    ":" and lines have no sentence end, so the group adds one sentence (plus two for each undecided list)."""
     from flextool.run_warnings._behaviour_specs import BEHAVIOUR_TEXTS, RESULTS_UNCHANGED
 
     known = sorted((i for i in dict.fromkeys(ids) if i in BEHAVIOUR_TEXTS), key=lambda i: BEHAVIOUR_TEXTS[i][0])
@@ -178,14 +187,14 @@ def _notice_paragraphs(ids: list[str], undecided: list[str]) -> tuple[str, ...]:
     changing = [i for i in known if i not in RESULTS_UNCHANGED]
     unchanged = [i for i in known if i in RESULTS_UNCHANGED]
     out: list[str] = []
+    undecided = [(text, code, names) for text, code, names in undecided if names]
     if changing or undecided:
         out.append("These FlexTool changes affect the results of this model:")
         if changing:
             out.append(lines(changing))
-        if undecided:
-            shown = ", ".join(undecided[:UNDECIDED_SHOWN])
-            more = len(undecided) - UNDECIDED_SHOWN
-            out += [_UNDECIDED, f"W-0231: {shown}" + (f" and {more} more" if more > 0 else "")]
+        for text, code, names in undecided:
+            more = len(names) - UNDECIDED_SHOWN
+            out += [text, ", ".join(names[:UNDECIDED_SHOWN]) + (f" and {more} more" if more > 0 else "") + f" ({code})"]
     if unchanged:
         out += ["The upgrade added these behaviour notes:", lines(unchanged)]
     if out:

@@ -364,7 +364,10 @@ A release is a version tag pushed to GitHub; `publish.yml` builds it and uploads
 
 A change that alters what an existing model does gets a registry entry (summary, how to silence it) and a marker
 (`metadata` named `flextool_behaviour_change:<id>`) written by the database migration on upgraded databases only;
-the engine calls `_behaviour_changes.notice(...)` with the entities whose results change.
+the engine calls `_behaviour_changes.notice(...)` with the entities whose results change.  When the upgrade writes
+values that keep the old results (rather than the change altering them), add the id to `RESULTS_UNCHANGED`
+(`run_warnings/_behaviour_specs.py`): the GUI's "database upgraded" message lists it under the other notes, not
+under the changes that affect results.
 
 ## Solver
 

@@ -210,11 +210,12 @@ def added_notices(before: Mapping[str, str], after: Mapping[str, str]) -> tuple[
                         key=lambda i: BEHAVIOUR_TEXTS[i][0]))
 
 
-def undecided_units(markers: Mapping[str, str]) -> tuple[str, ...]:
-    """The units the upgrade could not decide a ``minimum_time_method`` for (the ``undecided`` rows of the marker
-    ``minimum_time_method_written``, first column), de-duplicated in order; ``()`` when absent or not JSON."""
+def undecided_names(markers: Mapping[str, str], change_id: str) -> tuple[str, ...]:
+    """The entities the upgrade left undecided in the marker *change_id* (the first column of its ``undecided``
+    rows: the units of ``minimum_time_method_written``, the nodes of ``storage_fix_method_rewritten``),
+    de-duplicated in order; ``()`` when absent or not JSON."""
     try:
-        value = json.loads(markers.get("minimum_time_method_written") or "")
+        value = json.loads(markers.get(change_id) or "")
     except (TypeError, ValueError):
         return ()
     rows = value.get("undecided") if isinstance(value, dict) else None

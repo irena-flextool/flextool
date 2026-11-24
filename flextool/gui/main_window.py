@@ -218,9 +218,10 @@ def upgrade_one(
     version is read read-only before (from *path*) and after (from the copy for a frozen copy); an after-read
     that fails on an upgraded file counts as the target version.  The behaviour-change markers are read the same
     way (plain SQLite, while no mapping is open): the result names the notices the upgrade added and, with the
-    minimum_time_method notice, the units it could not decide; either read failing lists none.
+    minimum_time_method notice the units it could not decide, with the storage_start_end_method notice the nodes;
+    either read failing lists none.
     """
-    from flextool.engine._behaviour_changes import added_notices, undecided_units
+    from flextool.engine._behaviour_changes import added_notices, undecided_names
     from flextool.gui.db_version_check import _read_flextool_version, get_target_flextool_version
     from flextool.sqlite_url import sqlite_url_string
     from flextool.update_flextool.frozen import read_markers_ro
@@ -242,6 +243,7 @@ def upgrade_one(
     after = before
     notices: tuple[str, ...] = ()
     undecided: tuple[str, ...] = ()
+    undecided_nodes: tuple[str, ...] = ()
     if upgraded and not failed:
         after = _read_flextool_version(sqlite_url_string(result_path))
         if after is None:
@@ -252,9 +254,11 @@ def upgrade_one(
         else:
             notices = added_notices(before_m, after_m)
             if "minimum_time_method_written" in notices:
-                undecided = undecided_units(after_m)
+                undecided = undecided_names(after_m, "minimum_time_method_written")
+            if "storage_fix_method_rewritten" in notices:
+                undecided_nodes = undecided_names(after_m, "storage_fix_method_rewritten")
     return UpgradeResult(name, result_path, before, after, copy_of, upgraded, failed, list(messages),
-                         notices, undecided)
+                         notices, undecided, undecided_nodes)
 
 
 def _is_ghost_iid(iid: str) -> bool:
