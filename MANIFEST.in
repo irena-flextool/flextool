@@ -46,5 +46,7 @@ include docs/solvers/cplex.md
 include docs/solvers/xpress.md
 include docs/solvers/copt.md
 include docs/dev/architecture.md
+include docs/dev/assistant.md
 include docs/dev/slack_convention.md
+include docs/solvers/option_trust_internals.md
 include docs/dev/engine.md

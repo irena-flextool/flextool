@@ -1121,7 +1121,7 @@ a carrier (`fix_online` is the pattern) needs:
   leaves its variable out (`p_fix_online` sits with the online fields; a
   reserve carrier goes in `RESERVE_FIELDS`).
 
-### Fix-storage semantics (Deferred-B wiring)
+### How the fix_storage carriers enter the child solve
 
 The three `fix_storage_*` carriers translate into distinct LP wirings
 on the child solve:

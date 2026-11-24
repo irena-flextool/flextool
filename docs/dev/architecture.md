@@ -16,9 +16,9 @@ emitters, solve orchestration, handoff) are in [engine.md](engine.md).
 | Schema change & migration | [update_flextool](#flextoolupdate_flextool-migration-and-updates), CONTRIBUTING.md "Updating the Data Structure" |
 | Outputs | [process_outputs](#flextoolprocess_outputs-solution-parquet-downstream), [Output writers read only memory](#output-writers-read-only-memory-one-run-per-work-folder), [Solution extraction](#solution-extraction), [Run record](#run-record) |
 | Scaling / solve acceptance | [Numerical scaling](#numerical-scaling), [Scaling range guard](#scaling-range-guard), [Solve acceptance](#solve-acceptance) |
-| Options, env vars, threads, solver files | [Runtime options](#runtime-options), [Solver layout](#solver-layout) |
+| Options, env vars, threads, solver files | [Runtime options](#runtime-options), [Solver layout](#solver-layout), [solver option trust](../solvers/option_trust_internals.md) |
 | Tests and fixtures | [Test layout](#test-layout-and-fixture-architecture), [testing.md](testing.md) |
-| GUI / AI assistant | [gui](#flextoolgui-tkinter-desktop-application), [AI assistant tools](#ai-assistant-tools) |
+| GUI / AI assistant | [gui](#flextoolgui-tkinter-desktop-application), [assistant.md](assistant.md) |
 
 ## Project Purpose
 
@@ -103,7 +103,7 @@ packages. Every CLI command also has an installed entry point in
 
 Two entry points are top-level modules outside `flextool/cli/` (`[tool.setuptools] py-modules`), because they
 must act before `import flextool`: `flextool_run_supervisor` (`flextool-run`, see "Run record") and
-`flextool_assistant_entry` (`flextool-assistant`, see "AI assistant tools").
+`flextool_assistant_entry` (`flextool-assistant`, see [assistant.md](assistant.md)).
 
 ### Runtime options
 
@@ -161,59 +161,8 @@ The contract:
      (`gui_solver_config_flags`: the project's folder when it exists, then the workspace's, as
      `--workspace-solver-config-dir`; the folders of `FLEXTOOL_SOLVER_CONFIG_DIR` as `--solver-config-dir`, below
      the project's).
-   - **Which names are allowed.** The database layers (`solver_arguments`, `solver_mip_gap`) take only names in
-     `engine/solve/solver_catalogue/<solver>.json` (`_solver_catalogue`, written by `tools/solver_catalogue.py` with a
-     reviewed class per name: `plain` / `file` / `local_only` / `flextool`), checked for every solve before the first
-     (`check_run_solver_options`) and again per solve (`check_database_solver_option`). HiGHS names the installed
-     highspy knows as bool / int / double pass too. The per-user switch for unlisted names
-     (`flextool/_local_solver_settings.py`: `FLEXTOOL_ALLOW_UNLISTED_SOLVER_PARAMETERS`, else
-     `user_config_dir()/solver_settings.json`) is never read from a database, project, workspace or flag. Option
-     files and flags warn on an unlisted name and pass it. Project import screens shipped files with the run's own
-     rule for an untrusted file (`_solver_dispatch.untrusted_option_file_problems`: `validate_solver_option` +
-     `check_database_solver_option` per line) and holds a refused one back as `<solver>.opt.review`; export's
-     privacy screen is the engine-free `flextool/_solver_option_rules.py`.
-   - **Trust follows the source, per folder of the ladder (so per file).** A folder the run found by itself (tiers
-     2-4, and the GUI's `--workspace-solver-config-dir` folders) is trusted only when its parent (the workspace, or
-     the project for `projects/<P>/solver_config`) is in `trusted_workspaces` of the settings file
-     (`SolverConfigSource.layer_note`); otherwise `SolverOptionFiles.untrusted_note(solver)`, from the folder that
-     gave that solver's file, is handed to `resolve_commercial_options` / `_resolve_effective_highs_options` and each
-     file line goes through `check_database_solver_option(untrusted=...)`. `--solver-config-dir` /
-     `FLEXTOOL_SOLVER_CONFIG_DIR` and Spine Toolbox projects (code) are trusted. A file that is byte for byte a
-     shipped template is trusted wherever it lies; FlexTool's own file is told by content (`is_unedited_template`),
-     never by the origin text.
-   - **Adding and removing trust.** Only `ensure_runtime_files` (when it creates `solver_config/` or finds only
-     unedited templates, `holds_only_flextool_defaults`), the GUI's project create / open
-     (`note_project_set_up_here`: only with nothing received waiting, `awaits_review`) and the GUI's explicit "trust
-     this workspace / project" add to the list; project import, the first-open rename of `imported_solver_config/`
-     and project deletion take the path off (`forget_trusted_folder`); nothing inside a workspace
-     (`templates/project_folder.txt` included) is a trust anchor. An entry is bound to the folder trusted
-     (`folder_identity`: device + inode + birth time, Windows volume serial + file ID + creation time, `st_ctime`
-     before Python 3.12; ext4 reuses a deleted folder's inode at once, so the birth time is needed, and a stored one
-     must be matched) and to its `.opt` hashes (`TrustedFolder`): a replaced folder is untrusted (`trust_status`),
-     and a changed file is covered only when `only_you_can_change` (POSIX owner, not group/other-writable unless the
-     user's private group; on Windows a plain file, as owner and ACL are not read) — `read_solver_option_files`
-     keeps that per-file verdict in `SolverOptionFiles.file_notes`. Text entries of 4.4 development builds are bound
-     on first read; relative entries are refused; a relative `FLEXTOOL_USER_HOME` / `XDG_CONFIG_HOME` is ignored
-     (`user_dirs`; never depends on the start folder), and a settings file inside the folder judged
-     (`_check_settings_outside`) makes its trust unreadable. The settings file is refused on read when not UTF-8 or
-     (POSIX) another account owns or can write it (`_settings_file_problem`).
-   - **The terminal route** is `flextool-trust-workspace` (`cli/cmd_trust_workspace.py`): a typed, answered command,
-     not a run flag (a Toolbox project carries tool command lines, and anything that can start the command unasked
-     can already run code). It refuses a stdin that is not a terminal and has no `--yes`, escapes what it shows
-     (`_safe_text.printable`), and trusts exactly the bytes it showed (`show_folder` →
-     `apply_settings(workspace_shown=)`, `ShownFilesChanged`), as does the window's box with the files as the dialog
-     found them.
-   - **Solver wrapper.** A commercial solver may run behind this computer's solver wrapper
-     (`_local_solver_settings.solver_wrapper`: `FLEXTOOL_SOLVER_WRAPPER_GUROBI` and its CPLEX, XPRESS, COPT twins,
-     else `wrappers` in the same file; `check_wrapper` holds the rules), checked for every solver of the run before
-     the first solve (`check_run_solver_wrappers`) and again before each start; `_solve_commercial_subprocess`
-     prepends it to the solver's argv (no shell; the solver path is absolute, `_find_solver_binary` skips relative
-     and, on Windows, current-folder `PATH` entries), logs the `Running ... through the solver wrapper` line with
-     the program and its argument count only (the AI assistant sends run logs out) and notes `solver_wrappers` in
-     full in the run record (export keeps only the program and the count).
-   - The settings file (written 0600) is written only by the GUI's Solver options → On this computer,
-     `flextool-trust-workspace` and `ensure_runtime_files`; no assistant tool, database value, project file or flag
-     writes or sets it.
+   - Which names are allowed, which folders are trusted, the solver wrapper and the per-user settings file:
+     [solvers/option_trust_internals.md](../solvers/option_trust_internals.md).
 7. The run header prints `RunOptions.summary_lines()` — each option set by a flag or an environment variable,
    with its source — and the thread budget (`Threads:`), with polars' and HiGHS' thread counts.
 
@@ -965,187 +914,7 @@ The supervisor is a top-level module that never imports `flextool` (that imports
 
 ## AI assistant tools
 
-`flextool/assistant/` holds read-only tools that let an AI assistant answer questions about one project: input data
-by scenario, results, run logs and slack, and the documentation; the connection server that gives them to an AI
-agent; and FlexTool's own chat with an AI service ("AI assistant chat" below). User page:
-[The AI assistant](../ai_assistant.md).
-`flextool/assistant/__init__.py` imports nothing; every module imports what it needs when first used.
-
-- **Registry** (`registry.py`). Each tool module (`tools/orientation`, `discovery`, `inputs`, `results`,
-  `diagnostics`) lists its `Tool`s in `TOOLS` (name, title, description ending with the data-not-instructions
-  sentence, a closed JSON schema without ranges, handler, area, `small_tier`). `call_tool(ctx, name, args)` is the
-  only way to run one and never raises: it clamps the caps arguments (`caps.py`: `--result-cap` presets and hard
-  ceilings), validates against the schema with `jsonschema` (mcp does not validate on stdio), runs the handler and
-  fits the payload with `fit_json` (compact JSON, whole trailing rows dropped with a `truncated` note). A
-  `ToolError` carries a message key of `errors.MESSAGES`, the one table of user-facing texts; any other exception
-  becomes the fault message, with the traceback on stderr only. `tools_for_tier("small")` is the basic set.
-- **Redaction** (`redact.py`) runs once, in `fit_json`, on every string of every payload and every message: the
-  project folder → `<project>`, home → `~`, host and user names, other absolute paths → their last part.
-- **Inputs** (`inputs/_db.py`). One read-only, percent-encoded SQLite URI open per file (`mode=ro` counts only
-  with `uri=true`; a raw `#` or `%` makes SQLite create another file), `sqlite_timeout=5`; a fixed list of item
-  types is fetched and the mapping closed, so no file handle stays open. The scenario view (rank order,
-  `entity_alternative`, `is_enabled`) is computed in our code; spinedb-api's scenario filter is only the oracle of
-  its test. Input sources and their numbers come from `gui.input_sources` / `gui.settings_io` (Tk-free), read
-  only; a spreadsheet is read through its conversion `intermediate/<stem>.sqlite`.
-- **Results** (`results/`). A run folder is offered only when `run_record.results_usable` says so (see "Run
-  record"); the message comes from `unusable_code`. Tables are read and aggregated wide (`flextool/lean_parquet.py`
-  footer layout); only a reduced frame is unpivoted. `check_aggregation` refuses sums with no meaning (power over
-  time, annual values over periods, levels, ratios). Units are worded only by `unit_wording.py`, as the default
-  convention (units are not enforced by FlexTool). Comparison files are used while their `_metadata.json` members
-  match the current successful runs, else the member folders.
-- **Docs** (`docs_store.py`, `flextool/docs_build/`). The build step `_flextool_build.BuildPy` copies the curated
-  Markdown (`docs_build/scope.CURATED_DOCS`) into `flextool/assistant/_docs/md/`; an editable install reads the
-  clone's `docs/`. On first use the formulation page, the results catalogue and the BM25 index are generated by the
-  installed FlexTool into the user cache folder, keyed by FlexTool version + source hash. The web docs generate the
-  same two pages with the same generator (`tools/mkdocs_hooks.py`), plus the web-only parameter catalogue
-  (`scope.WEB_ONLY_PAGES`, `docs_build/parameters.py`: one large table per class, which `describe_parameter`
-  already serves, so it stays out of the assistant's index); `python -m flextool.docs_build --xlsx` writes it as an
-  Excel data dictionary.
-
-**The connection server for agents** (`flextool-assistant --mcp`, `mcp_server.py`, mcp 2.x low-level `Server`,
-telemetry middleware removed). The protocol uses stdin and stdout, so `flextool_assistant_entry.py`, a
-standard-library-only top-level module, keeps private duplicates of fd 0 and fd 1 for the protocol, then points
-fd 1 and `sys.stdout` at stderr and fd 0 at the null device (on Windows also the Win32 standard handles, and
-binary mode on the duplicates) **before** `import flextool`, whose dependencies and start-up checks may print.
-The server's streams are explicit `anyio` wrappers over those duplicates (UTF-8, `\n`), so mcp's own stdio claim
-is skipped. Tool calls run in a worker thread that takes the context's lock, so `ping` and `tools/list` answer
-during a slow call. The server sends the instructions of `prompt.instructions` (data use, units convention,
-vocabulary), lists the tools with read-only annotations, serves the docs pages as `flextool-docs:///<page>`
-resources and the level texts (`prompt.ADDENDA`) as the prompts `basic`, `standard`, `advanced`. `--tier basic`
-lists and runs only the basic set and defaults to the small result cap.
-
-When `import flextool` stops with `CompatRuntimeRequired` (env_check: this processor needs the compatible polars
-build), the entry module loads `mcp_server.py` by path (it imports only the standard library at module level) and
-serves one tool, `flextool_setup_problem`, that returns the fix. The assistant options have no environment-variable
-twins.
-
-`--call TOOL [JSON | @file.json]` runs one tool through the same `call_tool` and prints its text (support and
-testing). Tests: `tests/assistant/` (`test_server_stdio.py` drives the installed command over real stdio and fails
-on any non-protocol byte on stdout); CI smoke: `.github/scripts/mcp_smoke.py` (wheel check in `publish.yml`, the
-Toolbox bundle, the old-CPU emulation's degraded server).
-
-### AI assistant chat
-
-`flextool-assistant` without `--mcp` / `--call` is the chat (`chat_cli.py`); the same layers serve the FlexTool
-window ("AI assistant in the FlexTool window" below). `--mcp` and `--call` import none of the service libraries (`anthropic`, `openai`, `keyring`)
-nor the chat (`tests/assistant/test_import_hygiene.py`).
-
-- **Neutral model** (`llm_adapter.py`): `Message`, `ToolCall`, `Request`, `Reply`, `Usage`, the events a front
-  end shows (`TextDelta`, `ToolDone`, `Waiting`, `RetryWait`, …) and the `Backend` protocol. Data only one provider
-  understands (Anthropic thinking blocks, Gemini thought signatures, OpenRouter reasoning details) travels in
-  `provider_extra`, stamped with its origin (preset, base URL, model), and is replayed only to that origin; on a
-  switch it is dropped and tool-call ids are re-mapped. Ollama's reasoning string (the preset's
-  `reasoning_wire_key`, `delta.reasoning` joined) is kept as `provider_extra["reasoning_text"]`: never shown,
-  saved with the conversation, and sent back as `reasoning` only on the assistant messages after the last user
-  message (gpt-oss's template renders it only there; without it the model leaks its analysis into tool calls). It
-  does not make a turn's history uneditable, and like all message data a compaction drops it — also one in the
-  middle of a turn, after which this turn's earlier reasoning is not sent again.
-- **Backends** (`backends/`): Anthropic Messages and OpenAI Chat Completions (also Mistral, OpenRouter, Gemini,
-  Ollama, LM Studio and any compatible endpoint). The provider libraries are imported only in `make_backend`.
-  `net.py` builds each library's HTTP client: headers rebuilt from an allow-list (the libraries' identification
-  headers and the variables they read add nothing), our own proxy decision (a local endpoint is never proxied), no
-  redirects, cancel by shutting the open sockets. Presets (`providers.py`) name no models; they say which request
-  fields a service accepts and which privacy fields are sent (`store: false`, OpenRouter
-  `provider.data_collection`).
-- **Errors and retries** (`llm_errors.py`, `llm_retry.py`): every library error becomes one `LLMError` subclass
-  with a plain-English message; our own retry loop (no library retries), never after the first streamed output.
-- **Probes** (`probes.py`): before the first question, the model's context and tool support (Ollama `/api/show`,
-  load, `/api/ps`; LM Studio; the OpenRouter model list; Anthropic limits), standard library only and proxy-less
-  for local servers. A model Ollama forwards to another host (its cloud) gives a remote route.
-- **Session** (`session.py`): the agent loop — rounds of tool calls per question capped by level, tool calls under
-  the process-wide tool lock, the history kept valid for every provider after a cut-off, refusal, stop or error;
-  compaction points (every `compaction_every` questions, a context overflow, a rejected signature, a resume with
-  changed instructions) drop all provider data. `TurnWorker` runs turns in a daemon thread; a stop returns at once.
-- **Prompt** (`prompt.py`): five byte-stable layers (core rules, orientation, documentation map, level text,
-  front-end note) and the context block (project, input source, scenario) at the start of a user message; the
-  agent connection's instructions reuse the same rules.
-- **Levels** (`tiers.py`, standard library only): `resolve_tier` places a model from `TIER_RULES` (data, first
-  match wins: small-model words, the reported or named size, family words, GPT major ≥ 5, a fallback guess by
-  route) and caps it by the context window (`WINDOW_LEVELS`; below `MIN_WINDOW` it raises `WindowTooSmall`). The
-  automatic level is the lower of the two; `allowed_levels` is it and below, or up to the window's level for an
-  unrecognised model (`ALLOW_HIGHER_WHEN_UNRECOGNISED`). There is no bypass in shipped code: a stored or `--tier`
-  level above the allowed ones is lowered with a notice (`-q` with `--tier` exits 2). Before a probe the front ends
-  use `probes.cached_facts` (user cache); the settings dialog never probes. The level changes only the prompt
-  (`prompt.ADDENDA`), the tool list (`registry.tools_for_tier`; basic = the `small_tier` tools, any other name
-  refused by the session before the registry) and the budget — never what a tool returns. Agents choose a level
-  with the connection prompts or `--mcp --tier` (not checked against their model).
-- **Budgets** (`budget.py`, standard library only): `LevelBudget` per level (`LEVEL_BUDGETS`, the free plan's
-  `FREE_TIER_BUDGETS`): rounds, tool calls per question and per round, the output limit (≤ window / 4 for a known
-  window), planned calls and the prefix budget the shipped layers and schemas must fit
-  (`tests/assistant/test_prompt_budget.py`). `resolve_budget` adds the window's class (`WINDOW_CLASSES`: result-cap
-  ceiling, `fit_caps` for windows under 32 768, and the compaction rhythm; settings `compaction_every` /
-  `keep_recent_turns` `null` = automatic). `approx_tokens` is a digit-aware estimate (`JSON_CHARS_PER_TOKEN`,
-  pinned by `tests/assistant/llm/test_token_estimate.py` against real tokenizer counts) corrected per session by the
-  reported prompt tokens (`TokenCorrection`); the session's pre-send fit compacts or, for origins with replay data,
-  asks for an answer without tools, and sends nothing when the estimate plus the answer limit stays above 95 % of
-  the window (a reported one, or the assumed local one). The free plan
-  (`free_tier_on`: the setting, else on only for an OpenRouter `:free` id) lowers rounds and calls, caps results at
-  medium and, in the FlexTool window, gives the chat's gated backend a limit of one request at a time; the first rate-limit reply on a route with it off
-  shows the hint once (`settings.free_tier_suggested`).
-- **Local files** (`_files.py`, `settings.py`, `store.py`, `usage.py`, `keys.py`, `endpoint.py`), in
-  `platformdirs.user_config_dir("flextool")/assistant/`: settings, conversations per project (lock file per open
-  conversation, purge by age at every start), the usage ledger, the key file (opt-in; the keyring first, the
-  preset's environment variable before both) and `acknowledgements.json`. Every read-modify-write runs under a
-  lock file; every time is UTC.
-- **Data notice** (`endpoint.py`): the route (loopback, local network, remote; the proxy; the forwarded host), the
-  indicator line, and the notice a remote route needs before the first question. An acceptance is kept per
-  preset, normalised address, proxy host, forwarded host and notice wording.
-- **Terminal** (`chat_cli.py`): the REPL (a terminal only) and `-q` (only the answer on stdout; exit codes 0 / 1 /
-  2 / 3 / 130). The question and the probe run in daemon threads, so Ctrl-C stops them at once. The banner gives the
-  level and why (`level_lines`); `/context` the window, the result cap and the compaction rhythm of the session's
-  budget; `--free-tier on|off|auto` overrides `settings.free_tier` for the session.
-
-### AI assistant in the FlexTool window
-
-`flextool/gui/assistant/` is the window's front end on the same session, store, settings, keys, notices and ledger
-(user page: [The AI assistant](../ai_assistant.md), "Chat in the FlexTool window"). Everything without Tk — the
-worker, the provider gate, the Markdown parser, the window geometry, the strings — is tested in the sharded job
-(`tests/assistant/gui_support/`); the Tk modules in the `gui-tests` job ([Testing](testing.md), "GUI tests").
-
-- **Entry and lifecycle** (`entry.py`, `AssistantEntry`, created by `MainWindow`): "AI assistant…" + ⚙ in side-menu
-  row 5. Building it only runs `importlib.util.find_spec`; the chat window, the dialogs, the SDKs, the keyring and
-  the store are imported on the first click. It closes the chat window on a project switch, rename or deletion
-  (one window per project) and waits for its workers (5 s; the Project dialog and the project combo refuse a
-  rename or deletion while one still runs a tool call, `before_project_change`); `project_utils.rename_project`
-  moves the saved chats (`store.rename_project`), `notify_assistant_project_deleted` deletes them
-  (`store.forget_project`). At FlexTool close (`MainWindow._on_close`, before the settings save) it withdraws the
-  windows, shuts the workers down, deletes the runtime file and purges, within 3 s; at start (after 3 s) it purges
-  and removes runtime files of gone processes.
-- **Threads**: one `AssistantWorker` daemon thread per chat tab owns its `Session`, conversation and lock; the Tk
-  thread never calls the network, keyring, probes, store or ledger (except reading the settings and the welcome
-  flag when a window opens). Worker → Tk only through queues drained by one `after(50)` poll. The process-wide
-  `ProviderGate` (`gate.py`) lets `parallel_requests` (1–4) model requests per provider run at once (a free-plan
-  chat's own `limit` is 1), gives slots in arrival order and shares a rate-limit cool-down between chats; tool
-  calls run outside it, under the process-wide tool lock. A shut-down worker saves a checkpoint in which a running
-  tool call is "Not run: FlexTool was closed…", so the file is always a resumable history. A project rename or
-  deletion moves or deletes its chats on one FIFO daemon thread (`project_utils`); every store user waits for the
-  queued hooks first (`wait_project_hooks`). The Tk thread's blocking waits (project change, close) pump
-  `dooneevent(FILE_EVENTS | DONT_WAIT)`, so a worker's Tcl call (a finalizer collected on its thread) finishes;
-  closed assistant dialogs retire their Tk variables on the Tk thread.
-- **Window** (`chat_window.py`, `chat_tab.py`, `transcript.py`, `notices.py`, `settings_dialog.py`): chats as
-  `ttk.Notebook` tabs with an overflow budget (the Chats menu shows the hidden ones), restored when the window
-  opens again (`store.open_chats`); one data notice at a time; the size per monitor configuration in
-  `GlobalSettings.assistant_window_geometry`; a key shield on every assistant Toplevel so the main window's
-  `bind_all` shortcuts never fire from it. The settings' level rows list "Automatic" and only
-  `TierChoice.allowed` (from cached facts; ttk cannot grey single entries) with `TierChoice.lines()`, and the free
-  plan as a three-entry list (automatic / on / off → `free_tier` null / true / false); the worker's setup
-  fingerprint includes `free_tier`, so a saved change applies from the next question.
-- **What the window shows** (`gui_state.py`): `snapshot_from_main` reads the main window's checks and highlights
-  and `ResultViewer.view_state()` on the Tk thread (each part on its own, about 2 ms); every Send takes its own
-  snapshot (`ContextSnapshot.gui`), which the prompt renders as the context block. While a project is open,
-  `ContextPublisher` polls it every second and hands a changed payload to the `RuntimeContextWriter`
-  (`flextool/assistant/runtime_context.py`): one file per process,
-  `<config>/assistant/runtime/<project key>.<pid>.json`, names and selections only, rewritten every 30 s while the
-  poll ticks (a hung Tk thread's file goes stale), deleted by the writer thread at close. An agent's
-  `get_gui_context` (`--mcp`, `--call`) reads the file of the window in use (`read_runtime_context`: process alive,
-  written within 120 s; the latest focus `active_at`, then `changed_at`, then `written_at`); a live process with
-  only a stale file reads as open but not answering (`responding: false`).
-
-Tests: `tests/assistant/llm/` — no network (a socket guard refuses anything but loopback), synthetic provider
-payloads through `httpx2.MockTransport`, a scripted `FakeBackend` for the session and the chat, loopback servers
-for the probes and the cancel. Real provider replies are recorded by hand with `tools/record_llm_replies.py` on
-the synthetic test project only, scrubbed, checked and replayed in CI ([Testing](testing.md), "Recorded provider
-replies").
+The AI assistant (`flextool/assistant/`, `flextool/gui/assistant/`): [assistant.md](assistant.md).
 
 ## Solve-to-solve handoff
 
