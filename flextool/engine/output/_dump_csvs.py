@@ -179,6 +179,10 @@ DIRECT_WRITES: dict[str, tuple[str, str, dict[str, str]]] = {
                                {"p": "process"}),
     "process_online_integer": ("solve_data", "process_online_integer.csv",
                                 {"p": "process"}),
+    # The _fix_in_uc processes: set by the DB overlay only, so a reader-less reload seeds it from this file
+    # (_csv_reload._field_seeds) for the units-online ties of a separate_dispatch solve (1).
+    "process_online_fix_in_uc": ("solve_data", "process_online_fix_in_uc.csv",
+                                  {"p": "process"}),
     "process_minload": ("solve_data", "process_minload.csv", {"p": "process"}),
     "process_exact": ("solve_data", "process_exact.csv", {"p": "process"}),
     # Start-up input draws (startup_input_method): reloaded by flex_data._load_startup_inputs.

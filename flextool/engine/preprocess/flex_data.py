@@ -1444,7 +1444,9 @@ class FlexData:
     # The processes whose startup_method is linear_fix_in_uc or integer_fix_in_uc (params._projection
     # .process_online_fix_in_uc), online or not in this solve: a separate realization solve keeps their units online
     # at the stochastic solve's value (the fix_online handoff, build_handoff_from_solution).  Read there, by
-    # solve._realization and by the units-online ties of a solve whose na_online_fix_in_uc is set.
+    # solve._realization, by the units-online ties of a solve whose na_online_fix_in_uc is set and by
+    # coarse_tie_straddles (which processes such a solve ties).  A reader-less CSV reload seeds it from the dump
+    # (_csv_reload._field_seeds).
     process_online_fix_in_uc: pl.DataFrame | None = None     # set: (p,)
     # True in solve (1) of separate_dispatch (``solve_data/na_online_fix_in_uc``): across the forecasts only the
     # units online of process_online_fix_in_uc are tied (model._non_anticipativity.na_role "uc_only").

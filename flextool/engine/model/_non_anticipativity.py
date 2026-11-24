@@ -106,7 +106,10 @@ def na_role(d) -> str:
     ``dispatch_realization_method`` ``separate_dispatch``, single or rolling.  It makes, and so ties across the
     forecasts, only the decisions the realization solve takes over: the units online of the ``_fix_in_uc`` units
     (``process_online_fix_in_uc``).  Storage use, the first state, block starts and reserves are decided per
-    forecast; the realization solve decides them again.  ``"full"``: every dispatch tie.  The investment ties
+    forecast; the realization solve decides them again.  The free start level of a ``bind_forward_only`` stochastic
+    node is the present state, so ``storage_state_fan_start`` still ties it; a cyclic node's level
+    (``bind_within_period`` / ``bind_within_solve``) is part of its cycle and stays per forecast.  ``"full"``: every
+    dispatch tie.  The investment ties
     (:func:`add_invest_constraints`) do not depend on the role.
     """
     return "uc_only" if getattr(d, "na_online_fix_in_uc", False) else "full"
@@ -194,12 +197,9 @@ def storage_state_first_cells(b: "_Build") -> "pl.DataFrame | None":
 
 def _add_online_ties(b: "_Build", star: pl.DataFrame, tie_dt: pl.DataFrame,
                      only: "pl.DataFrame | None" = None) -> None:
-    """The units-online ties non_anticipativity_online_{integer,linear}; with ``only`` (``(p,)``, the ``uc_only``
-    role's process_online_fix_in_uc) just those processes, none when ``only`` is None or empty."""
+    """The units-online ties non_anticipativity_online_{integer,linear}: of every online process when ``only`` is
+    None, else (``(p,)`` with rows, the ``uc_only`` role's process_online_fix_in_uc) of just those processes."""
     d, m = b.d, b.m
-    uc_only = na_role(d) == "uc_only"
-    if uc_only and not _has_rows(only):
-        return
 
     # ─── EQ. ─── non_anticipativity_online_{integer,linear} ──────────────────
     # ─────────────────────────────────────────────────────────────────────────
@@ -220,7 +220,7 @@ def _add_online_ties(b: "_Build", star: pl.DataFrame, tie_dt: pl.DataFrame,
                                        ("linear", b.v_online_linear, d.process_online_linear)):
         if v_online is None or not _has_rows(online_set):
             continue
-        if uc_only:
+        if only is not None:
             online_set, keep = align_join_dtypes(online_set, only.select("p"), ["p"])
             online_set = online_set.join(keep, on="p", how="semi")
             if online_set.height == 0:
@@ -260,7 +260,9 @@ def add_dispatch_constraints(b: "_Build") -> None:
     if star is None or not _has_rows(tie_dt):
         return
     if na_role(d) == "uc_only":
-        _add_online_ties(b, star, tie_dt, d.process_online_fix_in_uc)
+        # No _fix_in_uc process (None: _projection._AUTHORITATIVE_SETS): nothing is tied.
+        if _has_rows(d.process_online_fix_in_uc):
+            _add_online_ties(b, star, tie_dt, d.process_online_fix_in_uc)
         return
     m = b.m
     v_state = b.v_state
