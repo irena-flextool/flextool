@@ -235,9 +235,7 @@ def roll_tail_plan(solve_cfg: Any, rolls: list[RollWindow], timeline: list[tuple
     (``_run_model._solve_timelines``).  ``{}`` when the solve is not gated (:func:`realization_roll_method`).  Raises
     :class:`FlexToolConfigError` when the solve has no ``realized: yes`` row, when its ``realized: yes`` rows name more
     than one branch or none lies on *timeline*, when a roll with a tail has no forecast made at the end of its jump,
-    (``separate_dispatch``) when no forecast is made at the start of a roll (its solve (1) branches there), and
-    (``within_solve``) when a split roll's period is in ``invest_periods`` (its label would carry the investment
-    period's rows, such as the capacity margin, over the jump only, priced at the label's period weight 0).  The
+    and (``separate_dispatch``) when no forecast is made at the start of a roll (its solve (1) branches there).  The
     authored rows are read, never changed.
     """
     from flextool.engine.solve._stochastic import realized_analysis_times
@@ -274,11 +272,6 @@ def roll_tail_plan(solve_cfg: Any, rolls: list[RollWindow], timeline: list[tuple
             "so its jumps have no realized series to read. Give the realized: yes rows the analysis_time of a time "
             "step of that timeline.")
     realized = realized_names[0]
-    # S9: the investment periods of the rolls (``invest_periods_of_current_solve`` is the complete solve's).  The
-    # realization solve of a ``separate_dispatch`` solve drops them (``REALIZATION_SOLVE_DROPS``), so only the rolls
-    # of a ``within_solve`` solve hold an investment period.
-    invest = ({str(t[1]) for t in (getattr(solve_cfg, "invest_periods", None) or {}).get(solve, [])}
-              if method == "within_solve" else set())
     plan: dict[str, RollTail] = {}
     for k, roll in enumerate(rolls):
         steps = _steps(roll.active)
@@ -305,15 +298,6 @@ def roll_tail_plan(solve_cfg: Any, rolls: list[RollWindow], timeline: list[tuple
                 "a rolling stochastic solve realizes each jump and then looks ahead with the forecasts made at "
                 "the end of the jump", "each jump ends at a time step with forecasts")
         shape: RollShape = "split" if roll.jump.get(tail_start[0]) else "seam"
-        if shape == "split" and tail_start[0] in invest:
-            raise FlexToolConfigError(
-                f"Solve '{name}', roll {k} (time steps {jump[0][1]} to {jump[-1][1]}): period '{tail_start[0]}' is in "
-                f"invest_periods, and the look-ahead after the jump starts inside it, at {tail_start[1]}. Since "
-                "FlexTool 4.7.0 a rolling stochastic solve dispatches the jump under the period's own name and the "
-                "rest of the period in each forecast, so the rows of an investment period (such as its capacity "
-                "margin) would cover only part of it. A rolling solve builds no investment: remove the period from "
-                "invest_periods of this solve (invest in a solve before it), set dispatch_realization_method to "
-                "separate_dispatch, or set rolling_solve_jump so that each jump ends at the end of a period.")
         plan[roll.name] = RollTail(cohort, shape, False, tuple(jump), tail_start, realized, times)
     return plan
 

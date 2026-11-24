@@ -197,10 +197,10 @@ def check_period_rows(b) -> None:
     lab = labels_with_steps(b.d)
     if not lab:
         return
-    # S9 backstop: a split realization roll is a roll, and rolls build no investment variables.  A split roll whose
-    # label is in ``period_invest`` (the capacity margin domain) is refused before the run
-    # (``_realization_tail.roll_tail_plan``); this check reads the variables' domains (``pd_invest_set`` is None on
-    # a roll).
+    # A split realization roll is a roll, and rolls build no investment variables (nor, therefore, a capacity
+    # margin: ``_group_slack._capacity_margin_periods``).  This check reads the variables' domains, not
+    # ``period_invest``: a rolling solve with authored invest_periods keeps them there but builds no variable
+    # (``pd_invest_set`` is None on a roll).
     for field in ("pd_invest_set", "pd_divest_set", "nd_invest_set", "nd_divest_set"):
         invest = getattr(b.d, field, None)
         if invest is not None and invest.height > 0:

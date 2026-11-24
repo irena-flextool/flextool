@@ -38,10 +38,9 @@ each roll fans out at the roll's first step (the forecasts are made at every
 roll start), so no roll holds a period label with time steps, and the
 realization solve drops ``invest_periods``.  Under ``within_solve`` each roll is
 a realization roll whose jump ends inside ``period1``: the label ``period1``
-then dispatches the jump while its investment-period rows (the capacity
-margin, priced at the label's period weight 0) would cover only part of the
-period, so since 4.7.0 such a solve stops before its first roll
-(:func:`test_within_solve_with_invest_periods_stops`).
+then dispatches the jump.  A roll builds no investment and therefore no capacity
+margin either, so such a solve runs as any rolling solve with ``invest_periods``
+(:func:`test_within_solve_with_invest_periods_runs_without_margin`).
 
 The fixture is built by IN-TEST injection onto a tmp copy of
 ``tests/fixtures/stochastics.json`` (invariant #3: DB built from JSON/schema,
@@ -185,18 +184,10 @@ class _WarningCollector(logging.Handler):
         self.messages.append(record.getMessage())
 
 
-@pytest.fixture(scope="module")
-def rolling_invest_result(
-    rolling_invest_db_url, test_solver_config_dir, tmp_path_factory
-):
-    """Run the rolling+stochastic+invest scenario ONCE for the module.
-
-    Runs under ``FLEXTOOL_AUTOSCALE_STRICT=1`` (invariant #1) so an autoscale
-    gap is loud rather than silently reverting to an un-scaled LP.  Captures
-    WARNING-level records across the whole run so the Task-1 warning can be
-    asserted.
-    """
-    work_folder = tmp_path_factory.mktemp("rolling_stoch_invest_run")
+def _run_collecting(url: str, work_folder: Path, solver_config_dir) -> dict:
+    """Run *url* under ``FLEXTOOL_AUTOSCALE_STRICT=1`` (invariant #1: an autoscale gap is loud rather than silently
+    reverting to an un-scaled LP), collecting the WARNING-level records of the whole run so the Task-1 warning can
+    be asserted.  ``{"steps", "error", "warnings"}``; a ``FlexToolConfigError`` is kept in ``error``."""
     prev = os.environ.get("FLEXTOOL_AUTOSCALE_STRICT")
     os.environ["FLEXTOOL_AUTOSCALE_STRICT"] = "1"
     collector = _WarningCollector()
@@ -209,10 +200,10 @@ def rolling_invest_result(
     steps = None
     try:
         steps = run_chain_from_db(
-            input_db_url=rolling_invest_db_url,
+            input_db_url=url,
             scenario_name=SCENARIO,
             work_folder=work_folder,
-            solver_config_dir=test_solver_config_dir,
+            solver_config_dir=solver_config_dir,
             warm=False,
             keep_solutions=True,
         )
@@ -226,6 +217,15 @@ def rolling_invest_result(
         else:
             os.environ["FLEXTOOL_AUTOSCALE_STRICT"] = prev
     return {"steps": steps, "error": error, "warnings": collector.messages}
+
+
+@pytest.fixture(scope="module")
+def rolling_invest_result(
+    rolling_invest_db_url, test_solver_config_dir, tmp_path_factory
+):
+    """Run the rolling+stochastic+invest scenario ONCE for the module (:func:`_run_collecting`)."""
+    return _run_collecting(rolling_invest_db_url, tmp_path_factory.mktemp("rolling_stoch_invest_run"),
+                           test_solver_config_dir)
 
 
 def _steps(result):
@@ -246,20 +246,39 @@ def test_rolling_recourse_designation_without_realization_raises(tmp_path_factor
                           solver_config_dir=test_solver_config_dir, warm=False, keep_solutions=True)
 
 
-@pytest.mark.parametrize("margin", [False, True], ids=["invest-periods", "with-capacity-margin"])
-def test_within_solve_with_invest_periods_stops(tmp_path_factory, test_solver_config_dir, margin):
-    """``within_solve``: roll 0 is t0001-t0096 with jump 24, so its jump ends at t0024 and its look-ahead starts at
-    t0025, inside ``period1`` (t0001-t0168): the label ``period1`` dispatches t0001-t0024 and is in
-    ``invest_periods``.  Its investment-period rows (the capacity margin of ``cm_g``, whose slack the label prices
-    at period weight 0) would cover t0001-t0024 only, so the run stops before any roll, naming the solve, roll 0
-    and the period (with and without a margin group: the rule is the investment period, not the margin)."""
-    work = tmp_path_factory.mktemp("rolling_within_invest")
-    url = _db_url(_build_invest_spec(realization="within_solve", margin=margin), work)
-    with pytest.raises(FlexToolConfigError, match=(
-            r"^Solve '1week_rolling', roll 0 \(time steps t0001 to t0024\): period 'period1' is in invest_periods, "
-            r"and the look-ahead after the jump starts inside it, at t0025\.")):
-        run_chain_from_db(input_db_url=url, scenario_name=SCENARIO, work_folder=work / "w",
-                          solver_config_dir=test_solver_config_dir, warm=False, keep_solutions=True)
+def _invest_warnings(result: dict) -> list[str]:
+    return [w for w in result["warnings"]
+            if "1week_rolling" in w and "investment is NOT built in a flat rolling_window solve" in w]
+
+
+def test_within_solve_with_invest_periods_runs_without_margin(tmp_path_factory, test_solver_config_dir):
+    """``within_solve``: roll 0 is t0001-t0096 with jump 24, so its jump ends at t0024 inside ``period1``
+    (t0001-t0168), and the label ``period1`` dispatches t0001-t0024 while ``period1`` is in ``invest_periods``.  A
+    roll builds no investment, so it builds no capacity margin: with the group ``cm_g`` (absolute margin 1e5 MW,
+    far above any capacity) the run completes, no roll has a ``capacityMargin`` row or a margin slack, every roll
+    equals the run without ``cm_g``, and the rolling-invest warning names the solve once."""
+    from tests.engine._unit_db import build, cstr_over
+
+    runs = {}
+    for margin in (True, False):
+        work = tmp_path_factory.mktemp(f"rolling_within_invest_{margin}")
+        url = _db_url(_build_invest_spec(realization="within_solve", margin=margin), work)
+        runs[margin] = _run_collecting(url, work / "w", test_solver_config_dir)
+        assert runs[margin]["error"] is None, runs[margin]["error"]
+    with_cm, without_cm = runs[True]["steps"], runs[False]["steps"]
+    assert len(with_cm) == EXPECTED_ROLLS and list(with_cm) == list(without_cm)
+    for name, s in with_cm.items():
+        assert s.flex_data.groupCapacityMargin is not None and s.flex_data.groupCapacityMargin.height == 1, name
+        assert s.flex_data.period_invest.height > 0, name
+        over = cstr_over(build(s.flex_data), "capacityMargin")
+        assert over is None or over.height == 0, name
+        try:
+            slack = s.solution.value("vq_capacity_margin")
+        except KeyError:
+            slack = None
+        assert slack is None or slack.height == 0, name
+        assert float(s.solution.obj) == pytest.approx(float(without_cm[name].solution.obj), rel=1e-9), name
+    assert len(_invest_warnings(runs[True])) == 1
 
 
 def test_rolling_invest_all_rolls_optimal(rolling_invest_result):

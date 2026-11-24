@@ -453,8 +453,8 @@ class RecursiveSolveBuilder:
             "stochastic_invest_method), but investment is NOT built in a flat "
             "rolling_window solve: investment is period-granular (v_invest has "
             "no timestep axis) and a rolling solve advances past period "
-            "beginnings, so no v_invest variable is created and the "
-            "investment intent is silently ignored. Run a separate investment "
+            "beginnings, so no v_invest variable is created, no capacity margin "
+            "is built and the investment intent is silently ignored. Run a separate investment "
             "solve BEFORE this rolling solve and hand its realized capacity "
             "forward; rolling solves are for operational modelling only.",
             solve,

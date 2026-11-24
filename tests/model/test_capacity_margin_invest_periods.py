@@ -220,15 +220,19 @@ def test_nested_chain_margin_in_invest_sub_solves_only(tmp_path_factory) -> None
         assert st.flex_data.period_invest is not None and st.flex_data.period_invest.height == 0, name
 
 
-def test_rolling_with_investment_builds_margin_in_every_roll(tmp_path_factory) -> None:
-    """A rolling solve with ``invest_periods [period1]``: every roll's dt is in period1, so every roll builds the
-    margin (24 rows per day of the roll's horizon) and has its slack."""
+def test_rolling_with_invest_periods_builds_no_margin(tmp_path_factory) -> None:
+    """A rolling solve with ``invest_periods [period1]``: every roll's dt is in period1, but a roll builds no
+    investment (no investment column whatever the data), so no roll builds the margin: no row, no slack, and every
+    roll equals the model without the margin and without invest_periods (a roll's invest_periods reach no other
+    row).  Before: dt.height rows per roll (24 per day of the roll's horizon) and a slack on period1 in each."""
     steps = _run(tmp_path_factory, "roll",
                  margin("elec_g") + [["solve", "1week_rolling", "invest_periods", periods_array(["period1"])]])
     assert len(steps) == 7
     for name, st in steps.items():
-        assert _rows(st) == st.flex_data.dt.height, name
-        assert set(_slack(st)) == {"period1"}, name
+        assert st.flex_data.period_invest.height == 1, name
+        assert _rows(st) == 0, name
+        assert _slack(st) == {}, name
+    _assert_same_objs(steps, _run(tmp_path_factory, "roll", []))
 
 
 def test_recourse_keeps_branch_periods(tmp_path_factory) -> None:
@@ -300,10 +304,7 @@ def test_outputs_recourse(tmp_path_factory, monkeypatch) -> None:
 # Warm start
 
 
-@pytest.mark.parametrize("invest", [False, True], ids=["dispatch", "invest"])
-def test_rolling_margin_warm_equals_cold(tmp_path_factory, invest) -> None:
-    """Rolling solve with an absolute margin group (with and without invest periods): warm rolls equal cold."""
+def test_rolling_margin_warm_equals_cold(tmp_path_factory) -> None:
+    """Rolling solve with an absolute margin group: warm rolls equal cold."""
     vals = margin("elec_g")
-    if invest:
-        vals = vals + [["solve", "1week_rolling", "invest_periods", periods_array(["period1"])]]
     _assert_same_objs(_run(tmp_path_factory, "roll", vals, warm=True), _run(tmp_path_factory, "roll", vals, warm=False))

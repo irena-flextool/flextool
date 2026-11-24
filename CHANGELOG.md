@@ -104,12 +104,11 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
   stochastic solve followed by a realization solve you configure yourself also keeps its two solves, and so does a
   rolling `separate_dispatch` solve with `stochastic_invest_method` `recourse` (a rolling `within_solve` recourse
   solve gets no realization solve, as before). Note W-0636 is not given for these solves.
-- **A rolling `within_solve` solve whose jump ends inside one of its `invest_periods` stops with an error.** Its
-  rolls dispatch the jump under the period's own name, so the period's investment rows, such as its capacity
-  margin, would cover the jump only (with the margin's shortfall free of cost). Before, such a solve ran (a rolling
-  solve builds no investment). The error names the solve, the roll and the period: remove the period from the
-  solve's `invest_periods` (invest in a solve before it), use `separate_dispatch`, or set `rolling_solve_jump` so
-  that each jump ends at the end of a period.
+- **A rolling solve builds no capacity margin.** Its rolls build no investment, so a capacity-margin group's rows
+  could only add a shortfall penalty on capacity the roll cannot change. Before, a rolling solve with
+  `invest_periods` built the margin in every roll and reported and paid its shortfall; now it has none, as a
+  rolling solve without `invest_periods` already had. Invest in a solve before the rolling solve to have the margin
+  checked. A single solve with `invest_periods` keeps its margin, also when nothing in it can be invested.
 - **The repair tool keeps an `invest_method` default changed by hand.** On a W-0490 database, an `invest_method`
   default that reads `cumulative_limits` and was saved after the last upgrade is now kept when you press Enter
   (4.6.3 suggested `not_allowed`); its entities keep investing as before in the repaired copy. Type `e` to restore

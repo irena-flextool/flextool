@@ -34,7 +34,7 @@ Note that the picture has two `model`: *solves* parameters defined one for each 
 
 **Check the investment solve's capacity margin.** A group's capacity margin (`capacity_margin_method`) applies only
 in a solve with investment periods, so here only the investment solve has it; the dispatch solve does not check it
-again. When the investment solve leaves a shortfall (the plan does not hold the margin, because the penalty is
+again, and nor does a rolling solve (its rolls build no investment, even with `invest_periods`). When the investment solve leaves a shortfall (the plan does not hold the margin, because the penalty is
 cheaper than the capacity or the capacity cannot be built), the run log says so right after that solve:
 
 ```
