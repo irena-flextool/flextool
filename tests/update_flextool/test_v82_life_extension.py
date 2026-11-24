@@ -6,7 +6,8 @@ gets them from the step; a database already at 82 without them (made by an earli
 same state, each definition a constant or a period map, group ``investment``, no default, with the shipped
 description; a rerun commits nothing.
 
-Databases: the v75 seed JSON migrated (never a checked-in ``.sqlite``).
+Databases: v75b (``_rerun.build_v75b``: the v2 template migrated to 75 plus the v75 seed data), migrated
+(never a checked-in ``.sqlite``).
 """
 from __future__ import annotations
 
@@ -21,9 +22,9 @@ from flextool._resources import package_data_path
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool import db_migration as m
 from flextool.update_flextool.db_migration import migrate_database
-from tests.db_utils import json_to_db
 
-SEED = Path(__file__).resolve().parent / "data" / "v75_seed_stoch_two_period.json"
+from tests.update_flextool._rerun import v75b_url
+
 NAMES = ("life_extension_cost", "life_extension_years")
 CLASSES = ("unit", "connection", "node")
 #: The six definitions and their capacity unit (the description's first bracket).
@@ -59,7 +60,7 @@ def _shipped() -> dict[tuple[str, str], tuple]:
 
 
 def _seed(tmp_path_factory, tag: str, up_to: int) -> str:
-    url = json_to_db(SEED, tmp_path_factory.mktemp(tag) / "seed.sqlite")
+    url = v75b_url(tmp_path_factory, tmp_path_factory.mktemp(tag) / "seed.sqlite")
     migrate_database(url, up_to=up_to)
     return url
 

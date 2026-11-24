@@ -1,6 +1,7 @@
 """Database migration to version 82: the model's discount parameters are renamed.
 
-A v80 database (built from the v75 seed JSON and migrated up to 80, never a checked-in ``.sqlite``) carries
+A v80 database (v75b, ``_rerun.build_v75b``: the v2 template migrated to 75 plus the v75 seed data,
+migrated up to 80; never a checked-in ``.sqlite``) carries
 ``model.inflation_rate`` values in two alternatives (a constant and a period map), an ``inflation_offset_investment``
 of 1 and a default of its own, 0.25, on ``inflation_offset_operations``.  Through 81 to 82:
 
@@ -31,9 +32,9 @@ from flextool._resources import package_data_path
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool import db_migration as m
 from flextool.update_flextool.db_migration import migrate_database
-from tests.db_utils import json_to_db
 
-SEED = Path(__file__).resolve().parent / "data" / "v75_seed_stoch_two_period.json"
+from tests.update_flextool._rerun import v75b_url
+
 OLD = tuple(m.V82_PARAMETER_RENAMES)
 NEW = tuple(m.V82_PARAMETER_RENAMES.values())
 #: Stored at 80: (alternative index, old name, value).
@@ -87,7 +88,7 @@ def _plant(db, *, user_default: bool = True) -> None:
 
 
 def _seed(tmp_path_factory, tag: str, up_to: int) -> str:
-    url = json_to_db(SEED, tmp_path_factory.mktemp(tag) / "seed.sqlite")
+    url = v75b_url(tmp_path_factory, tmp_path_factory.mktemp(tag) / "seed.sqlite")
     migrate_database(url, up_to=up_to)
     return url
 

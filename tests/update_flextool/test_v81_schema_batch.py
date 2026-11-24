@@ -1,6 +1,7 @@
 """Database migration to version 81 (all schema changes of one release in one step).
 
-A v80 database (built from the v75 seed JSON and migrated up to 80, never a checked-in ``.sqlite``) carries
+A v80 database (v75b, ``_rerun.build_v75b``: the v2 template migrated to 75 plus the v75 seed data,
+migrated up to 80; never a checked-in ``.sqlite``) carries
 ``lifetime`` (a constant, a ``period`` map, an unnamed ``x`` map and a ``time``-labelled map on a unit, constants on a
 connection and a node), ``salvage_value`` (a constant and a ``period`` map) and ``lifetime_method`` values
 ``no_investment`` (two alternatives) and ``reinvest_choice``; the ``node.lifetime_method`` default is
@@ -59,8 +60,8 @@ from flextool._resources import package_data_path
 from flextool.update_flextool import db_migration as m
 from flextool.update_flextool.db_migration import migrate_database
 from tests.db_utils import json_to_db
+from tests.update_flextool._rerun import v75b_url
 
-SEED = Path(__file__).resolve().parent / "data" / "v75_seed_stoch_two_period.json"
 TESTS_JSON = Path(__file__).resolve().parents[1] / "fixtures" / "tests.json"
 CLASSES = ("unit", "connection", "node")
 AGE_DEFINITIONS = {(cls, name) for cls in CLASSES for name in ("age_at_model_start", "build_year",
@@ -134,7 +135,7 @@ def _shipped(*, as_v81: bool = False) -> tuple[dict, dict[str, list[str]]]:
 
 @pytest.fixture(scope="module")
 def migrated(tmp_path_factory: pytest.TempPathFactory) -> dict:
-    url = json_to_db(SEED, tmp_path_factory.mktemp("v81") / "seed.sqlite")
+    url = v75b_url(tmp_path_factory, tmp_path_factory.mktemp("v81") / "seed.sqlite")
     migrate_database(url, up_to=80)
     with DatabaseMapping(url) as db:
         alts = sorted(a["name"] for a in db.get_items("alternative"))
@@ -419,7 +420,7 @@ def large(tmp_path_factory: pytest.TempPathFactory) -> dict:
     nodes, each with a ``salvage_value`` and an ``invest_cost`` value; every other node (even numbers) already has
     a ``net_salvage_value`` (a definition added at 80, as an earlier development build left it), so its old value
     is not copied, the odd ones get theirs."""
-    url = json_to_db(SEED, tmp_path_factory.mktemp("v81_large") / "seed.sqlite")
+    url = v75b_url(tmp_path_factory, tmp_path_factory.mktemp("v81_large") / "seed.sqlite")
     migrate_database(url, up_to=80)
     with DatabaseMapping(url) as db:
         alt = sorted(a["name"] for a in db.get_items("alternative"))[0]

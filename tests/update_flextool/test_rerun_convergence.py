@@ -16,20 +16,18 @@ import json
 from pathlib import Path
 
 import pytest
-from spinedb_api import import_data, to_database
+from spinedb_api import to_database
 
-from flextool._resources import package_data_path
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
-from flextool.update_flextool.db_migration import _DEFINITION_RENAMES, _REUSED_DEFINITIONS
+from flextool.update_flextool.db_migration import (_DEFINITION_RENAMES, _REUSED_DEFINITIONS,
+                                                   BEHAVIOUR_CHANGE_MARKER_PREFIX)
 from flextool.update_flextool.db_handle import open_database_mapping
-from flextool.update_flextool.fixture_schema import unpack_value
 from flextool.update_flextool.initialize_database import initialize_database
 
-from tests.update_flextool._rerun import (Kill, already_applied_records, commit_messages, copy_db, diff, kill_after_commit,
-                                          kill_and_rerun, migrate, quiet, restamp_file, snapshot, url_of, version_of)
+from tests.update_flextool._rerun import (TEMPLATES, Kill, already_applied_records, commit_messages, copy_db, diff,
+                                          import_v75_seed_data, kill_after_commit, kill_and_rerun, migrate, quiet,
+                                          restamp_file, snapshot, url_of, version_of)
 
-TEMPLATES = package_data_path("schemas/pre_v26")
-SEED75 = Path(__file__).parent / "data" / "v75_seed_stoch_two_period.json"
 
 #: The steps whose rerun on their own result failed (an item looked up after the step removed or renamed it, or a
 #: raw commit with nothing to commit) or changed values (v37 flipped the flipped coefficient back).
@@ -89,6 +87,130 @@ def _seed_data(path: Path, *, base: bool) -> None:
         db.commit_session("seed data")
 
 
+#: The online seed (plan §5): per case unit ``{unit: (values {param: {alternative: value}}, scenarios {scenario:
+#: [alternative, ...]} lowest rank first)}``.  Each unit is active only in its own alternatives (``unit`` is inactive
+#: by default), so the unit-wide defaults below reach only the unit of a scenario.  uE comes at 80 (its curve's
+#: first version).
+ONLINE_UNITS = {
+    # split times: A_S1 needs up (2), A_S2 up (the default 3) and down (3).
+    "uA": ({"startup_method": {"A_base": "linear"}, "min_uptime": {"A_up": 2.0}, "min_downtime": {"A_down": 3.0}},
+           {"A_S1": ["A_base", "A_up"], "A_S2": ["A_base", "A_down"]}),
+    # online by the binary default in B_S1 (both times); B_off's no_startup keeps it off in B_S2.
+    "uB": ({"min_downtime": {"B_base": 2.0}, "startup_method": {"B_off": "no_startup"}},
+           {"B_S1": ["B_base"], "B_S2": ["B_base", "B_off"]}),
+    # binary, both times; the method in C_scratch is in no scenario.
+    "uC": ({"startup_method": {"C_base": "binary"}, "min_downtime": {"C_base": 2.0},
+            "minimum_time_method": {"C_scratch": "min_uptime"}}, {"C_S": ["C_base"]}),
+    # D_E's method resolves in D_S1 only.
+    "uD": ({"startup_method": {"D_base": "linear"}, "min_downtime": {"D_base": 2.0},
+            "minimum_time_method": {"D_E": "min_downtime"}}, {"D_S1": ["D_base", "D_E"], "D_S2": ["D_base"]}),
+}
+#: The unit-wide defaults of the online seed: a binary startup (online) and a min up time.  Set at 11: steps 1-11
+#: import the pre-v12 templates, which give every definition its template default.
+ONLINE_DEFAULTS = {("unit", "startup_method"): "binary", ("unit", "min_uptime"): 3.0,
+                   ("connection", "startup_method"): "binary"}
+
+
+def _online_unit(db, unit: str, values: dict, scenarios: dict) -> None:
+    alternatives = sorted({a for alts in scenarios.values() for a in alts} | {
+        a for by_alt in values.values() for a in by_alt})
+    for alternative in alternatives:
+        db.add_alternative(name=alternative)
+    for scenario, alts in scenarios.items():
+        db.add_scenario(name=scenario)
+        for rank, alternative in enumerate(alts, start=1):
+            db.add_scenario_alternative(scenario_name=scenario, alternative_name=alternative, rank=rank)
+    db.add_entity(entity_class_name="unit", name=unit)
+    db.add_entity(entity_class_name="unit__outputNode", element_name_list=(unit, "n_out"))
+    for alternative in alternatives:
+        db.add_entity_alternative(entity_class_name="unit", entity_byname=(unit,), alternative_name=alternative,
+                                  active=True)
+    for name, by_alt in values.items():
+        for alternative, value in by_alt.items():
+            val, typ = to_database(value)
+            db.add_parameter_value(entity_class_name="unit", entity_byname=(unit,), parameter_definition_name=name,
+                                   alternative_name=alternative, value=val, type=typ)
+
+
+def _online_data(path: Path, version: int) -> None:
+    """The online seed's data that comes at *version*: at 0 the units of :data:`ONLINE_UNITS` and connection cX
+    (``binary`` in X_base); at 11 :data:`ONLINE_DEFAULTS`; at 80 uE (``no_startup``, ``piecewise_linear`` with a rising
+    curve, in E_S); at 82 solve sol_roll (branches and ``rolling_window`` in P_base, no method) and sol_sep (branches
+    and ``separate_dispatch``) in P_S."""
+    from tests.update_flextool.test_v83_dispatch_realization_method import _branches
+    from tests.update_flextool.test_v83_minimum_time_method import RISING
+
+    with open_database_mapping(url_of(path)) as db:
+        if version == 0:
+            for unit, (values, scenarios) in ONLINE_UNITS.items():
+                _online_unit(db, unit, values, scenarios)
+            db.add_alternative(name="X_base")
+            db.add_entity(entity_class_name="connection", name="cX")
+            val, typ = to_database("binary")
+            db.add_parameter_value(entity_class_name="connection", entity_byname=("cX",), alternative_name="X_base",
+                                   parameter_definition_name="startup_method", value=val, type=typ)
+        elif version == 11:
+            for (cls, name), value in ONLINE_DEFAULTS.items():
+                pdef = db.get_item("parameter_definition", entity_class_name=cls, name=name)
+                val, typ = to_database(value)
+                db.update_parameter_definition(id=pdef["id"], default_value=val, default_type=typ)
+        elif version == 80:
+            _online_unit(db, "uE", {"startup_method": {"E_base": "no_startup"},
+                                    "conversion_method": {"E_base": "piecewise_linear"},
+                                    "piecewise_linear_efficiency": {"E_base": RISING}}, {"E_S": ["E_base"]})
+        elif version == 82:
+            db.add_alternative(name="P_base")
+            db.add_scenario(name="P_S")
+            db.add_scenario_alternative(scenario_name="P_S", alternative_name="P_base", rank=1)
+            for solve, extra in (("sol_roll", ("solve_mode", "rolling_window")),
+                                 ("sol_sep", ("dispatch_realization_method", "separate_dispatch"))):
+                db.add_entity(entity_class_name="solve", name=solve)
+                for name, value in (("stochastic_branches", _branches()), extra):
+                    val, typ = to_database(value)
+                    db.add_parameter_value(entity_class_name="solve", entity_byname=(solve,),
+                                           alternative_name="P_base", parameter_definition_name=name, value=val,
+                                           type=typ)
+        db.commit_session(f"online seed data at {version}")
+
+
+#: The versions after whose step :func:`_online_data` adds its later parts.
+ONLINE_STAGES = (11, 80, 82)
+
+
+@pytest.fixture(scope="module")
+def online_chain(tmp_path_factory) -> dict:
+    """``{k: path}``: the v2 template with the seed data, ``Base`` and the online seed data (:func:`_online_data`,
+    each later part added right after the step of its version), migrated one step at a time."""
+    folder = tmp_path_factory.mktemp("online_chain")
+    current = folder / "current.sqlite"
+    quiet(initialize_database, str(TEMPLATES / "flextool_template_v2.json"), str(current))
+    _seed_data(current, base=True)
+    _online_data(current, 0)
+    chain = {0: copy_db(current, folder / "k0.sqlite")}
+    with already_applied_records() as records:
+        for k in range(1, FLEXTOOL_DB_VERSION + 1):
+            migrate(current, up_to=k)
+            if k in ONLINE_STAGES:
+                _online_data(current, k)
+            chain[k] = copy_db(current, folder / f"k{k}.sqlite")
+    chain["records"] = records
+    return chain
+
+
+@pytest.fixture(scope="module")
+def v25_one_shot(tmp_path_factory) -> dict:
+    """``{55: path, 56: path}``: the v25 template with the seed data (no ``Base``) migrated to 55, then to 56."""
+    folder = tmp_path_factory.mktemp("v25_one_shot")
+    current = folder / "current.sqlite"
+    quiet(initialize_database, str(TEMPLATES / "flextool_template_v25.json"), str(current))
+    _seed_data(current, base=False)
+    out = {}
+    for k in (55, 56):
+        migrate(current, up_to=k)
+        out[k] = copy_db(current, folder / f"k{k}.sqlite")
+    return out
+
+
 @pytest.fixture(scope="module")
 def v2_chain(tmp_path_factory) -> dict:
     """``{k: path}``: the v2 template (version 0) with the seed data and ``Base``, migrated one step at a time; the
@@ -112,15 +234,10 @@ def v75_chain(v2_chain, tmp_path_factory) -> dict:
     JSON and a valueless ``unit__node__profile``, migrated one step at a time."""
     folder = tmp_path_factory.mktemp("v75_chain")
     current = copy_db(v2_chain[75], folder / "current.sqlite")
-    with open(SEED75, encoding="utf-8") as f:
-        data = json.load(f)
+    import_v75_seed_data(current)
     with open_database_mapping(url_of(current)) as db:
-        _, errors = import_data(db, unparse_value=unpack_value, **{key: data[key] for key in (
-            "alternatives", "scenarios", "scenario_alternatives", "entities", "entity_alternatives",
-            "parameter_values")})
-        assert not errors, errors[:3]
         db.add_entity(entity_class_name="unit__node__profile", element_name_list=("thermal", "city", "wprof"))
-        db.commit_session("v75 seed data")
+        db.commit_session("a valueless unit__node__profile")
     chain = {75: copy_db(current, folder / "k75.sqlite")}
     with already_applied_records() as records:
         for k in range(76, FLEXTOOL_DB_VERSION + 1):
@@ -130,10 +247,23 @@ def v75_chain(v2_chain, tmp_path_factory) -> dict:
     return chain
 
 
-def test_a_clean_migration_finds_nothing_already_applied(v2_chain, v75_chain, tmp_path) -> None:
-    """The guards key on an effect a clean run does not have yet: the v2, v25 and v75 chains log none."""
+#: The v56 backfills of the seed data in a database without ``Base`` (V5): the entities of :func:`_seed_data` that
+#: have no value of the parameter in any alternative (no reserve provision: no ``is_enabled``).
+V56_BASE_VALUES = {
+    ("node__profile", ("n_in", "p1"), "profile_method", "Base"): "'none'",
+    ("connection__profile", ("c1", "p1"), "profile_method", "Base"): "'none'",
+    ("unit__node__profile", ("u1", "n_out", "p1"), "profile_method", "Base"): "'none'",
+    ("unit__inputNode", ("u1", "n_in"), "ramp_method", "Base"): "'none'",
+    ("unit__outputNode", ("u1", "n_out"), "ramp_method", "Base"): "'none'",
+}
+
+
+def test_a_clean_migration_finds_nothing_already_applied(v2_chain, v75_chain, online_chain, tmp_path) -> None:
+    """The guards key on an effect a clean run does not have yet: the v2, v25, v75 and online chains log none.
+    The v25 template has no ``Base``: v56 makes one for its backfills, below every scenario (it has none)."""
     assert v2_chain["records"] == []
     assert v75_chain["records"] == []
+    assert online_chain["records"] == []
     path = tmp_path / "v25.sqlite"
     quiet(initialize_database, str(TEMPLATES / "flextool_template_v25.json"), str(path))
     _seed_data(path, base=False)
@@ -141,6 +271,84 @@ def test_a_clean_migration_finds_nothing_already_applied(v2_chain, v75_chain, tm
         migrate(path)
     assert version_of(path) == FLEXTOOL_DB_VERSION
     assert records == []
+    after = snapshot(path)
+    assert "Base" in after["alternatives"]
+    assert {key: value for key, value in after["values"].items() if key[3] == "Base"} == V56_BASE_VALUES
+    assert [row for row in after["scenario_alternatives"] if row[1] == "Base"] == []
+
+
+#: The v83 lists every chain ends with (the members the parts append, ``binary`` removed by part 2).
+V83_LISTS = {
+    "minimum_time_methods": ("min_uptime", "min_downtime", "both", "none"),
+    "startup_methods": ("no_startup", "linear", "linear_fix_in_uc", "integer", "integer_fix_in_uc"),
+    "dispatch_realization_methods": ("within_solve", "separate_dispatch", "deterministic"),
+}
+
+
+@pytest.mark.parametrize("chain", ("v2_chain", "v75_chain", "online_chain"))
+def test_every_chain_ends_with_the_v83_lists(request, chain: str) -> None:
+    after = snapshot(request.getfixturevalue(chain)[FLEXTOOL_DB_VERSION])
+    assert {name: tuple(m for _index, m in sorted(after["list_values"][name])) for name in V83_LISTS} == {
+        name: tuple(repr(m) for m in members) for name, members in V83_LISTS.items()}
+    assert "solver" not in after["lists"]
+
+
+@pytest.mark.parametrize("chain", ("v2_chain", "v75_chain", "online_chain"))
+def test_v83_rerun_on_its_own_result_converges(request, tmp_path, chain: str) -> None:
+    """Content 83 under stamp 82 (a hand edit, or a kill after the v83 commit with its stamp lost) migrated to 83
+    equals content 83, markers included."""
+    clean = request.getfixturevalue(chain)
+    path = copy_db(clean[FLEXTOOL_DB_VERSION], tmp_path / "db.sqlite")
+    restamp_file(path, FLEXTOOL_DB_VERSION - 1)
+    migrate(path)
+    assert version_of(path) == FLEXTOOL_DB_VERSION
+    assert diff(snapshot(clean[FLEXTOOL_DB_VERSION]), snapshot(path)) == []
+
+
+def test_online_seed_kill_after_the_v83_commit_converges(online_chain, tmp_path) -> None:
+    """The v83 step commits once (parts 0-5), then the version commit; a kill after the first converges."""
+    assert len(commit_messages(online_chain[82], 83)) == 2
+    assert kill_and_rerun(online_chain, FLEXTOOL_DB_VERSION, 1, tmp_path) == []
+
+
+def test_online_seed_at_83(online_chain) -> None:
+    """The v83 parts on the online seed (rules of ``plan_minimum_time_method``; D = binary, min_uptime default 3).
+    uA: A_S1 needs up, A_S2 up and down → both into A_base (its startup winner).  uB: online by D in B_S1, both times
+    → both into B_base (no startup value: the highest alternative with a value); B_S2 is off by B_off's no_startup
+    and B_base would win → none into B_off.  uC: binary, both times; C_scratch is in no scenario → both into C_base.
+    uD: D_S1 resolves by D_E; D_S2 needs both → both into D_base (D_E still wins in D_S1).  uE: online by its rising
+    curve, the default up time → min_uptime into E_base.  u1 is off in every scenario.  Part 2: every binary (uC,
+    cX and both defaults) is integer_fix_in_uc.  Part 5: sol_roll gets within_solve in P_base; part 3 lists it and
+    the separate_dispatch sol_sep."""
+    writes = {("uA", "A_base"): "both", ("uB", "B_base"): "both", ("uB", "B_off"): "none", ("uC", "C_base"): "both",
+              ("uD", "D_base"): "both", ("uE", "E_base"): "min_uptime"}
+    after = snapshot(online_chain[FLEXTOOL_DB_VERSION])
+    before = snapshot(online_chain[FLEXTOOL_DB_VERSION - 1])
+    methods = {(key[1][0], key[3]): value for key, value in after["values"].items()
+               if key[0] == "unit" and key[2] == "minimum_time_method"}
+    own = {(key[1][0], key[3]): value for key, value in before["values"].items()
+           if key[0] == "unit" and key[2] == "minimum_time_method"}
+    assert methods == own | {key: repr(value) for key, value in writes.items()}
+    markers = {name.removeprefix(BEHAVIOUR_CHANGE_MARKER_PREFIX): value for name, value in after["metadata"]}
+    assert json.loads(markers["minimum_time_method_written"]) == {
+        "since": 83, "writes": [[u, a, m] for (u, a), m in sorted(writes.items())], "undecided": []}
+    assert json.loads(markers["rolling_within_solve_one_solve"]) == {"since": 83, "solves": ["sol_roll"]}
+    assert json.loads(markers["separate_dispatch_realization_looks_ahead"]) == {"since": 83, "solves": ["sol_sep"]}
+    assert {key: value for key, value in after["values"].items() if key[2] == "startup_method"} == {
+        key: ("'integer_fix_in_uc'" if value == "'binary'" else value)
+        for key, value in before["values"].items() if key[2] == "startup_method"}
+    for cls in ("unit", "connection"):
+        assert after["definitions"][(cls, "startup_method")][1] == "'integer_fix_in_uc'"
+    assert after["values"][("solve", ("sol_roll",), "dispatch_realization_method", "P_base")] == "'within_solve'"
+    assert after["values"][("solve", ("sol_sep",), "dispatch_realization_method", "P_base")] == "'separate_dispatch'"
+
+
+def test_v25_v56_rerun_on_its_own_result_converges(v25_one_shot, tmp_path) -> None:
+    """V5 on the v25 seed (no ``Base`` before v56): content 56 under stamp 55 migrated to 56 equals content 56."""
+    path = copy_db(v25_one_shot[56], tmp_path / "db.sqlite")
+    restamp_file(path, 55)
+    migrate(path, up_to=56)
+    assert diff(snapshot(v25_one_shot[56]), snapshot(path)) == []
 
 
 def test_one_step_chain_equals_one_shot_migration(v2_chain, tmp_path) -> None:
@@ -249,16 +457,19 @@ def test_a_kill_in_a_step_leaves_the_previous_steps_stamp(v2_chain, tmp_path) ->
 
 @pytest.mark.nightly_heavy  # PR CI skips it; runs nightly (pyproject markers)
 @pytest.mark.timeout(3600)
-def test_every_kill_inside_a_step_converges(v2_chain, v75_chain, tmp_path) -> None:
-    """For every step k (12..current on the v2 chain, 76..current on the v75 chain) and every commit j of it: the
-    run of step k on clean k-1 killed right after commit j, migrated to k again, equals clean k."""
+def test_every_kill_inside_a_step_converges(v2_chain, v25_chain, v75_chain, online_chain, tmp_path) -> None:
+    """For every step k (12..current on the v2 chain, 76..current on the v75 and online chains, 56 (V5: the one
+    that makes ``Base``) and current on the v25 chain) and every commit j of it: the run of step k on clean k-1
+    killed right after commit j, migrated to k again, equals clean k."""
+    last = FLEXTOOL_DB_VERSION + 1
     failures = []
-    for chain, first in ((v2_chain, 12), (v75_chain, 76)):
-        for k in range(first, FLEXTOOL_DB_VERSION + 1):
+    for name, chain, steps in (("v2", v2_chain, range(12, last)), ("v75", v75_chain, range(76, last)),
+                               ("online", online_chain, range(76, last)), ("v25", v25_chain, (56, last - 1))):
+        for k in steps:
             for j in range(1, len(commit_messages(chain[k - 1], k))):
                 result = kill_and_rerun(chain, k, j, tmp_path)
                 if result:
-                    failures.append((first, k, j, result[:3]))
+                    failures.append((name, k, j, result[:3]))
     assert failures == []
 
 
@@ -284,12 +495,12 @@ def v25_chain(tmp_path_factory) -> dict:
 
 @pytest.mark.nightly_heavy  # PR CI skips it; runs nightly (pyproject markers)
 @pytest.mark.timeout(3600)
-def test_every_restamp_of_the_grid_converges(v2_chain, v25_chain, v75_chain, tmp_path) -> None:
-    """Content k of the v2, v25 and v75 chains under every grid stamp s < k (a hand edit, a lost or a legacy
+def test_every_restamp_of_the_grid_converges(v2_chain, v25_chain, v75_chain, online_chain, tmp_path) -> None:
+    """Content k of the v2, v25, v75 and online chains under every grid stamp s < k (a hand edit, a lost or a legacy
     stamp), migrated to k, equals the clean content k."""
     failures = []
     cases = 0
-    for name, chain in (("v2", v2_chain), ("v25", v25_chain), ("v75", v75_chain)):
+    for name, chain in (("v2", v2_chain), ("v25", v25_chain), ("v75", v75_chain), ("online", online_chain)):
         for k in GRID_CONTENTS:
             if k not in chain:
                 continue

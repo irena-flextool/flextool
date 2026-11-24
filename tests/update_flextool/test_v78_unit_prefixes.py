@@ -1,20 +1,20 @@
 """Database migration to version 78 (a unit on every parameter description).
 
-Seed: ``data/v75_seed_stoch_two_period.json`` (a frozen version-75 copy of
-``tests/fixtures/stoch_two_period.json``) migrated to 77, then given the cases
-the v78 step must handle: one definition deleted (it must stay absent), one
-description edited by the user with its own bracket (kept), one edited without
-a bracket (gets the prefix) and one starting with an old bracket followed by the
-user's own text (only the bracket is rewritten).  The seed's
-``unit__outputNode.capacity_min_coeff`` text predates the v70 one (a v70-v75 template
-skipped that rewrite): its older bracket is rewritten too, as is the older bracket of
-``existing`` (review C2-5).  Every other description must end up with the unit the
-shipped schema has.
+Seed: v75b (``_rerun.build_v75b``: the v2 template migrated to 75, a real v75
+schema, plus the data of ``data/v75_seed_stoch_two_period.json``) migrated to
+77, then given the cases the v78 step must handle: one definition deleted (it
+must stay absent), one description edited by the user with its own bracket
+(kept), one edited without a bracket (gets the prefix) and one starting with an
+old bracket followed by the user's own text (only the bracket is rewritten).
+``unit__outputNode.capacity_min_coeff`` gets the text of a v70-v75 template,
+which predates the v70 one (that template skipped the rewrite): its older
+bracket is rewritten too, as is the older bracket of ``existing`` (review
+C2-5).  Every other description must end up with the unit the shipped schema
+has.
 """
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 from spinedb_api import DatabaseMapping
@@ -24,14 +24,18 @@ from flextool._resources import package_data_path
 from flextool.update_flextool import db_migration as m
 from flextool.update_flextool.db_migration import migrate_database
 
-from tests.db_utils import json_to_db
+from tests.update_flextool._rerun import v75b_url
 
-SEED = Path(__file__).resolve().parent / "data" / "v75_seed_stoch_two_period.json"
+
 ABSENT = ("unit", "min_load")  # deleted before the step: it must not be re-created
 OWN_BRACKET = ("node", "penalty_up", "[EUR/MWh] My own penalty note.")
 NO_BRACKET = ("unit", "startup_method", "My own note.")
 OLD_BRACKET = ("unit", "availability", "[e.g. 0.9 means 90%] My own availability note.")
-OLDER_TEMPLATE_BRACKET = ("unit__outputNode", "capacity_min_coeff")  # "[factor, default 1.0] ..." in the seed
+#: The text of a v70-v75 template (the v75 seed JSON has it); a database migrated from v2 has the v70 text instead.
+OLDER_TEMPLATE_BRACKET = ("unit__outputNode", "capacity_min_coeff", (
+    "[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online (combined "
+    "multiplicatively with the unit-level min_load). Set to 0 to remove the lower cap on this edge (e.g. heat output "
+    "of an extraction CHP that may drop to zero in pure-condensing mode)."))
 OLDER_EXISTING = ("unit", "existing", "[MW] My own existing note.")  # the bracket of the first v77 templates
 PENALTY_RESERVE = ("reserve__upDown__group", "penalty_reserve")
 
@@ -47,10 +51,10 @@ def _set(db, cls: str, name: str, text: str) -> None:
 
 @pytest.fixture(scope="module")
 def migrated(tmp_path_factory: pytest.TempPathFactory) -> dict:
-    url = json_to_db(SEED, tmp_path_factory.mktemp("v78") / "seed.sqlite")
+    url = v75b_url(tmp_path_factory, tmp_path_factory.mktemp("v78") / "seed.sqlite")
     migrate_database(url, up_to=77)
     with DatabaseMapping(url) as db:
-        for cls, name, text in (OWN_BRACKET, NO_BRACKET, OLD_BRACKET, OLDER_EXISTING):
+        for cls, name, text in (OWN_BRACKET, NO_BRACKET, OLD_BRACKET, OLDER_EXISTING, OLDER_TEMPLATE_BRACKET):
             _set(db, cls, name, text)
         db.remove_item("parameter_definition",
                        db.get_item("parameter_definition", entity_class_name=ABSENT[0], name=ABSENT[1])["id"])
@@ -106,9 +110,9 @@ def test_user_edits(migrated) -> None:
 
 def test_older_template_brackets_are_rewritten(migrated) -> None:
     """A v70-v75 template's capacity_min_coeff kept its pre-v70 bracket and old default (C2-5)."""
-    before = migrated["before"][OLDER_TEMPLATE_BRACKET]
-    assert before.startswith("[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap")
-    assert migrated["after"][OLDER_TEMPLATE_BRACKET] == "[-] default 0. " + before[len("[factor, default 1.0] "):]
+    before = migrated["before"][OLDER_TEMPLATE_BRACKET[:2]]
+    assert before == OLDER_TEMPLATE_BRACKET[2]
+    assert migrated["after"][OLDER_TEMPLATE_BRACKET[:2]] == "[-] default 0. " + before[len("[factor, default 1.0] "):]
 
 
 def test_the_reserve_penalty_says_per_hour_once(migrated) -> None:

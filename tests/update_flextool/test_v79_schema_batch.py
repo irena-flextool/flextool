@@ -1,7 +1,7 @@
 """Database migration to version 79 (all schema changes of one release in one step).
 
-Seed: ``data/v75_seed_stoch_two_period.json`` (a frozen version-75 copy of
-``tests/fixtures/stoch_two_period.json``) migrated to 78, then to 79.  The step
+Seed: v75b (``_rerun.build_v75b``: the v2 template migrated to 75 plus the data of
+``data/v75_seed_stoch_two_period.json``) migrated to 78, then to 79.  The step
 
 * adds ``constraint_online_coeff`` on unit and connection (``1d_map``, group
   ``constraint``, no default, the shipped description);
@@ -50,7 +50,6 @@ It changes no other definition and no value, and a rerun commits nothing.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 from spinedb_api import Array, DatabaseMapping, Map, from_database, to_database
@@ -60,9 +59,9 @@ from flextool._resources import package_data_path
 from flextool.update_flextool import db_migration as m
 from flextool.update_flextool.db_migration import migrate_database
 
-from tests.db_utils import json_to_db
+from tests.update_flextool._rerun import v75b_url
 
-SEED = Path(__file__).resolve().parent / "data" / "v75_seed_stoch_two_period.json"
+
 PREFIX = m.BEHAVIOUR_CHANGE_MARKER_PREFIX
 
 ONLINE_NEW = [("unit", "constraint_online_coeff"), ("connection", "constraint_online_coeff")]
@@ -182,7 +181,7 @@ def _set(db, cls: str, name: str, param: str, value, alt: str) -> None:
 
 
 def _migrate(tmp_path_factory, tag: str, values: dict) -> dict:
-    url = json_to_db(SEED, tmp_path_factory.mktemp(tag) / "seed.sqlite")
+    url = v75b_url(tmp_path_factory, tmp_path_factory.mktemp(tag) / "seed.sqlite")
     migrate_database(url, up_to=78)
     with DatabaseMapping(url) as db:
         alt = sorted(a["name"] for a in db.get_items("alternative"))[0]
@@ -295,7 +294,7 @@ def test_adds_the_value_lists_in_order(plain) -> None:
 def test_completes_a_partial_list(tmp_path_factory) -> None:
     """A list that already holds some values (here only ``none`` and ``online``, at indexes 0 and 5) is completed:
     no value twice, and the added values take indexes after the largest one present."""
-    url = json_to_db(SEED, tmp_path_factory.mktemp("v79_partial") / "seed.sqlite")
+    url = v75b_url(tmp_path_factory, tmp_path_factory.mktemp("v79_partial") / "seed.sqlite")
     migrate_database(url, up_to=78)
     with DatabaseMapping(url) as db:
         db.add_parameter_value_list(name="reduce_unit_detail_methods")

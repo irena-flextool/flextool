@@ -2,8 +2,8 @@
 at 83 (plan §0 "Head-step rules at 83", §7 V1b).
 
 Databases: the v82 schema (``v82_schema_db_url``: the bundled v25 template migrated to 82), the current schema
-(``schema_db_url``, at 83), the v75 seed JSON and ``tests.json`` data imported into the v82 schema; all built in
-``tmp_path``.  Expected values come from the plan's rules: the members appended at the end in their plan order, the
+(``schema_db_url``, at 83), v75b (``_rerun.build_v75b``) and ``tests.json`` data imported into the v82 schema; all
+built in ``tmp_path``.  Expected values come from the plan's rules: the members appended at the end in their plan order, the
 shipped default ``deterministic``, the description texts of plan §2 (``test_v83_startup_method.NEW``, copied from
 the plan), the hash of the empty-default names as ``list_default_restore.empty_hash`` defines it (sha1 of the sorted
 names, newline-joined, first 12 hex), and the T1 model of C rev 3 §10.3 worked out by hand at the test.
@@ -30,12 +30,11 @@ from flextool.update_flextool import list_default_restore as ldr
 from flextool.update_flextool.db_migration import migrate_database
 from flextool.update_flextool.fixture_schema import unpack_value
 
-from tests.db_utils import json_to_db
+from tests.update_flextool._rerun import v75b_url
 from tests.update_flextool._value_list_cases import add_commit, make_lost_defaults, repair_part_b, sql
 from tests.update_flextool.test_v83_startup_method import NEW, OLD_UNIT_STARTUP
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
-SEED75 = Path(__file__).resolve().parent / "data" / "v75_seed_stoch_two_period.json"
 SCHEMA = Path(__file__).resolve().parents[2] / "flextool" / "schemas" / "spinedb_schema.json"
 STARTUP_MEMBERS = ["no_startup", "linear", "linear_fix_in_uc", "integer", "integer_fix_in_uc"]
 DISPATCH_MEMBERS = ["within_solve", "separate_dispatch", "deterministic"]
@@ -168,11 +167,11 @@ def test_v25_to_83_startup_method_default(v82_schema_db_url: str, tmp_path: Path
         assert pdef["parsed_value"] == (None if default == "null" else "integer_fix_in_uc")
 
 
-def test_v75_seed_to_83_writes_within_solve(tmp_path: Path) -> None:
-    """The v75 seed (a stochastic solve before v76): ``stoch_2p`` has ``stochastic_branches`` in alternative
+def test_v75_seed_to_83_writes_within_solve(tmp_path: Path, tmp_path_factory) -> None:
+    """v75b (a stochastic solve before v76): ``stoch_2p`` has ``stochastic_branches`` in alternative
     ``stoch`` (scenarios stoch and stoch_horizon; not det) and no method, so ``within_solve`` is written into
     ``stoch`` and nowhere else; the ``within_solve`` default becomes ``deterministic``."""
-    url = json_to_db(SEED75, tmp_path / "seed.sqlite")
+    url = v75b_url(tmp_path_factory, tmp_path / "seed.sqlite")
     printed = _migrate(url)
     with DatabaseMapping(url) as db:
         written = {(pv["entity_byname"][0], pv["alternative_name"]): pv["parsed_value"]
