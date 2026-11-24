@@ -110,6 +110,12 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
   message is dismissed keeps the earlier notes in the new message.
 - **The GUI message list's buttons are named "Dismiss message" and "Close dialog"** (before: "Dismiss" and "Close
   for now"). The close button keeps its label also when the list is empty.
+- **The repair tool asks about method parameter defaults in one question**: it says once why, lists each default
+  with the entities that rely on it in some scenario, and says whether restoring changes results (then it lists
+  the entities to check; the report lists them too). An `invest_method` default changed by hand after the last
+  upgrade is kept unless you choose otherwise; one set to another member than `cumulative_limits` is no longer
+  asked about. Storage nodes whose start an old upgrade left free are listed to check, and Enter keeps them as they
+  are. W-0491 and its GUI message are titled "Method parameter defaults lost in an old upgrade".
 
 ### Fixes
 
