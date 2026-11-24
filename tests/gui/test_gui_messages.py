@@ -110,7 +110,7 @@ def _anchors(page: Path) -> set[str]:
 def test_registry_kinds_and_their_docs_exist():
     from flextool.run_warnings.registry import WARNINGS
 
-    # Design §3.1: W-0490 and the unreadable file are attention messages without Dismiss; the event kinds and
+    # Design §3.1: W-0490 and the unreadable file are attention messages without Dismiss message; the event kinds and
     # the update state are dismissable and capped.
     assert (W0490.dismissable, W0490.attention) == (False, True)
     assert (UNREADABLE.dismissable, UNREADABLE.attention) == (False, True)
@@ -529,7 +529,7 @@ def test_non_dismissable_note_is_capped_but_stays(tmp_path):
     assert center.recompute("project_open") is None                      # the third open does not show it
     assert [msg.key for msg in center.messages] == [states[0].key]       # still active and counted
     assert center.indicator() == (1, True)
-    with pytest.raises(ValueError):                                      # and has no Dismiss
+    with pytest.raises(ValueError):                                      # and has no Dismiss message
         center.dismiss(center.messages[0])
     states[:] = [_msg(NOTE_STUB, key, "hash2")]                          # a changed set of empty defaults
     assert _open_project(path, _static(states)) == states[0].key

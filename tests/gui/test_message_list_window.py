@@ -5,10 +5,11 @@ Run headless, never on the owner's display:
         --gui-only -n 0'
 
 Expected values come from the design's rules, not from the window's output: "Message i of N" / "1 message",
-Previous disabled on the first and Next on the last, Dismiss only on a dismissable message, Close for now records
-"seen" (and one ``shown`` per non-attention message only when the project-open auto-show opened the window), no
-grab, the main window's ``Alt-c`` does not fire in the list, an auto-show waits while another window holds a grab,
-the "other" trigger opens the list only for a new attention message, an open window updates in place.  The docs
+Previous disabled on the first and Next on the last, Dismiss message only on a dismissable message, the labels
+"Dismiss message" and "Close dialog" (also on an empty list), Close dialog records "seen" (and one ``shown`` per
+non-attention message only when the project-open auto-show opened the window), no grab, the main window's ``Alt-c``
+does not fire in the list, an auto-show waits while another window holds a grab, the "other" trigger opens the
+list only for a new attention message, an open window updates in place.  The docs
 address is built here from ``run_warnings.registry.docs_url`` (a W-code goes to its section).
 """
 from __future__ import annotations
@@ -144,7 +145,7 @@ def test_one_message_hides_the_pager_and_focuses_close(host, tmp_path) -> None:
         assert _text(window, "header.position") == "1 message"
         assert not _mapped(window, "header.previous") and not _mapped(window, "header.next")
         assert window.focus_get() is _w(window, "buttons.close")
-        assert _text(window, "buttons.close") == "Close for now"
+        assert _text(window, "buttons.close") == "Close dialog"
     finally:
         window.close()
 
@@ -155,10 +156,11 @@ def test_dismiss_only_on_a_dismissable_message_and_it_moves_on(host, center3, tm
     window = MessageListWindow(host, center3, on_change=lambda: changes.append(1))
     try:
         pump(window, lambda: bool(window.winfo_viewable()))
-        assert not _mapped(window, "buttons.dismiss")             # W-0490: no Dismiss
+        assert not _mapped(window, "buttons.dismiss")             # W-0490: no Dismiss message
         assert _mapped(window, "buttons.docs")
         window.page(1)
         assert _mapped(window, "buttons.dismiss")                 # an upgrade event
+        assert _text(window, "buttons.dismiss") == "Dismiss message"
         _w(window, "buttons.dismiss").invoke()
         # b's event is gone from the file; c (the next one) is shown.
         assert database_key(tmp_path / "b.sqlite") not in MessageStore(tmp_path / "gui_messages.json").pending(
@@ -188,7 +190,7 @@ def test_no_messages_left(host, tmp_path) -> None:
         _w(window, "buttons.dismiss").invoke()
         assert _text(window, "content.title") == "No messages."
         assert _paragraphs(window) == ["Notices about this project and its databases appear here."]
-        assert _text(window, "buttons.close") == "Close"
+        assert _text(window, "buttons.close") == "Close dialog"
         assert not any(_mapped(window, f"buttons.{n}") for n in ("docs", "action", "dismiss"))
         assert not _mapped(window, "header.position")
     finally:

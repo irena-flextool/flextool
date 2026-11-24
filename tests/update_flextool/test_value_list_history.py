@@ -145,7 +145,7 @@ def test_a_run_warns_once_at_its_start(tmp_path_factory) -> None:
 
 
 def test_gui_lists_the_flagged_file_at_every_check(make, tmp_path: Path) -> None:
-    """The GUI's message list asks at every recompute: the flagged file stays flagged (W-0490 has no Dismiss)."""
+    """The GUI's message list asks at every recompute: the flagged file stays flagged (W-0490 has no Dismiss message)."""
     from flextool.gui.data_models import ProjectSettings
     from flextool.gui.input_sources import InputSourceManager
 

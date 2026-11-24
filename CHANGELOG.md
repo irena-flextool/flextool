@@ -108,6 +108,8 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
   up/down time method of some units, the message names them (the first ten; warning W-0231 names all at each run):
   they run without those limits until a `minimum_time_method` is chosen. A database upgraded again before the
   message is dismissed keeps the earlier notes in the new message.
+- **The GUI message list's buttons are named "Dismiss message" and "Close dialog"** (before: "Dismiss" and "Close
+  for now"). The close button keeps its label also when the list is empty.
 
 ### Fixes
 
