@@ -5,14 +5,12 @@ It reads the data, splits the run into sub-solves (rolling, nested,
 stochastic), builds each LP with polar_high, solves it and passes results
 (investments, storage states, …) on to the next sub-solve.
 
-## Public API (`flextool/engine/__init__.py`)
+## Public API
 
-- `run_chain_from_db(input_db_url, scenario_name, work_folder)`: the usual entry point.
-- `run_orchestration`, `OrchestrationStep`: the loop behind it.
-- `run_chain`, `ChainStep`: older wrapper around `run_chain_from_db`.
-- `load_flextool`, `FlexData`: per-solve model data. `build_flextool`: the LP.
-- `SolveHandoff`: what one sub-solve passes to the next.
-- `SpineDbReader`, `InMemoryReader`, `CsvSource`, `FlexInputSource`, `InputSource`: input adapters.
+`flextool/engine/__init__.py`; the symbols are described in
+[docs/dev/engine.md "Public API"](../../docs/dev/engine.md#public-api).
+`run_chain_from_db(input_db_url, scenario_name, work_folder)` is the usual
+entry point.
 
 ## Pipeline
 
@@ -58,5 +56,6 @@ module outside it may import it.
 - An equation: grep `EQ. ─── <name>` (map in the `model/core.py` docstring).
 - A Provider key: `preprocess/_provider_keys.py`.
 - Did my change alter the LP? `tools/lp_snapshot.py` (snapshot, then compare).
-- More depth: `docs/dev/engine.md`, `docs/dev/architecture.md`.
+- More depth: `docs/dev/engine.md` (engine internals; "Where to read" table at the top),
+  `docs/dev/architecture.md` (whole system, cross-cutting invariants).
 - Tests: `tests/engine/`.

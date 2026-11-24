@@ -26,7 +26,8 @@
 
 ## Project Structure
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for a detailed overview of the codebase.
+See [docs/dev/architecture.md](docs/dev/architecture.md) for the whole system and its invariants, and
+[docs/dev/engine.md](docs/dev/engine.md) for the engine internals; each starts with a "Where to read" table.
 
 ## Running Tests
 
@@ -44,13 +45,9 @@ they are already set); thread-budget tests set their own environment.
 Tests of the unsupported CSV reload are deselected by default; run them with
 `pytest -m csv_reload tests/csv_reload/`.
 
-Axis-Enum mode (`pl.Enum` axis columns instead of `pl.Utf8`) is experimental and
-off in production; `FLEXTOOL_AXIS_ENUMS=1` turns it on for a whole run (see
-`docs/dev/engine.md` "Enum-dtype axis convention" for its known gaps). Its LP
-parity run (Enum LP byte-identical to the Utf8 LP, fixture by fixture) is
-deselected by default; run it with
-`pytest -m axis_enums tests/engine/axis_enums -n 8` (it also runs nightly in
-the non-gating CI job `enum-mode`).
+The experimental axis-Enum LP parity run (`docs/dev/engine.md` "Enum-dtype axis
+convention") is deselected by default; run it with
+`pytest -m axis_enums tests/engine/axis_enums -n 8`.
 
 The heaviest tests (~1 h of CI worker time) carry the `nightly_heavy` marker.
 A local `pytest tests/` runs them like any other test; only the PR "Tests"
@@ -317,7 +314,7 @@ The user docs live in `docs/` and are built with MkDocs Material (`mkdocs build 
 
 - **Focused changes** — one feature, one bug fix, or one refactoring per PR. Don't mix unrelated changes.
 - **Tests** — add or update tests for any new or changed functionality. If you're fixing a bug, add a test that would have caught it.
-- **Vectorized derive parity** — when you change a heavy preprocessing derive in `flextool/engine/preprocess/emit/`, gate the vectorized derive against a reference implementation with a `tests/engine/test_vectorize_<family>_parity.py` test, under a two-tier policy: **Tier A** strict byte-equality (`df_vec.equals(df_legacy)`) for pure lookup/coalesce families, **Tier B** tolerance (`rtol≈1e-12`, parsing both sides' rendered values back to float) for families that sum many terms. Run that per-family parity test in the inner loop.
+- **Vectorized derive parity** — a changed heavy derive in `flextool/engine/preprocess/emit/` keeps its `tests/engine/test_vectorize_<family>_parity.py` gate green (Tier A / Tier B, [engine.md "Vectorized per-roll emit"](docs/dev/engine.md#vectorized-per-roll-emit)); run it in the inner loop.
 - **Updated golden files** — if your change affects solver outputs, regenerate the affected golden files and include them in the PR.
 - **Updated master template** — if your change modifies the database schema, include the regenerated `schemas/spinedb_schema.json`.
 - **Clear description** — explain what the PR does and why. Reference any related issues.
@@ -330,11 +327,11 @@ The user docs live in `docs/` and are built with MkDocs Material (`mkdocs build 
 - [ ] Master template is up-to-date (If schema changed. Check [CONTRIBUTING.md updating the data structure](#updating-the-data-structure))
 - [ ] Code follows existing patterns and style
 - [ ] A new schema map parameter is in `TIME_AGGREGATION` (how a solve's `new_stepduration` combines it: mean, harmonic mean, sum or last) or in `NOT_TIME_SERIES` (`flextool/engine/input/_solve_step_aggregation.py`); `tests/engine/test_time_aggregation_registry.py` checks it.
-- [ ] New `add_var` / `add_cstr` / schema parameter is registered in the autoscale registries (`flextool/engine/autoscale/_layer2_types.py`, `_quantity_types.py`); ran the affected tests with `FLEXTOOL_AUTOSCALE_STRICT=1`. A missing entry silently degrades the solve to an un-scaled LP — see [architecture.md "Numerical scaling"](docs/dev/architecture.md).
-- [ ] Any parameter broadcast over `(d,t)` goes through `_param_shapes` (`resolve_param_shape` / `broadcast_to_period_time` / `promote_param_to_dt`), never column-name axis detection — see [architecture.md "Parameter shapes & (d,t) broadcasting"](docs/dev/architecture.md).
+- [ ] New `add_var` / `add_cstr` / schema parameter is registered in the autoscale registries (`flextool/engine/autoscale/_layer2_types.py`, `_quantity_types.py`); ran the affected tests with `FLEXTOOL_AUTOSCALE_STRICT=1`. A missing entry silently degrades the solve to an un-scaled LP — see [architecture.md "Numerical scaling"](docs/dev/architecture.md#layers-bottom-up).
+- [ ] Any parameter broadcast over `(d,t)` goes through `_param_shapes` (`resolve_param_shape` / `broadcast_to_period_time` / `promote_param_to_dt`), never column-name axis detection — see [architecture.md "Parameter shapes & (d,t) broadcasting"](docs/dev/architecture.md#parameter-shapes-dt-broadcasting).
 - [ ] New / changed tests build their DB from JSON or schema under `tmp_path` (no checked-in `.sqlite` dependency).
 - [ ] The CSV dump writers (`dump_csvs`, `snapshot_processed_inputs`) are supported; `flextool/engine/_csv_reload/` (CSV reload, offline outputs) is not kept in sync — do not update it or its `tests/csv_reload/` unless you need the reload, and never import it from outside the package.
-- [ ] A changed heavy `preprocess/emit/` derive is gated by a `tests/engine/test_vectorize_<family>_parity.py` test against a reference implementation (Tier A `.equals` for pure lookup/coalesce families, Tier B `rtol≈1e-12` for many-term sums).
+- [ ] A changed heavy `preprocess/emit/` derive is gated by its `tests/engine/test_vectorize_<family>_parity.py` test (see "What a PR Should Contain").
 
 ### Review Process
 

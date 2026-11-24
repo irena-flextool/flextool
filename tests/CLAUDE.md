@@ -3,8 +3,9 @@
 - **Which tests:** the modules your change touches or that test it (`tools/related_tests.py`), new tests, and
   `tools/lp_snapshot.py` for model changes; `-n` ≤ 8.  No directory or `-k` keyword sweeps, no "baseline before
   edits" runs, never the whole `tests/test_scenarios.py` (name the scenarios by node id).  The full suite runs at
-  milestones only (a hook enforces this).  `tests/csv_reload/` runs only with `-m csv_reload`.  Anything that opens Tk windows
-  (`tests/gui`) runs under `xvfb-run -a`, never on the owner's display.
+  milestones only (a hook enforces this).  `tests/csv_reload/` (the shelved reload) runs only with
+  `-m csv_reload`.  Anything that opens Tk windows (`tests/gui`) runs under `xvfb-run -a`, never on the owner's
+  display.
 - **Databases come from JSON** in `tmp_path` (`json_to_db`, the session-scoped `schema_db_url`).  Never read a
   template `.sqlite` in place: it lags the schema, and concurrent xdist opens of one SQLite file can hang a Windows
   shard.  If one must be read, open it read-only or from a `tmp_path` copy (`tests/test_invariant_guards.py`).

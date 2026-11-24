@@ -20,6 +20,8 @@ update_flextool, process_outputs, gui, tests) load when you work in that folder 
 ## Rules for every change
 - No shortcuts.  Nothing deferred to TODOs or later phases; a real blocker is reported, not worked around.
 - Grep for an existing helper before writing one; never duplicate a helper across modules.
+- Delete what a change makes obsolete — the old code path, its helpers, tests and docs — in the same change.  Keep
+  an old name only where users' databases still carry it (the migration window).
 - No new dependencies: polars / numpy only, also for packages that arrive transitively (scipy via spinedb-api).
 - Never make a test pass by loosening it (tolerance, skip / xfail, deleted assert, golden regenerated "to match");
   report instead.  Expected values are derived by hand from the fixture and the docs, never copied from new output.
@@ -44,4 +46,5 @@ update_flextool, process_outputs, gui, tests) load when you work in that folder 
 3. Tests build their DB from JSON, never read a template `.sqlite` — `tests/CLAUDE.md`; invariant guards.
 4. Schema renames update readers, `PARAMETER_TYPES`, the migration and `split_params` — `update_flextool/CLAUDE.md`.
 5. Vectorized emit stays byte-identical to the per-roll writer — `engine/preprocess/emit/CLAUDE.md`; parity tests.
-6. A new FlexData field has a CSV dump/reload route — `tests/engine/test_flexdata_field_routes.py`.
+6. A new FlexData field is written by the CSV dump or says why not — `tests/engine/test_flexdata_field_routes.py`.
+   (The CSV *reload* is shelved: `engine/_csv_reload/CLAUDE.md`.)
