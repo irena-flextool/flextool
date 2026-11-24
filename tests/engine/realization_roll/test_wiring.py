@@ -218,3 +218,84 @@ def test_a_delayed_solve_stopped_before_it_runs_gets_no_w0594(tmp_path, stop):
     with capture_coded() as got, pytest.raises(FlexToolConfigError, match=error):
         scm.run_spec(spec, tmp_path)
     assert not got.names("W-0594")
+
+
+@pytest.mark.parametrize("markers", ["another_solve", "no_marker"])
+def test_an_unlisted_solve_gets_no_notice(tmp_path, monkeypatch, markers):
+    """The same two runs as :func:`test_listed_solves_get_their_notice` (``within_solve``, then ``separate_dispatch``
+    with forecasts made at t01 and t02), but the database's markers list only a solve 'other' (or the database
+    carries no marker: it was made at 83, nothing was upgraded): 'st' runs with the new realization in both, yet is
+    in no list, so neither W-0635 nor W-0636 is announced."""
+    from flextool.engine import _behaviour_changes
+    from tests._support.coded_warnings import capture_coded
+
+    if markers == "another_solve":
+        _listed(monkeypatch, solve="other")
+    else:
+        monkeypatch.setattr(_behaviour_changes, "read_markers_from_url", lambda url: {})
+    for name, spec in (("within", srl._tw1(0.5)), ("separate", _separate(srl._tw1(0.5)))):
+        with capture_coded() as got:
+            _built, steps = scm.run_spec(spec, tmp_path / name)
+        assert steps and all(s.solution.optimal for s in steps.values()), name
+        assert not got.names("W-0635") and not got.names("W-0636"), name
+
+
+def test_listed_rolling_within_solve_with_delays_gets_w0594_not_w0635(tmp_path, monkeypatch):
+    """test_trunk_sites' model (``within_solve``, jump 2, horizon 4, forecasts and the realized row made at t01, t03,
+    t05, the roll starts; listed in both markers) with ``gen`` fed from ``fuel`` with a 1 h delay, as
+    ``test_split_roll_lp.test_a_delay_keeps_todays_realization``: D12 gives no solve a realization roll in a model
+    with delayed units, so 'st' keeps the earlier realization (a realization solve after each roll, as before 4.7.0)
+    and its realization did not change: no W-0635.  It is no ``separate_dispatch`` solve: no W-0636.  W-0594 names
+    the delayed unit ``gen`` instead."""
+    from tests._support.coded_warnings import capture_coded
+
+    _listed(monkeypatch)
+    spec = ts._spec(real_at=ts.OVERLAP, forecast_at=ts.OVERLAP)
+    spec["entities"] += [["node", "fuel", None], ["unit__inputNode", ["gen", "fuel"], None]]
+    spec["entity_alternatives"].append(["node", ["fuel"], "init", True])
+    spec["parameter_values"] += [*srl._node("fuel", "balance", pack(100.0, "float")),
+                                 ["unit", "gen", "delay", pack(1.0, "float"), "init"]]
+    with capture_coded() as got:
+        built, _steps = scm.run_spec(spec, tmp_path)
+    assert any("__realized_dispatch" in s for s, _, _ in built)
+    assert got.names("W-0594") == ["gen"]
+    assert not got.names("W-0635") and not got.names("W-0636")
+
+
+def test_listed_single_separate_dispatch_gets_w0636(tmp_path, monkeypatch, coded_log):
+    """T-sd2 (``test_solve_shapes``): a single ``separate_dispatch`` solve, listed.  Its solve (1) changed (D3: only
+    the ``_fix_in_uc`` commitment is shared), so W-0636 names 'st'; it is no rolling solve, so W-0635 is not
+    announced and its full notice carries no 'keeps the earlier realization' sentence (that is for the rolling solves
+    without realization rolls)."""
+    from tests._support.coded_warnings import capture_coded
+    from tests.engine.realization_roll import test_solve_shapes as ss
+
+    _listed(monkeypatch)
+    spec = ss._spec(ss.SD2_PERIODS, mode="single_solve", method="separate_dispatch", realized=["p1"], fan=ss.SD2_FAN,
+                    wind=ss.SD2_WIND, gas={"t01": 10.0, "t02": 30.0})
+    coded_log.notices()
+    with capture_coded() as got:
+        built, _steps = scm.run_spec(spec, tmp_path)
+    assert len(built) == 2 and "__realized_dispatch" in built[1][0]
+    assert got.names("W-0636") == ["st"] and not got.names("W-0635")
+    (text,) = [n for n in coded_log.notices() if "separate_dispatch" in n]
+    assert "Affected solves: st." in text and "keeps the earlier realization" not in text
+
+
+def test_listed_rolling_recourse_separate_dispatch_gets_w0636_without_look_ahead(tmp_path, monkeypatch, coded_log):
+    """D21: T-w1 as ``separate_dispatch`` (forecasts made at t01 and t02) with ``stochastic_invest_method`` recourse.
+    A recourse solve gets no realization roll (``realization_roll_method``), so its engine-added realization solve
+    dispatches each jump alone, as before 4.7.0; its solve (1) changed all the same, so W-0636 names 'st' and its full
+    notice says that this solve keeps the earlier realization.  No W-0635 (no ``within_solve``)."""
+    from tests._support.coded_warnings import capture_coded
+
+    _listed(monkeypatch)
+    spec = _set_solve(_separate(srl._tw1(0.5)), "stochastic_invest_method", pack("recourse", "str"))
+    coded_log.notices()
+    with capture_coded() as got:
+        built, _steps = scm.run_spec(spec, tmp_path)
+    assert any("__realized_dispatch" in s for s, _, _ in built)
+    assert got.names("W-0636") == ["st"] and not got.names("W-0635")
+    (text,) = [n for n in coded_log.notices() if "separate_dispatch" in n]
+    assert ("Affected solves: st. Solve 'st' keeps the earlier realization: its realization solve dispatches each "
+            "jump alone, without the look-ahead; only its first solve changed.") in text

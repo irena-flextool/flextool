@@ -183,6 +183,22 @@ def test_v75_seed_to_83_writes_within_solve(tmp_path: Path, tmp_path_factory) ->
     assert "  solve stoch_2p [stoch]\n" in printed
 
 
+def test_v75_seed_to_83_lists_no_realization_notice(tmp_path: Path, tmp_path_factory) -> None:
+    """v75b → 83, part 3: ``stoch_2p`` gets ``within_solve`` from part 5 (above), but its ``solve_mode`` is
+    ``single_solve`` (alternative ``init``, in every scenario), so it is not rolling: a single ``within_solve`` solve
+    keeps its separate realization and W-0635 does not list it; no solve has ``separate_dispatch``, so W-0636 lists
+    nothing.  Neither marker is written (a marker is written only when its list is non-empty)."""
+    url = v75b_url(tmp_path_factory, tmp_path / "seed.sqlite")
+    _migrate(url)
+    names = {f"flextool_behaviour_change:{m.V83_WITHIN_SOLVE_MARKER}",
+             f"flextool_behaviour_change:{m.V83_SEPARATE_DISPATCH_MARKER}"}
+    with DatabaseMapping(url) as db:
+        assert db.get_item("parameter_value", entity_class_name="solve", entity_byname=("stoch_2p",),
+                           parameter_definition_name="solve_mode", alternative_name="init")["parsed_value"] \
+            == "single_solve"
+        assert [md["name"] for md in db.get_items("metadata") if md["name"] in names] == []
+
+
 # ─── refresh of a database at 83 ─────────────────────────────────────────
 
 
