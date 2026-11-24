@@ -431,6 +431,7 @@
  "tests/gui/test_settings_io_calibrate.py": 0.0,
  "tests/gui/test_solver_fix_offer.py": 0.0,
  "tests/gui/test_solver_options_dialog.py": 0.0,
+ "tests/gui/test_upgrade_notices.py": 0.8,
  "tests/gui/test_warm_markers.py": 0.0,
  "tests/model/test_balance_penalty_shapes.py": 206.3,
  "tests/model/test_capacity_margin_invest_periods.py": 202.7,
@@ -570,5 +571,5 @@
  "tests/update_flextool/test_v75_rename_and_reserve_duration.py": 4.4,
  "tests/update_flextool/test_v76_dispatch_realization_method.py": 7.0,
  "tests/update_flextool/test_v77_schema_batch.py": 6.8,
- "tests/update_flextool/test_value_list_repair_block.py": 6.0
+ "tests/update_flextool/test_value_list_repair_block.py": 1.8
 }
