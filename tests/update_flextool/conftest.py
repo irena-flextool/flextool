@@ -31,5 +31,5 @@ def v82_schema_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
             "JOIN entity_class c ON c.id = d.entity_class_id")}
     finally:
         con.close()
-    assert len(old) == 7 and {key: held.get(key) for key in old} == old
+    assert len(old) == 21 and {key: held.get(key) for key in old} == old
     return f"sqlite:///{path}"

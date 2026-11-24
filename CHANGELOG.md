@@ -115,6 +115,12 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
   solve" when a roll holds only one time step of a period it holds in part** (e.g. the last roll with
   `rolling_solve_jump` 1). That step is the start of the roll's block chain and continues from the level carried
   from the previous roll (or from `fix_start` in the first roll).
+- **Parameter descriptions brought up to date in older databases.** The upgrade to data version 83 replaces old
+  shipped descriptions that named too few value shapes (e.g. "Constant or time" for `availability`,
+  `other_operational_cost`, `penalty_up`, `penalty_down`, `co2_price`, `reservation` and
+  `storage_state_reference_value`), the old member name `no_method` in `group.co2_method`, and the `binary`
+  start-ups in `virtual_unitsize` (now `integer` or `integer_fix_in_uc`). A description you edited is kept. The
+  unused value list `solver` (left over from before `solve.solver` moved to `solvers`) is deleted.
 
 ## Release 4.6.3 (23.11.2026) — fixes: list-valued defaults kept when migrating FlexTool 3.x databases, Benders between regions, FlexTool 2.0 conversion in the GUI; repair tool for W-0490 databases; GUI message list
 

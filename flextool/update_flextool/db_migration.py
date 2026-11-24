@@ -12886,6 +12886,82 @@ _V83_NEW_MEMBERS: dict[str, tuple[str, ...]] = {"minimum_time_methods": _V83_MIN
                                                 "dispatch_realization_methods": (_V83_DETERMINISTIC,)}
 
 
+#: Part 4 of v83 (item 278): the descriptions whose shipped text names an old member or an old set of value shapes,
+#: ``{(class, name): (old, new)}``.  The old texts are what the v25 template has at 82; the new ones name the current
+#: members and the shapes each parameter takes.
+_V83_SHAPE_TEXTS: dict[tuple[str, str], tuple[str, str]] = {
+    ("connection", "availability"): (
+        "[-] e.g. 0.9 means 90%. Fraction of capacity available for connection flows. Constant or time.",
+        "[-] e.g. 0.9 means 90%. Fraction of capacity available for connection flows. Constant, period, time or "
+        "period+time."),
+    ("connection", "other_operational_cost"): (
+        "[CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, Period or time.",
+        "[CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, period, time or "
+        "period+time."),
+    ("group", "co2_method"): (
+        "[choice] Choice of the CO2 method: no_method, price, period, total, price_period, price_total, period_total, "
+        "price_period_total",
+        "[choice] Choice of the CO2 method: none, price, period, total, price_period, price_total, period_total, "
+        "price_period_total"),
+    ("group", "co2_price"): (
+        "[CUR/tCO2] CO2 price for a group of nodes. Constant, period or time.",
+        "[CUR/tCO2] CO2 price for a group of nodes. Constant, period, time or period+time."),
+    ("node", "availability"): (
+        "[-] e.g. 0.9 means 90%. Fraction of capacity available for storage. Constant or time.",
+        "[-] e.g. 0.9 means 90%. Fraction of capacity available for storage. Constant, period, time, period+time or "
+        "stochastic time."),
+    ("node", "penalty_up"): (
+        "[CUR/MWh] Penalty cost for decreasing consumption in the node (energy not served). Constant, Period or Time.",
+        "[CUR/MWh] Penalty cost for decreasing consumption in the node (energy not served). Constant, period, time, "
+        "period+time, or stochastic time."),
+    ("node", "penalty_down"): (
+        "[CUR/MWh] Penalty cost for increasing consumption in the node (excess energy). Constant, Period or Time.",
+        "[CUR/MWh] Penalty cost for increasing consumption in the node (excess energy). Constant, period, time, "
+        "period+time, or stochastic time."),
+    ("node", "storage_state_reference_value"): (
+        "[-] 0-1, share of the storage capacity. Relative state of storage at then end of each solve (can be "
+        "overwritten in the next solve).  Requires 'use_reference_value' in 'storage_solve_horizon_method'. Constant.",
+        "[-] 0-1, share of the storage capacity. Relative state of storage at then end of each solve (can be "
+        "overwritten in the next solve).  Requires 'use_reference_value' in 'storage_solve_horizon_method'. Constant, "
+        "period, time or period+time."),
+    ("reserve__upDown__group", "reservation"): (
+        "[MW] Amount of reserve to be reserved. Constant or time.",
+        "[MW] Amount of reserve to be reserved. Constant, period, time, period+time or stochastic time."),
+    ("unit", "availability"): (
+        "[-] e.g. 0.9 means 90%. Fraction of capacity available for flows from/to the unit. For online units, the "
+        "online variable is multiplied by the availability. Constant or time.",
+        "[-] e.g. 0.9 means 90%. Fraction of capacity available for flows from/to the unit. For online units, the "
+        "online variable is multiplied by the availability. Constant, period, time, period+time or stochastic time."),
+    **{(cls, "other_operational_cost"): (
+        "[CUR/MWh] Other operational variable cost for energy flows. Constant, Period or Time.",
+        "[CUR/MWh] Other operational variable cost for energy flows. Constant, period, time, period+time or "
+        "stochastic time.") for cls in ("unit__inputNode", "unit__outputNode")},
+}
+
+
+def _v83_description_texts() -> dict[tuple[str, str], tuple[str, str]]:
+    """``{(class, name): (old, new)}``: the descriptions part 4 of v83 replaces by text alone
+    (:func:`_replace_superseded_texts`): the twelve of :data:`_V83_SHAPE_TEXTS` and ``virtual_unitsize`` of units
+    and connections, whose v77 text (:func:`_unit_count_vu_text`) names the removed ``binary`` startups."""
+    out = dict(_V83_SHAPE_TEXTS)
+    for cls in ("unit", "connection"):
+        old = _unit_count_vu_text(cls)
+        out[(cls, "virtual_unitsize")] = (old, old.replace(
+            "Binary startups commit", "Integer startups (startup_method integer or integer_fix_in_uc) commit"))
+    return out
+
+
+def _v83_descriptions(db) -> None:
+    """Part 4 of v83 (item 278): the current description in place of each old shipped one of
+    :func:`_v83_description_texts` (by text alone, whatever the default; a description the user edited is kept), and
+    the value list ``solver`` deleted when no definition is on it (``solve.solver`` is on ``solvers`` since v52; an
+    older template can still hold the unused list).  Descriptions and an unused list only.  Idempotent."""
+    _replace_text_pairs(db, _v83_description_texts())
+    solver = db.get_item("parameter_value_list", name="solver")
+    if solver and not any(pd["parameter_value_list_name"] == "solver" for pd in db.get_items("parameter_definition")):
+        db.remove_item("parameter_value_list", solver["id"])
+
+
 def _v82_superseded_texts() -> dict[tuple[str, str], tuple[str, str]]:
     """``{(class, name): (old, new)}``: the descriptions of :func:`_v82_superseded` (a development build of v82
     shipped them; the default stays) and their current text (:func:`_v82_texts`), replaced by text alone."""
@@ -12895,7 +12971,7 @@ def _v82_superseded_texts() -> dict[tuple[str, str], tuple[str, str]]:
 
 def _v83_superseded_texts() -> dict[tuple[str, str], tuple[str, str]]:
     """``{(class, name): (old, new)}``: the descriptions the parts of v83 replace by text alone."""
-    return {**_v83_startup_texts(), **_v83_dispatch_realization_texts()}
+    return {**_v83_startup_texts(), **_v83_dispatch_realization_texts(), **_v83_description_texts()}
 
 
 def _v83_carry_over(db) -> None:
@@ -12922,6 +12998,8 @@ def _migrate_v83_schema_batch(db) -> None:
     3. Rolling ``within_solve`` solves realize each jump in one solve and ``separate_dispatch`` realizations look
        ahead: the solves whose results change are listed in two behaviour-change markers (after part 5, whose
        writes count; :func:`_v83_realization_notices`).
+    4. Item 278: the current description in place of fourteen old shipped ones (value shapes, ``no_method``,
+       ``binary`` startups), and the unused value list ``solver`` deleted (:func:`_v83_descriptions`).
 
     On a non-local URL the list defaults are not repaired before the step (item 279): a default still stored as its
     member's text reads as nothing, and a description written on its definition stores it as ``NULL``; it read as
@@ -12932,9 +13010,10 @@ def _migrate_v83_schema_batch(db) -> None:
     _v83_startup_method(db)
     _v83_dispatch_realization_method(db)
     _v83_realization_notices(db)
+    _v83_descriptions(db)
     _commit_step(db, "v83: minimum_time_method decides the min up/down times, startup_method binary is "
                      "integer_fix_in_uc, dispatch_realization_method deterministic is the default, the "
-                     "realization of stochastic solves looks ahead")
+                     "realization of stochastic solves looks ahead, descriptions updated")
 
 
 #: The schema step of the current data version.  The template sync reruns it on the master template, so that schema

@@ -892,7 +892,7 @@
       "virtual_unitsize",
       null,
       null,
-      "[MW] Size of one unit. With it, existing is the number of units. Binary startups commit whole units of this size. Investments and retirements are continuous; their limits are in MW. No value: the existing capacity, or 1000 MW without it.",
+      "[MW] Size of one unit. With it, existing is the number of units. Integer startups (startup_method integer or integer_fix_in_uc) commit whole units of this size. Investments and retirements are continuous; their limits are in MW. No value: the existing capacity, or 1000 MW without it.",
       "basics"
     ],
     [
@@ -2774,7 +2774,7 @@
       "virtual_unitsize",
       null,
       null,
-      "[MW] Size of one unit. With it, existing is the number of units. Binary startups commit whole units of this size. Investments and retirements are continuous; their limits are in MW. No value: the existing capacity, or 1000 MW without it.",
+      "[MW] Size of one unit. With it, existing is the number of units. Integer startups (startup_method integer or integer_fix_in_uc) commit whole units of this size. Investments and retirements are continuous; their limits are in MW. No value: the existing capacity, or 1000 MW without it.",
       "basics"
     ],
     [
@@ -6572,27 +6572,6 @@
       "solve_mode",
       [
         "\"rolling_window\"",
-        "str"
-      ]
-    ],
-    [
-      "solver",
-      [
-        "\"glpsol\"",
-        "str"
-      ]
-    ],
-    [
-      "solver",
-      [
-        "\"highs\"",
-        "str"
-      ]
-    ],
-    [
-      "solver",
-      [
-        "\"cplex\"",
         "str"
       ]
     ],
