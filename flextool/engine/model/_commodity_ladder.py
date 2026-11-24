@@ -18,7 +18,9 @@ import polars as pl
 from polar_high import Param, Sum, Where
 from polar_high.engine import Expr
 
-from flextool.engine.model._common import _has_rows, _period_branch_pairs, branch_periods_inherit
+from flextool.engine.model._common import (
+    _has_rows, _period_branch_pairs, branch_periods_inherit, d_period_path, on_paths, path_rows,
+)
 from flextool.engine.preprocess.params._branch import branch_anchor_pairs, inherit_anchor_period
 
 if TYPE_CHECKING:
@@ -385,7 +387,10 @@ def _eq_tier_cap_annual(b: _Build) -> None:
     # Σ_n v_trade[c,n,d,i] · commodity_unitsize[c]
     #   ≤  quantity_ann[c,i,d] · period_share[d] · f_d_k[d] − realized_ann[c,i,α(d)]
     #   ∀ (c,i,d) with (c,n,d,i) ∈ cndi_ladder_ann and quantity_ann[c,i,d] < 1e29
+    #   split realization roll (d_period_path): the row on a branch period p_f sums the cells d ∈ {p, p_f} (p its
+    #   base period: the jump, then the tail), each at its own weight; no row on p
     #   f_d_k[d] = (realized hours of α(d) from earlier solves + this solve's hours of d) / complete hours of α(d)
+    #     (+ the jump hours of p for a branch period d = p_f of a split realization roll: the path's hours)
     #   α(d) = the period label of a forecast branch period d, d itself otherwise; period_share, f_d_k and the
     #   realized carry of a forecast come from α(d) unless it has its own row: every forecast continues from
     #   its period's realized history (the realization solve's carry)
@@ -405,6 +410,9 @@ def _eq_tier_cap_annual(b: _Build) -> None:
     # α(d) unless it has its own row (branch_periods_inherit): every forecast continues from its period's
     # realized history (the realization solve's carry); without it a null share/fdk would clamp the
     # tier to 0, and a realized 0 would re-open the period's already-spent budget (#59).
+    # Path rows (split realization roll, d_period_path): the row of a branch period p_f sums the purchases of its
+    # base period p (the jump) and of p_f (the tail); p has no row.  f_d_k[p_f] counts the jump hours, so the RHS
+    # is the path's allocation.
     share_frame = branch_periods_inherit(d, d.p_period_share.frame, ())
     fdk_frame = branch_periods_inherit(d, d.p_f_d_k.frame, ()) if d.p_f_d_k is not None else None
     realized_frame = (branch_periods_inherit(d, d.p_ladder_cum_realized_mwh.frame, ("c", "i"))
@@ -425,11 +433,14 @@ def _eq_tier_cap_annual(b: _Build) -> None:
     else:
         cap_df = cap_df.with_columns(realized=pl.lit(0.0))
     cap_df = cap_df.with_columns(value=pl.col("cap") - pl.col("realized")).select("c", "i", "d", "value")
+    trade = Sum(Where(b.v_trade * _commodity_unitsize_param(d), cndi_ann_finite), over=("n",))
+    if (path := d_period_path(b, "ladder_tier_cap_annual_roll")) is not None:
+        trade, keys = on_paths(trade, path), path_rows(keys, path)
     b.m.add_cstr(
         "ladder_tier_cap_annual_roll",
         over      = keys,
         sense     = "<=",
-        lhs_terms = {"trade": Sum(Where(b.v_trade * _commodity_unitsize_param(d), cndi_ann_finite), over=("n",))},
+        lhs_terms = {"trade": trade},
         rhs_terms = {"cap": Param(("c", "i", "d"), cap_df)},
     )
 

@@ -447,9 +447,13 @@ def emit_period_calculated_params(
                          schema={"period": pl.Utf8, "value": pl.Float64}),
             pb_pairs_set, period_col="period")
         cum_of = dict(zip(carry["period"].to_list(), carry["value"].to_list()))
+    # A split realization roll (a period label with steps): a branch period's path also holds its label's jump,
+    # f_d_k[p_f] = (H[p] + W[p] + W[p_f]) / T[p].  Without a label with steps (every other solve) this is empty.
+    jump_hours = {b: sum_step_dur_by_period[a] for a, b in pb_rows
+                  if a != b and sum_step_dur_by_period.get(a, 0.0) > 0}
     f_d_k_rows: list[tuple[str, float]] = []
     for d in period_in_use:
-        num = cum_of.get(d, 0.0) + sum_step_dur_by_period.get(d, 0.0)
+        num = cum_of.get(d, 0.0) + sum_step_dur_by_period.get(d, 0.0) + jump_hours.get(d, 0.0)
         denom = complete_share_lookup.get(d, 0.0) * HOURS_PER_YEAR
         f_d_k_rows.append((d, num / denom))
     # A period only leaves `period_in_use` once the rolling chain has moved past it, which (periods

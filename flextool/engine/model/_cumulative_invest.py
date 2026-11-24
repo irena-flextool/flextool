@@ -26,9 +26,13 @@ from flextool.engine.model._common import (
     _var_view,
     chain_prior,
     check_max_cap,
+    d_period_path,
     group_prior,
     leaf_rows,
     minus_prior,
+    on_paths,
+    path_rows,
+    path_values,
 )
 
 if TYPE_CHECKING:
@@ -955,28 +959,36 @@ def _eq_cumulative_flow_period(b: _Build) -> None:
     # Σ_t F[g,d,t]·sd[d,t]·tw[d,t]  ≤ max_cumulative_flow[g,d] · Σ_t sd[d,t]·tw[d,t]   (max…)
     #                               ≥ min_cumulative_flow[g,d] · Σ_t sd[d,t]·tw[d,t]   (min…)
     #   ∀ (g,d) with a max / min_cumulative_flow (the reader leaves out an inf max / −inf min: no limit in d)
+    #   split realization roll (d_period_path): the row on a branch period p_f sums the cells d ∈ {p, p_f} (p its
+    #   base period: the jump, then the tail), each at its own weight; no row on p; Σ_t sd·tw on the RHS over the same cells
     #   F = net flow into the group (_group_flow; a one-variable connection by v_flow − v_flow_back)
     #   sd = step_duration, tw = timestep_weight
     # Limits the energy flowing into a flow group in each period to an average power times the
     # weighted hours of the period — the same timestep_weight every operational cost term already
     # carries (op_factor), so a representative-period step does not count as a full unweighted
     # hour.  A branch period that authors no value of its own reads its anchor's value
-    # (broadcast_to_period's branch-period inheritance); it still gets its own (g,d) row here, not
-    # merged with the anchor's — the continuation fan always starts at a solve's first step
-    # (_branch.py, d_leaf_lf), so no period is ever split into an anchor fragment and a branch
-    # fragment within one solve, and there is nothing to merge.
+    # (broadcast_to_period's branch-period inheritance); it still gets its own (g,d) row here.  A split
+    # realization roll is the one solve that splits a period: its base period p holds the jump and each
+    # branch period p_f the tail, so the row of p_f sums the path p + p_f (flow and hours, d_period_path) and
+    # p has no row.  In every other solve a fan starts at the solve's first step: each period is its own path.
     for name, sense, cap in (("maxCumulative_flow_period", "<=", d.pd_max_cumulative_flow),
                              ("minCumulative_flow_period", ">=", d.pd_min_cumulative_flow)):
         if cap is None or cap.frame.height == 0:
             continue
-        rhs = (cap.frame.join(hours_in_period, on="d", how="inner")
+        over, hours = cap.frame.select("g", "d").unique(), hours_in_period
+        flow_int = Sum(flow * d.p_step_duration * d.p_timestep_weight, over=("t",))
+        if (path := d_period_path(b, name)) is not None:
+            over, flow_int = path_rows(over, path), on_paths(flow_int, path)
+            hours = path_values(hours.rename({"hours_in_period": "value"}), (), path).rename(
+                {"value": "hours_in_period"})
+        rhs = (cap.frame.join(hours, on="d", how="inner")
                .with_columns(value=pl.col("value") * pl.col("hours_in_period"))
                .select("g", "d", "value"))
         b.m.add_cstr(
             name,
-            over      = cap.frame.select("g", "d").unique(),
+            over      = over,
             sense     = sense,
-            lhs_terms = {"flow_int": Sum(flow * d.p_step_duration * d.p_timestep_weight, over=("t",))},
+            lhs_terms = {"flow_int": flow_int},
             rhs_terms = {"cap":      Param(("g", "d"), rhs)},
         )
 

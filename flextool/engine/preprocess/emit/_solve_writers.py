@@ -1327,18 +1327,24 @@ def _compute_timeset_cost_weight_rows(
 ) -> tuple[list[tuple[Any, ...]], bool]:
     """Shared compute for :func:`emit_timeset_cost_weight`.
     Returns ``(rows, any_written)``.  The stochastic branch periods of ``period__branch``
-    (``(anchor, branch)`` rows) take their anchor period's timeset weights.
+    (``(anchor, branch)`` rows) take their anchor period's timeset weights.  Each name's weights are scaled to mean
+    1 over its steps, except under a split realization roll (an anchor with steps): one scale over the path, the
+    anchor's jump steps and a branch period's tail (the same roll without forecasts; every tail has the same steps).
     """
     rows: list[tuple[Any, ...]] = []
     any_written = False
+    tail_of = {a: b for a, b in reversed(period__branch or ()) if a != b and active_time_list.get(a)}
+    jump_of = {b: a for a, b in (period__branch or ()) if a in tail_of and a != b}
     for period, timeset in _with_branch_period_timesets(timesets_used_by_solve, period__branch):
         weights = timeset_weights.get(timeset)
         active_steps = active_time_list.get(period, [])
         if weights is None or not active_steps:
             continue
         raw = [float(weights.get(step.timestep, 0.0)) for step in active_steps]
-        total = sum(raw)
-        n = len(raw)
+        path = [*active_time_list.get(jump_of.get(period), []), *active_steps,
+                *active_time_list.get(tail_of.get(period), [])]
+        total = sum(float(weights.get(step.timestep, 0.0)) for step in path)
+        n = len(path)
         if total <= 0 or n == 0:
             continue
         scale = n / total

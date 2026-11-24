@@ -9158,6 +9158,17 @@ def p_f_d_k_from_source(
         out_lf = out_lf.with_columns(pl.col("cum").fill_null(0.0))
     else:
         out_lf = out_lf.with_columns(cum=pl.lit(0.0))
+    # A split realization roll (a period label with steps): a branch period's path also holds its label's jump
+    # (emit_period_calculated_params, the emitted twin).  Empty without a label with steps.
+    pairs = [(a, b) for a, b in _read_period_branch_pairs(workdir, provider=provider) if a != b]
+    jump = (pl.LazyFrame(pairs, schema={"_a": pl.Utf8, "_d": pl.Utf8}, orient="row")
+            .join(sum_step.select(pl.col("d").cast(pl.Utf8).alias("_a"), pl.col("sum_step").alias("jump")),
+                  on="_a", how="inner")
+            .group_by("_d").agg(pl.col("jump").sum()).collect())
+    if jump.height > 0:
+        out_lf = (out_lf.with_columns(_d=pl.col("d").cast(pl.Utf8)).join(jump.lazy(), on="_d", how="left")
+                  .with_columns(sum_step=pl.col("sum_step").fill_null(0.0) + pl.col("jump").fill_null(0.0))
+                  .drop("_d", "jump"))
     out_lf = (out_lf
                 .with_columns(pl.col("sum_step").fill_null(0.0))
                 .with_columns(value=(pl.col("cum") + pl.col("sum_step"))

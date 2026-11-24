@@ -125,8 +125,13 @@ from flextool.engine.model._common import (
     chain_prior,
     branch_periods_inherit,
     check_max_cap,
+    PATH_D,
+    d_period_path,
     leaf_rows,
     minus_prior,
+    on_paths,
+    path_rows,
+    path_values,
 )
 from flextool.engine.input._param_shapes import drop_no_limit_rows, promote_param_to_dt, without_no_limit_rows
 from flextool.engine.model._pdt_join import (
@@ -2479,6 +2484,8 @@ def _eq_node_balance_period(b: _Build) -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_t w[d,t] · (flow, start-up and slack terms of nodeBalance_eq)[n,d,t]  =  −Σ_t w[d,t] · inflow[n,d,t]
     #   ∀ n ∈ nodeBalancePeriod, n ∉ nodeState, d ∈ periods of dt;   w = timestep_weight
+    #   split realization roll (d_period_path): the row on a branch period p_f sums the cells d ∈ {p, p_f} (p its
+    #   base period: the jump, then the tail), each at its own weight; no row on p, inflow likewise
     # Energy balance over a whole period instead of every step, in MWh.  The
     # terms are b.node_balance_flow_terms (Δt already applied); period nodes
     # are never storage, so there are no state terms.
@@ -2487,6 +2494,8 @@ def _eq_node_balance_period(b: _Build) -> None:
     # low-weight timeslices offset high-weight ones.  The other op_factor
     # parts (inflation_op, period_share) are per period and cancel in a row.
     # Inflow is energy per step (no Δt), as in nodeBalance_eq.
+    # Path rows (split realization roll, d_period_path): the row of a branch period p_f balances the path, the
+    # cells of its base period p (the jump) and of p_f (the tail); p has no row.
     over = (d.nodeBalancePeriod.select("n").lazy()
             .join(dispatch_periods(d).lazy(), how="cross"))
     if _has_rows(d.nodeState):
@@ -2504,6 +2513,9 @@ def _eq_node_balance_period(b: _Build) -> None:
                                        .agg(pl.col("value").sum())
                                        .select("n", "d", "value")
                                        .collect()))
+    if (path := d_period_path(b, "nodeBalancePeriod_eq")) is not None:
+        over, lhs = path_rows(over, path), {key: on_paths(term, path) for key, term in lhs.items()}
+        inflow_period = Param(("n", "d"), path_values(inflow_period.frame, ("n",), path))
     b.m.add_cstr(
         "nodeBalancePeriod_eq",
         over      = over,
@@ -4461,7 +4473,10 @@ def _eq_co2_max_period(b: _Build) -> None:
     #   ∀ (g,d) ∈ group_d_co2_capped;   w = step_duration · timestep_weight / period_share
     #   group_d_co2_capped = the capped groups × the periods of dt, without the (g,d) where co2_max_period = inf
     #   (no cap in that period: no row and no carry)
+    #   split realization roll (d_period_path): the row on a branch period p_f sums the cells d ∈ {p, p_f} (p its
+    #   base period: the jump, then the tail), each at its own weight; no row on p
     #   f_d_k[d] = (realized hours of α(d) from earlier solves + this solve's hours of d) / complete hours of α(d)
+    #     (+ the jump hours of p for a branch period d = p_f of a split realization roll: the path's hours)
     #   α(d) = the period label of a forecast branch period d, d itself otherwise; period_share, f_d_k and the
     #   realized carry of a forecast come from α(d) unless it has its own row: every forecast continues from
     #   its period's realized history (the realization solve's carry)
@@ -4478,6 +4493,9 @@ def _eq_co2_max_period(b: _Build) -> None:
     # noEff processes take neither slope nor section (applying them would over-count).  The removal term
     # (#19, Q14) subtracts flows into the same group's node(s) — e.g. DAC/BECCS — unsplit, no slope, same
     # measure as flow_to_co2_priced; it only loosens the cap, never tightens it.
+    # Path rows (split realization roll, d_period_path): the row of a branch period p_f sums the cells of its base
+    # period p (the jump) and of p_f (the tail), each at its own w; p has no row.  f_d_k[p_f] counts the jump
+    # hours, so the RHS is the path's budget.
     lhs: dict = {}
     if b.has_co2_cap_eff:
         for key, term in _eff_fuel_input(b, d.flow_from_co2_capped):
@@ -4507,9 +4525,13 @@ def _eq_co2_max_period(b: _Build) -> None:
                 term * d.p_co2_content * d.p_timestep_weight / d.p_period_share,
                 over=("p", "n", "c", "t"),
             )
+    over = d.group_d_co2_capped
+    if (path := d_period_path(b, "co2_max_period")) is not None:
+        lhs = {key: on_paths(term, path) for key, term in lhs.items()}
+        over = path_rows(over, path)
     m.add_cstr(
         "co2_max_period",
-        over      = d.group_d_co2_capped,
+        over      = over,
         sense     = "<=",
         lhs_terms = lhs,
         rhs_terms = {"cap": _co2_period_cap_with_carry(d)},
@@ -5078,6 +5100,9 @@ def _eq_user_constraints_period_total(b: _Build, pt_cns: list[str], capacity_ter
     #            + Σ_e cap[e,d]·capacity_coef[e,cn] )
     #   = / ≤ / ≥  constant[cn] (or constant[cn,d] for a period map)
     #   ∀ (cn,d) ∈ cdt_{eq,le,ge}, cn ∈ constraint_period_total, window_fraction[d] = 1
+    #   split realization roll (d_period_path): the row on a branch period p_f sums the cells d ∈ {p, p_f} (p its
+    #   base period: the jump, then the tail), each at its own weight; no row on p; H[p_f]
+    #   and window_fraction[p_f] are the path's (Σ over p, p_f), the capacity terms stay on p_f
     # w[d,t] = step_duration[d,t]·timestep_weight[d,t] / period_share[d];   H[d] = Σ_t w[d,t]
     # inv, con, pre, cap, us, the v_flow_back term and the existing / carried constants as in process_constraint_*
     # (_eq_user_constraints).
@@ -5113,10 +5138,15 @@ def _eq_user_constraints_period_total(b: _Build, pt_cns: list[str], capacity_ter
     w = d.p_step_duration * d.p_timestep_weight / d.p_period_share
     w_frame = _collected(w.frame).sort("d", "t")
     hours = Param(("d",), w_frame.group_by("d", maintain_order=True).agg(pl.col("value").sum()))
-    # The periods the solve holds whole (window_fraction 1); the others have no row.
+    path = d_period_path(b, *(name for _rows, _sense, name in rows_by_sense))
+    if path is not None:
+        hours = Param(("d",), path_values(hours.frame, (), path))
+    # The periods the solve holds whole (window_fraction 1, of the path under a split roll); the others have no row.
     whole = None
     if d.p_window_fraction is not None:
         frac = _collected(d.p_window_fraction.frame)
+        if path is not None:
+            frac = path_values(frac.select("d", pl.col("value").cast(pl.Float64)), (), path)
         over = frac.filter(pl.col("value").cast(pl.Float64) > 1.0 + 1e-9)
         if over.height > 0:
             raise ValueError(f"{feature}: window_fraction above 1 for period(s) "
@@ -5131,6 +5161,7 @@ def _eq_user_constraints_period_total(b: _Build, pt_cns: list[str], capacity_ter
         if idx.height > 0:
             terms.extend(Sum(term, over=("p", "source", "sink", "t"))
                          for term in _user_constraint_flow_terms(b, idx, w))
+    capacity_at = len(terms) if capacity_terms else None
     if capacity_terms:
         terms.append(_sum_terms(capacity_terms) * hours)
     for v_online, coef_k in online_by_class:
@@ -5141,8 +5172,19 @@ def _eq_user_constraints_period_total(b: _Build, pt_cns: list[str], capacity_ter
                          over=("p", "t")))
     consts = [const * hours for const in const_terms]
     live = _user_constraint_live_keys(terms)
+    if path is not None:
+        # The time sums of each path's cells on its row period (capacity terms are per row period already); a row
+        # is live when a cell of its path is.
+        terms = [term if i == capacity_at else on_paths(term, path) for i, term in enumerate(terms)]
+        rows_of: dict = {}
+        for cell, row in path.select(pl.col("d", PATH_D).cast(pl.Utf8)).rows():
+            rows_of.setdefault(cell, []).append(row)
+        if "*" not in live:
+            live = {f"{cn}\x1f{row}" for cn, cell in (k.split("\x1f") for k in live) for row in rows_of.get(cell, ())}
     empty_rows: list[tuple[pl.DataFrame, str]] = []
     for rows, sense, name in rows_by_sense:
+        if path is not None:
+            rows = path_rows(rows, path)
         if whole is not None:
             rows = rows.filter(pl.col("d").cast(pl.Utf8).is_in(whole))
         has_var = (pl.repeat(True, rows.height, eager=True) if "*" in live

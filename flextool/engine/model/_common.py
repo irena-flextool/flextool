@@ -6,7 +6,7 @@ coefficient factors.  Nothing here emits rows or columns.
 """
 
 import polars as pl
-from polar_high import Param
+from polar_high import Param, Sum, Where
 from polar_high.engine import Var
 
 from flextool.engine.input._axis_enums import filter_isin, rename_to_axis
@@ -174,6 +174,54 @@ def leaf_rows(terms: pl.DataFrame, key: str, var: "Var | pl.DataFrame", d_leaf: 
         return False, terms.select(key).unique(), terms
     rows = mask.select(key, "leaf").unique()
     return True, rows, mask
+
+
+PATH_D = "__path_d"   # the row period of a cell period in d_period_path
+
+
+def d_period_path(b, *families: str) -> "pl.DataFrame | None":
+    """``(d, __path_d)``: the cell periods ``d`` that a period-level row on ``__path_d`` sums, under a split
+    realization roll; None (today's rows, one per period name) without a label with steps.
+
+    A path is the base period p's jump and one branch period ``p_f``'s tail (design rev 7.1 §2.3): the row on
+    ``p_f`` sums the cells of p and of ``p_f``, p gets no row, every other period of ``dt`` is its own path.  A
+    non-None result records each of ``families`` in ``b.path_converted`` (read by G1,
+    ``_period_rows.check_period_rows``)."""
+    from flextool.engine.preprocess._step_relations import labels_with_steps
+
+    lab = labels_with_steps(b.d)
+    if not lab:
+        return None
+    dtype = b.d.dt.schema["d"]
+    split = set(lab).union(*lab.values())
+    own = [x for x in b.d.dt["d"].cast(pl.Utf8).unique(maintain_order=True).to_list() if x not in split]
+    pairs = [(x, x) for x in own] + [(c, f) for p, fs in lab.items() for f in fs for c in (p, f)]
+    b.path_converted.update(families)
+    return pl.DataFrame(pairs, schema={"d": pl.Utf8, PATH_D: pl.Utf8}, orient="row").with_columns(
+        pl.col("d", PATH_D).cast(dtype))
+
+
+def on_paths(expr, path: pl.DataFrame):
+    """``expr`` indexed by ``(…, d)`` summed over the cells of each path of ``path`` (``d_period_path``), indexed by
+    ``(…, d)`` = the row period."""
+    rows = path.select(PATH_D, pl.col(PATH_D).alias("d")).unique(maintain_order=True)
+    return Sum(Where(Sum(Where(expr, path), over=("d",)), rows), over=(PATH_D,))
+
+
+def path_rows(over: pl.DataFrame, path: pl.DataFrame) -> pl.DataFrame:
+    """The rows of ``over`` on a row period of ``path`` (the split labels leave)."""
+    keep = path.select(pl.col(PATH_D).alias("d")).unique()
+    return over.join(keep.with_columns(pl.col("d").cast(over.schema["d"])), on="d", how="semi")
+
+
+def path_values(frame: pl.DataFrame, keys: "tuple[str, ...]", path: pl.DataFrame) -> pl.DataFrame:
+    """``(*keys, d, value)``: ``frame`` (``*keys, d, value``) summed over the cells of each path, on its row period
+    (the frame's ``d`` dtype kept)."""
+    dtype = frame.schema["d"]
+    return (frame.join(path.with_columns(pl.col("d").cast(dtype)), on="d", how="inner")
+            .sort(*keys, PATH_D, "d")  # fixed summation order
+            .group_by(*keys, PATH_D, maintain_order=True).agg(pl.col("value").sum())
+            .select(*keys, pl.col(PATH_D).cast(dtype).alias("d"), "value"))
 
 
 def check_max_cap(over: pl.DataFrame, cap: "pl.DataFrame | None", key: str, has_period: bool,
