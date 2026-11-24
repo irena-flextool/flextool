@@ -1,8 +1,7 @@
 """Period-level rows of a split realization roll sum the path: the base period's jump and one tail (design rev 7.1
 §2.3, §8.1 T-pc / T-cw weighted; MR-b3).
 
-Each test forces the live plan through the seam and suppresses the spawned realization solve
-(``test_trunk_sites._live_plan``, D6), as in ``test_split_roll_lp``.  The model (``_base``): one period ``p1`` on
+The realization roll is wired, as in ``test_split_roll_lp``.  The model (``_base``): one period ``p1`` on
 t01-t04 (1 h steps, ``years_represented`` 1, factor 8760 / 4 = 2190), a rolling ``within_solve`` solve with jump 2,
 horizon 4: R_0 = ``p1`` t01-t02 (the jump, on the realized branch ``R``) + ``p1_A`` / ``p1_B`` t03-t04 (forecasts made
 at t03, weight 0.5 each); R_1 = ``p1`` t03-t04 (the last roll, deterministic on ``R``).  Node ``elec`` (in the
@@ -269,7 +268,7 @@ def test_nested_fix_usage_gets_no_plan(tmp_path, monkeypatch, designated):
     from flextool.engine.input._solve_state import FlexToolConfigError
     from flextool.engine.solve import _run_model
 
-    sr.ts._live_plan(monkeypatch, suppress_spawn=False)  # the plan live, the realization solve spawned as today
+    sr.ts._live_plan(monkeypatch)
     live = _run_model._roll_tail_plans
     plans: list = []
 
@@ -279,7 +278,8 @@ def test_nested_fix_usage_gets_no_plan(tmp_path, monkeypatch, designated):
 
     monkeypatch.setattr(_run_model, "_roll_tail_plans", recording)
     if designated:
-        match = r"Solve 'st' has a realized: yes designation .* nested inside another solve's contains_solves"
+        match = (r"Solve 'st' is a rolling stochastic solve nested inside another solve's contains_solves\. "
+                 r"FlexTool 4\.7\.0 cannot yet realize the jumps of a nested rolling stochastic solve")
     else:
         match = r"Solve 'st_p1_roll_0' commits 2 step\(s\) inside a forecasts-only stochastic fan .*storage state"
     with pytest.raises(FlexToolConfigError, match=match):

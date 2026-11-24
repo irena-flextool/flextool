@@ -1464,22 +1464,25 @@ def _assert_one_start_or_carry(step, family: str, start: float, hours) -> int:
 
 
 def test_rolling_forecast_first_step_takes_the_start_or_the_carry_once(tmp_path_factory):
-    """1_week_rolling_wind with storage_state_start 0.3: roll 0's forecasts start from 0.3·5000 = 1500 MWh (RHS
-    −(1500 + 400) = −1900), each later roll's forecasts from the realized carry (RHS −(carry + 400)); one state
-    column per row in every roll (forecast and realization rolls)."""
+    """1_week_rolling_wind with storage_state_start 0.3: since 4.7.0 each roll realizes its jump under ``period1``
+    and the forecasts continue from its last step, so each roll has one start row, at ``period1``'s first step: roll
+    0 from 0.3·5000 = 1500 MWh (RHS −(1500 + 400) = −1900), each later roll from the realized carry (RHS
+    −(carry + 400)); one state column per row (before: one row per forecast)."""
     steps = _overlay_steps(tmp_path_factory, STOCH_JSON, "1_week_rolling_wind", "fsf_roll",
                            [["node", HYDRO, "storage_state_start", 0.3]])
-    assert len(steps) > 2
+    assert [s.solve_name for s in steps] == [f"1week_rolling_roll_{k}" for k in range(7)]
     assert _carry(steps[0].flex_data, HYDRO) is None
-    assert all(_carry(s.flex_data, HYDRO) is not None for s in steps[2:])
+    assert all(_carry(s.flex_data, HYDRO) is not None for s in steps[1:])
+    assert all(_first_steps(s.flex_data, HYDRO) == [("period1", f"t{24 * k + 1:04d}")] for k, s in enumerate(steps))
     fan_rows = [_assert_one_start_or_carry(s, "nodeBalance_eq", 0.3, lambda _fd, _d: 1.0) for s in steps]
-    assert fan_rows[0] == 3       # roll 0: lower / mid / upper (realized is the realization solve's)
+    assert fan_rows == [1] * 7
 
 
 def test_rolling_blocks_forecast_takes_the_start_or_the_carry_once(tmp_path_factory):
-    """Same with bind_intraperiod_blocks: each forecast's block (the roll's part of the 168 h 1week timeblock)
-    has one nodeBalanceBlock_eq row with one non-zero state column (−su; the block's state is one value) and RHS
-    −(start energy + 400 · the block's hours): roll 0 −(1500 + 400·96) = −39 900."""
+    """Same with bind_intraperiod_blocks: the roll holds the 168 h 1week timeblock in part, so its blocks chain
+    forward: the jump's block (``period1``, 24 h) has the one start row, with one non-zero state column (−su; the
+    block's state is one value) and RHS −(start energy + 400 · the block's hours): roll 0 −(1500 + 400·24) =
+    −11 100; each forecast's block (72 h in roll 0) continues from it."""
     steps = _overlay_steps(tmp_path_factory, STOCH_JSON, "1_week_rolling_wind", "fsf_roll_blocks",
                            [["node", HYDRO, "storage_binding_method", "bind_intraperiod_blocks"],
                             ["node", HYDRO, "storage_state_start", 0.3]])
@@ -1487,9 +1490,10 @@ def test_rolling_blocks_forecast_takes_the_start_or_the_carry_once(tmp_path_fact
     def hours(fd, d):
         return float(utf8(fd.dt).filter(pl.col("d") == d).height)       # 1 h steps
 
-    assert hours(steps[0].flex_data, "period1_mid") == 96.0
+    assert hours(steps[0].flex_data, "period1") == 24.0
+    assert hours(steps[0].flex_data, "period1_mid") == 72.0
     for s in steps:
-        assert _assert_one_start_or_carry(s, "nodeBalanceBlock_eq", 0.3, hours) > 0
+        assert _assert_one_start_or_carry(s, "nodeBalanceBlock_eq", 0.3, hours) == 1
 
 
 def test_sequence_free_start_returns_at_the_model_end(tmp_path_factory):

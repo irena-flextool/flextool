@@ -69,9 +69,9 @@ def test_a_failed_basis_load_is_one_warning_per_solve(stochastic_db_url, tmp_pat
     monkeypatch.setattr(Problem, "basis_name_fingerprint", broken)
     records = _run(stochastic_db_url, tmp_path / "work", caplog, scenario=ROLLING)
     lines = _lines(records, "W-0550")
-    # One line per complete solve, although all 14 sub-solves failed.
-    assert lines == [f"Warning: warm-start basis not loaded for solve '{solve}'; solved from scratch [W-0550]"
-                     for solve in ("1week_rolling", "1week_rolling__realized_dispatch")], lines
+    # One line per complete solve, although all 7 sub-solves failed (since 4.7.0 each roll of the rolling
+    # within_solve solve realizes its own jump: one complete solve, no realization solve).
+    assert lines == ["Warning: warm-start basis not loaded for solve '1week_rolling'; solved from scratch [W-0550]"], lines
     assert "basis cache broken (test)" in caplog.text            # the error goes to the debug log
     assert run_warnings.tally()["W-0550"] == len(lines)
     assert not [c for c in ("W-0551", "W-0552", "W-0553") if _lines(records, c)]

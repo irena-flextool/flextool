@@ -1009,7 +1009,7 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
     ),
     WarningSpec(
         code="W-0588",
-        message="realization '{solve}' keeps nothing of '{parent}': a myopic dispatch of each window",
+        message="realization '{solve}' keeps nothing of '{parent}': its results do not depend on it",
         title="Realization solve that inherits nothing",
         topic=_SOLVES,
         severity=NOTE,
@@ -1023,9 +1023,12 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "decides no investments (no `invest_periods`, `realized_invest_periods` or "
             "`stochastic_invest_method`). Storage and the other states continue from the previous realization, "
             "not from the stochastic solve, and reserve is met again with the realized data. So the realized "
-            "results do not depend on the stochastic solve: they are a dispatch of each committed window with the "
-            "realized data and no look-ahead, and the forecasts only change the stochastic solve's own results. "
-            "The note is printed once per realization solve.\n\n"
+            "results do not depend on the stochastic solve, and its forecasts only change its own results. The "
+            "realization of a single solve dispatches its committed window with the realized data and no "
+            "look-ahead; the realization added to a rolling `separate_dispatch` solve dispatches each jump with "
+            "the realized data and then looks ahead with the forecasts made at the end of the jump (without the "
+            "look-ahead when the model has delayed units, note W-0594). The note is printed once per realization "
+            "solve.\n\n"
             "**How to fix:** nothing, if that is meant. For a commitment made in the stochastic solve that holds "
             "in the realization, give those units `startup_method` *integer_fix_in_uc* or *linear_fix_in_uc*. "
             "For a rolling solve that should keep nothing of a separate unit-commitment solve, use "

@@ -537,6 +537,25 @@ def test_nested_designation_raises(nesting: str) -> None:
         _spawn_realized_dispatch_siblings(cfg, _Reader(), logger=None)
 
 
+@pytest.mark.parametrize("nesting", ["parent", "child"])
+def test_nested_rolling_designation_raises_reworded(nesting: str) -> None:
+    """A rolling stochastic solve that contains solves, or is nested in another solve, gets the 4.7.0 text: its jumps
+    cannot be realized (design §2.6, rev 6 §6.4)."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+    from flextool.engine.solve._orchestration import _spawn_realized_dispatch_siblings
+    if nesting == "parent":
+        cfg = _config(contains_solves={"p": ["c"]}, solve_modes={"p": "rolling_window"})
+        match = (r"Solve 'p' is a rolling stochastic solve that contains other solves \(contains_solves\)\. "
+                 r"FlexTool 4\.7\.0 cannot yet realize the jumps")
+    else:
+        cfg = _config(model_solve={"m": ["top"]}, contains_solves={"top": ["p"]},
+                      solve_modes={"p": "rolling_window", "top": "single_solve"})
+        match = (r"Solve 'p' is a rolling stochastic solve nested inside another solve's contains_solves\. "
+                 r"FlexTool 4\.7\.0 cannot yet realize the jumps of a nested rolling stochastic solve")
+    with pytest.raises(FlexToolConfigError, match=match):
+        _spawn_realized_dispatch_siblings(cfg, _Reader(), logger=None)
+
+
 def test_configured_realization_of_a_solve_with_contained_solves_raises() -> None:
     """A stochastic solve that contains solves cannot be realized by the deterministic solve right after it: its
     contained solves would take its pins, and that solve would continue from the last of them."""
@@ -732,26 +751,6 @@ def _rolling_hedge(data: dict) -> None:
         ["solve", "stoch_2p_hedge", "stochastic_invest_method", enc("none", "str"), "roll"]]
 
 
-@pytest.mark.solver
-def test_rolling_fan_in_the_look_ahead_carries_the_committed_state(tmp_path_factory) -> None:
-    """A rolling fan only in the look-ahead needs no designation: roll 1 starts from roll 0's committed end state,
-    v_state of the pre-reveal period p2035 at t0003 (its last committed step) × the state unitsize, and every forecast of
-    roll 1's fan (opened at its first step) starts from that carry."""
-    tmp = tmp_path_factory.mktemp("label_rolling_lookahead")
-    steps, _ = _run(_variant(HEDGE, tmp, "rolling_hedge", _rolling_hedge), tmp, scenario="hedge_storage")
-    rolls = list(steps.values())
-    assert len(rolls) == 2 and not any(is_realization(k) for k in steps), list(steps)
-    first, second = rolls
-    v0 = utf8(first.solution.value("v_state")).filter(
-        (pl.col("n") == "resv") & (pl.col("d") == "p2035") & (pl.col("t") == "t0003"))
-    assert v0.height == 1
-    su = utf8(first.flex_data.p_state_unitsize.frame).filter(pl.col("n") == "resv")["value"][0]
-    carry = utf8(second.flex_data.p_roll_continue_state.frame).filter(pl.col("n") == "resv")["value"].to_list()
-    assert carry == [pytest.approx(float(v0["value"][0]) * su, abs=1e-6)]
-    starts = utf8(second.flex_data.nodeState_first_dt).filter(pl.col("n") == "resv")
-    assert set(starts["d"].to_list()) == {"p2040_high", "p2040_low"}
-
-
 def _rolling_hedge_online(data: dict) -> None:
     """:func:`_rolling_hedge` with unit commitment on ``base`` (startup_method linear, min_load 0.3)."""
     _rolling_hedge(data)
@@ -759,40 +758,8 @@ def _rolling_hedge_online(data: dict) -> None:
                                  ["unit", "base", "min_load", [base64.b64encode(b"0.3").decode(), "float"], "roll"]]
 
 
-@pytest.mark.solver
-def test_rolling_fan_in_the_look_ahead_leaves_units_online_untied(tmp_path_factory) -> None:
-    """Units online are tied only where committed.  Roll 0 commits t0001-t0003 of the pre-reveal period p2035 and
-    has the fan (p2040 = t0004) only in its look-ahead: no step of the fan is committed, so its forecasts commit
-    units freely there (no non_anticipativity_online row).  Roll 1 commits t0004-t0006 inside the fan: units online
-    are tied on those 3 steps, reference forecast ``p2040_high`` to the one other forecast ``p2040_low``, for the
-    one online unit ``base``: 3 rows."""
-    from tests.engine._unit_db import build, cstr_over
-    tmp = tmp_path_factory.mktemp("label_rolling_lookahead_online")
-    steps, _ = _run(_variant(HEDGE, tmp, "rolling_hedge_online", _rolling_hedge_online), tmp,
-                    scenario="hedge_storage")
-    rolls = list(steps.values())
-    assert len(rolls) == 2 and not any(is_realization(k) for k in steps), list(steps)
-    first, second = (cstr_over(build(r.flex_data), "non_anticipativity_online_linear") for r in rolls)
-    assert first is None
-    assert second is not None
-    assert sorted(second.select("p", "d", "b", "t").iter_rows()) == [
-        ("base", "p2040_high", "p2040_low", t) for t in ("t0004", "t0005", "t0006")]
-
-
 def _stochastics_variant(tmp: Path, name: str, mutate) -> Path:
     return _variant(STOCHASTICS, tmp, name, mutate)
-
-
-@pytest.mark.solver
-def test_committed_window_in_forecasts_only_fan_with_storage_raises(tmp_path_factory) -> None:
-    """``1_week_rolling_wind`` with every branch a forecast: each roll commits its jump inside the fan, the next
-    roll continues from it and the storage state is decided per forecast there, so the run stops before the first
-    roll's LP and names the storage state."""
-    from flextool.engine.input._solve_state import FlexToolConfigError
-    tmp = tmp_path_factory.mktemp("label_committed_storage")
-    fixture = _stochastics_variant(tmp, "forecasts_only_rolling", lambda d: _all_forecasts(d, "1week_rolling"))
-    with pytest.raises(FlexToolConfigError, match=r"1week_rolling_roll_0.*storage state"):
-        _run(fixture, tmp, scenario="1_week_rolling_wind")
 
 
 def _append_alternative(data: dict, scenario: str, alt: str, entities: list, values: list) -> None:
@@ -843,23 +810,6 @@ def _forecasts_only_without_storage(extra: tuple):
     return mutate
 
 
-@pytest.mark.solver
-@pytest.mark.parametrize(("family", "extra"), [("CO2 period cap", _CO2_PERIOD_CAP),
-                                               ("annual commodity ladder", _ANNUAL_LADDER)])
-def test_committed_window_in_forecasts_only_fan_with_period_carry_raises(tmp_path_factory, family: str,
-                                                                         extra: tuple) -> None:
-    """A CO2 period cap and a finite annual ladder tier continue from the period's realized emissions /
-    purchases.  With every branch a forecast and no storage, each roll still commits its jump inside the fan and
-    the next roll continues from it, but those emissions / purchases are decided per forecast there and no solve
-    realizes them: the run stops before the first roll's LP and names the family."""
-    from flextool.engine.input._solve_state import FlexToolConfigError
-    tmp = tmp_path_factory.mktemp("label_committed_period_carry")
-    fixture = _stochastics_variant(tmp, "forecasts_only_no_storage", _forecasts_only_without_storage(extra))
-    with pytest.raises(FlexToolConfigError, match=rf"1week_rolling_roll_0.*{family}") as raised:
-        _run(fixture, tmp, scenario="1_week_rolling_wind")
-    assert "storage state" not in str(raised.value)
-
-
 def _period_carry_flex_data(cap_period: str) -> SimpleNamespace:
     """A FlexData stand-in with one fan (label ``p1``, forecasts ``p1_a`` / ``p1_b``), a finite annual ladder
     tier and a CO2 period cap, both on *cap_period*; every other family absent."""
@@ -907,36 +857,6 @@ def _rolling_hedge_with_period_carry(data: dict) -> None:
          ["group", "co2g", "co2_max_period", _period_map({"p2035": 1.0e6, "p2040": 1.0e6})]])
 
 
-@pytest.mark.solver
-def test_rolling_fan_in_the_look_ahead_with_period_carry_solves(tmp_path_factory) -> None:
-    """A fan only in the look-ahead commits nothing inside it: roll 0 commits t0001-t0003 of the pre-reveal
-    period p2035, so an annual ladder tier and a CO2 period cap need no realization solve.  The run solves, and
-    the carries roll 1 continues from (simulated hours, CO2 tonnes, ladder purchases) are keyed by the committed
-    period p2035 only, the simulated hours being its 3 committed one-hour steps."""
-    tmp = tmp_path_factory.mktemp("label_rolling_lookahead_period_carry")
-    steps, _ = _run(_variant(HEDGE, tmp, "rolling_hedge_period_carry", _rolling_hedge_with_period_carry), tmp,
-                    scenario="hedge_storage")
-    rolls = list(steps.values())
-    assert len(rolls) == 2 and not any(is_realization(k) for k in steps), list(steps)
-    first, second = rolls
-    assert second.flex_data.group_d_co2_capped is not None and second.flex_data.cndi_ladder_ann is not None
-    handoff = first.handoff
-    hours = handoff.cum_sim_hours
-    assert dict(zip(hours["period"].cast(pl.Utf8), hours["p_ladder_cum_sim_hours"])) == {
-        "p2035": pytest.approx(3.0)}
-    for name in ("cumulative_co2", "cumulative_commodity"):
-        carrier = getattr(handoff, name)
-        assert carrier is not None and carrier.height > 0, name
-        period_col = "period" if "period" in carrier.columns else "d"
-        assert set(utf8(carrier)[period_col].to_list()) == {"p2035"}, carrier
-    co2 = second.flex_data.p_co2_cum_realized_tonnes.frame
-    assert set(utf8(co2).select("g", "d").iter_rows()) == {("co2g", "p2035")}, co2
-    # the carried tonnes are the carried fuel purchases × co2_content 0.5, and both are non-zero
-    mwh = float(handoff.cumulative_commodity["p_ladder_cum_realized_mwh"].sum())
-    assert mwh > 0.0
-    assert float(co2["value"][0]) == pytest.approx(0.5 * mwh, rel=1e-9)
-
-
 def _rolling_online_only(data: dict) -> None:
     """``stoch_t0_commit`` as a rolling solve over a forecasts-only fan with unit commitment only: no designation,
     no ``separate_dispatch``, no investment; horizon 2 h, jump 1 h, so every roll commits its first step inside the
@@ -967,29 +887,6 @@ def _rolling_online_only(data: dict) -> None:
                                  ["solve", "stoch_rd", "rolling_solve_jump", enc(1.0, "float"), "init"]]
 
 
-@pytest.mark.solver
-def test_committed_window_in_forecasts_only_fan_online_only_solves(tmp_path_factory) -> None:
-    """A committed window inside a forecasts-only fan with only non-anticipativity-tied families (online): the
-    run needs no realization solve, every roll solves, and the next roll's online carry is the first sorted
-    forecast's commitment at the committed step, applied to every forecast at the next roll's first step.  Hand value: demand 100 MW, wind 80 (high) or 0 (low) MW, the
-    peaker 2 × 50 MW with min_load 0.5; ``low`` needs both units, the tie gives ``high`` the same commitment, and
-    a slack costs 10 000 per MWh against the 10 per MWh peaker, so v_online = 2 at each roll's first step."""
-    tmp = tmp_path_factory.mktemp("label_committed_online")
-    steps, _ = _run(_variant(T0_FIXTURE, tmp, "rolling_online_only", _rolling_online_only), tmp)
-    rolls = list(steps.values())
-    assert len(rolls) == 3 and not any(is_realization(k) for k in steps), list(steps)
-    for prev, nxt in zip(rolls, rolls[1:]):
-        online = utf8(prev.solution.value("v_online_linear")).filter(pl.col("p") == "peaker")
-        first = online.filter(pl.col("d") == FIRST_FORECAST).sort("t")
-        assert float(first["value"][0]) == pytest.approx(2.0, abs=1e-6)
-        assert set(online.filter(pl.col("t") == first["t"][0])["value"].round(6).to_list()) == {2.0}
-        carry = utf8(nxt.flex_data.p_roll_continue_online.frame).filter(pl.col("p") == "peaker")
-        assert carry["value"].to_list() == [pytest.approx(float(first["value"][0]), abs=1e-6)]
-        # ... and it reaches every forecast of the next roll's fan at its first step.
-        takes = utf8(nxt.flex_data.dt_online_carry)
-        assert set(takes["d"].to_list()) == {"p2035_high", "p2035_low"} and takes["t"].n_unique() == 1, takes
-
-
 def _rolling_online_only_min_uptime(data: dict) -> None:
     """:func:`_rolling_online_only` with the peaker's minimum up and down time 2 h (1 h steps) and the demand
     50 MW at t0001, 100 MW after (so a unit starts at t0002, after the solve's free first step)."""
@@ -1000,42 +897,6 @@ def _rolling_online_only_min_uptime(data: dict) -> None:
         if r[1] == "elec" and r[2] == "inflow":
             demand = {"index_type": "str", "data": [["t0001", -50.0], ["t0002", -100.0], ["t0003", -100.0]]}
             r[3] = [base64.b64encode(json.dumps(demand).encode()).decode(), "map"]
-
-
-@pytest.mark.solver
-def test_committed_window_in_forecasts_only_fan_carries_the_min_uptime(tmp_path_factory) -> None:
-    """The forecasts-only rolling fan with a 2 h minimum up time: each roll commits its first step inside the fan
-    (the tied forecast ``p2035_high`` holds its values), so the next roll's forecasts both start at the step after
-    it and owe the start-ups of that committed step — on 1 h steps the committed step is 1 h before the next roll's
-    first step (1 < 2), the step before it 2 h (not < 2).  So carry = v_startup of ``p2035_high`` at the committed
-    step, at the first step of every forecast of the next roll, nothing later.  The history used to be stored under
-    the period label, where no forecast's look-back reached it.
-    Hand derivation (2 units of 50 MW, min_load 0.5, start-up 50 per unit, 10 €/MWh, branches 0.5 each; wind 100 MW
-    at CF 0.8 / 0.0): roll 0 commits t0001 (50 MW): ``low`` needs 1 unit (2 would floor ``high``'s peaker at 50 MW
-    instead of 25, +125, to save ``low``'s later start-up, 25), and t0001 is a free start: no start-up there, so
-    nothing is carried into roll 1.  Roll 1 commits t0002 (100 MW): ``low`` needs both units, tied: a start-up of 1
-    from the carried 1, carried into the first step t0003 of both forecasts of roll 2."""
-    tmp = tmp_path_factory.mktemp("label_committed_min_uptime")
-    steps, _ = _run(_variant(T0_FIXTURE, tmp, "rolling_online_only_min_uptime", _rolling_online_only_min_uptime),
-                    tmp)
-    rolls = list(steps.values())
-    assert len(rolls) == 3 and all(r.solution.optimal for r in rolls)
-    carried = 0
-    for prev, nxt in zip(rolls, rolls[1:]):
-        committed = prev.handoff.roll_end_step["step"][0]
-        su = utf8(prev.solution.value("v_startup_linear")).filter(
-            (pl.col("p") == "peaker") & (pl.col("d") == FIRST_FORECAST) & (pl.col("t") == committed))
-        expect = float(su["value"][0])
-        first = utf8(nxt.flex_data.dt)["t"].sort()[0]
-        uc = nxt.flex_data.uptime_carry
-        got = {} if uc is None else {(d, t): v for _p, d, t, v in utf8(uc).rows()}
-        want = {(d, first): expect for d in ("p2035_high", "p2035_low")} if abs(expect) > 1e-9 else {}
-        assert got.keys() == want.keys(), (got, want)
-        for key, v in want.items():
-            assert got[key] == pytest.approx(v, abs=1e-9)
-        carried += len(want)
-        assert expect == pytest.approx(0.0 if committed == "t0001" else 1.0, abs=1e-9), (committed, expect)
-    assert carried == 2, "the witness starts one unit at t0002, carried into both forecasts of roll 2"
 
 
 def _flowgroup_path(invest_method: str):
@@ -1064,15 +925,44 @@ def _rolling_online_only_free(data: dict) -> None:
                                       "array"], "init"])
 
 
+def _w3(solve: str) -> str:
+    return (f"Solve '{solve}' is a rolling stochastic solve with dispatch_realization_method within_solve, but its "
+            "stochastic_branches have no branch with realized: yes. Since FlexTool 4.7.0 such a solve dispatches "
+            "each jump with the data of the realized branch. Mark the branch that holds the realized data with "
+            "realized: yes.")
+
+
 @pytest.mark.solver
-def test_committed_window_in_forecasts_only_fan_with_untied_online_raises(tmp_path_factory) -> None:
-    """The twin of the online-only case with ``shared_operation_periods = []``: units online are no longer tied on
-    the committed step, so they are decided per forecast there, no solve realizes them and the next roll would
-    continue from them: the run stops before the first roll's LP and names the units online."""
+@pytest.mark.parametrize(("fixture", "name", "mutate", "scenario", "solve"), [
+    ("hedge", "rolling_hedge", _rolling_hedge, "hedge_storage", "stoch_2p_hedge"),
+    ("hedge", "rolling_hedge_online", _rolling_hedge_online, "hedge_storage", "stoch_2p_hedge"),
+    ("hedge", "rolling_hedge_period_carry", _rolling_hedge_with_period_carry, "hedge_storage", "stoch_2p_hedge"),
+    ("stochastics", "forecasts_only_rolling", lambda d: _all_forecasts(d, "1week_rolling"), "1_week_rolling_wind",
+     "1week_rolling"),
+    ("stochastics", "forecasts_only_co2", _forecasts_only_without_storage(_CO2_PERIOD_CAP), "1_week_rolling_wind",
+     "1week_rolling"),
+    ("stochastics", "forecasts_only_ladder", _forecasts_only_without_storage(_ANNUAL_LADDER),
+     "1_week_rolling_wind", "1week_rolling"),
+    ("t0", "rolling_online_only", _rolling_online_only, "stoch_t0_commit", "stoch_rd"),
+    ("t0", "rolling_online_only_min_uptime", _rolling_online_only_min_uptime, "stoch_t0_commit", "stoch_rd"),
+    ("t0", "rolling_online_only_free", _rolling_online_only_free, "stoch_t0_commit", "stoch_rd"),
+], ids=["lookahead_fan_storage", "lookahead_fan_online", "lookahead_fan_period_carry", "committed_storage",
+        "committed_co2_period_cap", "committed_annual_ladder", "committed_online", "committed_min_uptime",
+        "committed_online_untied"])
+def test_rolling_forecasts_only_within_solve_stops(tmp_path_factory, fixture, name, mutate, scenario,
+                                                   solve) -> None:
+    """W3 (design rev 7.1 §2.6, §8.2 T-w4): since 4.7.0 a rolling stochastic ``within_solve`` solve realizes each
+    jump on its ``realized: yes`` branch, so a forecasts-only fan stops the run before any roll, whether the fan is
+    only in a roll's look-ahead (``hedge_storage`` rolling, fan at t0004) or each roll commits its jump inside it
+    (``1_week_rolling_wind`` with every branch a forecast; ``stoch_t0_commit`` rolling, horizon 2 / jump 1) and
+    whatever the committed families (storage, CO2 period cap, annual ladder, units online tied or not).  Before,
+    these ran a roll-start fan (and the committed-window checks stopped the ones that left a carry undecided)."""
     from flextool.engine.input._solve_state import FlexToolConfigError
-    tmp = tmp_path_factory.mktemp("label_committed_online_free")
-    with pytest.raises(FlexToolConfigError, match=r"stoch_rd_roll_0.*units online"):
-        _run(_variant(T0_FIXTURE, tmp, "rolling_online_only_free", _rolling_online_only_free), tmp)
+    tmp = tmp_path_factory.mktemp(f"w3_{name}")
+    base = {"hedge": HEDGE, "stochastics": STOCHASTICS, "t0": T0_FIXTURE}[fixture]
+    with pytest.raises(FlexToolConfigError) as err:
+        _run(_variant(base, tmp, name, mutate), tmp, scenario=scenario)
+    assert str(err.value) == _w3(solve)
 
 
 @pytest.mark.solver

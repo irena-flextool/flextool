@@ -1010,15 +1010,23 @@ class StochasticSolver:
                 # Later forecast cohorts in this solve's horizon (collected
                 # from the pre-stochastic list; checked after the loop).
                 order = list(active_time_list)
-                trig_index = order.index(trig_period)
-                trig_steps = [e.timestep for e in active_time_list[trig_period]]
-                trig_step_index = trig_steps.index(trig_step)
+                # A realization roll fans out at the end of its jump; the cohorts made inside its jump are read by
+                # no roll either, so its walk starts after the roll's first step (the start cohort of roll 0 is
+                # read by no roll of a rolling within_solve solve and is not reported).
+                walk_period = order[0] if planned is not None else trig_period
+                walk_step = active_time_list[walk_period][0].timestep if planned is not None else trig_step
+                trig_index = order.index(walk_period)
+                trig_steps = [e.timestep for e in active_time_list[walk_period]]
+                trig_step_index = trig_steps.index(walk_step)
                 complete = complete_solves[solve]
                 if complete not in cohort_rows:
                     rows_by_cohort: defaultdict[tuple[str, str], list] = (
                         defaultdict(list)
                     )
-                    for row in info:
+                    # Every authored cohort, also for a realization roll that reads only the forecasts made at the
+                    # end of its jump: a cohort no roll fans out at is still reported (each roll's tail start is
+                    # its fan point, so the cohorts the rolls read are not).
+                    for row in ((stochastic_branches.get(complete) or []) if planned is not None else info):
                         rows_by_cohort[(row[0], row[2])].append(row)
                     cohort_rows[complete] = dict(rows_by_cohort)
                     cohort_forecasts[complete] = dict()
@@ -1034,7 +1042,7 @@ class StochasticSolver:
                         cohort = (period_c, step_c)
                         if cohort not in rows_by_cohort_c:
                             continue
-                        if period_c == trig_period and idx_c <= trig_step_index:
+                        if period_c == walk_period and idx_c <= trig_step_index:
                             continue
                         forecasts = forecasts_by_cohort.get(cohort)
                         if forecasts is None:
@@ -1050,6 +1058,10 @@ class StochasticSolver:
                             forecasts_by_cohort[cohort] = forecasts
                         if forecasts:
                             candidates.append((period_c, step_c, forecasts))
+                            continue
+                        if planned is not None:
+                            # The jump reads the realized branch flattened over all its analysis times
+                            # (``RollTail.realized``): a realized row anywhere switches nothing.
                             continue
                         realized = realized_by_cohort.get(cohort)
                         if realized is None:

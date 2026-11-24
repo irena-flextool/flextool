@@ -197,11 +197,14 @@ def check_period_rows(b) -> None:
     lab = labels_with_steps(b.d)
     if not lab:
         return
-    invest = getattr(b.d, "period_invest", None)
-    if invest is not None and invest.height > 0:
-        # S9: a split realization roll is a roll, and rolls build no investment.
-        for p in sorted(set(invest["d"].cast(pl.Utf8).to_list()).intersection(lab)):
-            raise not_path_aware("period_invest", p, b.solve_name)
+    # S9: a split realization roll is a roll, and rolls build no investment variables.  The domains of those
+    # variables are read, not ``period_invest``: a rolling solve with authored invest_periods keeps them in
+    # ``period_invest`` but builds no variable (``pd_invest_set`` is None on a roll).
+    for field in ("pd_invest_set", "pd_divest_set", "nd_invest_set", "nd_divest_set"):
+        invest = getattr(b.d, field, None)
+        if invest is not None and invest.height > 0:
+            for p in sorted(set(invest["d"].cast(pl.Utf8).to_list()).intersection(lab)):
+                raise not_path_aware(field, p, b.solve_name)
     branches = {f for fs in lab.values() for f in fs}
     for name in b.m.cstr_names():
         over = b.m.cstrs_named(name)[0].over

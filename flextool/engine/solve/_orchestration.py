@@ -2125,8 +2125,7 @@ def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
         raise FlexToolConfigError(
             f"Solve '{base_name}' sets dispatch_realization_method='separate_dispatch', which runs a separate "
             f"dispatch solve of the realized branch, but its stochastic_branches have no branch with realized: "
-            f"yes. Mark the branch to realize with realized: yes, or set dispatch_realization_method to "
-            f"within_solve."
+            f"yes. Mark the branch to realize with realized: yes."
         )
 
 
@@ -2253,6 +2252,9 @@ def _spawn_realized_dispatch_siblings(
 
     from flextool.engine.solve import _realization, _realization_tail
 
+    def _is_rolling(solve: str) -> bool:
+        return (getattr(solve_cfg, "solve_modes", None) or {}).get(solve) == "rolling_window"
+
     # Spawn list: every separate_dispatch solve (authored), then every
     # designated solve (a ``realized: yes`` branch) without a configured realization solve.  Each
     # entry carries the reason the error messages below name.
@@ -2264,10 +2266,10 @@ def _spawn_realized_dispatch_siblings(
             # realization solve (SolveConfig.apply_deterministic_realization).
             continue
         roll_method = _realization_tail.realization_roll_method(solve_cfg, p)
-        if roll_method is not None and logger is not None:
-            # A solve with realization rolls (the gate the roll plans read): its realization solve is added as
-            # before, while the realization roll is not wired (``_run_model._roll_tail_plans``).
-            logger.debug("solve '%s' has realization rolls (dispatch_realization_method %s)", p, roll_method)
+        if roll_method == "within_solve":
+            # Each roll of a rolling within_solve solve is its own realization roll (``_realization_tail``): it
+            # realizes its jump and looks ahead after it, so no realization solve is added.
+            continue
         delayed = _realization_tail.delay_gated_units(solve_cfg, p)
         if delayed:
             run_warnings.note("W-0594", delayed, solve=p, per_run=True)
@@ -2319,6 +2321,13 @@ def _spawn_realized_dispatch_siblings(
         if solve_cfg.stochastic_invest_method_for(p) == "recourse":
             _realization.warn_recourse_designation(p)
             continue
+        if contains_solves.get(p) and _is_rolling(p):
+            raise FlexToolConfigError(
+                f"Solve '{p}' is a rolling stochastic solve that contains other solves (contains_solves). "
+                f"FlexTool 4.7.0 cannot yet realize the jumps of a rolling stochastic solve that contains other "
+                f"solves. Move the solves it contains out of its contains_solves, or remove its realized: yes "
+                f"branch."
+            )
         if contains_solves.get(p):
             raise FlexToolConfigError(
                 f"Solve '{p}' has a realized: yes designation in "
@@ -2332,6 +2341,12 @@ def _spawn_realized_dispatch_siblings(
     for c in sorted(contained):
         if (_realization.designation_reaches_committed_window(solve_cfg, c)
                 and solve_cfg.stochastic_invest_method_for(c) != "recourse"):
+            if _is_rolling(c):
+                raise FlexToolConfigError(
+                    f"Solve '{c}' is a rolling stochastic solve nested inside another solve's contains_solves. "
+                    f"FlexTool 4.7.0 cannot yet realize the jumps of a nested rolling stochastic solve. Make it a "
+                    f"top-level solve, or remove its realized: yes branch."
+                )
             raise FlexToolConfigError(
                 f"Solve '{c}' has a realized: yes designation in "
                 f"stochastic_branches whose fan reaches its committed window, "

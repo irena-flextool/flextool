@@ -450,10 +450,11 @@ def test_union_of_overlapping_solves_takes_each_step_from_the_last_solve(tmp_pat
 
 def test_stochastic_fan_solves_report_no_forecast_steps(tmp_path_factory) -> None:
     """``stochastics.json`` ``1_week_rolling_wind`` (rolling 96 h / jump 24 h over the 168 steps of period1, a
-    forecast fan in every roll with a ``realized`` designation): each fan roll realizes no step, its realization
-    solve ``1week_rolling__realized_dispatch_roll_k`` the steps 24k+1..24k+24.  A timeseries reserve of 10 MW on
-    demand_node (coal_plant and gas_plant providers): the fan rolls' report is empty (no forecast-branch period
-    such as period1_mid), and the union has the 168 steps of period1 once each, requirement 10."""
+    ``realized`` designation): since 4.7.0 each roll ``1week_rolling_roll_k`` realizes its jump, the steps
+    24k+1..24k+24 under period1, and looks ahead with the forecasts made at the jump end.  A timeseries reserve of
+    10 MW on demand_node (coal_plant and gas_plant providers): each roll's report has its 24 jump steps of period1
+    (no forecast-branch period such as period1_mid), and the union has the 168 steps of period1 once each,
+    requirement 10."""
     from flextool.engine import run_chain_from_db
 
     rel = "reserve__upDown__unit__node"
@@ -474,14 +475,17 @@ def test_stochastic_fan_solves_report_no_forecast_steps(tmp_path_factory) -> Non
     with contextlib.redirect_stdout(io.StringIO()):
         run_chain_from_db(url, scen, work_folder=work, keep_solutions=True)
     raw = work / "output_raw"
-    fan = sorted(raw.glob("reserve_group__1week_rolling_roll_*.parquet"))
-    assert len(fan) == 7
-    assert all(pl.read_parquet(p).height == 0 for p in fan)
+    rolls = sorted(raw.glob("reserve_group__1week_rolling_roll_*.parquet"))
+    assert len(rolls) == 7 and not list(raw.glob("reserve_group__*realized_dispatch*.parquet"))
+    for k, path in enumerate(rolls):
+        df = pl.read_parquet(path)
+        assert set(df["period"].cast(str)) == {"period1"}, path.name
+        assert sorted(df["time"].cast(str).unique()) == [f"t{24 * k + h:04d}" for h in range(1, 25)], path.name
     rep = _report({"work": work})
     assert rep.height == 168
     assert rep["period"].unique().to_list() == ["period1"]
     assert rep["time"].to_list() == [f"t{k:04d}" for k in range(1, 169)]
-    assert rep["solve"].to_list() == [f"1week_rolling__realized_dispatch_roll_{(k - 1) // 24}" for k in range(1, 169)]
+    assert rep["solve"].to_list() == [f"1week_rolling_roll_{(k - 1) // 24}" for k in range(1, 169)]
     assert rep["requirement"].to_list() == pytest.approx([10.0] * 168)
 
 

@@ -1,8 +1,6 @@
 """A split realization roll's LP, end to end (design rev 7.1 §2.2 S2/S3, §8.1 T-L1 / T-cw; design note G3 wraps).
 
-Each test forces the live plan through the seam and suppresses the realization solve the spawn still adds
-(``test_trunk_sites._live_plan``, owner decision D6), so every roll of a ``within_solve`` rolling solve is a
-realization roll R_k: the label ``p1`` dispatches the jump on the realized branch, the forecasts ``p1_<f>`` the
+The realization roll is wired, so every roll of a ``within_solve`` rolling solve is a realization roll R_k: the label ``p1`` dispatches the jump on the realized branch, the forecasts ``p1_<f>`` the
 rest of the horizon from the jump end on.  The period-cyclic placeholders at the first steps of ``p1`` and of
 each ``p1_<f>`` are null (``_step_relations.null_split_placeholders``), so the build passes G1-G4 and solves.
 bind_within_period and bind_intraperiod_blocks close per path (``test_seam_steps``).  A model with a delayed unit
@@ -385,7 +383,7 @@ def test_a_delay_keeps_todays_realization(tmp_path, monkeypatch, caplog):
     spec["entity_alternatives"].append(["node", ["fuel"], "init", True])
     spec["parameter_values"] += [*_node("fuel", "balance", pack(100.0, "float")),
                                  ["unit", "gen", "delay", pack(1.0, "float"), "init"]]
-    ts._live_plan(monkeypatch, suppress_spawn=False)
+    ts._live_plan(monkeypatch)
     live = _run_model._roll_tail_plans
     plans: list = []
 

@@ -9,6 +9,12 @@ t0049, t0073, t0097, t0121, t0145 — matching the seven ``stochastic_branches``
 reveal points).  Three equal-probability branches (``upper`` / ``lower`` /
 ``mid``) fan at every reveal alongside the ``realized`` anchor.
 
+**Since 4.7.0** (``dispatch_realization_method`` ``within_solve``, rolling) each
+roll realizes its 24-step jump once under ``period1`` on the ``realized``
+branch and looks ahead from the jump end with the forecasts made there, so no
+roll ties anything across forecasts and no realization solve is added; the
+history below describes the roll-start fans that 4.7.0 replaced.
+
 Why this test exists / what it protects
 ---------------------------------------
 This file was written BEFORE W1 as a coverage-first guard.  Before W1 the
@@ -154,246 +160,59 @@ def test_rolling_stochastic_solve_completes(rolling_result):
     }
 
 
-def test_rolling_na_frames_couple_branches_per_roll(rolling_result):
-    """PRIMARY structural signal: each roll carries the NA precondition.
+def test_rolling_rolls_tie_nothing_and_hold_their_jump(rolling_result):
+    """Since 4.7.0 each roll of the rolling ``within_solve`` solve realizes its jump under the period's own name:
+    ``period1`` holds the 24 jump steps t(24k+1)..t(24k+24) once, on the realized data, and the forecasts
+    ``period1_{lower,mid,upper}`` (``period_branch_full`` rows ``period1 -> period1_<f>``) hold only the steps after
+    it.  Nothing is decided per forecast over the jump, so nothing is tied: no ``non_anticipativity_*`` row (before:
+    the storage use and the first state of the jump, tied across the forecasts) and no ``dt_non_anticipativity``.
+    The last roll (t0145-t0168) is its jump only."""
+    from tests.engine._unit_db import build
 
-    The ``NA-1`` synthetic-path re-wire in ``_apply_db_overrides``
-    (replicating ``apply_branch_cluster``'s two frame assignments) must
-    populate, on every roll's ``flex_data``, both the ``period_branch_full``
-    (d, b) anchor→sibling map — with a non-empty ``d != b`` sub-cohort — and
-    the ``dt_non_anticipativity`` (d, t) tie set.  That is exactly the gate the
-    operational-NA families check in ``_non_anticipativity.add_dispatch_constraints`` before emitting
-    the ``non_anticipativity_*`` constraints.
-    """
     steps = _steps(rolling_result)
-    for name, s in steps.items():
+    assert len(steps) == EXPECTED_ROLLS
+    for k, (name, s) in enumerate(steps.items()):
         fd = s.flex_data
         assert fd is not None, f"roll {name!r} retained no flex_data"
-
-        pbf = fd.period_branch_full
-        assert pbf is not None and pbf.height > 0, (
-            f"roll {name!r}: empty period_branch_full"
-        )
-        assert fd.dt_non_anticipativity is not None, (
-            f"roll {name!r}: dt_non_anticipativity is None"
-        )
-        assert fd.dt_non_anticipativity.height > 0, (
-            f"roll {name!r}: empty dt_non_anticipativity"
-        )
-
-        # The d != b sub-cohort is the real anchor→sibling tie set the NA
-        # gate filters to.  Cast both axes to Utf8 before comparing — under
-        # Phase 4 activation ``d`` and ``b`` are different Enum vocabularies
-        # and polars refuses ``!=`` across them.
-        off_diag = pbf.with_columns(
-            pl.col("d").cast(pl.Utf8),
-            pl.col("b").cast(pl.Utf8),
-        ).filter(pl.col("d") != pl.col("b"))
-        assert off_diag.height > 0, (
-            f"roll {name!r}: period_branch_full has no d != b rows"
-        )
+        dt = fd.dt.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+        jump = [f"t{_JUMP * k + h:04d}" for h in range(1, _JUMP + 1)]
+        assert sorted(dt.filter(pl.col("d") == "period1")["t"].to_list()) == jump, name
+        assert not [n for n in build(fd).cstr_names() if n.startswith("non_anticipativity")], name
+        tails = dt.filter(pl.col("d") != "period1")
+        if k == EXPECTED_ROLLS - 1:
+            assert tails.height == 0, name
+            continue
+        assert fd.dt_non_anticipativity is None, name
+        assert set(tails["d"].to_list()) == {"period1_lower", "period1_mid", "period1_upper"}, name
+        assert tails["t"].min() == f"t{_JUMP * (k + 1) + 1:04d}", name
+        pbf = fd.period_branch_full.with_columns(pl.col("d").cast(pl.Utf8), pl.col("b").cast(pl.Utf8))
+        assert set(pbf.filter(pl.col("d") != pl.col("b")).rows()) == {
+            ("period1", f"period1_{f}") for f in ("lower", "mid", "upper")}, name
 
 
-def test_rolling_na_ties_storage_across_branches(rolling_result):
-    """Storage NA ties NET CHARGE across branches at the tied (d, t) cells.
-
-    This fixture authors NO unit commitment (no ``online_method`` /
-    ``startup_method`` in ``stochastics.json``), so ``v_online_integer`` never
-    exists — the variable NA actually ties here is ``v_state`` (storage params
-    ARE present).  The storage non-anticipativity family pins the per-(n, t)
-    NET CHARGE across siblings — the consecutive ``v_state`` delta
-    ``v_state[n, d, t] - v_state[n, d, t_prev]`` (``non_anticipativity_storage_use``) — NOT
-    absolute ``v_state``.  This test therefore witnesses the net charge: for
-    each FORECAST-period ``d`` in the cohort (``v_state``'s ``d`` axis carries
-    the realized trunk ``period1`` plus the three forecast copies
-    ``period1_{lower,mid,upper}``) and node ``n``, it sorts by tied timestep
-    ``t``, takes the consecutive ``v_state`` delta, and asserts that delta is
-    equal across the forecast copies at each matching ``(n, t)`` tied step.
-    Under the corrected (forecast-to-forecast) re-ground the trunk
-    ``period1`` is NO LONGER an NA hub — it floats freely — so it is EXCLUDED
-    from the cohort; the coupling witnessed is forecast↔forecast (the
-    forecasts tied to the reference forecast ``period1_lower``), never
-    realized↔forecast.
-
-    Two witnesses run here:
-
-    * **Net-charge** (diagnostic localization): the per-step ``v_state`` delta
-      is equal across the cohort ``d`` at each tied ``(n, t)``.  This stays in
-      place so a future regression reads as the fine "flows tied but states
-      offset" rather than the coarse "states not tied".
-    * **Absolute ``v_state``** (§B / §D.6, now DELIVERED): at each tied
-      ``(n, t)`` the spread of ABSOLUTE ``v_state`` across the branch cohort is
-      ≤ 1e-6 — the constant realized↔forecast offset (previously ~0.06) is
-      gone, closed by ``non_anticipativity_storage_state_first`` pinning the
-      absolute state at the first tied step and the net-charge ties
-      telescoping the rest of the contiguous jump.
-
-    The absolute assertion compares the branches to EACH OTHER (cross-branch
-    spread), NOT to the nominal 0.5 / ``roll_continue`` value: the hard
-    roll-to-roll carry-in (spec W8b) is not yet delivered, so in continuation
-    rolls the shared branch-point level is the SOFT carried value (~0.38), and
-    asserting against 0.5 would wrongly fail.
-
-    Branches legitimately DIVERGE at non-tied steps, so both equalities are
-    restricted to the tied timesteps carried by that roll's
-    ``fd.dt_non_anticipativity``.  The test also asserts that a positive number
-    of tied cells was actually checked for each witness so neither can be
-    silently vacuous.
-    """
+def test_rolling_storage_of_the_jump_is_one_path(rolling_result):
+    """The storage of the jump is decided once: ``hydro_reservoir``'s ``v_state`` has one row per jump step, on
+    ``period1`` (before 4.7.0: one per forecast, tied across them by the net-charge and first-state rows), and each
+    forecast's state starts after the jump, from the jump's last step (its first state change continues from
+    ``(period1, t(24k+24))``, the seam link ``dtttdt``)."""
     steps = _steps(rolling_result)
-    tol = 1e-6
     checked = 0
-    checked_abs = 0
-    checked_struct = 0
-    # Families that can fire for this storage-only fixture (no online /
-    # reserve authored).  constraint_dual raises for a name that never
-    # emitted a row, so each lookup is guarded.
-    na_families = (
-        "non_anticipativity_storage_use",
-        "non_anticipativity_storage_state_first",
-    )
-    for name, s in steps.items():
-        sol = s.solution
-        assert sol is not None, f"roll {name!r} retained no solution"
-
-        # ── Structural: the trunk period1 is NOT an NA hub or sibling ──
-        # Under the forecast-to-forecast re-ground every emitted NA row keys
-        # ``d`` on a reference FORECAST and ``b`` on another forecast; the
-        # realized trunk ``period1`` must appear in NO axis of any tied row.
-        # ``constraint_dual`` returns the over tuple packed into a single
-        # comma-joined ``key`` string (e.g.
-        # ``"hydro_reservoir,period1_lower,period1_mid,t0001"`` — n,d,b,t),
-        # so inspect the tokens of each key.
-        for fam in na_families:
-            try:
-                over = sol.constraint_dual(fam)
-            except Exception:
-                continue
-            if over.height == 0 or "key" not in over.columns:
-                continue
-            saw_forecast_period = False
-            for key in over["key"].to_list():
-                toks = [tok.strip() for tok in str(key).split(",")]
-                # The bare trunk token ``period1`` must never appear; only
-                # the forecast copies ``period1_<branch>`` are tied.
-                assert "period1" not in toks, (
-                    f"roll {name!r}: trunk period1 in {fam} key {key!r}")
-                if any(tok.startswith("period1_") for tok in toks):
-                    saw_forecast_period = True
-            assert saw_forecast_period, (
-                f"roll {name!r}: {fam} has no forecast-period token")
-            checked_struct += 1
-
-        if "v_state" not in sol._vars:
-            continue
-
-        fd = s.flex_data
-        assert fd is not None, f"roll {name!r} retained no flex_data"
-        dtna = fd.dt_non_anticipativity
-        if dtna is None or dtna.height == 0:
-            continue
-
-        vs = sol.value("v_state")
-        cols = vs.columns
-        ncol = _pick(cols, "n", "node")
-        tcol = _pick(cols, "t", "time")
-        dcol = _pick(cols, "d", "period")
-
-        # Restrict to the tied timesteps (the (d, t) tie set's ``t`` axis).
-        # ``v_state``'s ``d`` is the branch-period axis, so keeping every
-        # branch at the tied timesteps is what lets the cross-branch net
-        # charge be witnessed; cast every key to Utf8 so the join / grouping
-        # composes across the Enum vocabularies.
-        tied_t = (dtna.select(pl.col("t").cast(pl.Utf8).alias("__t"))
-                      .unique())
-        vs_tied = (vs.with_columns(
-                        pl.col(ncol).cast(pl.Utf8).alias("__n"),
-                        pl.col(dcol).cast(pl.Utf8).alias("__d"),
-                        pl.col(tcol).cast(pl.Utf8).alias("__t"),
-                   )
-                     .join(tied_t, on="__t", how="inner")
-                     # Forecast-to-forecast: under the re-ground the trunk
-                     # ``period1`` is no longer an NA hub (it floats), so it
-                     # is excluded from both cross-forecast equality cohorts.
-                     # The retained ``d`` are the forecast copies
-                     # ``period1_{lower,mid,upper}`` tied to the reference
-                     # forecast ``period1_lower``.
-                     .filter(pl.col("__d") != "period1"))
-        if vs_tied.height == 0:
-            continue
-
-        # Net charge = consecutive v_state delta within each (n, d), over the
-        # tied timesteps sorted by t.  The first tied step per (n, d) has no
-        # predecessor → null delta, dropped.
-        # NB: this takes the delta over consecutive TIED steps, which matches
-        # the constraint's true-predecessor net charge only while the tied set
-        # is contiguous in real time (it is here — each roll's jump is 24
-        # contiguous steps).  A future non-contiguous dt_non_anticipativity
-        # would need the delta taken over real predecessors instead.
-        deltas = (vs_tied
-                  .sort(["__n", "__d", "__t"])
-                  .with_columns(
-                      delta=(pl.col("value") - pl.col("value").shift(1))
-                            .over(["__n", "__d"]))
-                  .drop_nulls("delta"))
-
-        # Spread of net charge across the branch-period axis at each (n, t).
-        spread = (deltas
-                  .group_by(["__n", "__t"])
-                  .agg(
-                      n_branches=pl.col("delta").len(),
-                      dmax=pl.col("delta").max(),
-                      dmin=pl.col("delta").min(),
-                  )
-                  .filter(pl.col("n_branches") > 1))
-        for row in spread.iter_rows(named=True):
-            assert row["dmax"] - row["dmin"] <= tol + 1e-6 * max(
-                1.0, abs(row["dmax"]), abs(row["dmin"])
-            ), (
-                f"roll {name!r}: net-charge spread "
-                f"{row['dmax'] - row['dmin']} at (n={row['__n']}, "
-                f"t={row['__t']}) exceeds tol across branches"
-            )
+    for k, (name, s) in enumerate(list(steps.items())[:-1]):
+        vs = s.solution.value("v_state")
+        vs = vs.filter(pl.col("n").cast(pl.Utf8) == _STORAGE_NODE).select(
+            pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+        jump = vs.filter(pl.col("d") == "period1")
+        assert jump.height == _JUMP and jump["t"].n_unique() == _JUMP, name
+        last = f"t{_JUMP * (k + 1):04d}"
+        first = f"t{_JUMP * (k + 1) + 1:04d}"
+        link = s.flex_data.dtttdt.select(*(pl.col(c).cast(pl.Utf8) for c in ("d", "t", "d_previous",
+                                                                            "t_previous_within_solve")))
+        for f in ("lower", "mid", "upper"):
+            assert vs.filter(pl.col("d") == f"period1_{f}")["t"].min() == first, (name, f)
+            assert link.filter((pl.col("d") == f"period1_{f}") & (pl.col("t") == first)).rows() == [
+                (f"period1_{f}", first, "period1", last)], (name, f)
             checked += 1
-
-        # ── Absolute v_state witness (§B / §D.6) ──
-        # Spread of ABSOLUTE v_state across the branch cohort at each tied
-        # (n, t).  Delivered by non_anticipativity_storage_state_first +
-        # net-charge telescoping; must collapse to ~0 (offset gone).  Compare
-        # branches to EACH OTHER, never to 0.5 (the shared level is the soft
-        # carried value under the still-deferred hard carry-in, W8b).
-        abs_spread = (vs_tied
-                      .group_by(["__n", "__t"])
-                      .agg(
-                          n_branches=pl.col("value").len(),
-                          vmax=pl.col("value").max(),
-                          vmin=pl.col("value").min(),
-                      )
-                      .filter(pl.col("n_branches") > 1))
-        for row in abs_spread.iter_rows(named=True):
-            assert row["vmax"] - row["vmin"] <= tol + 1e-6 * max(
-                1.0, abs(row["vmax"]), abs(row["vmin"])
-            ), (
-                f"roll {name!r}: absolute v_state spread "
-                f"{row['vmax'] - row['vmin']} at (n={row['__n']}, "
-                f"t={row['__t']}) exceeds tol across branches — §D.6 "
-                f"branch-point continuity broken"
-            )
-            checked_abs += 1
-
-    assert checked > 0, (
-        "no tied (n, t) net-charge cells with >1 branch were checked — the "
-        "storage NA witness would be vacuous"
-    )
-    assert checked_abs > 0, (
-        "no tied (n, t) absolute-v_state cells with >1 branch were checked — "
-        "the §D.6 branch-point continuity witness would be vacuous"
-    )
-    assert checked_struct > 0, (
-        "no non_anticipativity_* family emitted rows to witness the "
-        "forecast-to-forecast hub (trunk period1 absent) — the structural "
-        "witness would be vacuous"
-    )
+    assert checked == 3 * (EXPECTED_ROLLS - 1)
 
 
 # rolling_solve_jump for this fixture (see module docstring).
@@ -404,69 +223,37 @@ _STORAGE_NODE = "hydro_reservoir"
 def test_rolling_handoff_carries_trunk_committed_jump_end_storage(rolling_result):
     """PRODUCER-LEVEL guard for the H1 rolling-storage handoff fix.
 
-    With the fixture's realized: yes designation each stochastic roll hands
-    its committed jump to the realization roll interleaved after it, so the
-    carry is produced by that realization roll (its state at the committed
-    jump-end) and consumed by the next stochastic roll; the stochastic roll
-    carries nothing.  The wrong-step / wrong-branch guards below still read
-    the stochastic roll's own window (its forecasts: the period label
-    ``period1`` has no dispatch of its own).
+    Since 4.7.0 each roll realizes its jump under the period ``period1`` itself, so it produces the carry: its
+    own ``v_state`` at the COMMITTED JUMP-END (``period1``, t(24k+24)) × the state unitsize, consumed by the next
+    roll as ``p_roll_continue_state``.  It must not carry a forecast branch's state at the discarded look-ahead
+    HORIZON-END: the ``roll_end_state`` producer (``flex_data.py``) reads the Provider anchor
+    ``solve_data/realized_dispatch`` (the realized jump only), not the forecast-expanded
+    ``flex_data.realized_dispatch``, whose lexically-last ``(d, t)`` is a forecast at the window horizon.
 
-    The roll-to-roll storage carry (``SolveHandoff.roll_end_state``, consumed
-    next roll as ``p_roll_continue_state``) must carry the realized TRUNK's
-    ``v_state`` at the COMMITTED JUMP-END, NOT the discarded look-ahead
-    HORIZON-END of a forecast branch.  The fix (``flex_data.py`` ``roll_end_state``
-    producer) sources the value from the Provider anchor
-    ``solve_data/realized_dispatch`` — trunk-only, committed jump-end — instead
-    of the forecast-EXPANDED in-memory ``flex_data.realized_dispatch`` (all
-    branch periods × the full look-ahead window), whose lexically-last ``(d,t)``
-    is a forecast branch at the window horizon.
+    Two independent defects are witnessed, so a future regression of EITHER surfaces here:
 
-    WHY this is a PRODUCER-level guard (no solve consumes the value today):
-    the carried number is operationally INERT at the solution level.  The soft
-    ``roll_continue`` balance term does not bind ``v_state[t_first]`` under any
-    wired ``storage_binding_method`` — the schema-default ``bind_forward_only``
-    drops the first-step state-change term and plain ``bind_within_period`` is
-    unwired — so the full solution is byte-identical whatever the carried value
-    is.  A solution-level witness is therefore impossible without the
-    owner-deprecated hard pin; this test guards the PRODUCED value directly.
-    (Cross-ref: scratchpad ``h1_design.md`` §3, ``handoff_carry_bug.md`` §2.)
+    * **wrong BRANCH** — the carry must come from ``period1``, not a forecast copy (HEAD once picked
+      ``period1_upper``);
+    * **wrong STEP** — the carry must be the committed jump-end step, not the discarded window-horizon step.
 
-    Two independent defects are witnessed, so a future regression of EITHER
-    surfaces here:
-
-    * **wrong BRANCH** — the carry must come from the realized trunk
-      ``period1``, not a forecast copy (HEAD picked ``period1_upper``);
-    * **wrong STEP** — the carry must be the committed jump-end step, not the
-      discarded window-horizon step (HEAD picked the horizon).
-
-    Discriminator on ``1_week_rolling_wind``: on continuation rolls 0-5 the
-    committed jump-end ``v_state`` (the realization roll's) differs from the
-    forecast window-horizon value (``period1_upper`` @ window end, a non-zero
-    end-reference pin), so a carry of the horizon value is caught.  Roll 6 is
-    the LAST roll: its jump reaches the window horizon (jump-end == horizon),
-    so the carry legitimately coincides with the horizon value and no next
-    roll consumes it — it is excluded from the strict guard.
+    Discriminator on ``1_week_rolling_wind``: on continuation rolls 0-5 the committed jump-end ``v_state``
+    differs from the forecast window-horizon value (``period1_upper`` @ window end, a non-zero end-reference
+    pin), so a carry of the horizon value is caught.  Roll 6 is the LAST roll: its jump reaches the window
+    horizon and no next roll consumes the carry; it is excluded from the strict guard.
     """
     steps = _steps(rolling_result)
     names = list(steps)
     assert len(names) == EXPECTED_ROLLS, (
         f"expected {EXPECTED_ROLLS} rolls, got {len(names)}")
-    everything = rolling_result["steps"]
+    assert list(rolling_result["steps"]) == names, "a realization solve was added"
 
     for i, name in enumerate(names):
         s = steps[name]
-        # The fixture's realized: yes designation hands each stochastic roll's
-        # committed jump to its realization roll, which therefore produces the
-        # carry: the stochastic roll carries nothing itself.
-        assert s.handoff.roll_end_state is None, f"roll {name!r} carries its own storage"
-        rname = name.replace("1week_rolling_roll_", "1week_rolling__realized_dispatch_roll_")
-        assert rname in everything, f"no realization roll {rname!r}"
-        res = everything[rname].handoff.roll_end_state
-        assert res is not None, f"roll {rname!r}: roll_end_state unexpectedly None"
+        res = s.handoff.roll_end_state
+        assert res is not None, f"roll {name!r}: roll_end_state unexpectedly None"
         carried = {r["node"]: r["value"] for r in res.iter_rows(named=True)}
         assert _STORAGE_NODE in carried, (
-            f"roll {rname!r}: {_STORAGE_NODE} absent from roll_end_state "
+            f"roll {name!r}: {_STORAGE_NODE} absent from roll_end_state "
             f"(got {sorted(carried)})")
         carried_v = carried[_STORAGE_NODE]
 
@@ -488,51 +275,34 @@ def test_rolling_handoff_carries_trunk_committed_jump_end_storage(rolling_result
             r = _sub.filter((pl.col("__d") == d) & (pl.col("__t") == t))
             return r["value"][0] if r.height else None
 
-        # The period label period1 has no dispatch: no v_state rows of its own.
-        assert _vstate("period1", jump_end_t) is None, f"roll {name!r}: the period label has v_state"
+        # The period period1 dispatches the jump: its v_state at the jump end is the carry.
+        jump_end_v = _vstate("period1", jump_end_t)
+        assert jump_end_v is not None, f"roll {name!r}: no v_state at (period1, {jump_end_t})"
+        su = (s.flex_data.p_state_unitsize.frame
+              .filter(pl.col("n").cast(pl.Utf8) == _STORAGE_NODE)["value"][0])
+        assert carried_v == pytest.approx(float(jump_end_v) * su, abs=1e-6), (name, carried_v)
+        if i == EXPECTED_ROLLS - 1:
+            assert jump_end_t == horizon_t, (
+                f"last roll {name!r}: jump-end {jump_end_t} != horizon "
+                f"{horizon_t} (the roll should realize to the window end)")
+            continue
         fcast_horizon = _vstate("period1_upper", horizon_t)
         assert fcast_horizon is not None, (
             f"roll {name!r}: no forecast v_state at horizon "
             f"(period1_upper, {horizon_t})")
 
-        if i < EXPECTED_ROLLS - 1:
-            # Continuation roll: the committed jump-end strictly precedes the
-            # discarded look-ahead window horizon (the step distinction is real).
-            assert jump_end_t < horizon_t, (
-                f"roll {name!r}: jump-end {jump_end_t} not before horizon "
-                f"{horizon_t}")
-
-            # (1) VALUE — the carry equals the realized TRUNK's committed
-            #     jump-end v_state (0.0 here).  FAILS ON HEAD, which carries the
-            #     forecast horizon-end (0.5 × unitsize = 2500).
-            # The carry is the realization roll's own state at the committed
-            # jump-end (its window is the jump) × the state unitsize, and the
-            # next stochastic roll starts from it.
-            rstep = everything[rname]
-            rv = rstep.solution.value("v_state")
-            rsub = rv.filter((pl.col(_pick(rv.columns, "n", "node")).cast(pl.Utf8) == _STORAGE_NODE)
-                             & (pl.col(_pick(rv.columns, "t", "time")).cast(pl.Utf8) == jump_end_t))
-            assert rsub.height == 1, f"{rname!r}: no {_STORAGE_NODE} v_state at {jump_end_t}"
-            su = (rstep.flex_data.p_state_unitsize.frame
-                  .filter(pl.col("n").cast(pl.Utf8) == _STORAGE_NODE)["value"][0])
-            assert carried_v == pytest.approx(float(rsub["value"][0]) * su, abs=1e-6), (rname, carried_v)
-            nxt = steps[names[i + 1]].flex_data.p_roll_continue_state
-            assert nxt is not None, f"roll {names[i + 1]!r}: no p_roll_continue_state"
-            nxt_v = (nxt.frame.filter(pl.col("n").cast(pl.Utf8) == _STORAGE_NODE)["value"].to_list())
-            assert nxt_v == [pytest.approx(carried_v, abs=1e-9)], (names[i + 1], nxt_v, carried_v)
-
-            # (2) BRANCH and STEP identity — the FORECAST branch horizon value
-            #     is non-zero and differs from the carried jump-end, so the carry
-            #     is NOT a forecast-branch horizon value (guards the wrong-BRANCH
-            #     and the wrong-STEP defects).  This is the exact (period1_upper,
-            #     horizon) cell HEAD lexically selects.
-            assert abs(fcast_horizon - carried_v) > 1e-6, (
-                f"roll {name!r}: carried {carried_v} coincides with the forecast "
-                f"horizon-end {fcast_horizon} — HEAD's wrong source")
-        else:
-            # Last roll: its jump reaches the window horizon (jump-end ==
-            # horizon), so the carry coincides with the horizon value and no
-            # next roll consumes it.  Sanity only: geometry holds.
-            assert jump_end_t == horizon_t, (
-                f"last roll {name!r}: jump-end {jump_end_t} != horizon "
-                f"{horizon_t} (trunk should realize to the window end)")
+        # Continuation roll: the committed jump-end strictly precedes the discarded look-ahead window horizon
+        # (the step distinction is real).
+        assert jump_end_t < horizon_t, (
+            f"roll {name!r}: jump-end {jump_end_t} not before horizon {horizon_t}")
+        # (1) VALUE — the next roll starts from the carried jump-end state.
+        nxt = steps[names[i + 1]].flex_data.p_roll_continue_state
+        assert nxt is not None, f"roll {names[i + 1]!r}: no p_roll_continue_state"
+        nxt_v = (nxt.frame.filter(pl.col("n").cast(pl.Utf8) == _STORAGE_NODE)["value"].to_list())
+        assert nxt_v == [pytest.approx(carried_v, abs=1e-9)], (names[i + 1], nxt_v, carried_v)
+        # (2) BRANCH and STEP identity — the FORECAST branch horizon value differs from the carried jump-end, so
+        #     the carry is NOT a forecast-branch horizon value (guards the wrong-BRANCH and the wrong-STEP defects).
+        #     This is the exact (period1_upper, horizon) cell HEAD once lexically selected.
+        assert abs(fcast_horizon * su - carried_v) > 1e-6, (
+            f"roll {name!r}: carried {carried_v} coincides with the forecast "
+            f"horizon-end {fcast_horizon} — HEAD's wrong source")

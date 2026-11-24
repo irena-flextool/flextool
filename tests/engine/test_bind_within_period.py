@@ -211,16 +211,26 @@ def test_stochastic_forecast_periods_cycle_on_themselves(tmp_path_factory):
 
 def test_rolling_roll_wraps_to_its_last_step_in_the_period(tmp_path_factory):
     """In a roll the period's steps are the roll's: its first step wraps to the roll's last step of the period
-    (how_to/solve_sequences.md: use whole periods as rolling_jump)."""
+    (how_to/solve_sequences.md: use whole periods as rolling_jump).  Since 4.7.0 a roll of the rolling
+    ``within_solve`` solve is one path per forecast: ``period1`` (the jump, t(24k+1)..t(24k+24)) and each forecast
+    ``period1_<f>`` after it.  Each forecast's first step lags to the jump's last step (``period1``, t(24k+24)); the
+    jump's first step wraps to the roll's last step of the path, held by the last forecast in name order
+    (``period1_upper``; the other paths' ends are tied to it).  The last roll (its jump only) wraps to its own last
+    step."""
     steps = _run(tmp_path_factory, "stochastics.json",
                  _overlay("1_week_rolling_wind", [["node", "hydro_reservoir", "storage_binding_method", WP]]))
-    assert len(steps) > 1
-    for step in steps.values():
+    assert list(steps) == [f"1week_rolling_roll_{k}" for k in range(7)]
+    for k, step in enumerate(steps.values()):
         fd = step.flex_data
         lag = fd.dtttdt_within_period.with_columns([pl.col(c).cast(pl.Utf8) for c in fd.dtttdt_within_period.columns])
         dt = fd.dt.with_columns(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
-        for d in lag["d"].unique().to_list():
-            steps_d = dt.filter(pl.col("d") == d)["t"].sort().to_list()
-            first = lag.filter((pl.col("d") == d) & (pl.col("t") == steps_d[0]))
-            assert first["t_previous_within_period"].to_list() == [steps_d[-1]], (d, steps_d[0])
+        last_of = {d: dt.filter(pl.col("d") == d)["t"].sort().to_list()[-1] for d in dt["d"].unique().to_list()}
+        first_jump, last_jump = f"t{24 * k + 1:04d}", f"t{24 * k + 24:04d}"
+        wrap = ("period1_upper", last_of["period1_upper"]) if k < 6 else ("period1", last_jump)
+        cols = ("d_previous", "t_previous_within_period")
+        assert lag.filter((pl.col("d") == "period1") & (pl.col("t") == first_jump)).select(cols).rows() == [wrap], k
+        for f in ("lower", "mid", "upper") if k < 6 else ():
+            d = f"period1_{f}"
+            first = lag.filter((pl.col("d") == d) & (pl.col("t") == f"t{24 * k + 25:04d}")).select(cols).rows()
+            assert first == [("period1", last_jump)], (k, d)
 

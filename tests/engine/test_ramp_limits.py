@@ -723,11 +723,12 @@ def test_ramp_output_at_roll_boundary_on_direct_input(tmp_path_factory) -> None:
 
 
 def test_stochastic_roll_branches_take_the_carry(tmp_path_factory) -> None:
-    """Rolling stochastic 1-week fixture (horizon 96, jump 24, forecast branches over the whole window): on
-    every continuation roll the realized period and each forecast branch ramp from the previous roll's realized
-    flow, at their common first step, without a predecessor column, and the carried flow is on the RHS:
-    ub = 0.12 + f̂.  A lower-limit profile keeps coal at ≥ 0.1 of capacity everywhere, so f̂ > 0 (the realized
-    trunk of this fixture otherwise dispatches nothing; review F7)."""
+    """Rolling stochastic 1-week fixture (horizon 96, jump 24): since 4.7.0 each roll realizes its jump under
+    ``period1`` and the forecast branches hold the steps after it.  On every continuation roll ``period1`` ramps
+    from the previous roll's realized flow at its first step t(24k+1), without a predecessor column, and the
+    carried flow is on the RHS: ub = 0.12 + f̂; each forecast's first step t(24k+25) ramps from ``period1``'s last
+    jump step instead (a predecessor column, no carry).  A lower-limit profile keeps coal at ≥ 0.1 of capacity
+    everywhere, so f̂ > 0 (review F7)."""
     from tests.engine._unit_db import FLEXTOOL_ROOT
 
     url, scen = make_db(tmp_path_factory, alt="ramp_stroll",
@@ -739,27 +740,31 @@ def test_stochastic_roll_branches_take_the_carry(tmp_path_factory) -> None:
                                   ["unit__node__profile", [PLANT, "demand_node", "coal_floor"], None]],
                         base_chain=["init", "base", "system", "1week_rolling"],
                         fixture_json=FLEXTOOL_ROOT / "tests" / "fixtures" / "stochastics.json")
-    # The stochastic rolls (the fixture's realization rolls interleave with them and realize the anchor only).
-    steps = list(without_realization(run(tmp_path_factory, url, scen)).values())
-    assert len(steps) > 2
+    all_steps = run(tmp_path_factory, url, scen)
+    assert list(all_steps) == list(without_realization(all_steps))  # no realization solve
+    steps = list(all_steps.values())
+    assert len(steps) == 7
     assert steps[0].flex_data.dt_ramp_carry is None
     arc = f"{PLANT},coal_market,demand_node,"
-    for s in steps[1:]:
+    for k, s in enumerate(steps[1:], start=1):
         fd = s.flex_data
         firsts = (utf8(fd.dt).with_row_index("i").group_by("d", maintain_order=True)
                   .agg(pl.col("t").sort_by("i").first()))
         carry = utf8(fd.dt_ramp_carry)
-        assert sorted(carry.select("d", "t").rows()) == sorted(firsts.rows())
+        assert carry.select("d", "t").rows() == [("period1", f"t{24 * k + 1:04d}")], k
         assert carry["d_previous"].unique().to_list() == ["period1"]
+        tails = [(d, t) for d, t in firsts.rows() if d != "period1"]
+        assert all(t == f"t{24 * k + 25:04d}" for _d, t in tails) and len(tails) == (3 if k < 6 else 0), k
+        link = set(utf8(fd.dt_ramp_link).select("d", "t", "d_previous", "t_previous").rows())
+        assert all((d, t, "period1", f"t{24 * k + 24:04d}") in link for d, t in tails), k
         f_hat = utf8(fd.p_roll_continue_flow.frame)["value"].unique().to_list()
         assert len(f_hat) == 1 and f_hat[0] >= 0.1 - 1e-9
         pb = build(fd)
         rows = row_terms(pb, "ramp_sink_up_constraint", arc)
         bounds = row_bounds(pb, "ramp_sink_up_constraint", arc)
-        for d, t in firsts.rows():
-            row = f"ramp_sink_up_constraint[{arc}{d},{t}]"
-            assert set(rows[row]) <= {f"v_flow[{arc}{d},{t}]"}
-            assert bounds[row][1] == pytest.approx(0.12 + f_hat[0], abs=1e-9)
+        row = f"ramp_sink_up_constraint[{arc}period1,t{24 * k + 1:04d}]"
+        assert set(rows[row]) <= {f"v_flow[{arc}period1,t{24 * k + 1:04d}]"}
+        assert bounds[row][1] == pytest.approx(0.12 + f_hat[0], abs=1e-9)
 
 
 def test_ramp_output_at_roll_boundary_without_ramp_limits(tmp_path_factory) -> None:

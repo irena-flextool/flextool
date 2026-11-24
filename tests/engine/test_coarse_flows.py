@@ -779,22 +779,25 @@ def _tie_reach(fd) -> list[tuple[str, str, str]]:
 
 @pytest.mark.parametrize("step", [24.0, 48.0])
 def test_stochastic_tie_stays_within_the_committed_steps(tmp_path_factory, step) -> None:
-    """Rolling stochastic dispatch (96-h horizon, 24-h jump): each roll ties the forecasts over its 24 committed
-    hours only.  With 24-h coarse steps a committed day is one coarse step: upper_turbine is coarse and its tied
-    columns hold only committed hours.  With 48-h steps the first coarse step of a roll holds 24 committed and 24
-    uncommitted hours, and one flow per coarse step would tie the uncommitted ones too: upper_turbine keeps the
-    solve's step in those rolls, so no tie row holds an uncommitted hour."""
+    """Rolling stochastic ``within_solve`` dispatch (96-h horizon, 24-h jump).  Since 4.7.0 each roll realizes its
+    24-h jump under the period's own name on the realized branch and the forecasts hold only the hours after it, so
+    nothing is tied across the forecasts (no non-anticipativity row; before: the storage use of the committed
+    hours) and no coarse step can hold tied and untied hours: upper_turbine is coarse in every roll with either
+    step (before: with 48-h steps a roll's first coarse step held 24 committed and 24 uncommitted hours, so it
+    kept the solve's step there).  Coarse steps are cut where the period name changes: the jump's first coarse step
+    starts at the roll's first hour t(24k+1), each forecast's at the jump end t(24k+25)."""
     steps = without_realization(_stoch(tmp_path_factory, f"cf_sto_roll{int(step)}", "1_week_rolling_wind", step))
     rolls = [s.flex_data for s in steps.values() if _forecasts(s.flex_data)]
-    assert len(rolls) >= 5
-    for fd in rolls:
-        assert row_terms(build(fd), "non_anticipativity_storage_use")
-        assert _tie_reach(fd) == []
-    coarse_in = ["upper_turbine" in _coarse_procs(fd) for fd in rolls]
-    if step == 24.0:
-        assert all(coarse_in)
-    else:
-        assert not coarse_in[0] and not all(coarse_in)
+    assert len(rolls) == 6  # rolls 0-5; roll 6 (t0145-t0168) is its jump only
+    for k, fd in enumerate(rolls):
+        pb = build(fd)
+        assert not [n for n in pb.cstr_names() if n.startswith("non_anticipativity")], k
+        assert "upper_turbine" in _coarse_procs(fd)
+        firsts = utf8(fd.process_coarse_step).filter(pl.col("p") == "upper_turbine").group_by("d").agg(
+            pl.col("b_first").min())
+        firsts = dict(firsts.iter_rows())
+        assert firsts.pop("period1") == f"t{24 * k + 1:04d}"
+        assert set(firsts.values()) == {f"t{24 * k + 25:04d}"}, (k, firsts)
 
 
 def test_benders_regions_keep_cross_region_flows_fine(tmp_path_factory, monkeypatch) -> None:

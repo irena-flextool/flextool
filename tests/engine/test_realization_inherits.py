@@ -2,8 +2,8 @@
 with ``startup_method`` ``linear_fix_in_uc`` or ``integer_fix_in_uc``, and the investments.
 
 ``linear_fix_in_uc`` / ``integer_fix_in_uc``: each realization roll pins the units online over its jump to the
-stochastic roll's reference forecast (``online_fix_eq_linear`` / ``online_fix_eq_integer``); the steps after the
-jump are not in the realization.  ``linear`` / ``integer``: no pin; the realization decides the units online again
+stochastic roll's reference forecast (``online_fix_eq_linear`` / ``online_fix_eq_integer``); since 4.7.0 the
+realization roll also looks ahead after the jump with the forecasts made at its end, where nothing is pinned.  ``linear`` / ``integer``: no pin; the realization decides the units online again
 with the realized data, their minimum up and down times and the previous realization's history.  When a realization
 solve keeps nothing (no ``_fix_in_uc`` unit online, no investments), note W-0588 says so, once.
 
@@ -88,16 +88,18 @@ def _kind(startup: str) -> str:
 @pytest.mark.parametrize("startup", ["linear", "integer"])
 def test_plain_units_online_are_decided_again_in_the_realization(runs, startup) -> None:
     """``linear`` / ``integer``: every realization roll has no units-online pin (no p_fix_online, no online_fix_eq
-    row) but its own minimum up time rows, all six solves are optimal, and W-0588 is given once (entityless):
-    nothing is pinned and the stochastic solve has no investments."""
+    row) but its own minimum up time rows (2 units × its 48 steps: the 24 of the jump and the 24 of the forecast
+    ``mid`` after it; the last roll, t0049-t0072, is its jump only: 2 × 24), all six solves are optimal, and W-0588
+    is given once (entityless): nothing is pinned and the stochastic solve has no investments."""
     steps, got, _ = runs(startup)
     kind = _kind(startup)
     assert list(steps) == ROLLS and all(s.solution.optimal for s in steps.values())
-    for _, real in _pairs(steps):
+    pairs = _pairs(steps)
+    for k, (_, real) in enumerate(pairs):
         assert real.flex_data.p_fix_online is None
         pb = build(real.flex_data)
         assert not row_terms(pb, "online_fix_eq_linear") and not row_terms(pb, "online_fix_eq_integer")
-        assert len(row_terms(pb, f"minimum_uptime_{kind}")) == 48        # 2 units × 24 steps of the jump
+        assert len(row_terms(pb, f"minimum_uptime_{kind}")) == (48 if k == len(pairs) - 1 else 96), k
     assert got.entityless("W-0588") and len(got.lines("W-0588")) == 1
     assert "'1week_rolling__realized_dispatch'" in got.lines("W-0588")[0] and "'1week_rolling'" in got.lines(
         "W-0588")[0]

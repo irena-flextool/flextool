@@ -325,8 +325,11 @@ def test_separate_dispatch_without_realized_branch_raises(rows):
         {"m": ["my_solve"]}, {"my_solve": "separate_dispatch"},
         solve_modes={"my_solve": "single_solve"}, stochastic_branches={"my_solve": rows},
     )
-    with pytest.raises(FlexToolConfigError, match="my_solve.*realized: yes"):
+    with pytest.raises(FlexToolConfigError, match="my_solve.*realized: yes") as err:
         _dispatch_realization_raw_guard(sc, "my_solve")
+    # D5 (4.7.0): within_solve is no way out (a rolling within_solve solve needs a realized: yes branch too).
+    assert str(err.value).endswith("Mark the branch to realize with realized: yes.")
+    assert "within_solve" not in str(err.value)
     state = dataclasses.make_dataclass("S", ["solve"])(solve=sc)
     with pytest.raises(FlexToolConfigError, match="my_solve"):
         _validate_model_solve(state)

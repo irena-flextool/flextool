@@ -1,7 +1,7 @@
 """The realization-roll plan (``solve._realization_tail``): the gate, ``roll_tail_plan``, the rows each roll reads,
 the plan errors and G2b.
 
-The plan is not wired yet (``_run_model._roll_tail_plans`` returns ``{}``), so these tests call the builder directly.
+Most tests call the builder directly; the seam tests stop a real run at ``_run_model._roll_tail_plans``.
 Every expected value is derived by hand from the roll windows below (comment at each test): a roll realizes its
 jump ``[s_k, s_{k+1})`` and looks ahead from ``s_{k+1}``, the first step of its horizon after the jump, with the
 forecasts made there (weight > 0, not realized, in database order).  The jump reads the one realized branch
@@ -368,7 +368,11 @@ def _seam_input(tmp_path, monkeypatch, fixture: str, scenario: str):
     work.mkdir()
     with pytest.raises(_Stop):
         run_chain_from_db(url, scenario, work_folder=work, warm=False)
-    assert default(seen["cfg"], seen["rolls"], seen["timelines"]) == {}  # not wired
+    # The seam is wired: the plan of each gated solve's rolls on its timeline.
+    wired: dict = {}
+    for solve, windows in seen["rolls"].items():
+        wired.update(rt.roll_tail_plan(seen["cfg"], windows, seen["timelines"][solve]))
+    assert wired and default(seen["cfg"], seen["rolls"], seen["timelines"]) == wired
     return seen["cfg"], seen["rolls"], seen["timelines"]
 
 

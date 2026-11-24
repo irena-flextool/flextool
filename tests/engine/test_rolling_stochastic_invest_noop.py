@@ -247,16 +247,23 @@ def test_rolling_invest_all_rolls_optimal(rolling_invest_result):
 def test_rolling_invest_w3_guards_inert(rolling_invest_result):
     """(2) W3 per-roll stochastic guards are CORRECT and inert.
 
-    Each roll's ``flex_data`` is genuinely stochastic and carries non-empty
-    synthetic branch tokens, yet the whole run raised no ``FlexToolConfigError``
-    — the W3 activation neither misfires nor crashes under investment intent.
+    Each roll with a look-ahead after its jump (rolls 0-5) has a genuinely
+    stochastic ``flex_data`` with non-empty synthetic branch tokens, yet the
+    whole run raised no ``FlexToolConfigError`` — the W3 activation neither
+    misfires nor crashes under investment intent.  The last roll (t0145-t0168)
+    is its jump only: since 4.7.0 it is dispatched on the realized branch with
+    no forecasts (a realization roll without a tail).
     """
     # No FlexToolConfigError was raised by the run.
     assert rolling_invest_result["error"] is None, rolling_invest_result["error"]
     steps = _steps(rolling_invest_result)
-    for name, s in steps.items():
+    assert len(steps) == EXPECTED_ROLLS
+    for k, (name, s) in enumerate(steps.items()):
         fd = s.flex_data
         assert fd is not None, f"roll {name!r} retained no flex_data"
+        if k == EXPECTED_ROLLS - 1:
+            assert is_genuinely_stochastic(fd) is False, name
+            continue
         assert is_genuinely_stochastic(fd) is True, (
             f"roll {name!r}: is_genuinely_stochastic should be True"
         )

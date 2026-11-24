@@ -396,7 +396,8 @@ def test_period_time_2d_maps_equal_time_maps_in_stochastic_rolling(tmp_path_fact
     for name in rolls:
         d2, d1 = as_2d[name].flex_data, as_1d[name].flex_data
         periods = set(_canon(d2.p_slope).filter(pl.col("p") == "coal_plant")["d"].to_list())
-        assert periods - {PERIOD}, (name, periods)  # branch periods present: inheritance tier exercised
+        # branch periods present (inheritance tier exercised), except in the last roll, its jump only since 4.7.0
+        assert bool(periods - {PERIOD}) == (name != rolls[-1]), (name, periods)
         for field in ("p_slope", "p_section"):
             c2 = _canon(getattr(d2, field)).filter(pl.col("p") == "coal_plant")
             c1 = _canon(getattr(d1, field)).filter(pl.col("p") == "coal_plant")
@@ -752,7 +753,7 @@ def test_node_period_time_2d_maps_equal_time_maps_in_stochastic_rolling(tmp_path
     for name in rolls:
         step = as_2d[name]
         branch_periods = set(_frame(step.flex_data.dt)["d"].to_list()) - {PERIOD}
-        assert branch_periods, name
+        assert bool(branch_periods) == (name != rolls[-1]), name  # the last roll is its jump only (4.7.0)
         for field in ("p_node_availability", "p_state_self_discharge"):
             cells = _node_cells(getattr(step.flex_data, field), step.flex_data.dt).filter(
                 pl.col("n") == "hydro_reservoir")
@@ -980,7 +981,8 @@ def test_silent_x_profile_period_map_in_stochastic_rolling(tmp_path_factory) -> 
         cells = _profile_cells_all(step, "wind")
         assert set(cells["value"]) == {0.35}, name
         if name in rolls:
-            assert set(cells["d"]) - {PERIOD}, name  # branch periods present
+            # branch periods present, except in the last roll, its jump only since 4.7.0
+            assert bool(set(cells["d"]) - {PERIOD}) == (name != rolls[-1]), name
         twin = constant[name]
         assert _canon(step.flex_data.p_profile_value).equals(_canon(twin.flex_data.p_profile_value)), name
         assert step.solution.obj == pytest.approx(twin.solution.obj, rel=1e-9), name

@@ -428,6 +428,15 @@ def _top(tmp_path_factory, alt: str, scenario: str, step: float) -> dict:
     return run(tmp_path_factory, url, scen)
 
 
+def _uc_tied(values: list) -> list:
+    """*values* as a rolling ``separate_dispatch`` solve with top_turbine ``linear_fix_in_uc``: since 4.7.0 the first
+    solve of each roll ties across the forecasts only the units online of ``_fix_in_uc`` units, over the roll's jump
+    (a rolling ``within_solve`` roll ties nothing: it realizes its jump under the period's own name)."""
+    return [v for v in values if not (v[1] == "top_turbine" and v[2] == "startup_method")] + [
+        ["unit", "top_turbine", "startup_method", _s("linear_fix_in_uc")],
+        ["solve", "1week_rolling", "dispatch_realization_method", _s("separate_dispatch")]]
+
+
 def _online_tie_reach(fd) -> list[tuple[str, str, str]]:
     """``(column, d, t)``: each units-online column of a non_anticipativity_online_linear row with a fine step it
     holds that is not tied (a coarse column holds every fine step of its coarse step)."""
@@ -448,13 +457,16 @@ def _online_tie_reach(fd) -> list[tuple[str, str, str]]:
 
 @pytest.mark.parametrize("step", [24.0, 48.0])
 def test_stochastic_online_tie_stays_within_the_committed_steps(tmp_path_factory, step) -> None:
-    """Rolling stochastic dispatch (96-h horizon, 24-h jump): each roll ties the units online of every online
-    process between the forecasts over its 24 committed hours.  With 24-h coarse steps a committed day is one
-    coarse step: top_turbine is coarse in every roll, tied by one row per forecast pair at the day's first hour,
-    and every forecast cuts the tied hours into the same coarse steps as its reference forecast.  With 48-h steps a
-    roll's first coarse step holds 24 committed and 24 uncommitted hours: top_turbine keeps the solve's step there
-    (no tie row holds an uncommitted hour)."""
-    steps = without_realization(_top(tmp_path_factory, f"co_sto_roll{int(step)}", "1_week_rolling_wind", step))
+    """Rolling stochastic ``separate_dispatch`` dispatch (96-h horizon, 24-h jump; :func:`_uc_tied`): the first
+    solve of each roll ties the units online of top_turbine (``linear_fix_in_uc``) between the forecasts over its 24
+    committed hours.  With 24-h coarse steps a committed day is one coarse step: top_turbine is coarse in every
+    roll, tied by one row per forecast pair at the day's first hour, and every forecast cuts the tied hours into the
+    same coarse steps as its reference forecast.  With 48-h steps a roll's first coarse step holds 24 committed and
+    24 uncommitted hours: top_turbine keeps the solve's step there (no tie row holds an uncommitted hour); the last
+    roll is 24 h long, so its coarse steps end with the horizon."""
+    url, scen = make_db(tmp_path_factory, alt=f"co_sto_roll{int(step)}", values=_uc_tied(_top_values(step)),
+                        base_chain=_chain(STOCH, "1_week_rolling_wind"), entities=_TOP_ENTITIES, fixture_json=STOCH)
+    steps = without_realization(run(tmp_path_factory, url, scen))
     rolls = [s.flex_data for s in steps.values() if _forecasts(s.flex_data)]
     assert len(rolls) >= 5
     coarse_in = []
@@ -713,11 +725,12 @@ def _top_ramp(speed: float) -> list:
 
 
 def test_stochastic_coarse_unit_with_ramps(tmp_path_factory) -> None:
-    """Rolling stochastic dispatch with 24-h coarse steps and a ramp limit on top_turbine (min_load 0.2, speed
-    1e-4 / min: SU = 0.2 + ½·0.144 = 0.272 < 1, a start-up / shut-down reduction): top_turbine is coarse in every
-    roll, tied once per committed day per forecast pair, with its capacity reduction once per coarse step of every
-    forecast (maxFlow_online_linear_coarse) and no hourly online capacity row."""
-    url, scen = make_db(tmp_path_factory, alt="co_sto_ramp", values=_top_values(24.0) + _top_ramp(1e-4),
+    """Rolling stochastic ``separate_dispatch`` dispatch (:func:`_uc_tied`) with 24-h coarse steps and a ramp limit
+    on top_turbine (min_load 0.2, speed 1e-4 / min: SU = 0.2 + ½·0.144 = 0.272 < 1, a start-up / shut-down
+    reduction): in the first solve of every roll top_turbine is coarse, tied once per committed day per forecast
+    pair, with its capacity reduction once per coarse step of every forecast (maxFlow_online_linear_coarse) and no
+    hourly online capacity row."""
+    url, scen = make_db(tmp_path_factory, alt="co_sto_ramp", values=_uc_tied(_top_values(24.0) + _top_ramp(1e-4)),
                         base_chain=_chain(STOCH, "1_week_rolling_wind"), entities=_TOP_ENTITIES, fixture_json=STOCH)
     steps = without_realization(run(tmp_path_factory, url, scen))
     rolls = [s.flex_data for s in steps.values() if _forecasts(s.flex_data)]
@@ -995,50 +1008,24 @@ def _top_reserve() -> tuple[list, list]:
     return [["group", "upper_res", None], ["group__node", ["upper_res", "upper"], None]] + ents, vals
 
 
-def _reserve_tie_reach(fd) -> list[tuple[str, str, str]]:
-    """``(column, d, t)``: each reserve column of a non_anticipativity_reserve row with a fine step it holds that is
-    not tied."""
-    tie = utf8(fd.dt_non_anticipativity)
-    tied = {(f, t) for a, fs in _forecasts(fd).items() for f in fs
-            for t in tie.filter(pl.col("d") == a)["t"].to_list()}
-    held: dict[tuple[str, str, str], list[str]] = {}
-    if fd.process_coarse_step is not None:
-        for p, d, b, t in utf8(fd.process_coarse_step).select("p", "d", "b_first", "t").iter_rows():
-            held.setdefault((p, d, b), []).append(t)
-    out = []
-    for terms in row_terms(build(fd), "non_anticipativity_reserve").values():
-        for col in terms:
-            k = _keys(col)
-            p, d, t = k[0], k[-2], k[-1]
-            out += [(col, d, s) for s in held.get((p, d, t), [t]) if (d, s) not in tied]
-    return out
-
-
 @pytest.mark.parametrize("step", [24.0, 48.0])
 def test_stochastic_reserve_tie_stays_within_the_committed_steps(tmp_path_factory, step) -> None:
-    """Rolling stochastic dispatch (96-h horizon, 24-h jump) with top_turbine holding reserve: each roll ties the
-    reserve between the forecasts over its 24 committed hours.  24-h coarse steps: top_turbine is coarse in every
-    roll, tied by one row per forecast pair at the day's first hour.  48-h steps: a roll's first coarse step holds
-    committed and uncommitted hours, so top_turbine keeps the solve's step there; no tie row holds an uncommitted
-    hour."""
+    """Rolling stochastic ``within_solve`` dispatch (96-h horizon, 24-h jump) with top_turbine holding reserve.
+    Since 4.7.0 a roll realizes its jump under the period's own name and the forecasts hold only the hours after it,
+    and the first solve of a ``separate_dispatch`` roll ties only units online: no rolling solve ties reserve (no
+    non-anticipativity row at all here; before: the reserve of the 24 committed hours).  So no coarse step holds
+    tied and untied hours, and top_turbine is coarse in every roll with 24-h and with 48-h steps (before: with 48-h
+    steps a roll's first coarse step held committed and uncommitted hours, so it kept the solve's step there)."""
     ents, vals = _top_reserve()
     url, scen = make_db(tmp_path_factory, alt=f"co_sto_res{int(step)}", values=_top_values(step) + vals,
                         base_chain=_chain(STOCH, "1_week_rolling_wind"), entities=_TOP_ENTITIES + ents,
                         fixture_json=STOCH)
     steps = without_realization(run(tmp_path_factory, url, scen))
     rolls = [s.flex_data for s in steps.values() if _forecasts(s.flex_data)]
-    assert len(rolls) >= 5
-    coarse_in = []
+    assert len(rolls) == 6  # rolls 0-5; roll 6 (t0145-t0168) is its jump only
     for fd in rolls:
-        assert _reserve_tie_reach(fd) == []
-        coarse_in.append("top_turbine" in _coarse_procs(fd))
-    if step == 24.0:
-        assert all(coarse_in)
-        for fd in rolls:
-            rows = [r for r in row_terms(build(fd), "non_anticipativity_reserve") if "top_turbine" in r]
-            assert len(rows) == sum(len(fs) - 1 for fs in _forecasts(fd).values()), rows
-    else:
-        assert not coarse_in[0] and not all(coarse_in)
+        assert not [n for n in build(fd).cstr_names() if n.startswith("non_anticipativity")]
+        assert "top_turbine" in _coarse_procs(fd)
 
 
 def test_reserve_outputs_equal_tied_fine_model(tmp_path_factory, monkeypatch) -> None:

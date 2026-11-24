@@ -113,10 +113,12 @@ _RP_METHOD_DOWNGRADE: dict[str, str] = {
 
 def _roll_tail_plans(solve_cfg, rolls: dict, timelines: dict) -> dict:
     """``{sub-solve: RollTail}``: the realization-roll plans of the run (``_realization_tail.roll_tail_plan`` of
-    each gated solve's rolls *rolls* on its timeline *timelines*, :func:`_solve_timelines`).  Not wired yet: returns
-    ``{}``, so every reader takes the complete solve's ``stochastic_branches`` rows as before.  Tests replace it to
-    run a realization roll end to end."""
-    return {}
+    each gated solve's rolls *rolls* on its timeline *timelines*, :func:`_solve_timelines`).  A sub-solve without a
+    plan reads its complete solve's ``stochastic_branches`` rows."""
+    plans: dict = {}
+    for solve, windows in rolls.items():
+        plans.update(_realization_tail.roll_tail_plan(solve_cfg, windows, timelines[solve]))
+    return plans
 
 
 def _solve_timelines(state, solves, complete_solve: dict, active_time_lists: dict,
@@ -1606,6 +1608,10 @@ def native_run_model(state, solver) -> int:
         for _sib_base, _par_base in list(_rdp.items()):
             _sib_rolls = _by_base.get(_sib_base)
             _par_rolls = _by_base.get(_par_base)
+            # A realization roll (``_realization_tail``) keeps the UC roll's whole horizon: it realizes the jump and
+            # looks ahead after it with the forecasts made at the jump end.
+            _rolls_ahead = (
+                _realization_tail.realization_roll_method(state.solve, _sib_base) == "separate_dispatch")
             if _sib_rolls and _par_rolls:
                 for _idx, _uc in _par_rolls.items():
                     _dp = _sib_rolls.get(_idx)
@@ -1623,7 +1629,7 @@ def native_run_model(state, solver) -> int:
                         # point); copy it as the active window.  The fix_online
                         # pin and the disp→disp realized carry already align on
                         # the jump.
-                        if _dp in realized_time_lists:
+                        if _dp in realized_time_lists and not _rolls_ahead:
                             active_time_lists[_dp] = copy.deepcopy(
                                 realized_time_lists[_dp])
         if _uc_to_disp:
@@ -1715,7 +1721,7 @@ def native_run_model(state, solver) -> int:
 
     # ------------------------------------------------------------------
     # 2.9 Realization-roll plans (``_realization_tail``): per roll of a gated solve, from the authored rows (never
-    # changed), before the expansion reads them.  The seam returns {} until the realization roll is wired.
+    # changed), before the expansion reads them.
     # ------------------------------------------------------------------
     _tail_rolls = _realization_tail.realization_rolls(
         state.solve, all_solves, complete_solve, active_time_lists, realized_time_lists)

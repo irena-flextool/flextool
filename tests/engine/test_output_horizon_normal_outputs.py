@@ -78,11 +78,11 @@ def _window(k: int) -> set[tuple[str, str]]:
 # * ``stoch_2p`` / ``stoch_2p_inv``: the fan opens in the first period, so no step is realized (forecasts only, no
 #   realization solve); the realized periods are the period labels ``p2035`` / ``p2040`` (no dispatch).
 # * ``1week_rolling``: rolling_solve_horizon 96, rolling_solve_jump 24, one period ``period1`` of 168 steps and a
-#   ``realized`` forecast designated at every jump start, so each roll ``k`` is a fan solve that realizes nothing
-#   plus a realization solve ``1week_rolling__realized_dispatch_roll_k`` that realizes steps 24k+1 .. 24k+24.
+#   ``realized`` forecast designated at every jump start; since 4.7.0 each roll ``k`` realizes its jump, steps
+#   24k+1 .. 24k+24, under ``period1`` and looks ahead with the forecasts made at the jump end (no realization solve).
 _FAN = {"periods": {"p2035", "p2040"}, "windows": {}}
 _ROLL = {"periods": {"period1"},
-         "windows": {f"1week_rolling__realized_dispatch_roll_{k}": _window(k) for k in range(7)}}
+         "windows": {f"1week_rolling_roll_{k}": _window(k) for k in range(7)}}
 REALIZED = {"stoch": _FAN, "stoch_horizon": _FAN, "recourse": _FAN, "recourse_horizon": _FAN,
             "rolling": _ROLL, "rolling_horizon": _ROLL}
 

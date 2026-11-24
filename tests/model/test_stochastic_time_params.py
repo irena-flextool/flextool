@@ -375,14 +375,18 @@ def _rolls(steps: dict) -> list:
 
 @pytest.mark.parametrize("labelled", [True, False], ids=["labelled", "silent"])
 def test_rolling_stochastic_time_params(tmp_path_factory, labelled: bool) -> None:
-    """Every roll solves; the rank-3 entity carries its branch values on the roll's branch periods; the second
-    entity keeps its period × time map on every (d, t) of every roll."""
-    for step in _rolls(_rolling(tmp_path_factory, labelled)):
+    """Every roll solves; the rank-3 entity carries its branch values on the roll's branch periods and, on the jump
+    (the period ``period1``, realized since 4.7.0), the ``realized`` branch's value; the second entity keeps its
+    period × time map on every (d, t) of every roll.  The last roll is its jump only (no branch period)."""
+    for k, step in enumerate(_rolls(_rolling(tmp_path_factory, labelled))):
         periods = {d for d, _t in _dt(step)} - {ANCHOR}
-        assert periods
+        assert bool(periods) == (k < 6), (k, periods)
         for field, (keys, ent, other, mult, base, *_rest) in ROLL_FIELDS.items():
             cells = _cells(step, field, keys)
             _assert_branch_values(cells, ent, mult, periods=periods)
+            jump = [v for (*key, d, _t), v in cells.items() if tuple(key) == ent and d == ANCHOR]
+            assert len(jump) == 24 and all(v == pytest.approx(BR["realized"] * mult, rel=1e-12) for v in jump), (
+                field, k)
             assert any(k[:len(keys)] == ent for k in cells), field
             for d, t in _dt(step):
                 assert cells[(*other, d, t)] == pytest.approx(_pt_value(base, t), rel=1e-12), (field, d, t)
@@ -526,13 +530,13 @@ def test_rank3_in_deterministic_solve_raises_no_realized_branch(tmp_path_factory
 
 
 def test_rank3_dispatch_sibling_uses_realized_branch(tmp_path_factory) -> None:
-    """A rolling + ``separate_dispatch`` solve's auto-spawned realized-dispatch sibling has no
-    ``stochastic_branches`` / branch-anchor pairs of its own (it is deterministic -- ``v_online`` is pinned
-    from its UC parent), but its parent's realized branch is projected onto it
-    (``_run_model.project_realized_branch_time_branch_rows``).  A rank-3 availability authored on
-    ``coal_plant`` must resolve to the REALIZED branch's own value on the sibling (owner decision #82(4):
-    a realized branch projected from elsewhere still counts; only the TRUE no-realized-branch-anywhere case
-    (above) raises), not the class default (1.0) and not a raise."""
+    """A rolling + ``separate_dispatch`` solve's auto-spawned realization solve has no ``stochastic_branches`` of
+    its own; since 4.7.0 each of its rolls realizes the jump with its parent's realized branch (read from the roll's
+    plan) and looks ahead with the forecasts made at the end of the jump.  A rank-3 availability authored on
+    ``coal_plant`` resolves to the REALIZED branch's own value (0.73) on the jump ``period1`` (owner decision
+    #82(4): a realized branch from elsewhere still counts; only the TRUE no-realized-branch-anywhere case (above)
+    raises), not the class default (1.0) and not a raise, and to each forecast's own value on its look-ahead
+    period: upper 0.81, lower 0.62, mid 0.95 (the last roll, its jump only, has none)."""
     from flextool.engine import run_chain_from_db
 
     at = {f"t{s:04d}": [f"t{i:04d}" for i in range(s, 73)] for s in (1, 25, 49)}
@@ -546,10 +550,14 @@ def test_rank3_dispatch_sibling_uses_realized_branch(tmp_path_factory) -> None:
                               keep_solutions=True, warm=False)
     dispatch = [s for name, s in steps.items() if "realized_dispatch" in name]
     assert dispatch, list(steps)
-    for step in dispatch:
-        coal = {k: v for k, v in _cells(step, "p_process_availability", ["p"]).items() if k[0] == "coal_plant"}
+    want = {"period1": 0.73, "period1_upper": 0.81, "period1_lower": 0.62, "period1_mid": 0.95}
+    assert len(dispatch) == 3
+    for k, step in enumerate(dispatch):
+        coal = {key: v for key, v in _cells(step, "p_process_availability", ["p"]).items() if key[0] == "coal_plant"}
         assert coal, "coal_plant missing from the dispatch sibling's availability"
-        assert set(coal.values()) == {0.73}, coal
+        assert {d for _p, d, _t in coal} == ({"period1"} if k == 2 else set(want)), (k, sorted(coal)[:4])
+        for (_p, d, t), v in coal.items():
+            assert v == pytest.approx(want[d], rel=1e-12), (k, d, t)
 
 
 # ---------------------------------------------------------------------------
@@ -587,20 +595,21 @@ def _wind_cells(step) -> dict:
 
 def test_rank3_profile_realization_solve_takes_realized_branch(tmp_path_factory) -> None:
     """``1_week_rolling_wind`` authors a rank-3 ``wind`` profile and designates branch ``realized`` in every
-    roll.  The period label ``period1`` has no dispatch in the stochastic rolls (no profile rows there); each
-    realization roll dispatches ``period1`` with the realized branch's own series for that roll's analysis time
-    (its first step), read straight from the fixture JSON."""
+    roll.  Since 4.7.0 each roll k dispatches its jump t(24k+1)..t(24k+24) under the period ``period1`` with the
+    realized branch's own series made at the roll's start t(24k+1) (the analysis time nearest to it), read straight
+    from the fixture JSON; no realization solve is added."""
     steps = _run(tmp_path_factory, ROLLING, [], [])
-    for step in _stochastic_steps(steps):
-        assert ANCHOR not in _wind_cells(step), "the period label has profile rows in a stochastic roll"
-    realization = [s for k, s in steps.items() if is_realization(k)]
-    assert len(realization) == 7, list(steps)
-    for step in realization:
-        cells = _wind_cells(step)
-        assert set(cells) == {ANCHOR}, sorted(cells)
-        analysis_time = min(cells[ANCHOR])
+    assert not any(is_realization(k) for k in steps), list(steps)
+    assert len(steps) == 7, list(steps)
+    for k, step in enumerate(steps.values()):
+        dt = set(_dt(step))
+        cells = {d: {t: v for t, v in ts.items() if (d, t) in dt} for d, ts in _wind_cells(step).items()}
+        cells = {d: ts for d, ts in cells.items() if ts}
+        analysis_time = f"t{24 * k + 1:04d}"
+        assert sorted(cells[ANCHOR]) == [f"t{24 * k + h:04d}" for h in range(1, 25)], k
         want = _wind_branch_series(STOCHASTICS_JSON, "1week_rolling", "realized", analysis_time)
         assert cells[ANCHOR] == {t: want[t] for t in cells[ANCHOR]}, analysis_time
+        assert (set(cells) == {ANCHOR}) == (k == 6), sorted(cells)
 
 
 def test_rank3_profile_forecasts_only_fan_solves(tmp_path_factory) -> None:

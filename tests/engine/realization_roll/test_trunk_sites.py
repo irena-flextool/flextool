@@ -1,8 +1,7 @@
 """The label-dispatch sites of a realization roll R_k (design rev 7.1 §2.2 S1-S9, §2.7 S13), through the seam.
 
-``_run_model._roll_tail_plans`` returns ``{}`` until the realization roll is wired, so each test replaces it with the
-live plan (``_realization_tail.roll_tail_plan`` of every gated solve) and suppresses the realization solve that the
-spawn still adds for ``within_solve`` today (owner decision D6).  The split-roll tests here stop at the first build
+The realization roll is wired (``_run_model._roll_tail_plans``): a rolling ``within_solve`` solve gets no
+realization solve, each of its rolls is a realization roll.  The split-roll tests here stop at the first build
 and check the data the build reads (FlexData and ``solve_data``); ``test_split_roll_lp.py`` builds and solves split
 rolls end to end.  Rolls whose horizon is their jump (``deterministic`` plans: no label with steps) build and solve
 end to end and pass G1-G4.
@@ -33,19 +32,8 @@ class _Stop(BaseException):
     """Ends the run at the first build (not an Exception, so no handler of the run takes it)."""
 
 
-def _live_plan(monkeypatch, *, suppress_spawn: bool = True) -> None:
-    from flextool.engine.solve import _orchestration, _run_model
-    from flextool.engine.solve import _realization_tail as rt
-
-    def live(solve_cfg, rolls, timelines):
-        out: dict = {}
-        for solve, windows in rolls.items():
-            out.update(rt.roll_tail_plan(solve_cfg, windows, timelines[solve]))
-        return out
-
-    monkeypatch.setattr(_run_model, "_roll_tail_plans", live)
-    if suppress_spawn:
-        monkeypatch.setattr(_orchestration, "_spawn_realized_dispatch_siblings", lambda *a, **k: None)
+def _live_plan(monkeypatch) -> None:
+    """The realization roll is wired (``_run_model._roll_tail_plans``): only the strict autoscale check is set."""
     monkeypatch.setenv("FLEXTOOL_AUTOSCALE_STRICT", "1")
 
 
@@ -228,7 +216,7 @@ def _rsd_horizon_is_jump(folder: Path) -> Path:
 
 
 def test_separate_dispatch_realization_roll_reads_its_plan(tmp_path_factory, monkeypatch):
-    """T-s13 (§2.7 items 2-3): a planned realization roll of ``separate_dispatch`` reads its realized branch from its
+    """T-s13 (§2.7 items 2-3): a realization roll of ``separate_dispatch`` reads its realized branch from its
     plan (3.8: ``realized`` through flat tiers nearest to the UC roll's start), not from the W4c projection of its
     UC roll.  ``realized`` is made at t0001, t0025 and t0049 and covers each roll's jump, so the LPs equal today's
     (the W4c projection reads the same series, made at the roll start)."""
@@ -242,9 +230,13 @@ def test_separate_dispatch_realization_roll_reads_its_plan(tmp_path_factory, mon
         return emit(rows, **kw)
 
     path = _rsd_horizon_is_jump(tmp_path_factory.mktemp("rsd"))
-    today, _ = scm.run_capturing(scm.build_db(path, tmp_path_factory.mktemp("today")), "rolling_separate_dispatch",
-                                 tmp_path_factory.mktemp("today_run"))
-    _live_plan(monkeypatch, suppress_spawn=False)
+    with monkeypatch.context() as unplanned:
+        # Today's realization rolls: no plan (the W4c projection of the UC roll; horizon = jump, so the window is
+        # the jump either way).
+        unplanned.setattr(_run_model, "_roll_tail_plans", lambda *a: {})
+        today, _ = scm.run_capturing(scm.build_db(path, tmp_path_factory.mktemp("today")),
+                                     "rolling_separate_dispatch", tmp_path_factory.mktemp("today_run"))
+    _live_plan(monkeypatch)
     monkeypatch.setattr(_run_model.solve_writers, "emit_branch_time_start", recording)
     planned, _ = scm.run_capturing(scm.build_db(path, tmp_path_factory.mktemp("planned")),
                                    "rolling_separate_dispatch", tmp_path_factory.mktemp("planned_run"))

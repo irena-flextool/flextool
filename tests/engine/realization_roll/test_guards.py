@@ -284,3 +284,11 @@ def test_coverage_of_step_pair_frames():
     f.prev_blocks = pl.DataFrame(schema={"d": pl.Utf8, "b": pl.Utf8, "b_prev_block": pl.Utf8, "t": pl.Utf8})
     f.lazy_link = pl.LazyFrame(schema={"d": pl.Utf8, "t": pl.Utf8, "t_next": pl.Utf8})
     assert sr.unregistered_step_frames(f) == ["block_chain", "prev_blocks", "lazy_link"]
+
+
+def test_s9_investment_variables_on_the_label_raise_period_invest_alone_does_not():
+    # S9: rolls build no investment variables; a v_invest domain on the label would be a roll that invests.  A
+    # rolling solve with authored invest_periods keeps them in period_invest only (pd_invest_set None): no raise.
+    pr.check_period_rows(_build({}, period_invest=_frame(("d",), [("p1",)])))
+    with pytest.raises(RuntimeError, match="pd_invest_set on period 'p1' of roll 's_roll_0' is not path-aware"):
+        pr.check_period_rows(_build({}, pd_invest_set=_frame(("p", "d"), [("gas", "p1")])))

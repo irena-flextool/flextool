@@ -14,17 +14,19 @@ realized-dispatch sibling.  Two carrier flows are kept separate:
     takes its roll-forward (``roll_end_online`` → ``p_roll_continue_online``,
     etc.) from ``disp_roll_{k-1}``, NOT from ``uc_roll_k``.
 
-**SCOPE (the correctness invariant this test pins).** Each ``disp_roll_k``
-solves ONLY its realized JUMP window (the committed section), NOT the UC
-parent's full roll horizon (jump + look-ahead).  The UC parent legitimately
-spans jump + look-ahead and fans/discards the look-ahead; the dispatch
-sibling must realize only the jump — the look-ahead has no realized data and
-no online pin, so solving it would force spurious unserved load (which it did
-before the fix: the dispatch solved all 48 steps, the zero-wind look-ahead
-half was unserved).  ``test_dispatch_rolls_scoped_to_jump`` asserts the
-dispatch solves exactly ``JUMP_STEPS`` (24) steps, strictly fewer than the
-UC's ``HORIZON_STEPS`` (48) — a solver-independent guard that FAILS on the
-pre-fix behaviour (dispatch solved 48) and catches this whole bug class.
+**SCOPE (the invariant this test pins; 4.7.0).** Each ``disp_roll_k`` is the
+realization roll of ``uc_roll_k``: it spans the UC roll's whole horizon, the
+jump dispatched once under the period's own name (``period1``) on the
+realized data, with the units online pinned to the UC commitment, and the
+look-ahead after it (``period1_<forecast>``) read from the forecasts made at
+the end of the jump, with their probabilities.  Before 4.7.0 the dispatch
+solved only the jump, without look-ahead (solving the look-ahead on the
+realized-only data then forced spurious unserved load).
+``test_dispatch_rolls_scoped_to_jump`` asserts the jump cells are exactly the
+``JUMP_STEPS`` (24) steps of the realized period and the roll spans its UC
+roll's steps.  The jump's realized values (flows, fuel, spill, pins) are read
+under ``period1``: only the pinned units online couple the jump and the
+look-ahead here, so their hand values hold.
 
 This is pure orchestration + handoff routing — NO new var/cstr/param family
 (the pin family ``online_fix_eq`` is already registered), so CLAUDE.md
@@ -264,33 +266,27 @@ def test_interleaved_expansion_order(chain):
 
 @pytest.mark.solver
 def test_dispatch_rolls_scoped_to_jump(chain):
-    """SCOPE INVARIANT (the correctness guard).  Each realized-dispatch roll
-    solves EXACTLY its realized JUMP window (``JUMP_STEPS`` steps), strictly
-    fewer than the UC parent's full HORIZON (``HORIZON_STEPS``).  The dispatch
-    must realise only the committed jump — NOT the UC's look-ahead, which has
-    no realized data or online pin and forced spurious unserved load before
-    the fix.  Solver-independent (step counts from the fixture's rolling
-    config); FAILS on the pre-fix behaviour where the dispatch solved all
-    ``HORIZON_STEPS`` (48)."""
+    """SCOPE INVARIANT (4.7.0).  Each realization roll spans its UC roll's
+    horizon (``HORIZON_STEPS`` = 48 steps for rolls 0 and 1; roll 2 is the
+    truncated last 24 steps of the 72-step timeline): the jump t(24k+1) ..
+    t(24k+24) under the realized period ``period1`` only, and from t(24k+25)
+    on the forecasts ``period1_<f>`` made there (none in roll 2, whose horizon
+    is its jump).  Before 4.7.0 the realization solved the jump only."""
     steps, _ = chain
-    assert JUMP_STEPS < HORIZON_STEPS   # sanity: look-ahead exists to exclude
+    assert JUMP_STEPS < HORIZON_STEPS   # sanity: a look-ahead exists
     for k in range(N_ROLLS):
         uc_steps = _n_time_steps(steps[UC.format(k=k)])
-        disp_steps = _n_time_steps(steps[DISP.format(k=k)])
-        # UC parent spans the full horizon (roll 2 is the horizon-truncated
-        # tail of the 72-step timeline, so it may be shorter — bound it).
-        assert uc_steps > JUMP_STEPS or k == N_ROLLS - 1, (
-            f"UC roll {k} spans {uc_steps} steps; expected > jump ({JUMP_STEPS})"
-        )
-        # The dispatch roll solves EXACTLY the jump — not the look-ahead.
-        assert disp_steps == JUMP_STEPS, (
-            f"dispatch roll {k} solves {disp_steps} steps, expected exactly "
-            f"the jump ({JUMP_STEPS}); solving the look-ahead is the bug"
-        )
-        assert disp_steps < uc_steps or k == N_ROLLS - 1, (
-            f"dispatch roll {k} ({disp_steps}) must be scoped tighter than its "
-            f"UC parent ({uc_steps})"
-        )
+        disp = steps[DISP.format(k=k)].flex_data.dt.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+        assert uc_steps == (HORIZON_STEPS if k < N_ROLLS - 1 else JUMP_STEPS), (k, uc_steps)
+        assert _n_time_steps(steps[DISP.format(k=k)]) == uc_steps
+        jump = {f"t{24 * k + h:04d}" for h in range(1, JUMP_STEPS + 1)}
+        assert set(disp.filter(pl.col("d") == REALIZED_PERIOD)["t"].to_list()) == jump
+        tails = disp.filter(pl.col("d") != REALIZED_PERIOD)
+        if k == N_ROLLS - 1:
+            assert tails.height == 0
+        else:
+            assert set(tails["d"].to_list()) == {f"{REALIZED_PERIOD}_{f}" for f in ("upper", "mid", "lower")}
+            assert set(tails["t"].to_list()) == {f"t{24 * k + h:04d}" for h in range(25, 49)}
 
 
 @pytest.mark.solver
@@ -322,10 +318,12 @@ def _unit_flow(step, p: str) -> pl.DataFrame:
 
 
 def _fuel_cost(step) -> float:
-    """Fuel cost of the solve from its flows: Σ flow x unitsize / efficiency x price."""
+    """Fuel cost of the solve's realized jump (period ``period1``) from its flows: Σ flow x unitsize / efficiency x
+    price."""
     total = 0.0
     for p, (size, eff, price, _) in UNIT.items():
-        total += float(_unit_flow(step, p)["flow"].sum()) * size / eff * price
+        flows = _unit_flow(step, p).filter(pl.col("d") == REALIZED_PERIOD)
+        total += float(flows["flow"].sum()) * size / eff * price
     return total
 
 
@@ -341,7 +339,9 @@ def test_dispatch_within_committed_unit_limits(chain):
         disp = steps[DISP.format(k=k)]
         uc = steps[UC.format(k=k)]
         for p, (_, _, _, min_load) in UNIT.items():
-            on = _online(disp, p).select("d", "t", pl.col("value").alias("online"))
+            # The jump cells: the look-ahead is decided again per forecast (its units online are not pinned).
+            on = _online(disp, p).filter(pl.col("d") == REALIZED_PERIOD).select(
+                "d", "t", pl.col("value").alias("online"))
             assert on.height == JUMP_STEPS, f"roll {k} {p}: {on.height} online rows"
             assert set(on["d"].unique()) == {REALIZED_PERIOD}
             uc_on = _online(uc, p).filter(pl.col("d") != REALIZED_PERIOD)
@@ -361,7 +361,7 @@ def test_dispatch_within_committed_unit_limits(chain):
 
 @pytest.mark.solver
 def test_dispatch_fuel_cost_hand_derived(chain):
-    """The fuel cost of each realized-dispatch roll, computed from its flows,
+    """The fuel cost of each realization roll's jump, computed from its flows,
     equals the closed form ``DISP_FUEL`` (gas closing the gap per 8-hour block,
     coal at its 720 MW floor): 747 200 / 750 400 / 744 000 for rolls 0 / 1 / 2."""
     steps, _ = chain
@@ -473,18 +473,18 @@ def test_realized_trajectory_carries_dispatch_to_dispatch(chain):
 
 @pytest.mark.solver
 def test_all_rolls_optimal_and_realized_demand_met(chain):
-    """All six solves OPTIMAL, and every REALIZED DISPATCH roll serves all
-    demand — ZERO unserved load (no up-slack VOLL).  This is meaningful ONLY
-    because the dispatch is scoped to the jump (see
-    ``test_dispatch_rolls_scoped_to_jump``): before the fix the dispatch
-    solved the dataless look-ahead and this assertion failed."""
+    """All six solves OPTIMAL, and every realization roll serves all realized
+    demand of its jump — ZERO unserved load (no up-slack VOLL) on ``period1``.
+    Its look-ahead reads the forecasts, whose lower one is short (as in the
+    UC roll, ``test_uc_lower_forecast_is_short_in_every_jump_hour``)."""
     steps, _ = chain
     for name, st in steps.items():
         assert st.optimal is True, f"{name} not optimal"
     for k in range(N_ROLLS):
         sol = steps[DISP.format(k=k)].solution
         if "vq_state_up" in sol._vars:
-            up = sol.value("vq_state_up").filter(pl.col("value") > 1e-3)
+            up = sol.value("vq_state_up").filter(
+                (pl.col("value") > 1e-3) & (pl.col("d").cast(pl.Utf8) == REALIZED_PERIOD))
             assert up.height == 0, (
                 f"dispatch roll {k}: {up.height} unserved-load (up-slack) "
                 f"rows — realized demand not met"
@@ -493,12 +493,14 @@ def test_all_rolls_optimal_and_realized_demand_met(chain):
 
 @pytest.mark.solver
 def test_dispatch_per_solve_objectives(chain):
-    """The realized-DISPATCH objectives (deterministic LP — ``v_online`` is
-    pinned) equal the hand-derived ``DISP_OBJ`` = ``ANNUALISE x (DISP_FUEL +
-    downriver spill x penalty)`` (no start-up and no unserved load in these
-    rolls), with the spill ``SPILL`` = 24 x (1000 − 100) MWh: 93 537 333.33 /
-    93 926 666.67 / 93 148 000 for rolls 0 / 1 / 2.  UC-parent objectives are
-    deliberately not anchored (see module docstring)."""
+    """The jump's realized cost: ``DISP_OBJ`` = ``ANNUALISE x (DISP_FUEL +
+    downriver spill x penalty)`` (no start-up and no unserved load in the
+    jump), with the spill ``SPILL`` = 24 x (1000 − 100) MWh: 93 537 333.33 /
+    93 926 666.67 / 93 148 000 for rolls 0 / 1 / 2.  The last realization
+    roll is its jump only (deterministic LP, ``v_online`` pinned), so its
+    objective is ``DISP_OBJ[2]``; rolls 0 and 1 add the look-ahead, dominated
+    by VOLL in the lower forecast, and are not anchored (as the UC rolls, see
+    module docstring); their jump spill is ``SPILL``."""
     steps, _ = chain
     assert [DISP_OBJ[k] for k in range(N_ROLLS)] == pytest.approx(
         [8760 / 72 * 768_800, 8760 / 72 * 772_000, 8760 / 72 * 765_600], rel=1e-12)
@@ -506,12 +508,12 @@ def test_dispatch_per_solve_objectives(chain):
         name = DISP.format(k=k)
         assert name in steps, f"missing solve {name}"
         sol = steps[name].solution
-        got = sol.obj
-        assert got == pytest.approx(DISP_OBJ[k], rel=1e-9), (
-            f"{name}: objective {got} != {DISP_OBJ[k]}"
-        )
+        if k == N_ROLLS - 1:
+            assert sol.obj == pytest.approx(DISP_OBJ[k], rel=1e-9), (
+                f"{name}: objective {sol.obj} != {DISP_OBJ[k]}"
+            )
         spill = float(sol.value("vq_state_down")
-                      .filter(pl.col("n") == SPILL_NODE)["value"].sum())
+                      .filter((pl.col("n") == SPILL_NODE) & (pl.col("d") == REALIZED_PERIOD))["value"].sum())
         assert spill == pytest.approx(SPILL, rel=1e-9), f"{name}: spill {spill} != {SPILL}"
 
 
@@ -554,18 +556,19 @@ def test_mintime_lookback_never_reaches_a_sibling_forecast(chain):
 
 
 def test_mintime_lookback_of_each_forecast_equals_the_realized_dispatch_twin(chain):
-    """Relational: over the realized jump, each forecast of a UC roll and the roll's deterministic realized-
-    dispatch sibling cover the same steps of the same timeline, both starting at the roll's first step.  Their
-    min up/down look-back rows are therefore the same once the forecast's period name is mapped to the realized
-    period's."""
+    """Relational: over the realized jump, each forecast of a UC roll and the jump of the roll's realization roll
+    (its ``period1`` cells) cover the same steps of the same timeline, both starting at the roll's first step.
+    Their min up/down look-back rows are therefore the same once the forecast's period name is mapped to the
+    realized period's.  (The look-ahead of the realization roll looks back into the jump: other rows.)"""
     steps, _ = chain
     cols = ("p", "d", "t", "d_back", "t_back")
     for k in range(N_ROLLS):
         disp_fd = steps[DISP.format(k=k)].flex_data
         uc_fd = steps[UC.format(k=k)].flex_data
-        disp_t = set(disp_fd.dt["t"].cast(pl.Utf8).to_list())
+        disp_t = set(disp_fd.dt.filter(pl.col("d").cast(pl.Utf8) == REALIZED_PERIOD)["t"].cast(pl.Utf8).to_list())
         for which in ("uptime_lookback", "downtime_lookback"):
-            twin = set(getattr(disp_fd, which).select(*(pl.col(c).cast(pl.Utf8) for c in cols)).rows())
+            twin = {r for r in getattr(disp_fd, which).select(*(pl.col(c).cast(pl.Utf8) for c in cols)).rows()
+                    if r[1] == REALIZED_PERIOD}
             assert twin, f"roll {k}: {which} of the realized dispatch is empty"
             assert {r[1] for r in twin} == {REALIZED_PERIOD}
             uc = getattr(uc_fd, which).select(*(pl.col(c).cast(pl.Utf8) for c in cols))
@@ -604,10 +607,11 @@ def peak_chain(tmp_path_factory):
 
 
 def _startups(step, p: str) -> dict[str, float]:
+    """The realized start-ups of *p* (period ``period1``: the jump of a realization roll, not its look-ahead)."""
     sol = step.solution
     for vn in ("v_startup_integer", "v_startup_linear"):
         if vn in sol._vars:
-            f = sol.value(vn).filter(pl.col("p").cast(pl.Utf8) == p)
+            f = sol.value(vn).filter((pl.col("p").cast(pl.Utf8) == p) & (pl.col("d").cast(pl.Utf8) == REALIZED_PERIOD))
             if f.height:
                 return dict(zip(f["t"].cast(pl.Utf8).to_list(), f["value"].to_list()))
     return {}
