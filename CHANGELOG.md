@@ -100,6 +100,15 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
   realization solve that does not look past the jump; note W-0594 names the delayed units, once per run. A rolling
   stochastic solve followed by a realization solve you configure yourself also keeps its two solves.
 
+### New features
+
+- **The GUI's "This database was upgraded" message lists the behaviour notes the upgrade added**, in two groups: the
+  changes that affect the results of the model (with the note codes, e.g. W-0635) and the notes about values the
+  upgrade wrote so that results stay the same (W-0601, W-0634). When the upgrade could not decide the minimum
+  up/down time method of some units, the message names them (the first ten; warning W-0231 names all at each run):
+  they run without those limits until a `minimum_time_method` is chosen. A database upgraded again before the
+  message is dismissed keeps the earlier notes in the new message.
+
 ### Fixes
 
 - **A rolling solve with a `bind_intraperiod_blocks` storage node no longer stops with "no timeset blocks in this

@@ -230,6 +230,32 @@ def read_schema_revision_ro(path: str | Path) -> str | None:
     return None if row is None else str(row[0])
 
 
+def read_markers_ro(path: str | Path) -> dict[str, str] | None:
+    """``{change id: value}`` of the behaviour-change markers (``flextool.engine._behaviour_changes``) of the
+    database at *path*, read read-only with plain SQLite (so a file at an older SpineDB revision reads the same);
+    a later row of the same name wins.
+
+    ``{}`` for a missing file or a database without a ``metadata`` table; ``None`` for any other read error.
+    """
+    from flextool.engine._behaviour_changes import MARKER_PREFIX
+
+    path = Path(path)
+    if not path.is_file():
+        return {}
+    try:
+        con = _connect_ro(path)
+    except (sqlite3.Error, OSError):
+        return None
+    try:
+        rows = con.execute("SELECT id, name, value FROM metadata ORDER BY id").fetchall()
+    except sqlite3.Error as exc:
+        return {} if _is_missing_table(exc) else None
+    finally:
+        con.close()
+    return {str(name)[len(MARKER_PREFIX):]: str(value) for _id, name, value in rows
+            if str(name).startswith(MARKER_PREFIX)}
+
+
 def schema_outdated_ro(path: str | Path) -> bool:
     """Whether the SpineDB schema of *path* is an older revision that this spinedb_api upgrades.
 

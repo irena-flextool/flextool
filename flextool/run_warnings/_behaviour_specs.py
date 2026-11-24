@@ -436,6 +436,10 @@ BEHAVIOUR_TEXTS: dict[str, tuple[str, str, str, str]] = {
     ),
 }
 
+#: The changes whose upgrade keeps the results (the upgrade wrote values that keep the old behaviour); every
+#: other entry changes results.  The GUI's "database upgraded" message lists them under their own heading.
+RESULTS_UNCHANGED = frozenset({"storage_fix_method_rewritten", "minimum_time_method_written"})
+
 BEHAVIOUR_SPECS: tuple[WarningSpec, ...] = tuple(
     WarningSpec(
         code=code,

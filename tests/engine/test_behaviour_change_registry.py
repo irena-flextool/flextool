@@ -83,3 +83,14 @@ def test_migration_markers_are_registered() -> None:
                                                               db_migration.V83_WITHIN_SOLVE_MARKER,
                                                               db_migration.V83_SEPARATE_DISPATCH_MARKER}
     assert written <= set(BEHAVIOUR_CHANGES)
+
+
+def test_gui_upgrade_message_classification() -> None:
+    """The GUI's "database upgraded" message: the results-unchanged set names registered changes only, and every
+    console text is a list line without a sentence end (the message's sentence limit counts on that)."""
+    from flextool.run_warnings._behaviour_specs import BEHAVIOUR_TEXTS, RESULTS_UNCHANGED
+
+    assert RESULTS_UNCHANGED <= set(BEHAVIOUR_TEXTS)
+    assert RESULTS_UNCHANGED == {"storage_fix_method_rewritten", "minimum_time_method_written"}
+    sentence_end = re.compile(r"[.!?](\s|$)")
+    assert [t[1] for t in BEHAVIOUR_TEXTS.values() if sentence_end.search(t[1])] == []

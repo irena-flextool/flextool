@@ -216,12 +216,17 @@ def upgrade_one(
 
     *mode* ``"plain"``, ``"frozen_in_place"`` or ``"frozen_copy"`` (then *copy_path* is the copy).  The data
     version is read read-only before (from *path*) and after (from the copy for a frozen copy); an after-read
-    that fails on an upgraded file counts as the target version.
+    that fails on an upgraded file counts as the target version.  The behaviour-change markers are read the same
+    way (plain SQLite, while no mapping is open): the result names the notices the upgrade added and, with the
+    minimum_time_method notice, the units it could not decide; either read failing lists none.
     """
+    from flextool.engine._behaviour_changes import added_notices, undecided_units
     from flextool.gui.db_version_check import _read_flextool_version, get_target_flextool_version
     from flextool.sqlite_url import sqlite_url_string
+    from flextool.update_flextool.frozen import read_markers_ro
 
     before = _read_flextool_version(sqlite_url_string(path))
+    before_m = read_markers_ro(path)
     if mode == "frozen_copy":
         assert copy_path is not None
         upgraded, failed, messages = _migrate_frozen_copy(
@@ -235,11 +240,21 @@ def upgrade_one(
         )
         result_path, copy_of = path, None
     after = before
+    notices: tuple[str, ...] = ()
+    undecided: tuple[str, ...] = ()
     if upgraded and not failed:
         after = _read_flextool_version(sqlite_url_string(result_path))
         if after is None:
             after = get_target_flextool_version()
-    return UpgradeResult(name, result_path, before, after, copy_of, upgraded, failed, list(messages))
+        after_m = read_markers_ro(result_path)
+        if before_m is None or after_m is None:
+            logger.debug("Behaviour-change markers of %s unreadable; the upgrade message lists none", name)
+        else:
+            notices = added_notices(before_m, after_m)
+            if "minimum_time_method_written" in notices:
+                undecided = undecided_units(after_m)
+    return UpgradeResult(name, result_path, before, after, copy_of, upgraded, failed, list(messages),
+                         notices, undecided)
 
 
 def _is_ghost_iid(iid: str) -> bool:

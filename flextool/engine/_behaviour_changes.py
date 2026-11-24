@@ -202,6 +202,28 @@ def marker_json(change_id: str) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+def added_notices(before: Mapping[str, str], after: Mapping[str, str]) -> tuple[str, ...]:
+    """The change ids whose markers are in *after* and not in *before* (what an upgrade added), in note-code order;
+    an id without a :data:`~flextool.run_warnings._behaviour_specs.BEHAVIOUR_TEXTS` entry is skipped."""
+    from flextool.run_warnings._behaviour_specs import BEHAVIOUR_TEXTS
+    return tuple(sorted((i for i in after if i not in before and i in BEHAVIOUR_TEXTS),
+                        key=lambda i: BEHAVIOUR_TEXTS[i][0]))
+
+
+def undecided_units(markers: Mapping[str, str]) -> tuple[str, ...]:
+    """The units the upgrade could not decide a ``minimum_time_method`` for (the ``undecided`` rows of the marker
+    ``minimum_time_method_written``, first column), de-duplicated in order; ``()`` when absent or not JSON."""
+    try:
+        value = json.loads(markers.get("minimum_time_method_written") or "")
+    except (TypeError, ValueError):
+        return ()
+    rows = value.get("undecided") if isinstance(value, dict) else None
+    if not isinstance(rows, list):
+        return ()
+    names = (row[0] if isinstance(row, (list, tuple)) and row else row for row in rows)
+    return tuple(dict.fromkeys(str(n) for n in names if isinstance(n, str)))
+
+
 def _installed_version() -> str:
     try:
         return metadata.version("flextool")
