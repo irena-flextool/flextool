@@ -24,11 +24,15 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
   when its units online are all `linear` or `integer`.
 - **Carried units online are rounded.** The units online that a separate realization solve keeps of its
   stochastic solve, and the units online, start-ups and shut-downs a roll hands to the next roll, are rounded where
-  they are produced: those of units online that are whole units to the nearest whole unit, the others below one
-  millionth of a unit (1e-6 × `unitsize`) to 0. Before, they carried the solver's last-digit noise, which depends
-  on the computer and the number of threads: the same model could build slightly different realization LPs on
-  different computers, and a near-zero number of units online at an outage step could give note W-0592 on one
-  computer and not on another. Results change by no more than that noise.
+  they are produced. Where the units online are whole units, they and their start-ups and shut-downs go to the
+  nearest whole unit. Other values that the solver could not tell from 0 go to 0: those within its primal
+  feasibility tolerance (1e-7 by default) in the solve's own scaling, a move the solver itself accepts as feasible.
+  Other values stay as the solver gave them. A unit carried offline this way also carries no ramp flow into the
+  next roll. Before, these values carried the solver's last-digit noise, which depends on the computer and the
+  number of threads: near-zero and whole-unit values could differ between computers, and a near-zero number of
+  units online at an outage step could give note W-0592 on one computer and not on another. The same rule applies
+  to `roll_end_online` and `online_history` handoff overrides (near 0 is within 1e-7 there). Results change by no
+  more than that noise.
 - **`min_uptime` / `min_downtime` apply only with their `minimum_time_method`.** A unit's minimum up time
   constraints are built only when its `minimum_time_method` is `min_uptime` or `both`, its minimum down time
   constraints only with `min_downtime` or `both`; without a method (the default, `none`) neither applies, as the

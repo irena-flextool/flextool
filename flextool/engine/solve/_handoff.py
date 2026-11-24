@@ -188,7 +188,10 @@ class SolveHandoff:
     # Producer: parent's committed v_online_linear / v_online_integer of the
     # process_online_fix_in_uc processes over the jump, rounded
     # (``flex_data.snap_carried_online``: integer columns to whole units,
-    # continuous ones near 0 to 0), as are roll_end_online and online_history.
+    # continuous ones within the solve's feasibility tolerance of 0 to 0), as
+    # are roll_end_online, online_history (whole-unit start-ups / shut-downs
+    # together: ``round_whole_unit_events``) and the roll_end_flow of a unit
+    # whose roll_end_online went to 0.
     # Consumer: sibling's ``p_fix_online`` overlay (``online_fix_eq``).
     # Schema: ``[process, period, step, value]``.  No file equivalent.
     fix_online: pl.DataFrame | None = None

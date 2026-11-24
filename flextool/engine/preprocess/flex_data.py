@@ -6948,23 +6948,31 @@ def _committed_fan_online_cells(sd: Path, flex_data: "FlexData | None", *,
     return cells if cells.height > 0 else None
 
 
-#: Units online, start-ups and shut-downs (units of unitsize, so 1e-6 × unitsize in MW) of a continuous column below
-#: this are handed to the next solve as 0: well above the solver's noise (HiGHS's feasibility tolerance is 1e-7),
-#: well below any real commitment.
-CARRIED_ONLINE_ZERO = 1e-6
-
-
-def snap_carried_online(frame: pl.DataFrame, integer: bool, columns: "tuple[str, ...]" = ("value",)) -> pl.DataFrame:
+def snap_carried_online(frame: pl.DataFrame, integer: bool, zero: float,
+                        columns: "tuple[str, ...]" = ("value",)) -> pl.DataFrame:
     """*frame* with its *columns* (units online, start-ups or shut-downs read from a solution) rounded for the next
-    solve: an *integer* column to the nearest integer, a continuous one to 0 where ``|value| <
-    CARRIED_ONLINE_ZERO``.  The solver's last-digit noise depends on the platform and the thread count; rounded,
-    every platform builds the same next LP (the realization pins, the carried units online and minimum up / down
-    time) and takes the same outage cuts (W-0592).  ``+ 0.0`` turns a rounded ``-0.0`` into ``0.0``."""
+    solve: an *integer* column to the nearest integer, a continuous one to 0 where ``|value| <= zero``
+    (``output._coarse_flows.var_zero_tolerance``: the solve's primal feasibility tolerance in its own scale, so the
+    move to 0 is one the solver itself accepts as feasible; a nonzero value above it is kept as it is).  The
+    solver's last-digit noise depends on the platform and the thread count; rounded, near-zero and whole-unit values
+    are the same on every platform in the next LP (the realization pins, the carried units online and minimum up /
+    down time) and in its outage cuts (W-0592).  ``+ 0.0`` turns a rounded ``-0.0`` into ``0.0``."""
     if integer:
         return frame.with_columns(pl.col(c).cast(pl.Float64).round(0) + 0.0 for c in columns)
     return frame.with_columns(
-        pl.when(pl.col(c).abs() < CARRIED_ONLINE_ZERO).then(0.0).otherwise(pl.col(c).cast(pl.Float64)).alias(c)
+        pl.when(pl.col(c).abs() <= zero).then(0.0).otherwise(pl.col(c).cast(pl.Float64)).alias(c)
         for c in columns)
+
+
+def round_whole_unit_events(frame: pl.DataFrame) -> pl.DataFrame:
+    """*frame* with its ``startup`` / ``shutdown`` (of a process whose units online are integer) rounded to whole
+    units so that ``startup − shutdown`` stays the change of the rounded units online (``online_change``: the
+    LP's su − sd is that integer change, up to noise).  ``shutdown ← ⌊sd + ½⌋``, ``startup ← shutdown +
+    round(su − sd)``: with ``su = sd + Δ`` (Δ integer) ``startup = ⌊su + ½⌋`` and both are ≥ 0; rounding each
+    alone half-to-even would break the change (1.5 / 0.5 → 2 / 0)."""
+    delta = (pl.col("startup") - pl.col("shutdown")).round(0)
+    sd = (pl.col("shutdown") + 0.5).floor()
+    return frame.with_columns((sd + delta + 0.0).alias("startup"), (sd + 0.0).alias("shutdown"))
 
 
 def _step_duration_at(flex_data: "FlexData | None", step: "tuple[str, str]") -> float:
@@ -7389,7 +7397,7 @@ def build_handoff_from_solution(
     # (a process has one startup_method at a time, so linear/integer never
     # mix for the same ``p``); linear and integer rows are unioned.  Rounded
     # (``snap_carried_online``): an integer column to whole units, a continuous one
-    # near 0 to 0.
+    # near 0 to 0; a process moved to 0 carries its ``roll_end_flow`` as 0 too.
     roll_end_online_df = None
     _has_online_var = ("v_online_linear" in sol._vars
                        or "v_online_integer" in sol._vars)
@@ -7397,8 +7405,12 @@ def build_handoff_from_solution(
     if fan_online is not None:
         # The last committed step lies in the fan (after every pre-reveal realized step): read the tied value.
         online_step = (fan_online["d_ref"][-1], fan_online["t"][-1])
+    # The processes whose carried units online the rounding moved to 0 (from a value that was not 0): their
+    # ``roll_end_flow`` is carried as 0 with them (below), so the next roll does not ramp from a flow of units it
+    # sees offline.
+    snapped_off: set[str] = set()
     if online_step is not None and _has_online_var:
-        from flextool.engine.output._coarse_flows import var_is_integer, var_values_at
+        from flextool.engine.output._coarse_flows import var_is_integer, var_values_at, var_zero_tolerance
 
         last_d_on, last_t_on = online_step
         rco_rows: list[tuple[str, float]] = []
@@ -7408,8 +7420,11 @@ def build_handoff_from_solution(
             _lst = var_values_at(sol, flex_data, _vname, str(last_d_on), str(last_t_on))
             if _lst is None:
                 continue
-            for r in snap_carried_online(_lst, var_is_integer(sol, _vname)).iter_rows(named=True):
+            _snapped = snap_carried_online(_lst, var_is_integer(sol, _vname), var_zero_tolerance(sol, _vname))
+            for raw, r in zip(_lst["value"], _snapped.iter_rows(named=True)):
                 rco_rows.append((str(r["p"]), float(r["value"])))
+                if float(r["value"]) == 0.0 and float(raw) != 0.0:
+                    snapped_off.add(str(r["p"]))
         if rco_rows:
             roll_end_online_df = pl.DataFrame(
                 rco_rows, schema=["process", "value"], orient="row")
@@ -7419,6 +7434,9 @@ def build_handoff_from_solution(
     # where the complete solve's predecessor of its first step is this step and adjacent).  Units of
     # unitsize, like v_flow.  ``duration`` = this step's length (the ramp room uses both step lengths).
     roll_end_flow_df = _roll_end_flow(sol, flex_data, last_step)
+    if roll_end_flow_df is not None and snapped_off:
+        roll_end_flow_df = roll_end_flow_df.with_columns(
+            pl.when(pl.col("process").is_in(sorted(snapped_off))).then(0.0).otherwise(pl.col("value")).alias("value"))
     # ---- roll_end_step: the last realized step itself (with its duration) ----
     # The next roll links its first step to it (ramp rows with roll_end_flow, and the ramp output also in
     # models without ramp limits).
@@ -7477,7 +7495,7 @@ def build_handoff_from_solution(
         _cells = online_tie_cells(flex_data)
         _parts: list[pl.DataFrame] = []
         if _cells is not None:
-            from flextool.engine.output._coarse_flows import var_is_integer, var_values
+            from flextool.engine.output._coarse_flows import var_is_integer, var_values, var_zero_tolerance
 
             _pinned = _fix_in_uc["p"].cast(pl.Utf8).to_list()
             for _vn in ("v_online_linear", "v_online_integer"):
@@ -7485,7 +7503,7 @@ def build_handoff_from_solution(
                 _all = var_values(sol, flex_data, _vn)
                 if _all is None:
                     continue
-                _fr = (snap_carried_online(_all, var_is_integer(sol, _vn))
+                _fr = (snap_carried_online(_all, var_is_integer(sol, _vn), var_zero_tolerance(sol, _vn))
                        .with_columns(pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
                        .filter(pl.col("p").is_in(_pinned)))
                 _re = (_fr.join(_cells, left_on=["d", "t"],
@@ -7510,7 +7528,8 @@ def build_handoff_from_solution(
     # this solve started from is kept, its ``hours_to_end`` moved by the root's, when the walk reaches this solve's
     # ``dt_ramp_carry`` (the first step that continued from it).  Trimmed per process to ``hours_to_end <`` the
     # authored max min-up/down time (``flex_data.online_min_time``); a process without one is never stored.  The
-    # start-ups / shut-downs are rounded (``snap_carried_online``, continuous: near 0 is 0), so solver noise opens no
+    # start-ups / shut-downs are rounded: of a process with integer units online to whole units
+    # (``round_whole_unit_events``), the others near 0 to 0 (``snap_carried_online``), so solver noise opens no
     # carried obligation.
     online_history_df = None
     last_pairs_on = None
@@ -7566,7 +7585,13 @@ def build_handoff_from_solution(
                                    float(lmap["_L"].max()))
         hist_now = None
         if h2e is not None:
-            from flextool.engine.output._coarse_flows import var_values
+            from flextool.engine.output._coarse_flows import var_is_integer, var_values, var_zero_tolerance
+
+            # Start-ups / shut-downs are continuous columns.  Of a process whose units online are integer they are
+            # rounded to whole units together below (round_whole_unit_events); the others go to 0 near 0.
+            whole = var_is_integer(sol, "v_online_integer")
+            whole_procs = (set(flex_data.process_online_integer["p"].cast(pl.Utf8).to_list())
+                           if whole and getattr(flex_data, "process_online_integer", None) is not None else set())
 
             def _pull_online_metric(vnames):
                 # Every fine step: a coarse process's start-up / shut-down stays at its coarse step's first fine
@@ -7581,13 +7606,14 @@ def build_handoff_from_solution(
                            .join(h2e, left_on=["__d", "__t"], right_on=["d", "t"], how="inner"))
                     if _fr.height == 0:
                         continue
-                    frames.append(_fr.select(pl.col("p").cast(pl.Utf8), pl.col("__d").alias("d"),
-                                             pl.col("__t").alias("t"), pl.col("value")))
+                    _fr = _fr.select(pl.col("p").cast(pl.Utf8), pl.col("__d").alias("d"),
+                                     pl.col("__t").alias("t"), pl.col("value"))
+                    if not (whole and vn.endswith("_integer")):
+                        _fr = snap_carried_online(_fr, False, var_zero_tolerance(sol, vn))
+                    frames.append(_fr)
                 if not frames:
                     return None
-                # Continuous columns (also of the integer class): a near-zero event is no event.
-                return snap_carried_online(pl.concat(frames).group_by(["p", "d", "t"]).agg(pl.col("value").sum()),
-                                           integer=False)
+                return pl.concat(frames).group_by(["p", "d", "t"]).agg(pl.col("value").sum())
 
             su = _pull_online_metric(("v_startup_linear", "v_startup_integer"))
             sh = _pull_online_metric(("v_shutdown_linear", "v_shutdown_integer"))
@@ -7605,6 +7631,12 @@ def build_handoff_from_solution(
                                           pl.col("duration").cast(pl.Float64).fill_null(1.0),
                                           pl.col("hours_to_end").cast(pl.Float64))
                             .select("p", "d", "t", "startup", "shutdown", "duration", "hours_to_end"))
+                if whole_procs:
+                    rounded = round_whole_unit_events(hist_now)
+                    is_whole = pl.col("p").is_in(sorted(whole_procs))
+                    hist_now = hist_now.with_columns(
+                        pl.when(is_whole).then(rounded["startup"]).otherwise(pl.col("startup")).alias("startup"),
+                        pl.when(is_whole).then(rounded["shutdown"]).otherwise(pl.col("shutdown")).alias("shutdown"))
         if hist_now is not None:
             # The history this solve started from (the routed ``handoff/online_history`` its LP read,
             # solve._carry_routing), continued through the first step of this solve that continued from it.

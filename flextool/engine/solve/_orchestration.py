@@ -1110,14 +1110,25 @@ def _autoscale_unscale_post_solve(
     *,
     solve_name: str,
     logger: logging.Logger,
+    problem: object = None,
 ) -> None:
     """Layer 2 unscale guard — invoke immediately after ``pb.solve(...)``.
 
     Idempotent when ``plan is None`` or ``sol is None``: the eager
     unscale keeps the rest of the pipeline (output writers, range
     re-readouts) blind to the Layer-2 substitution.
+
+    Also records on ``sol`` the primal feasibility tolerance *problem* was
+    solved with (``sol.flextool_primal_tolerance``; with the column
+    factors the unscale leaves on ``sol``, what the carried units online
+    are rounded by: ``output._coarse_flows.var_zero_tolerance``).
     """
-    if plan is None or sol is None:
+    if sol is None:
+        return
+    if problem is not None:
+        from flextool.engine.autoscale._guard import highs_tolerances
+        sol.flextool_primal_tolerance = highs_tolerances(problem)[0]
+    if plan is None:
         return
     try:
         _autoscale_unscale_solution(sol, plan)
@@ -4479,12 +4490,12 @@ def _drive_cascade(
                 # cached plan is None (Layer 2 was off or didn't
                 # trigger at first-build).
                 _phase_prof("unscale_start")
-                if self._autoscale_warm_layer2_plan is not None:
-                    _autoscale_unscale_post_solve(
-                        sol, self._autoscale_warm_layer2_plan,
-                        solve_name=complete_solve_name,
-                        logger=self.state.logger,
-                    )
+                _autoscale_unscale_post_solve(
+                    sol, self._autoscale_warm_layer2_plan,
+                    solve_name=complete_solve_name,
+                    logger=self.state.logger,
+                    problem=self._warm_problem.problem,
+                )
                 _phase_prof("unscale_done")
                 # Phase 4 Step 4b — in-process warm-start basis CAPTURE
                 # (fresh build only).  ``sol.highs`` is the live retained
@@ -4989,6 +5000,7 @@ def _drive_cascade(
                     sol, _autoscale_layer2_plan,
                     solve_name=complete_solve_name,
                     logger=self.state.logger,
+                    problem=pb,
                 )
                 _phase_prof("unscale_done")
             # autoscale Layer 1 (detect) — log the four LP coefficient

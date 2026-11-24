@@ -196,6 +196,27 @@ _RETIRED_OVERRIDE_KEYS: dict[str, str] = {
 }
 
 
+#: The value columns of the overridable carriers of units online / start-ups / shut-downs.
+_ONLINE_OVERRIDE_COLUMNS: dict[str, tuple[str, ...]] = {
+    K.HANDOFF_ROLL_END_ONLINE: ("value",),
+    K.HANDOFF_ONLINE_HISTORY: ("startup", "shutdown"),
+}
+
+
+def _snap_override_online(handoff_key: str, frame: "pl.DataFrame | None") -> "pl.DataFrame | None":
+    """An override of the carried units online or start-ups / shut-downs with its values near 0 set to 0, as the
+    producer sets the values it carries (``flex_data.snap_carried_online``; the consumers' cuts compare with 0).
+    An override comes from no LP, so "near" is HiGHS' default primal feasibility tolerance (1e-7 units); its other
+    values are kept as given."""
+    columns = _ONLINE_OVERRIDE_COLUMNS.get(handoff_key)
+    if frame is None or columns is None or not set(columns) <= set(frame.columns):
+        return frame
+    from polar_high.autoscale._precedence import HIGHS_DEFAULT_FEASIBILITY_TOLERANCE
+
+    from flextool.engine.preprocess.flex_data import snap_carried_online
+    return snap_carried_online(frame, False, HIGHS_DEFAULT_FEASIBILITY_TOLERANCE, columns)
+
+
 def translate_overrides_to_provider(
     overrides: "dict[str, pl.DataFrame] | None", provider,
 ) -> None:
@@ -239,6 +260,7 @@ def translate_overrides_to_provider(
                 f"overridable.  Allowed keys: "
                 f"{sorted(_HANDOFF_TO_OVERRIDE.keys())!r}"
             )
+        frame = _snap_override_online(handoff_key, frame)
         # Phase 6a — tag every override write so the audit dump can
         # distinguish externally-supplied keys from natural-cascade
         # writes.  The override key itself is the discriminator at the
