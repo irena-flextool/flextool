@@ -33,6 +33,16 @@ operational modelling only.  This test therefore pins:
   parent rolling solve explaining the no-build and pointing at a pre-rolling
   invest solve.
 
+The no-build is pinned on the ``separate_dispatch`` method: its solve (1) of
+each roll fans out at the roll's first step (the forecasts are made at every
+roll start), so no roll holds a period label with time steps, and the
+realization solve drops ``invest_periods``.  Under ``within_solve`` each roll is
+a realization roll whose jump ends inside ``period1``: the label ``period1``
+then dispatches the jump while its investment-period rows (the capacity
+margin, priced at the label's period weight 0) would cover only part of the
+period, so since 4.7.0 such a solve stops before its first roll
+(:func:`test_within_solve_with_invest_periods_stops`).
+
 The fixture is built by IN-TEST injection onto a tmp copy of
 ``tests/fixtures/stochastics.json`` (invariant #3: DB built from JSON/schema,
 never a checked-in sqlite) so the committed fixture — and the existing
@@ -74,7 +84,8 @@ def _pack(value, value_type):
     ]
 
 
-def _build_invest_spec(method: str = "none") -> dict:
+def _build_invest_spec(method: str = "none", realization: str = "separate_dispatch",
+                       margin: bool = False) -> dict:
     """Extend the rolling-stochastic fixture with investment intent.
 
     Mirrors the exploration setup: gas_plant becomes invest-eligible and the
@@ -87,6 +98,8 @@ def _build_invest_spec(method: str = "none") -> dict:
     realized by its realization solve (under ``recourse`` no realization
     solve is added, so the committed window is unrealized — see
     :func:`test_rolling_recourse_designation_without_realization_raises`).
+    *realization* is the solve's ``dispatch_realization_method``; *margin* adds
+    the group ``cm_g`` on ``demand_node`` with an absolute capacity margin.
     """
     src = json.loads((FIXTURES_DIR / "stochastics.json").read_text())
 
@@ -124,27 +137,36 @@ def _build_invest_spec(method: str = "none") -> dict:
         ["solve", "1week_rolling", "realized_invest_periods",
          _pack({"value_type": "str", "data": ["period1"]}, "array"),
          "invest"],
+        ["solve", "1week_rolling", "dispatch_realization_method",
+         _pack(realization, "str"), "invest"],
     ])
+    if margin:
+        src["entities"] += [["group", "cm_g", None], ["group__node", ["cm_g", "demand_node"], None]]
+        src["parameter_values"] += [
+            ["group", "cm_g", "capacity_margin_method", _pack("absolute", "str"), "invest"],
+            ["group", "cm_g", "capacity_margin_absolute", _pack(1.0e5, "float"), "invest"],
+            ["group", "cm_g", "penalty_capacity_margin", _pack(1.0, "float"), "invest"]]
     return src
 
 
-@pytest.fixture(scope="module")
-def rolling_invest_db_url(tmp_path_factory) -> str:
-    """Build the rolling+stochastic+invest DB from the injected JSON spec."""
+def _db_url(spec: dict, work: Path) -> str:
     import sys
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from db_utils import json_to_db
     from flextool.update_flextool.db_migration import migrate_database
 
-    spec = _build_invest_spec()
-    work = tmp_path_factory.mktemp("rolling_stoch_invest")
     jpath = work / "rolling_stoch_invest.json"
-    jpath.write_text(json.dumps(spec, indent=2) + "\n")
-    dbpath = work / "rolling_stoch_invest.sqlite"
-    url = json_to_db(jpath, dbpath)
+    jpath.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+    url = json_to_db(jpath, work / "rolling_stoch_invest.sqlite")
     migrate_database(url)
     return url
+
+
+@pytest.fixture(scope="module")
+def rolling_invest_db_url(tmp_path_factory) -> str:
+    """Build the rolling+stochastic+invest DB from the injected JSON spec."""
+    return _db_url(_build_invest_spec(), tmp_path_factory.mktemp("rolling_stoch_invest"))
 
 
 class _WarningCollector(logging.Handler):
@@ -217,18 +239,25 @@ def test_rolling_recourse_designation_without_realization_raises(tmp_path_factor
     """Under ``recourse`` a ``realized: yes`` designation adds no realization solve, so each roll's committed
     window inside the forecasts-only fan is realized by no solve while the next roll continues from it: the run
     stops before the first roll's LP, naming the storage state."""
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from db_utils import json_to_db
-    from flextool.update_flextool.db_migration import migrate_database
-
     work = tmp_path_factory.mktemp("rolling_stoch_recourse")
-    jpath = work / "rolling_stoch_recourse.json"
-    jpath.write_text(json.dumps(_build_invest_spec("recourse")) + "\n")
-    url = json_to_db(jpath, work / "rolling_stoch_recourse.sqlite")
-    migrate_database(url)
+    url = _db_url(_build_invest_spec("recourse", realization="within_solve"), work)
     with pytest.raises(FlexToolConfigError, match=r"1week_rolling_roll_0.*storage state"):
+        run_chain_from_db(input_db_url=url, scenario_name=SCENARIO, work_folder=work / "w",
+                          solver_config_dir=test_solver_config_dir, warm=False, keep_solutions=True)
+
+
+@pytest.mark.parametrize("margin", [False, True], ids=["invest-periods", "with-capacity-margin"])
+def test_within_solve_with_invest_periods_stops(tmp_path_factory, test_solver_config_dir, margin):
+    """``within_solve``: roll 0 is t0001-t0096 with jump 24, so its jump ends at t0024 and its look-ahead starts at
+    t0025, inside ``period1`` (t0001-t0168): the label ``period1`` dispatches t0001-t0024 and is in
+    ``invest_periods``.  Its investment-period rows (the capacity margin of ``cm_g``, whose slack the label prices
+    at period weight 0) would cover t0001-t0024 only, so the run stops before any roll, naming the solve, roll 0
+    and the period (with and without a margin group: the rule is the investment period, not the margin)."""
+    work = tmp_path_factory.mktemp("rolling_within_invest")
+    url = _db_url(_build_invest_spec(realization="within_solve", margin=margin), work)
+    with pytest.raises(FlexToolConfigError, match=(
+            r"^Solve '1week_rolling', roll 0 \(time steps t0001 to t0024\): period 'period1' is in invest_periods, "
+            r"and the look-ahead after the jump starts inside it, at t0025\.")):
         run_chain_from_db(input_db_url=url, scenario_name=SCENARIO, work_folder=work / "w",
                           solver_config_dir=test_solver_config_dir, warm=False, keep_solutions=True)
 
@@ -247,23 +276,18 @@ def test_rolling_invest_all_rolls_optimal(rolling_invest_result):
 def test_rolling_invest_w3_guards_inert(rolling_invest_result):
     """(2) W3 per-roll stochastic guards are CORRECT and inert.
 
-    Each roll with a look-ahead after its jump (rolls 0-5) has a genuinely
-    stochastic ``flex_data`` with non-empty synthetic branch tokens, yet the
-    whole run raised no ``FlexToolConfigError`` — the W3 activation neither
-    misfires nor crashes under investment intent.  The last roll (t0145-t0168)
-    is its jump only: since 4.7.0 it is dispatched on the realized branch with
-    no forecasts (a realization roll without a tail).
+    Solve (1) of each of the 7 rolls fans out at the roll's first step (forecasts are made at every roll start,
+    t0001, t0025, ..., t0145), so each has a genuinely stochastic ``flex_data`` with non-empty synthetic branch
+    tokens, the last roll (t0145-t0168, its jump only) too, yet the whole run raised no ``FlexToolConfigError``:
+    the W3 activation neither misfires nor crashes under investment intent.
     """
     # No FlexToolConfigError was raised by the run.
     assert rolling_invest_result["error"] is None, rolling_invest_result["error"]
     steps = _steps(rolling_invest_result)
     assert len(steps) == EXPECTED_ROLLS
-    for k, (name, s) in enumerate(steps.items()):
+    for name, s in steps.items():
         fd = s.flex_data
         assert fd is not None, f"roll {name!r} retained no flex_data"
-        if k == EXPECTED_ROLLS - 1:
-            assert is_genuinely_stochastic(fd) is False, name
-            continue
         assert is_genuinely_stochastic(fd) is True, (
             f"roll {name!r}: is_genuinely_stochastic should be True"
         )

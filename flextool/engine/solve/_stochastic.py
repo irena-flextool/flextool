@@ -565,9 +565,11 @@ class StochasticSolver:
         """Warn, once per run, about the later forecast cohorts that no
         sub-solve of their complete solve fans out at: they are ignored.
 
-        A solve or roll fans out only once, at its first reveal; a later
-        cohort ``(period, start_step)`` with forecast branches is not read
-        by it.  A later cohort is used when it is the fan point
+        A solve or roll fans out only once, at its first reveal (a
+        realization roll, ``_realization_tail``, at the end of its jump:
+        its walk starts after its first step and covers every authored
+        cohort); a later cohort ``(period, start_step)`` with forecast
+        branches is not read by it.  A later cohort is used when it is the fan point
         (``branch_start_time_lists``) of any sub-solve ``x`` with
         ``complete_solves[x] == complete_solves[s]`` — e.g. the roll that
         starts there reads it through its own fan.  The others are ignored
@@ -626,7 +628,10 @@ class StochasticSolver:
         ``realized: yes`` row and no nonzero-weight forecast) that is not
         the fan point of any sub-solve of its complete solve -- whatever
         branch it names, such a row either switches the series or repeats
-        it.  Checked for every sub-solve in ``solves`` order, the first
+        it.  A realization roll's fan point is the end of its jump; its
+        jump reads the realized branch flattened over the analysis times
+        of the ``realized: yes`` rows, which therefore lie at the solve's
+        start or at fan points.  Checked for every sub-solve in ``solves`` order, the first
         offender raises.
 
         R2: the fan points of one roll sequence (the sub-solve name without
@@ -1059,10 +1064,8 @@ class StochasticSolver:
                         if forecasts:
                             candidates.append((period_c, step_c, forecasts))
                             continue
-                        if planned is not None:
-                            # The jump reads the realized branch flattened over all its analysis times
-                            # (``RollTail.realized``): a realized row anywhere switches nothing.
-                            continue
+                        # A realization roll too: a realized: yes row where no roll fans out stops the run
+                        # (_check_realized_switch), as for solve (1) of a separate_dispatch roll.
                         realized = realized_by_cohort.get(cohort)
                         if realized is None:
                             realized = sorted(

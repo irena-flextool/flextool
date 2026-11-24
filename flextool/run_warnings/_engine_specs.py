@@ -1026,13 +1026,15 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "results do not depend on the stochastic solve, and its forecasts only change its own results. The "
             "realization of a single solve dispatches its committed window with the realized data and no "
             "look-ahead; the realization added to a rolling `separate_dispatch` solve dispatches each jump with "
-            "the realized data and then looks ahead with the forecasts made at the end of the jump (without the "
-            "look-ahead when the model has delayed units, note W-0594). The note is printed once per realization "
-            "solve.\n\n"
+            "the realized data and then looks ahead with the forecasts made at the end of the jump. In a model "
+            "with delayed units (note W-0594) a rolling `separate_dispatch` or `within_solve` solve gets a "
+            "realization solve that dispatches each jump without the look-ahead. The note is printed once per "
+            "realization solve.\n\n"
             "**How to fix:** nothing, if that is meant. For a commitment made in the stochastic solve that holds "
             "in the realization, give those units `startup_method` *integer_fix_in_uc* or *linear_fix_in_uc*. "
             "For a rolling solve that should keep nothing of a separate unit-commitment solve, use "
-            "`dispatch_realization_method` *within_solve*: each roll is then one solve."
+            "`dispatch_realization_method` *within_solve*: each roll is then one solve (not in a model with "
+            "delayed units, note W-0594)."
         ),
     ),
     WarningSpec(

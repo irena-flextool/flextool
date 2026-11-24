@@ -96,3 +96,93 @@ def test_within_solve_without_a_realized_branch_stops(tmp_path):
                                                   r"dispatch_realization_method within_solve, but its "
                                                   r"stochastic_branches have no branch with realized: yes"):
         scm.run_spec(spec, tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# W-0635 / W-0636 (design rev 7.1 §6.2): announced for a listed solve that runs with the new realization, only
+# after the checks of §6.4 have passed; a stopped solve never reaches the notice.
+# ---------------------------------------------------------------------------
+
+def _listed(monkeypatch, solve: str = "st") -> None:
+    """The database carries both markers (v83 part 3) listing *solve*."""
+    from flextool.engine import _behaviour_changes
+
+    marker = '{"since": 83, "solves": ["%s"]}' % solve
+    markers = {"rolling_within_solve_one_solve": marker, "separate_dispatch_realization_looks_ahead": marker}
+    monkeypatch.setattr(_behaviour_changes, "read_markers_from_url", lambda url: dict(markers))
+
+
+def _separate(spec: dict, forecasts_at_t01: bool = True) -> dict:
+    """*spec* (T-w1) as ``separate_dispatch``; with *forecasts_at_t01* also the forecasts made at t01 that solve (1)
+    of roll 0 branches into (``test_separate_dispatch_realization_looks_ahead_jump_one``)."""
+    _set_solve(spec, "dispatch_realization_method", pack("separate_dispatch", "str"))
+    if forecasts_at_t01:
+        _set_solve(spec, "stochastic_branches", srl._fan([
+            ("A", {"t01": 0.5, "t02": 0.5}, "no"), ("B", {"t01": 0.5, "t02": 0.5}, "no"),
+            ("R", {"t01": 0.0, "t02": 0.0}, "yes")]))
+        for row in spec["parameter_values"]:
+            if row[:3] == ["profile", "wp", "profile"]:
+                row[3] = srl._series({"A": {"t01": {"t01": 0.0, "t02": 1.0}, "t02": {"t02": 1.0}},
+                                      "B": {"t01": {"t01": 0.0, "t02": 0.0}, "t02": {"t02": 0.0}},
+                                      "R": {"t01": {"t01": 0.0, "t02": 0.0}, "t02": {"t02": 0.0}}})
+    return spec
+
+
+def test_listed_solves_get_their_notice(tmp_path, monkeypatch):
+    """T-w1 ``within_solve`` runs (2 rolls): W-0635 names 'st' once, no W-0636.  As ``separate_dispatch`` (forecasts
+    made at t01 and t02): W-0636 names 'st', no W-0635."""
+    from tests._support.coded_warnings import capture_coded
+
+    _listed(monkeypatch)
+    with capture_coded() as got:
+        scm.run_spec(srl._tw1(0.5), tmp_path / "within")
+    assert got.names("W-0635") == ["st"] and not got.names("W-0636")
+    with capture_coded() as got:
+        scm.run_spec(_separate(srl._tw1(0.5)), tmp_path / "separate")
+    assert got.names("W-0636") == ["st"] and not got.names("W-0635")
+
+
+def test_a_stopped_solve_gets_no_notice(tmp_path, monkeypatch):
+    """The listed solve stops with a §6.4 error before it runs, so neither notice is announced: ``within_solve``
+    without its ``realized: yes`` row (W3); ``separate_dispatch`` without forecasts made at roll 0's start t01
+    (T-w1's fan is made at t02 only); ``separate_dispatch`` with ``fix_storage_periods`` (its realization solve
+    would re-float the pinned storage)."""
+    from tests._support.coded_warnings import capture_coded
+
+    _listed(monkeypatch)
+    no_realized = _set_solve(srl._tw1(0.5), "stochastic_branches",
+                             srl._fan([("A", {"t02": 0.5}, "no"), ("B", {"t02": 0.5}, "no")]))
+    fix_storage = _set_solve(_separate(srl._tw1(0.5)), "fix_storage_periods", scm.array(["p1"]))
+    cases = [
+        (no_realized, r"^Solve 'st' is a rolling stochastic solve with dispatch_realization_method within_solve, "
+                      r"but its stochastic_branches have no branch with realized: yes"),
+        (_separate(srl._tw1(0.5), forecasts_at_t01=False),
+         r"^Solve 'st', roll 0 \(time steps t01 to t01\): no forecast of stochastic_branches is made at t01, the "
+         r"start of the roll"),
+        (fix_storage, r"^Solve 'st' needs an engine-added realization solve .* but also authors fix_storage_periods"),
+    ]
+    for i, (spec, error) in enumerate(cases):
+        with capture_coded() as got, pytest.raises(FlexToolConfigError, match=error):
+            scm.run_spec(spec, tmp_path / str(i))
+        assert not got.names("W-0635") and not got.names("W-0636"), i
+
+
+def test_rolling_separate_dispatch_with_delays_gets_no_look_ahead_notice(tmp_path, monkeypatch):
+    """A rolling ``separate_dispatch`` solve in a model with a delayed unit keeps today's realization (D12: no
+    realization roll, the jump is realized without look-ahead): note W-0594 names the unit, and W-0636, whose text
+    says the rolling realization now looks ahead, is not announced.  test_trunk_sites' model (jump 2, horizon 4,
+    forecasts and the realized row made at t01, t03, t05, the roll starts) with ``gen`` fed from ``fuel`` with a 1 h
+    delay, as ``test_split_roll_lp.test_a_delay_keeps_todays_realization``."""
+    from tests._support.coded_warnings import capture_coded
+
+    _listed(monkeypatch)
+    spec = ts._spec(real_at=ts.OVERLAP, forecast_at=ts.OVERLAP)
+    spec["entities"] += [["node", "fuel", None], ["unit__inputNode", ["gen", "fuel"], None]]
+    spec["entity_alternatives"].append(["node", ["fuel"], "init", True])
+    spec["parameter_values"] += [*srl._node("fuel", "balance", pack(100.0, "float")),
+                                 ["unit", "gen", "delay", pack(1.0, "float"), "init"]]
+    _set_solve(spec, "dispatch_realization_method", pack("separate_dispatch", "str"))
+    with capture_coded() as got:
+        built, _steps = scm.run_spec(spec, tmp_path)
+    assert any("__realized_dispatch" in s for s, _, _ in built)
+    assert got.names("W-0594") == ["gen"] and not got.names("W-0636") and not got.names("W-0635")

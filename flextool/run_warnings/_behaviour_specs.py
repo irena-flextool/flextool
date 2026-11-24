@@ -427,8 +427,8 @@ BEHAVIOUR_TEXTS: dict[str, tuple[str, str, str, str]] = {
          "now looks ahead after its jump with each forecast made at the end of the jump and its probability; "
          "before, it dispatched the jump alone. In rolling and single solves, the first solve now shares across "
          "the forecasts only the units online of units whose startup_method ends in _fix_in_uc, the only "
-         "decisions the realization keeps; before, it also shared the other units online, reserves and the "
-         "storage use of the stochastic nodes. Results change: units online, storage levels, prices and, with "
+         "decisions the realization keeps, and the start level of a storage that starts free; before, it also "
+         "shared the other units online, reserves and the storage use of the stochastic nodes. Results change: units online, storage levels, prices and, with "
          "timeset weights that are not equal, the costs reported for the jump. A rolling solve without forecasts "
          "made at the start of each roll and at the end of each jump now stops with an error naming the roll and "
          "the time step."),

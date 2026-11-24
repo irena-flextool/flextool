@@ -1502,7 +1502,8 @@ class SolveConfig:
         if mode == "single_solve":
             # Only the committed periods: a look-ahead period dispatched with the realized data would let the
             # committed periods' operation (storage) use information the stochastic solve did not have (item
-            # 255).  A rolling sibling's rolls are trimmed to each roll's jump instead (``_run_model`` OC1 fix).
+            # 255).  A rolling sibling's rolls take the windows of the rolls they realize instead (``_run_model``
+            # step 1b): the whole horizon for a realization roll (``_realization_tail``), else the jump.
             timesets, years = SolveConfig.realization_window(self, parent)
             overrides["timesets_used_by_solves"] = timesets
             overrides["solve_period_years_represented"] = years
@@ -1535,8 +1536,8 @@ class SolveConfig:
         """The ``solve`` parameter values the reader gives the realization solve of *parent* instead of the
         parent's, for ``SpineDbReader.register_derived_solve(replace=...)``: for a single solve, ``period_timeset``
         and ``years_represented`` of its first to last realized period (:meth:`realization_window`), as maps with the
-        index name ``period`` (as :meth:`copy_reader_values`); empty for a rolling solve (its realization rolls
-        are trimmed to each roll's jump)."""
+        index name ``period`` (as :meth:`copy_reader_values`); empty for a rolling solve (each roll of its
+        realization solve takes the window of the roll it realizes, ``_run_model`` step 1b)."""
         if (getattr(self, "solve_modes", None) or {}).get(parent, "single_solve") == "rolling_window":
             return {}
         timesets, years = SolveConfig.realization_window(self, parent)

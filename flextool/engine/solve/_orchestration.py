@@ -2043,6 +2043,25 @@ def _stochastic_invest_raw_guard(solve_cfg, base_name: str) -> None:
         )
 
 
+def _rolling_containing_error(solve: str) -> FlexToolConfigError:
+    """A rolling stochastic solve that contains other solves cannot have its jumps realized (4.7.0)."""
+    return FlexToolConfigError(
+        f"Solve '{solve}' is a rolling stochastic solve that contains other solves (contains_solves). "
+        f"FlexTool 4.7.0 cannot yet realize the jumps of a rolling stochastic solve that contains other "
+        f"solves. Move the solves it contains out of its contains_solves, or remove its realized: yes "
+        f"branch."
+    )
+
+
+def _rolling_nested_error(solve: str) -> FlexToolConfigError:
+    """A rolling stochastic solve nested in another solve cannot have its jumps realized (4.7.0)."""
+    return FlexToolConfigError(
+        f"Solve '{solve}' is a rolling stochastic solve nested inside another solve's contains_solves. "
+        f"FlexTool 4.7.0 cannot yet realize the jumps of a nested rolling stochastic solve. Make it a "
+        f"top-level solve, or remove its realized: yes branch."
+    )
+
+
 def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
     """W4 Guard — validate a non-default ``dispatch_realization_method``.
 
@@ -2051,13 +2070,14 @@ def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
     ``stochastic_branches`` reads only its ``realized: yes`` branch,
     ``SolveConfig.apply_deterministic_realization``) and ``'within_solve'``
     are always allowed.  ``'separate_dispatch'`` (W4b) — the
-    engine automatically registers a deterministic realized-dispatch
-    SIBLING ``<solve>__realized_dispatch`` that takes the full
-    invest→dispatch handoff + last-wins path — is now ACCEPTED, but ONLY
-    for a single TOP-LEVEL ``single_solve``.  Every other shape (rolling,
-    a solve that itself ``contains_solves`` children, or a solve nested
-    inside another's ``contains_solves``) is still rejected: the sibling
-    machinery is single-solve only.
+    engine automatically registers a realization solve
+    ``<solve>__realized_dispatch`` that takes the full
+    invest→dispatch handoff + last-wins path — is accepted for a
+    TOP-LEVEL ``single_solve`` or ``rolling_window`` solve that contains no
+    solves and has a ``realized: yes`` branch.  A solve that itself
+    ``contains_solves`` children, or one nested inside another's
+    ``contains_solves``, is rejected; a rolling one with the 4.7.0 texts of
+    a rolling stochastic solve whose jumps cannot be realized.
 
     The guard reads the RAW authored value rather than the resolver's
     output: :meth:`SolveConfig.dispatch_realization_method_for` silently
@@ -2096,9 +2116,11 @@ def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
         elif _children is not None:
             nested.add(_children)
     mode = solve_modes.get(base_name, "single_solve")
+    if mode == "rolling_window" and contains_solves.get(base_name):
+        raise _rolling_containing_error(base_name)
+    if mode == "rolling_window" and base_name in nested:
+        raise _rolling_nested_error(base_name)
     reasons: list[str] = []
-    # OC1 rolling separate_dispatch: allow rolling_window; keep the
-    # contains/nesting bans.  (Was: single_solve only.)
     if mode not in ("single_solve", "rolling_window"):
         reasons.append(
             f"it runs under solve_mode='{mode}' (separate_dispatch needs a "
@@ -2114,7 +2136,7 @@ def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
         raise FlexToolConfigError(
             f"Solve '{base_name}' sets "
             f"dispatch_realization_method='separate_dispatch', which is only "
-            f"supported for a single top-level single_solve, but "
+            f"supported for a top-level solve that contains no solves, but "
             + "; ".join(reasons)
             + "."
         )
@@ -2159,7 +2181,7 @@ def _spawn_realized_dispatch_siblings(
       solve reads its realized branch, ``apply_deterministic_realization``)} — migration ``_migrate_v75_...``, accessor
       ``SolveConfig.dispatch_realization_method_for``.
     * validation: ``_dispatch_realization_raw_guard`` (both wired sites) —
-      accepts separate_dispatch only for a single top-level single_solve.
+      accepts separate_dispatch for a top-level single or rolling solve that contains no solves.
     * registration (W4b): THIS function → for each eligible parent, a DUAL
       in-memory registration of the sibling ``<parent>__realized_dispatch``:
         - ``SpineDbReader.register_derived_solve`` — clones every RAW Spine
@@ -2250,16 +2272,16 @@ def _spawn_realized_dispatch_siblings(
         except Exception:  # noqa: BLE001
             reader_solves = set()
 
-    from flextool.engine import _behaviour_changes
     from flextool.engine.solve import _realization, _realization_tail
 
     def _is_rolling(solve: str) -> bool:
         return (getattr(solve_cfg, "solve_modes", None) or {}).get(solve) == "rolling_window"
 
-    def _realization_notice(change_id: str, solve: str) -> None:
-        # W-0635 / W-0636: the database upgrade listed the solve (v83 part 3) and it runs with the new realization.
-        if solve in (_behaviour_changes.marker_json(change_id).get("solves") or []):
-            _behaviour_changes.notice(change_id, "solves", [solve])
+    def _add(solve: str, why: str, delayed: list[str]) -> None:
+        # W-0594 where the delayed units alone keep the added realization solve from looking ahead.
+        if delayed:
+            run_warnings.note("W-0594", delayed, solve=solve, per_run=True)
+        eligible.append((solve, why))
 
     # Spawn list: every separate_dispatch solve (authored), then every
     # designated solve (a ``realized: yes`` branch) without a configured realization solve.  Each
@@ -2274,12 +2296,10 @@ def _spawn_realized_dispatch_siblings(
         roll_method = _realization_tail.realization_roll_method(solve_cfg, p)
         if roll_method == "within_solve":
             # Each roll of a rolling within_solve solve is its own realization roll (``_realization_tail``): it
-            # realizes its jump and looks ahead after it, so no realization solve is added.
-            _realization_notice("rolling_within_solve_one_solve", p)
+            # realizes its jump and looks ahead after it, so no realization solve is added.  (W-0635 / W-0636:
+            # native_run_model, once the plans have passed their checks.)
             continue
         delayed = _realization_tail.delay_gated_units(solve_cfg, p)
-        if delayed:
-            run_warnings.note("W-0594", delayed, solve=p, per_run=True)
         if solve_cfg.dispatch_realization_method_for(p) == "separate_dispatch":
             if not (getattr(solve_cfg, "realized_periods", None) or {}).get(p):
                 # Nothing to realize (an invest-only solve): no realization solve.
@@ -2289,8 +2309,7 @@ def _spawn_realized_dispatch_siblings(
                         "realized_periods: no realization solve is added (it would dispatch nothing)", p,
                     )
                 continue
-            eligible.append((p, "dispatch_realization_method='separate_dispatch'"))
-            _realization_notice("separate_dispatch_realization_looks_ahead", p)
+            _add(p, "dispatch_realization_method='separate_dispatch'", delayed)
             continue
         configured = _realization.configured_realization_solve(solve_cfg, p)
         if configured is not None:
@@ -2330,12 +2349,7 @@ def _spawn_realized_dispatch_siblings(
             _realization.warn_recourse_designation(p)
             continue
         if contains_solves.get(p) and _is_rolling(p):
-            raise FlexToolConfigError(
-                f"Solve '{p}' is a rolling stochastic solve that contains other solves (contains_solves). "
-                f"FlexTool 4.7.0 cannot yet realize the jumps of a rolling stochastic solve that contains other "
-                f"solves. Move the solves it contains out of its contains_solves, or remove its realized: yes "
-                f"branch."
-            )
+            raise _rolling_containing_error(p)
         if contains_solves.get(p):
             raise FlexToolConfigError(
                 f"Solve '{p}' has a realized: yes designation in "
@@ -2345,16 +2359,12 @@ def _spawn_realized_dispatch_siblings(
                 f"contains out of its contains_solves, or remove the "
                 f"designation."
             )
-        eligible.append((p, "a realized: yes designation in stochastic_branches"))
+        _add(p, "a realized: yes designation in stochastic_branches", delayed)
     for c in sorted(contained):
         if (_realization.designation_reaches_committed_window(solve_cfg, c)
                 and solve_cfg.stochastic_invest_method_for(c) != "recourse"):
             if _is_rolling(c):
-                raise FlexToolConfigError(
-                    f"Solve '{c}' is a rolling stochastic solve nested inside another solve's contains_solves. "
-                    f"FlexTool 4.7.0 cannot yet realize the jumps of a nested rolling stochastic solve. Make it a "
-                    f"top-level solve, or remove its realized: yes branch."
-                )
+                raise _rolling_nested_error(c)
             raise FlexToolConfigError(
                 f"Solve '{c}' has a realized: yes designation in "
                 f"stochastic_branches whose fan reaches its committed window, "

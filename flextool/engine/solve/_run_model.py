@@ -1618,17 +1618,20 @@ def native_run_model(state, solver) -> int:
                     if _dp is not None:
                         _uc_to_disp[_uc] = _dp
                         _rdp[_dp] = _uc           # per-roll parent map
-                        # OC1 fix — the realized-dispatch roll realizes ONLY
-                        # its JUMP (the committed/realized section).  Restrict
-                        # its SOLVE window to the realized (jump) time list
-                        # instead of inheriting the parent's full roll horizon
-                        # (jump + look-ahead): the look-ahead has no realized
-                        # data and no online pin, so solving it forced
-                        # spurious unserved load.  ``realized_time_lists[_dp]``
-                        # here is the start→next-jump slice (untrimmed at this
-                        # point); copy it as the active window.  The fix_online
-                        # pin and the disp→disp realized carry already align on
-                        # the jump.
+                        # A realized-dispatch roll that is no realization roll
+                        # (``_rolls_ahead`` False: delayed units, recourse, ...,
+                        # ``_realization_tail.realization_roll_method``) realizes
+                        # ONLY its JUMP.  Its SOLVE
+                        # window is the realized (jump) time list instead of the
+                        # parent's full roll horizon: without forecasts after the
+                        # jump, the look-ahead has no realized data and no online
+                        # pin, so solving it forced spurious unserved load.
+                        # ``realized_time_lists[_dp]`` here is the start→next-jump
+                        # slice (untrimmed at this point); copy it as the active
+                        # window.  The fix_online pin and the disp→disp realized
+                        # carry already align on the jump.  A realization roll
+                        # keeps the horizon and looks ahead with the forecasts
+                        # made at the end of its jump (its plan, step 2.9).
                         if _dp in realized_time_lists and not _rolls_ahead:
                             active_time_lists[_dp] = copy.deepcopy(
                                 realized_time_lists[_dp])
@@ -1751,6 +1754,8 @@ def native_run_model(state, solver) -> int:
         fix_storage_time_lists,
         realized_time_lists,
     )
+    # The plans (2.9) and the expansion have passed their checks: the realization notices of the listed solves.
+    _realization_tail.announce_realization_notices(state.solve)
 
     # ------------------------------------------------------------------
     # 3.1 Realization plan per sub-solve.  A period label has no dispatch, so

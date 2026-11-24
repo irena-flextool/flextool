@@ -278,7 +278,9 @@ def add_variables(b: _Build) -> None:
     # vq_capacity_margin[g,d] ≥ 0   ∀ (g,d) ∈ capacity_margin_rows = groupCapacityMargin × D_inv, without the
     #   (g,d) whose margin is −inf (no requirement in that period)
     #   D_inv = period_invest ∩ periods of dt: the solve's investment periods and, in a stochastic fan, the
-    #   forecast branch periods of those anchors (a period label has no dt); one slack per forecast
+    #   forecast branch periods of those anchors (a period label has no dt; the label with steps of a split
+    #   realization roll is never in period_invest: _realization_tail.roll_tail_plan refuses it); one slack per
+    #   forecast
     # Capacity margin shortfall of group g in period d, as a fraction of
     # group_capacity_for_scaling: MW = vq_capacity_margin · group_capacity_for_scaling[g,d].
     if b.has_capacity_margin:
@@ -735,8 +737,9 @@ def _eq_capacity_margin(b: _Build) -> None:
     #   capacity_margin_rows = groupCapacityMargin × D_inv without the (g,d) whose margin is −inf (no requirement)
     #   groupCapacityMargin = groups with capacity_margin_method absolute or relative_of_peak_demand
     #   D_inv = period_invest ∩ periods of dt (investment periods of the solve; a period label has no dt, so a
-    #   fan contributes its forecast branch periods, one row per forecast); a solve without investment periods
-    #   has no capacity margin
+    #   fan contributes its forecast branch periods, one row per forecast; the label with steps of a split
+    #   realization roll is never in period_invest, _realization_tail.roll_tail_plan refuses it); a solve without
+    #   investment periods has no capacity margin
     #   N(g) = nodes of g in nodeBalance without a storage state;  icap = inv_group_cap = 1 / group_capacity_for_scaling
     #   F(g), V(g) = the unit output arcs into N(g) that count at capacity (capacity_margin_counted_arcs): not of a
     #   storage-backed unit (an input from a storage-state node, Σ input_share_max of its other inputs < 1), not of

@@ -436,9 +436,10 @@ def _realized_rolls(realized_at_p3: str) -> list[tuple]:
     return [*_two_forecasts("p1", "t0001", realized="real"), *_two_forecasts("p3", "t0009", realized=realized_at_p3)]
 
 
-def _not_fanned_error(branch: str) -> str:
+def _not_fanned_error(branch: str, fan: tuple[str, str] = ("p1", "t0001")) -> str:
     return (
-        "Roll 'sol_roll_0' of rolling solve 'sol' opens its stochastic fan at period 'p1' (analysis_time 't0001'). "
+        f"Roll 'sol_roll_0' of rolling solve 'sol' opens its stochastic fan at period '{fan[0]}' (analysis_time "
+        f"'{fan[1]}'). "
         "The stochastic_branches of solve 'sol' also mark a realized branch later in its horizon, where no solve or "
         f"roll fans out: period 'p2' at analysis_time 't0005' (realized branch '{branch}'). This row switches the "
         "realization dispatch to its branch from that period on, and it is not allowed even when it names the "
@@ -457,8 +458,8 @@ def _two_realized(first: str, second: str) -> str:
 @pytest.mark.parametrize(("method", "fans", "expected"), [
     pytest.param("within_solve", [*_realized_rolls("real"), ("p2", "alt", "t0005", "yes", 0.0)],
                  _two_realized("real", "alt"), id="switch-other"),
-    pytest.param("within_solve", [*_realized_rolls("real"), ("p2", "real", "t0005", "yes", 0.0)], None,
-                 id="same-branch-not-fan"),
+    pytest.param("within_solve", [*_realized_rolls("real"), ("p2", "real", "t0005", "yes", 0.0)],
+                 "^" + re.escape(_not_fanned_error("real", ("p3", "t0009"))) + "$", id="same-branch-not-fan"),
     pytest.param("separate_dispatch", [*_realized_rolls("real"), ("p2", "real", "t0005", "yes", 0.0)],
                  "^" + re.escape(_not_fanned_error("real")) + "$", id="same-branch-not-fan-solve-1"),
     pytest.param("within_solve", _realized_rolls("obs"), _two_realized("real", "obs"), id="fan-point-other-branch"),
@@ -471,10 +472,11 @@ def _two_realized(first: str, second: str) -> str:
 def test_realized_row_where_no_roll_fans_out_or_switching_branch(tmp_path_factory, method, fans, expected) -> None:
     """Rolling 8/12, NP=3, forecasts high/low and realized: yes ``real`` at p1/t0001 and p3/t0009.  Since 4.7.0
     the jumps read the one realized branch flattened over all its analysis times (D7): realized: yes rows naming
-    more than one branch stop the run before any roll (``within_solve`` and ``separate_dispatch``); a realized
-    row of the same branch where no roll fans out (p2/t0005) is one more analysis time of the realized series
-    for a ``within_solve`` solve (valid).  Solve (1) of a ``separate_dispatch`` roll still fans at the roll's start,
-    and a realized row in its horizon where no roll fans out is the item-248b error naming roll 0."""
+    more than one branch stop the run before any roll (``within_solve`` and ``separate_dispatch``).  A realized
+    row of the same branch where no roll fans out (p2/t0005) is the item-248b error naming roll 0 for both methods:
+    solve (1) of a ``separate_dispatch`` roll fans at the roll's start (p1/t0001); roll 0 of the ``within_solve``
+    solve (t0001-t0012, jump 8) fans at the end of its jump (p3/t0009) and roll 1 (t0009-t0012) is its jump only,
+    so no roll fans out at t0005."""
     if expected is None:
         steps = _run(tmp_path_factory, n_periods=3, fans=fans, rolling=(8.0, 12.0), method=method)
         assert list(steps) == ["sol_roll_0", "sol_roll_1"]
