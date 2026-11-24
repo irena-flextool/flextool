@@ -2062,11 +2062,12 @@ def _rolling_containing_error(solve: str, *, separate_dispatch: bool = False,
     ``stochastic_branches``."""
     kind = "rolling stochastic solve" if stochastic else "rolling solve"
     method = " with dispatch_realization_method separate_dispatch" if separate_dispatch else ""
+    why = (f"FlexTool 4.7.0 cannot yet realize the jumps of a {kind} that contains other solves." if stochastic else
+           "FlexTool 4.7.0 cannot yet add the realization solve that separate_dispatch needs to a rolling solve "
+           "that contains other solves.")
     return FlexToolConfigError(
-        f"Solve '{solve}' is a {kind}{method} that contains other solves (contains_solves). "
-        f"FlexTool 4.7.0 cannot yet realize the jumps of a {kind} that contains other "
-        f"solves. Move the solves it contains out of its contains_solves, or "
-        f"{_rolling_realization_fix(separate_dispatch, stochastic)}."
+        f"Solve '{solve}' is a {kind}{method} that contains other solves (contains_solves). {why} Move the solves it "
+        f"contains out of its contains_solves, or {_rolling_realization_fix(separate_dispatch, stochastic)}."
     )
 
 
@@ -2076,9 +2077,11 @@ def _rolling_nested_error(solve: str, *, separate_dispatch: bool = False,
     :func:`_rolling_containing_error`."""
     kind = "rolling stochastic solve" if stochastic else "rolling solve"
     method = " with dispatch_realization_method separate_dispatch" if separate_dispatch else ""
+    why = (f"FlexTool 4.7.0 cannot yet realize the jumps of a nested {kind}." if stochastic else
+           "FlexTool 4.7.0 cannot yet add the realization solve that separate_dispatch needs to a nested rolling "
+           "solve.")
     return FlexToolConfigError(
-        f"Solve '{solve}' is a {kind}{method} nested inside another solve's contains_solves. "
-        f"FlexTool 4.7.0 cannot yet realize the jumps of a nested {kind}. Make it a "
+        f"Solve '{solve}' is a {kind}{method} nested inside another solve's contains_solves. {why} Make it a "
         f"top-level solve, or {_rolling_realization_fix(separate_dispatch, stochastic)}."
     )
 
@@ -2299,18 +2302,16 @@ def _spawn_realized_dispatch_siblings(
     def _is_rolling(solve: str) -> bool:
         return (getattr(solve_cfg, "solve_modes", None) or {}).get(solve) == "rolling_window"
 
-    def _add(solve: str, why: str, delayed: list[str]) -> None:
-        # W-0594 where the delayed units alone keep the added realization solve from looking ahead: noted once the
-        # realization solves are registered, so a solve stopped by the checks below never gets it.
-        if delayed:
-            delayed_of[solve] = delayed
+    def _add(solve: str, why: str) -> None:
+        # W-0594 (the delayed units keep the added realization solve from looking ahead) is noted with the
+        # realization notices, once the plans and the expansion have passed their checks
+        # (_realization_tail.announce_realization_notices).
         eligible.append((solve, why))
 
     # Spawn list: every separate_dispatch solve (authored), then every
     # designated solve (a ``realized: yes`` branch) without a configured realization solve.  Each
     # entry carries the reason the error messages below name.
     eligible: list[tuple[str, str]] = []
-    delayed_of: dict[str, list[str]] = {}
     deterministic = getattr(solve_cfg, "deterministic_branches", None) or {}
     for p in sorted(top_level):
         if p in deterministic:
@@ -2323,7 +2324,6 @@ def _spawn_realized_dispatch_siblings(
             # realizes its jump and looks ahead after it, so no realization solve is added.  (W-0635 / W-0636:
             # native_run_model, once the plans have passed their checks.)
             continue
-        delayed = _realization_tail.delay_gated_units(solve_cfg, p)
         if solve_cfg.dispatch_realization_method_for(p) == "separate_dispatch":
             if not (getattr(solve_cfg, "realized_periods", None) or {}).get(p):
                 # Nothing to realize (an invest-only solve): no realization solve.
@@ -2333,7 +2333,7 @@ def _spawn_realized_dispatch_siblings(
                         "realized_periods: no realization solve is added (it would dispatch nothing)", p,
                     )
                 continue
-            _add(p, "dispatch_realization_method='separate_dispatch'", delayed)
+            _add(p, "dispatch_realization_method='separate_dispatch'")
             continue
         configured = _realization.configured_realization_solve(solve_cfg, p)
         if configured is not None:
@@ -2383,7 +2383,7 @@ def _spawn_realized_dispatch_siblings(
                 f"contains out of its contains_solves, or remove the "
                 f"designation."
             )
-        _add(p, "a realized: yes designation in stochastic_branches", delayed)
+        _add(p, "a realized: yes designation in stochastic_branches")
     for c in sorted(contained):
         if (_realization.designation_reaches_committed_window(solve_cfg, c)
                 and solve_cfg.stochastic_invest_method_for(c) != "recourse"):
@@ -2476,9 +2476,6 @@ def _spawn_realized_dispatch_siblings(
         SolveConfig.check_derived_solves(solve_cfg, siblings)
         if cascade_solve_cfg is not None and cascade_solve_cfg is not solve_cfg:
             SolveConfig.check_derived_solves(cascade_solve_cfg, siblings)
-    for parent, _why in eligible:
-        if parent in delayed_of:
-            run_warnings.note("W-0594", delayed_of[parent], solve=parent, per_run=True)
 
 
 def _validate_model_solve(state: RunnerState) -> list[str]:

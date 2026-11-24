@@ -193,20 +193,28 @@ def test_rolling_separate_dispatch_with_delays_gets_the_notice_without_look_ahea
             "jump alone, without the look-ahead; only its first solve changed.") in text
 
 
-def test_a_delayed_solve_stopped_before_its_realization_is_added_gets_no_w0594(tmp_path):
-    """The delayed-unit case above with ``fix_storage_periods``: the realization solve it needs would re-float the
-    pinned storage, so the run stops before the realization solve is added, and W-0594 (which says how that
-    realization solve dispatches) is not noted."""
+@pytest.mark.parametrize("stop", ["fix_storage_periods", "realized_row_where_no_roll_fans_out"])
+def test_a_delayed_solve_stopped_before_it_runs_gets_no_w0594(tmp_path, stop):
+    """The delayed-unit case above, stopped before any roll: by ``fix_storage_periods`` (the realization solve it
+    needs would re-float the pinned storage; refused while the realization solve is added) or by a ``realized: yes``
+    row at t02, where no roll fans out (the solve keeps the earlier realization, so nothing reads that row: R1,
+    refused by the stochastic expansion).  W-0594, which says how that realization solve dispatches, is noted with
+    the realization notices after those checks, so neither stopped run gets it."""
     from tests._support.coded_warnings import capture_coded
 
-    spec = ts._spec(real_at=ts.OVERLAP, forecast_at=ts.OVERLAP)
+    real_at = dict(ts.OVERLAP, t02=ts.STEPS[1:]) if stop != "fix_storage_periods" else ts.OVERLAP
+    spec = ts._spec(real_at=real_at, forecast_at=ts.OVERLAP)
     spec["entities"] += [["node", "fuel", None], ["unit__inputNode", ["gen", "fuel"], None]]
     spec["entity_alternatives"].append(["node", ["fuel"], "init", True])
     spec["parameter_values"] += [*srl._node("fuel", "balance", pack(100.0, "float")),
                                  ["unit", "gen", "delay", pack(1.0, "float"), "init"]]
     _set_solve(spec, "dispatch_realization_method", pack("separate_dispatch", "str"))
-    _set_solve(spec, "fix_storage_periods", scm.array(["p1"]))
-    with capture_coded() as got, pytest.raises(FlexToolConfigError, match=(
-            r"^Solve 'st' needs an engine-added realization solve .* but also authors fix_storage_periods")):
+    if stop == "fix_storage_periods":
+        _set_solve(spec, "fix_storage_periods", scm.array(["p1"]))
+        error = r"^Solve 'st' needs an engine-added realization solve .* but also authors fix_storage_periods"
+    else:
+        error = (r"^Roll 'st_roll_0' of rolling solve 'st' opens its stochastic fan at period 'p1' \(analysis_time "
+                 r"'t01'\)\. The stochastic_branches of solve 'st' also mark a realized branch later in its horizon")
+    with capture_coded() as got, pytest.raises(FlexToolConfigError, match=error):
         scm.run_spec(spec, tmp_path)
     assert not got.names("W-0594")

@@ -161,14 +161,20 @@ def announce_realization_notices(solve_cfg: Any) -> None:
     W-0635: a solve with ``within_solve`` realization rolls.  W-0636: a ``separate_dispatch`` solve with an
     engine-added realization solve: its solve (1) changed, and with ``separate_dispatch`` realization rolls its
     realization also looks ahead.  A rolling one without them (delayed units, recourse, a realization solve the
-    author declared) keeps the earlier realization; the full notice says so for it.
+    author declared) keeps the earlier realization; the full notice says so for it.  W-0594 (every run, not only
+    upgraded databases): a solve with an engine-added realization solve that the delayed units alone keep from
+    realization rolls (:func:`delay_gated_units`).
     """
+    from flextool import run_warnings
     from flextool.engine import _behaviour_changes
 
     derived = getattr(solve_cfg, "derived_solves", None) or {}
     spawned = {p for s, p in (getattr(solve_cfg, "realized_dispatch_parent", None) or {}).items() if s in derived}
     modes = getattr(solve_cfg, "solve_modes", None) or {}
     for solve in sorted(_top_level_solves(solve_cfg)):
+        delayed = delay_gated_units(solve_cfg, solve) if solve in spawned else []
+        if delayed:
+            run_warnings.note("W-0594", delayed, solve=solve, per_run=True)
         method = realization_roll_method(solve_cfg, solve)
         detail = ""
         if method == "within_solve":

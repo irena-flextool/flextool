@@ -349,7 +349,8 @@ def test_within_solve_without_realized_branch_passes():
 def test_rolling_separate_dispatch_nested_or_containing_changes_the_method(nesting, stochastic):
     """A rolling ``separate_dispatch`` solve that contains solves, or is nested in one, stops; the way out keeps its
     ``realized: yes`` branch (``separate_dispatch`` stops without one) and changes the method instead.  A solve
-    without ``stochastic_branches`` is not called stochastic."""
+    without ``stochastic_branches`` is not called stochastic, and its cause is the realization solve that
+    ``separate_dispatch`` needs (a deterministic rolling solve with contained solves runs)."""
     from flextool.engine.solve._orchestration import _dispatch_realization_raw_guard
 
     branches = None if stochastic else {"s": []}
@@ -367,9 +368,10 @@ def test_rolling_separate_dispatch_nested_or_containing_changes_the_method(nesti
     kind = "rolling stochastic solve" if stochastic else "rolling solve"
     fix = ("set its dispatch_realization_method to deterministic (the solve then reads only its realized: yes "
            "branch)." if stochastic else "set its dispatch_realization_method to deterministic.")
+    why = ("FlexTool 4\\.7\\.0 cannot yet realize the jumps" if stochastic else
+           "FlexTool 4\\.7\\.0 cannot yet add the realization solve that separate_dispatch needs to a")
     with pytest.raises(FlexToolConfigError, match=(
-            f"^Solve 's' is a {kind} with dispatch_realization_method separate_dispatch {where}\\. "
-            "FlexTool 4\\.7\\.0 cannot yet realize the jumps")) as err:
+            f"^Solve 's' is a {kind} with dispatch_realization_method separate_dispatch {where}\\. {why}")) as err:
         _dispatch_realization_raw_guard(sc, "s")
     msg = str(err.value)
     assert msg.endswith(f"{first}, or {fix}"), msg

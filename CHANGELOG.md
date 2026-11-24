@@ -113,11 +113,12 @@ Input databases move to data version 83. The FlexTool window, the Spine Toolbox 
   solve gets no realization solve, as before). Their first solve changes all the same (it shares only the
   `_fix_in_uc` commitment, see above), so note W-0636 names the `separate_dispatch` ones; its full notice says
   that their realization dispatches each jump alone.
-- **A `realized: yes` row where no solve or roll fans out stops the run in more cases.** The row was already an
-  error; now it is also one where forecasts are declared at the same point (they are ignored there, as before),
-  and in a roll whose horizon ends with its jump. A `realized: yes` row belongs at the solve's start and where the
-  solve or a roll fans out. For a rolling `within_solve` or `separate_dispatch` solve the error says that every jump
-  reads one realized series, so the row switches nothing and can be removed.
+- **A `realized: yes` row where no roll fans out is read by a rolling solve whose realization looks ahead.** In a
+  rolling `within_solve` or `separate_dispatch` solve (other than those that keep the earlier realization) each jump
+  reads the realized branch over all its `realized: yes` rows as one timeline, so such a row is one more realized
+  series and is no longer an error. In a single solve and in the rolling solves that keep the earlier realization
+  nothing reads it, and it is still an error, now also where forecasts are declared at the same point (they are
+  ignored there, as before).
 - **A rolling solve builds no capacity margin.** Its rolls build no investment, so a capacity-margin group's rows
   could only add a shortfall penalty on capacity the roll cannot change. Before, a rolling solve with
   `invest_periods` built the margin in every roll and reported and paid its shortfall; now it has none, as a
