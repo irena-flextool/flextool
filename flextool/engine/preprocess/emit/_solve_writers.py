@@ -376,10 +376,11 @@ def emit_stochastic_invest_method(
     filename: str,
     *, provider,
 ) -> None:
-    """Emit the resolved ``solve.stochastic_invest_method`` (Slice D).
+    """Emit the recourse switch of the solve (``SolveConfig.recourse_invest``: its investments branch after the
+    reveal, ``invest_solve_branching_method`` ``investments_after_reveal_period`` or
+    ``investments_at_reveal_period``).
 
-    A single-row, single-column (``method``) frame carrying the resolved
-    per-solve mode (``"none"`` / ``"recourse"``).  Read run-time via
+    A single-row, single-column (``method``) frame carrying ``"recourse"`` or ``"none"``.  Read run-time via
     ``_derived._recourse_invest_active`` so the derived/model
     layers can gate the recourse feature without a ``SolveConfig``.
     """

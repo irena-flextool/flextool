@@ -7157,6 +7157,27 @@
       ]
     ],
     [
+      "invest_solve_branching_methods",
+      [
+        "Im9wZXJhdGlvbnNfb25seSI=",
+        "str"
+      ]
+    ],
+    [
+      "invest_solve_branching_methods",
+      [
+        "ImludmVzdG1lbnRzX2FmdGVyX3JldmVhbF9wZXJpb2Qi",
+        "str"
+      ]
+    ],
+    [
+      "invest_solve_branching_methods",
+      [
+        "ImludmVzdG1lbnRzX2F0X3JldmVhbF9wZXJpb2Qi",
+        "str"
+      ]
+    ],
+    [
       "lifetime_methods",
       [
         "InJlaW52ZXN0X2F1dG9tYXRpYyI=",
@@ -7706,20 +7727,6 @@
       "startup_methods",
       [
         "ImludGVnZXJfZml4X2luX3VjIg==",
-        "str"
-      ]
-    ],
-    [
-      "stochastic_invest_methods",
-      [
-        "Im5vbmUi",
-        "str"
-      ]
-    ],
-    [
-      "stochastic_invest_methods",
-      [
-        "InJlY291cnNlIg==",
         "str"
       ]
     ],
@@ -9181,7 +9188,7 @@
       "model",
       "version",
       [
-        "ODMuMA==",
+        "ODQuMA==",
         "float"
       ],
       null,
@@ -10054,7 +10061,7 @@
         "str"
       ],
       "dispatch_realization_methods",
-      "[choice] How a solve with stochastic_branches is solved. deterministic (default): the forecasts are ignored and the solve uses the data of the realized: yes branch, with a warning (an error without that branch). within_solve: the forecasts are solved together; a rolling solve realizes each jump with the realized: yes branch and looks ahead with the forecasts made at the end of the jump; a single solve with a realized: yes branch gets a separate realization solve. separate_dispatch: a first, stochastic solve decides the units online of _fix_in_uc units; a realization solve keeps them and dispatches the realized: yes branch over the jump and, in a rolling solve, looks ahead with the forecasts made at the end of the jump (a single solve realizes its realized periods only); needs a realized: yes branch. Without stochastic_branches, deterministic and within_solve give the same model.",
+      "[choice] How a solve with stochastic_branches is solved. deterministic (default): the forecasts are ignored and the solve uses the data of the realized: yes branch, with a warning (an error without that branch). within_solve: the forecasts are solved together; a rolling solve realizes each jump with the realized: yes branch and looks ahead with the forecasts made at the end of the jump; a single solve with a realized: yes branch gets a separate realization solve. separate_dispatch: a first, stochastic solve decides the units online of _fix_in_uc units; a realization solve keeps them and dispatches the realized: yes branch over the jump and, in a rolling solve, looks ahead with the forecasts made at the end of the jump (a single solve realizes its realized periods only); needs a realized: yes branch. Without stochastic_branches, deterministic and within_solve give the same model. On an investment solve (not rolling, with invest_periods or realized_invest_periods) only deterministic is read, as a perfect-foresight benchmark with a warning: without it the forecasts are solved (invest_solve_branching_method); separate_dispatch is refused there.",
       "solve_advanced"
     ],
     [
@@ -10078,6 +10085,17 @@
       null,
       "[name] Array of periods in which investments can be decided. With a construction lead time, the capacity comes online later.",
       "solve_basics"
+    ],
+    [
+      "solve",
+      "invest_solve_branching_method",
+      [
+        "Im9wZXJhdGlvbnNfb25seSI=",
+        "str"
+      ],
+      "invest_solve_branching_methods",
+      "[choice] Investment solves only (not rolling, with invest_periods or realized_invest_periods, and stochastic_branches): which decisions all forecast branches share. The reveal period is the period where the forecasts start. operations_only (default): the investments of every period are one plan for all branches; each branch operates on its own from the reveal period on. investments_after_reveal_period: the investments up to and including the reveal period are shared; each branch invests on its own in the later periods, which cannot be realized. investments_at_reveal_period: the investments before the reveal period are shared; each branch invests on its own from the reveal period on, and those periods cannot be realized.",
+      "solve_advanced"
     ],
     [
       "solve",
@@ -10191,28 +10209,6 @@
     ],
     [
       "solve",
-      "shared_invest_periods",
-      [
-        null,
-        null
-      ],
-      null,
-      "[name] Periods where investments are the same in every stochastic branch (with recourse). No value or empty array: none.",
-      "solve_advanced"
-    ],
-    [
-      "solve",
-      "shared_operation_periods",
-      [
-        null,
-        null
-      ],
-      null,
-      "[name] Periods where operations are the same in every stochastic branch. No value: the committed time steps. Empty array: none.",
-      "solve_advanced"
-    ],
-    [
-      "solve",
       "solve_mode",
       [
         "InNpbmdsZV9zb2x2ZSI=",
@@ -10275,17 +10271,6 @@
       ],
       null,
       "[-] Forecast branches of the solve (map: period, branch, analysis_time, realized \u2192 probability weight). Weights are normalised per start time. At most one branch per start time may be realized: yes. That branch is not a weighted forecast; it adds a realization solve over the committed time steps. Without it, the solve reports investments only.",
-      "solve_advanced"
-    ],
-    [
-      "solve",
-      "stochastic_invest_method",
-      [
-        "Im5vbmUi",
-        "str"
-      ],
-      "stochastic_invest_methods",
-      "[choice] How stochastic branches invest. none (default): one shared investment plan for all branches. recourse: each branch also invests at and after its branching period.",
       "solve_advanced"
     ],
     [
@@ -12837,6 +12822,12 @@
     ],
     [
       "solve",
+      "invest_solve_branching_method",
+      "str",
+      0
+    ],
+    [
+      "solve",
       "new_stepduration",
       "float",
       0
@@ -12909,18 +12900,6 @@
     ],
     [
       "solve",
-      "shared_invest_periods",
-      "array",
-      1
-    ],
-    [
-      "solve",
-      "shared_operation_periods",
-      "array",
-      1
-    ],
-    [
-      "solve",
       "solve_mode",
       "str",
       0
@@ -12954,12 +12933,6 @@
       "stochastic_branches",
       "map",
       4
-    ],
-    [
-      "solve",
-      "stochastic_invest_method",
-      "str",
-      0
     ],
     [
       "solve",

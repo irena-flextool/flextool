@@ -231,8 +231,6 @@ def build() -> dict:
          "stoch"],
         ["profile", "wprof", "profile", _pack(profile_plain, "map"),
          "stoch"],
-        ["solve", "stoch_2p_mid", "stochastic_invest_method",
-         _pack("none", "str"), "stoch"],
         ["solve", "stoch_2p_mid", "stochastic_branches",
          _pack(stochastic_branches, "map"), "stoch"],
         ["solve", "stoch_2p_mid", "dispatch_realization_method",

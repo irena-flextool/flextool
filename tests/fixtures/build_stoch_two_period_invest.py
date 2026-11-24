@@ -214,8 +214,8 @@ def build() -> dict:
         ["profile", "wprof", "profile", _pack(profile_stoch, "map"),
          "stoch"],
         # ---- recourse: opt-in flag -------------------------------------
-        ["solve", "stoch_2p_inv", "stochastic_invest_method",
-         _pack("recourse", "str"), "recourse"],
+        ["solve", "stoch_2p_inv", "invest_solve_branching_method",
+         _pack("investments_after_reveal_period", "str"), "recourse"],
         # ---- horizon: surface non-realized branch invest (§11.2) -------
         ["model", "flextool", "output_horizon", _pack("yes", "str"),
          "horizon"],

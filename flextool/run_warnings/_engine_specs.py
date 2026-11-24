@@ -1020,8 +1020,8 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "neither: no unit or connection with a _fix_in_uc method has units online in the realization solve "
             "(units with *linear* or *integer* are decided again with the realized data; units without online "
             "variables, or with `reduce_unit_detail_method` leaving them out, have none), and the stochastic solve "
-            "decides no investments (no `invest_periods`, `realized_invest_periods` or "
-            "`stochastic_invest_method`; a rolling solve builds no investment in its rolls). Storage and the other states continue from the previous realization, "
+            "decides no investments (no `invest_periods` or `realized_invest_periods`; a rolling solve builds no "
+            "investment in its rolls). Storage and the other states continue from the previous realization, "
             "not from the stochastic solve, and reserve is met again with the realized data. So the realized "
             "results do not depend on the stochastic solve, and its forecasts only change its own results. The "
             "realization of a single solve dispatches its committed window with the realized data and no "
@@ -1029,14 +1029,16 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "the realized data and then looks ahead with the forecasts made at the end of the jump. Three kinds of "
             "rolling solve keep a realization solve that does not look ahead with the forecasts: in a model with "
             "delayed units (note W-0594) a rolling `separate_dispatch` or `within_solve` solve, a rolling "
-            "`separate_dispatch` solve with `stochastic_invest_method` *recourse*, and a rolling stochastic solve "
+            "`separate_dispatch` solve whose investments branch (`invest_solve_branching_method`), and a rolling "
+            "stochastic solve "
             "followed by a realization solve you configure yourself (that solve dispatches as you configured it). "
             "The note is printed once per realization solve.\n\n"
             "**How to fix:** nothing, if that is meant. For a commitment made in the stochastic solve that holds "
             "in the realization, give those units `startup_method` *integer_fix_in_uc* or *linear_fix_in_uc*. "
             "For a rolling solve that should keep nothing of a separate unit-commitment solve, use "
             "`dispatch_realization_method` *within_solve*: each roll is then one solve (not in a model with "
-            "delayed units, note W-0594, and not with `stochastic_invest_method` *recourse*, under which a rolling "
+            "delayed units, note W-0594, and not when its investments branch (`invest_solve_branching_method`), "
+            "under which a rolling "
             "*within_solve* solve gets no realization at all)."
         ),
     ),
@@ -1121,18 +1123,18 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "The solve is a dispatch solve with `stochastic_branches`, and its `dispatch_realization_method` is "
             "`deterministic` (the default of a dispatch solve since FlexTool 4.7.0; an investment solve, a solve "
             "that is not rolling and has `invest_periods` or `realized_invest_periods`, solves its forecasts "
-            "unless it sets `deterministic`, warning W-0637). It is solved with the data of the `realized: yes` "
+            "unless it sets `deterministic`, warning W-0638). It is solved with the data of the `realized: yes` "
             "branch only, as one "
             "timeline: each time step reads the realized series that covers it (where several do, the one made "
-            "nearest to the start of the solve, or of the roll in a rolling solve). The forecasts, "
-            "`stochastic_invest_method` `recourse` and the realization solve are ignored. Without a "
+            "nearest to the start of the solve, or of the roll in a rolling solve). The forecasts "
+            "and the realization solve are ignored. Without a "
             "`realized: yes` branch, or at a time step no realized series covers, the run stops with an error.\n\n"
             "**How to fix:** set `dispatch_realization_method` to `within_solve` or `separate_dispatch` to solve "
             "the forecasts."
         ),
     ),
     WarningSpec(
-        code="W-0637",
+        code="W-0638",
         message="investment solve '{solve}' has dispatch_realization_method deterministic",
         title="Investment solve made deterministic",
         topic=_SOLVES,
@@ -1141,8 +1143,8 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "The solve is an investment solve (not rolling, with `invest_periods` or `realized_invest_periods`) "
             "with `stochastic_branches`, and it sets `dispatch_realization_method` `deterministic`. It invests and "
             "dispatches with the data of the `realized: yes` branch only, as one timeline, knowing that data in "
-            "advance: a perfect-foresight benchmark. The forecasts, `stochastic_invest_method` and the realization "
-            "solve are ignored. Without that setting an investment solve solves its forecasts. Without a "
+            "advance: a perfect-foresight benchmark. The forecasts, `invest_solve_branching_method` and the "
+            "realization solve are ignored. Without that setting an investment solve solves its forecasts. Without a "
             "`realized: yes` branch, or at a time step no realized series covers, the run stops with an error.\n\n"
             "**How to fix:** nothing, if the benchmark is intended. To invest against the forecasts, remove "
             "`dispatch_realization_method` from the solve, or set it to `within_solve`."

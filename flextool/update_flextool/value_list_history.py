@@ -52,7 +52,7 @@ APPEND: dict[int, tuple[str, ...]] = {
 #: any earlier one loads the list values and protects the appends after it.
 TOUCH: frozenset[int] = frozenset(
     [*range(1, 12), 13, 17, 21, 25, 29, 40, 42, 51, 52, 53, 55, 56, 58, 60, 62, 64, 65, 67, 71, 74, 76, 77,
-     79, 80, 81, 82, 83, *APPEND])
+     79, 80, 81, 82, 83, 84, *APPEND])
 
 # The repair tool's data (value_list_repair).  Only step 22 can give a finding (no session in the window ran a
 # later APPEND step), so these tables have exactly the key 22 and the tool refuses a finding for any other step.

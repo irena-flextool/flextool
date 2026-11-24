@@ -99,8 +99,8 @@ def realization_roll_method(solve_cfg: Any, solve: str, *, ignore_delays: bool =
 
     True only for a top-level solve (in ``model.solves``, neither nested in nor containing other solves) with an
     explicit ``solve_mode`` ``rolling_window``, a non-empty ``stochastic_branches`` and
-    ``dispatch_realization_method`` ``within_solve`` or ``separate_dispatch``, that is no recourse solve
-    (``stochastic_invest_method``) and has no author-declared realization solve
+    ``dispatch_realization_method`` ``within_solve`` or ``separate_dispatch``, whose investments do not branch
+    (``SolveConfig.recourse_invest``) and has no author-declared realization solve
     (``_realization.configured_realization_solve``; the engine-added one is not author-declared).
     ``deterministic`` (absent or explicit; such a solve has no ``stochastic_branches`` left,
     ``SolveConfig.apply_deterministic_realization``) and single solves get ``None``.  The engine-added realization
@@ -123,7 +123,7 @@ def realization_roll_method(solve_cfg: Any, solve: str, *, ignore_delays: bool =
     method = solve_cfg.dispatch_realization_method_for(solve)
     if method not in ("within_solve", "separate_dispatch"):
         return None
-    if solve_cfg.stochastic_invest_method_for(solve) == "recourse":
+    if solve_cfg.recourse_invest(solve):
         return None
     # Nested solves get no plan (D11): only a contained solve has a storage-usage fix from its parent
     # (node_storage_usage_fix_le / node_balance_fix_quantity_eq_lower), and its per-path cap is computed nowhere
@@ -156,7 +156,7 @@ def delay_gated_units(solve_cfg: Any, solve: str) -> list[str]:
 
 def announce_realization_notices(solve_cfg: Any) -> None:
     """Notes W-0635 / W-0636 for the solves that the database upgrade listed (v83 part 3) and that run with the new
-    realization.  Called by ``native_run_model`` once the plans and the stochastic expansion have passed their
+    realization, and W-0637 for the solves the v84 upgrade listed that run.  Called by ``native_run_model`` once the plans and the stochastic expansion have passed their
     checks: a solve stopped by a configuration error never gets the notice (its error explains the change).
 
     W-0635: a solve with ``within_solve`` realization rolls.  W-0636: a ``separate_dispatch`` solve with an
@@ -189,6 +189,18 @@ def announce_realization_notices(solve_cfg: Any) -> None:
             continue
         if solve in (_behaviour_changes.marker_json(change).get("solves") or []):
             _behaviour_changes.notice(change, "solves", [solve], detail)
+    # W-0637: the solves whose stochastic investment settings the v84 upgrade rewrote, with the reason it listed.
+    change = "stochastic_invest_controls_rewritten"
+    marker = _behaviour_changes.marker_json(change)
+    listed = set(marker.get("solves") or [])
+    if listed:
+        reasons = marker.get("reasons") or {}
+        copies = getattr(solve_cfg, "map2d_duplicate_of", None) or {}
+        in_run = solve_cfg.solves_in_run() if hasattr(solve_cfg, "solves_in_run") else _top_level_solves(solve_cfg)
+        for solve in dict.fromkeys(copies.get(s, (s,))[0] for s in in_run):
+            if solve in listed:
+                reason = reasons.get(solve) if isinstance(reasons, dict) else None
+                _behaviour_changes.notice(change, "solves", [solve], str(reason or ""))
 
 
 def realization_rolls(

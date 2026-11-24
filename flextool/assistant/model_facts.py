@@ -376,9 +376,7 @@ def input_facts(db: Any, scenario: str) -> tuple[SolveFacts, ...]:
             realization=_realization(
                 data.value("solve", solve, "dispatch_realization_method"),
                 investment=mode != "rolling_window" and bool(
-                    invest or _names(data.value("solve", solve, "realized_invest_periods"))
-                    or str(data.value("solve", solve, "stochastic_invest_method") or "none").strip().lower()
-                    not in ("", "none")))))
+                    invest or _names(data.value("solve", solve, "realized_invest_periods"))))))
     return tuple(out)
 
 

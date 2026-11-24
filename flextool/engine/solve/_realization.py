@@ -188,15 +188,15 @@ def lookahead_in_configured_realization(solve_cfg: Any, realization_solve: str, 
 
 
 def warn_recourse_designation(solve: str) -> None:
-    """Warn that a ``realized: yes`` designation of a recourse-investment solve gets no realization solve.
+    """Warn that a ``realized: yes`` designation of a solve whose investments branch gets no realization solve.
 
     Under recourse every forecast branch invests on its own after the reveal, so there is no realized post-reveal
     investment to fix in a realization solve.  The designation still selects the branch a deterministic solve
     reads stochastic data from.
     """
     _MODULE_LOGGER.warning(
-        "Solve '%s' has a realized: yes designation in stochastic_branches, but it uses "
-        "stochastic_invest_method = recourse: no realization solve is added (there is no realized post-reveal "
+        "Solve '%s' has a realized: yes designation in stochastic_branches, but its investments branch "
+        "(invest_solve_branching_method): no realization solve is added (there is no realized post-reveal "
         "investment to fix).  The designation only selects the branch deterministic solves read stochastic data "
         "from.", solve)
 

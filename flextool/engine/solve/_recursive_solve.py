@@ -422,8 +422,9 @@ class RecursiveSolveBuilder:
 
         This fires at most once per PARENT rolling solve (keyed on *solve*),
         never per roll, and ONLY when the solve ITSELF authors investment
-        intent — ``invest_periods`` non-empty, ``realized_invest_periods``
-        non-empty, or ``stochastic_invest_method != "none"``.  A rolling solve
+        intent — ``invest_periods`` or ``realized_invest_periods`` non-empty
+        (``invest_solve_branching_method`` on a rolling solve stops the run:
+        ``SolveConfig.check_invest_branching``).  A rolling solve
         that merely sits downstream of an invest solve (invest-eligible
         entities exist in the model, but the rolling solve authors none of
         these knobs) does NOT trigger it.  WARNING only — it changes no LP,
@@ -435,10 +436,7 @@ class RecursiveSolveBuilder:
         has_realized_invest = bool(
             self.state.solve.realized_invest_periods.get(solve)
         )
-        stochastic_invest = (
-            self.state.solve.stochastic_invest_method_for(solve) != "none"
-        )
-        if not (has_invest_periods or has_realized_invest or stochastic_invest):
+        if not (has_invest_periods or has_realized_invest):
             return
         self._rolling_invest_warned.add(solve)
         # Emit via a MODULE-level logger, NOT ``self.logger``: the orchestrator
@@ -449,8 +447,7 @@ class RecursiveSolveBuilder:
         # ``_MODULE_LOGGER`` (effective level inherited from root).
         _MODULE_LOGGER.warning(
             "Solve '%s' is a rolling_window solve authored with investment "
-            "intent (invest_periods / realized_invest_periods / "
-            "stochastic_invest_method), but investment is NOT built in a flat "
+            "intent (invest_periods / realized_invest_periods), but investment is NOT built in a flat "
             "rolling_window solve: investment is period-granular (v_invest has "
             "no timestep axis) and a rolling solve advances past period "
             "beginnings, so no v_invest variable is created, no capacity margin "

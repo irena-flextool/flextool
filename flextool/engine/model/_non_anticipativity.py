@@ -8,7 +8,6 @@ solve (the ties of the retirements of model-built capacity, non_anticipativity_d
 _retire_built's).  The module declares no variables.
 """
 
-import logging
 from typing import TYPE_CHECKING
 
 import polars as pl
@@ -22,7 +21,6 @@ from flextool.engine.preprocess.params._branch import forecast_star_pairs
 if TYPE_CHECKING:
     from flextool.engine.model.core import _Build
 
-_LOG = logging.getLogger(__name__)
 
 
 def reference_forecasts(d) -> "list[tuple[str, list[str]]]":
@@ -427,14 +425,8 @@ def add_invest_constraints(b: "_Build") -> None:
         return
     window = window.with_columns(cast_dim(pl.col("b"), None, "d"))
     if not getattr(d, "recourse_invest", False):
-        # Without recourse investment there is one investment per period for all branches: nothing to tie.
-        _LOG.info(
-            "shared_invest_periods is set but "
-            "stochastic_invest_method is not 'recourse'; investment is "
-            "already shared across all periods, so the invest-NA window "
-            "has no effect (use 'recourse' for shared-first-period / "
-            "recourse-later)."
-        )
+        # Without branching investments there is one investment per period for all branches: nothing to tie
+        # (SolveConfig.invest_tie_periods_for gives tie periods only to investments_after_reveal_period).
         return
     m = b.m
 

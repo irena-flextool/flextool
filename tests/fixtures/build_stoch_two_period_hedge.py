@@ -307,8 +307,8 @@ def build() -> dict:
          "stoch"],
         ["profile", "wprof", "profile", _pack(profile_stoch, "map"),
          "stoch"],
-        ["solve", "stoch_2p_hedge", "stochastic_invest_method",
-         _pack("recourse", "str"), "stoch"],
+        ["solve", "stoch_2p_hedge", "invest_solve_branching_method",
+         _pack("investments_after_reveal_period", "str"), "stoch"],
         # ---- rp: mid-horizon reveal at p2040 ---------------------------
         ["solve", "stoch_2p_hedge", "stochastic_branches",
          _pack(stochastic_branches_rp, "map"), "rp"],
@@ -326,12 +326,6 @@ def build() -> dict:
         # per-branch (recourse), and free operations from t0.  The tie
         # reproduces the Option-B hedge RP = 165 000 by CONSTRAINT (vs the
         # mid-horizon ``hedge`` scenario's shared trunk by construction).
-        ["solve", "stoch_2p_hedge", "shared_invest_periods",
-         _pack({"value_type": "str", "data": ["p2035"]}, "array"),
-         "na_window"],
-        ["solve", "stoch_2p_hedge", "shared_operation_periods",
-         _pack({"value_type": "str", "data": []}, "array"),
-         "na_window"],
         # ---- divest: base divest-eligible (T-Divest, F2) ---------------
         # invest_retire_total is in BOTH the invest- and divest-allowed
         # method sets; a non-zero salvage_value makes the divest annuity
@@ -345,8 +339,8 @@ def build() -> dict:
         ["unit", "base", "existing", _pack(50.0, "float"), "divest"],
         ["unit", "base", "net_salvage_value", _pack(1.0, "float"), "divest"],
         # ---- invest_none: none composition (T-None) --------------------
-        ["solve", "stoch_2p_hedge", "stochastic_invest_method",
-         _pack("none", "str"), "invest_none"],
+        ["solve", "stoch_2p_hedge", "invest_solve_branching_method",
+         _pack("operations_only", "str"), "invest_none"],
         # ---- storage: a stochastic-group storage node (T-S) ------------
         # ``resv`` is a storage node in ``stoch_g`` (via group__node), so
         # under recourse mid-horizon the dispatch NA net-charge pinning

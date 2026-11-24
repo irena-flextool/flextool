@@ -71,23 +71,13 @@ def build() -> dict:
         ])),
     ])
 
-    # Curated NA window = the reveal periods, so dt_non_anticipativity
-    # populates from the window (no realized_dispatch at n_real=0).
-    window = _pack({"value_type": "str", "data": ["p2035", "p2040"]}, "array")
-
     new_pv = []
     for row in spec["parameter_values"]:
         # Swap the stochastic_branches payload for the all-forecast fan.
         if row[0] == "solve" and row[2] == "stochastic_branches":
             row = [row[0], row[1], row[2], _pack(stochastic_branches, "map"),
                    row[4]]
-        # Drop the free_ops empty-window row (replaced by the curated window).
-        if row[0] == "solve" and row[2] == "shared_operation_periods":
-            continue
         new_pv.append(row)
-    # Curated window lives in the ``stoch`` alternative (seen by the scenario).
-    new_pv.append(["solve", "stoch_2p_free", "shared_operation_periods",
-                   window, "stoch"])
     spec["parameter_values"] = new_pv
 
     # Single n_real=0 scenario (drop the free_ops / pinned_ops pair and the

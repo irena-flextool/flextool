@@ -99,8 +99,8 @@ def build() -> dict:
     # investable exercises the node-side ``annu_n`` under the fanned
     # invest axis while the storage NA keeps the leaves coupled.
     spec["parameter_values"] += [
-        ["solve", "2day_dispatch", "stochastic_invest_method",
-         _pack("recourse", "str"), "recourse_na"],
+        ["solve", "2day_dispatch", "invest_solve_branching_method",
+         _pack("investments_after_reveal_period", "str"), "recourse_na"],
         ["solve", "2day_dispatch", "invest_periods",
          _pack({"value_type": "str", "data": ["period1"]}, "array"),
          "recourse_na"],

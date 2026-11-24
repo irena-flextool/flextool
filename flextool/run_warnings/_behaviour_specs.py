@@ -112,7 +112,8 @@ BEHAVIOUR_TEXTS: dict[str, tuple[str, str, str, str]] = {
     ),
     "stochastic_branch_period_years": (
         "W-0610", "stochastic branch periods count from their year",
-        ("In a stochastic solve whose stochastic_invest_method is not recourse, the branch periods of the"
+        ("In a stochastic solve whose investments do not branch per forecast (stochastic_invest_method none, "
+         "invest_solve_branching_method operations_only from FlexTool 4.7.0 on), the branch periods of the"
          " stochastic branches now count from the year of their period. Before, every branch period "
          "counted as the first year of the solve: capacity invested in a later period, or starting to "
          "operate in a later period after a construction lead time, was missing from the branches of that"
@@ -429,12 +430,29 @@ BEHAVIOUR_TEXTS: dict[str, tuple[str, str, str, str]] = {
          "shared the other units online, reserves and the storage use of the stochastic nodes. In a rolling solve "
          "the realization solve now also looks ahead after its jump with each forecast made at the end of the jump "
          "and its probability; before, it dispatched the jump alone. The rolling solves that keep the earlier "
-         "realization (a model with delayed units, stochastic_invest_method recourse, or a realization solve you "
+         "realization (a model with delayed units, investments that branch per forecast, or a realization solve you "
          "configure) still dispatch the jump alone: only their first solve changed. Results change: units online, "
          "storage levels, prices and, with timeset weights that are not equal, the costs reported for the jump. A "
          "rolling solve whose realization looks ahead and that has no forecasts made at the start of each roll and "
          "at the end of each jump now stops with an error naming the roll and the time step."),
         _delete_marker("separate_dispatch_realization_looks_ahead"),
+    ),
+    "stochastic_invest_controls_rewritten": (
+        "W-0637", "stochastic investment settings replaced",
+        ("stochastic_invest_method, shared_invest_periods and shared_operation_periods are replaced by "
+         "invest_solve_branching_method, read on investment solves only (not rolling, with invest_periods or "
+         "realized_invest_periods). The upgrade wrote investments_after_reveal_period where stochastic_invest_method "
+         "was recourse: the investment of the period where the forecasts start is one decision of all branches, and "
+         "the later periods invest per branch. Listed here: solves converted from recourse whose "
+         "shared_invest_periods was unset or empty (before, every branch invested on its own from the period where "
+         "the forecasts start; investments_at_reveal_period keeps that); investment solves whose storage, units "
+         "online and reserve were tied across the branches (shared_operation_periods unset or a list; now each branch "
+         "operates on its own from the period where the forecasts start); dispatch solves with "
+         "shared_operation_periods (no longer read: their forecasts are tied over their realized_periods again); and "
+         "investment solves whose dispatch_realization_method separate_dispatch the upgrade removed (refused on an "
+         "investment solve; with a realized: yes branch the solve gets a realization dispatch of its own). Results "
+         "change."),
+        _delete_marker("stochastic_invest_controls_rewritten"),
     ),
 }
 

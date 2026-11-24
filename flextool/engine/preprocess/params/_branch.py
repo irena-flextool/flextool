@@ -604,15 +604,14 @@ def dt_non_anticipativity_lf(workdir: Path | None,
     Slice G (F1) — the operational non-anticipativity set is now the
     single source of truth materialised by
     ``_per_solve.emit_per_solve_sets`` as
-    ``solve_data/dt_non_anticipativity_set.csv``, driven by the resolved
-    ``non_anticipativity_periods`` window:
+    ``solve_data/dt_non_anticipativity_set.csv``, driven by the solve's
+    window (``SolveConfig.operational_window_for``):
 
-    * unset window  -> the legacy ``realized_dispatch ∪ fix_storage``
-      union (byte-identical to prior behaviour);
+    * unset window  -> the committed window, ``realized_dispatch ∪
+      committed_in_fan ∪ fix_storage`` (a dispatch solve);
     * empty window  -> a header-only (present-but-empty) CSV -> the
       model's ``if dtna.height == 0: return`` (``model/core.py``) skips ALL
-      four families -> operations free from t0;
-    * curated window -> those periods' timesteps ∩ ``steps_in_use``.
+      four families -> operations free from t0 (an investment solve).
 
     The four ``non_anticipativity_*`` constraints fire on this set
     (storage_use, online_int, online_lin, reserve).  This reader sorts,
@@ -1510,9 +1509,8 @@ def _read_invest_tie_periods(
 ) -> "frozenset[str] | None":
     """Resolve the v72 invest-NA window (the periods to tie) for this solve.
 
-    Returns ``None`` when the window is unset (no
-    ``pd_non_anticipativity_invest_periods.csv`` was emitted) — the
-    byte-parity legacy path.  Returns a ``frozenset`` of period tokens
+    Returns ``None`` when no ``pd_non_anticipativity_invest_periods.csv``
+    was emitted (no tie).  Returns a ``frozenset`` of period tokens
     otherwise (possibly empty, though the emitter only writes the CSV
     for a non-empty window).
 
@@ -1520,8 +1518,7 @@ def _read_invest_tie_periods(
     ``_per_solve.emit_per_solve_sets`` is authoritative and requires
     a ``provider``.  The ``ctx`` argument is accepted for signature parity
     with sibling readers but is deliberately NOT a source for this window:
-    ``SolveConfig.non_anticipativity_invest_periods`` is a
-    ``{solve: [...]}`` mapping, so reading it off ctx would silently
+    ``SolveConfig.invest_tie_periods_for`` is per solve, so reading it off ctx would silently
     iterate solve-name keys — the CSV avoids that footgun.
     """
     if workdir is None:
@@ -1557,46 +1554,21 @@ def pd_non_anticipativity_lf(
     *,
     ctx: "object | None" = None,
     provider: "object | None" = None,
-    branch_start: pl.DataFrame | None = None,
     tie_periods: "frozenset[str] | None" = None,
 ) -> pl.LazyFrame:
-    """``pd_non_anticipativity`` — (d, b) invest-NA period pairs.
+    """``pd_non_anticipativity`` — (d, b) invest-NA period pairs: the branch copies whose investment, retirement
+    and extension decisions are one decision of all forecasts.
 
-    The period-level analog of dispatch ``db_pairs``: pairs whose
-    INVEST decisions must be tied when Slice E's
-    ``non_anticipativity_invest_p/n`` families land.  ``(d, b)`` is
-    emitted iff ``b`` is a synthetic in-use fan member, ``d`` is its
-    anchor, and ``d`` lies STRICTLY before the information reveal of
-    ``b``'s branch (the branching period itself is NOT tied — recourse
-    invest at the branching period is per-scenario by owner decision,
-    plan §7).
+    ``tie_periods`` is the solve's invest tie window, a ``frozenset`` of anchor periods
+    (``SolveConfig.invest_tie_periods_for``: the reveal period under ``invest_solve_branching_method``
+    ``investments_after_reveal_period``, none otherwise).  When ``None`` it is read from the per-solve CSV
+    (:func:`_read_invest_tie_periods`); no CSV means no tie.  The synthetic members whose anchor is in the window
+    are tied in the forecast star of that anchor (:func:`forecast_star_pairs`: ``(d_ref, m)`` for every other
+    member ``m``; members − 1 pairs).  The anchor itself is a period label with no investment column when the
+    investments branch, so nothing is tied to it.
 
-    The v72 invest-NA window drives the emit by MEMBERSHIP: ``tie_periods``
-    is the resolved window (a ``frozenset`` of anchor periods).  When
-    supplied, the synthetic members whose anchor lies in the window are
-    tied in the forecast star of that anchor (:func:`forecast_star_pairs`:
-    ``(d_ref, m)`` for every other member ``m``; members − 1 pairs) — the
-    standard two-stage mode.  The anchor itself is a period label with no
-    investment column under recourse, so nothing is tied to it.  When ``tie_periods`` is ``None`` it is auto-resolved
-    from ctx / the per-solve CSV via :func:`_read_invest_tie_periods`;
-    still ``None`` (unset) falls back to the legacy ``branch_start``
-    reveal-boundary path below, which is provably EMPTY for every
-    currently-constructible solve (byte-parity, design §2.3).
-
-    ``branch_start`` (optional, ``[time_branch, d_start]``) supplies
-    the authoritative reveal period per time-branch — the Slice E
-    hook.  When ``None`` (the current-universe normal; the runner-side
-    ``branch_start_time_lists`` is not persisted), the fallback
-    ``k(br) = min over synthetic members m of br of pos(anchor(m))``
-    is exact for every topology constructible at HEAD, under which the
-    emit condition is unsatisfiable — the frame is provably EMPTY for
-    every currently-constructible solve (design §2.3).  On future
-    fanned-pre-reveal shapes the fallback deliberately under-detects;
-    Slice E must supply ``branch_start``.
-
-    Returns a lazy ``(d, b)`` frame (``d`` = anchor / pin target on
-    the d axis, ``b`` = pinned sibling member on the branch axis,
-    mirroring dispatch ``db_pairs`` column roles).
+    Returns a lazy ``(d, b)`` frame (``d`` = the reference copy on the d axis, ``b`` = the tied copy on the branch
+    axis, mirroring dispatch ``db_pairs`` column roles).
     """
     schema = {"d": schema_dtype(_enums, "d"),
               "b": schema_dtype(_enums, "b")}
@@ -1607,52 +1579,15 @@ def pd_non_anticipativity_lf(
         workdir, source, active_solve, ctx=ctx, provider=provider)
     if not piu:
         return _empty_lf(schema)
-    anchors, pos, synthetic, anchor_of = _classify_lineage(
+    _anchors, _pos, synthetic, anchor_of = _classify_lineage(
         pb_rows, piu, tb_of)
-    if not synthetic:
+    if not tie_periods:
         return _empty_lf(schema)
-    if tie_periods is not None:
-        # v72 window-membership emit (design §3.2): tie the synthetic
-        # members whose real-named anchor is in the window to each other,
-        # in the forecast star of that anchor.  Supersedes the
-        # reveal-boundary gate below (which cannot express an at-branching-
-        # period tie).  An empty window -> no rows -> empty frame.
-        by_anchor: dict[str, list[str]] = {}
-        for m in synthetic:
-            if anchor_of[m] in tie_periods:
-                by_anchor.setdefault(anchor_of[m], []).append(m)
-        rows = forecast_star_pairs(by_anchor)
-        if not rows:
-            return _empty_lf(schema)
-        return _finalize_lineage_frame(rows, "d", "d", "b", "b",
-                                       "pd_non_anticipativity")
-    bs_of: dict[str, str] = {}
-    if branch_start is not None and branch_start.height > 0:
-        bs_of = {str(tb): str(d) for tb, d in
-                 zip(branch_start["time_branch"].to_list(),
-                     branch_start["d_start"].to_list())}
-    k_fallback: dict[str, int] = {}
+    by_anchor: dict[str, list[str]] = {}
     for m in synthetic:
-        br = tb_of[m]
-        p = pos[anchor_of[m]]
-        if br not in k_fallback or p < k_fallback[br]:
-            k_fallback[br] = p
-    rows: list[tuple[str, str]] = []
-    for m in synthetic:
-        br = tb_of[m]
-        if br in bs_of:
-            d_start = bs_of[br]
-            if d_start not in pos:
-                raise ValueError(
-                    "pd_non_anticipativity: branch_start maps "
-                    f"time-branch {br!r} to period {d_start!r}, which "
-                    "is not an in-use anchor period."
-                )
-            k = pos[d_start]
-        else:
-            k = k_fallback[br]
-        if pos[anchor_of[m]] < k:
-            rows.append((anchor_of[m], m))
+        if anchor_of[m] in tie_periods:
+            by_anchor.setdefault(anchor_of[m], []).append(m)
+    rows = forecast_star_pairs(by_anchor)
     if not rows:
         return _empty_lf(schema)
     return _finalize_lineage_frame(rows, "d", "d", "b", "b",
@@ -1666,14 +1601,13 @@ def pd_non_anticipativity_df(
     *,
     ctx: "object | None" = None,
     provider: "object | None" = None,
-    branch_start: pl.DataFrame | None = None,
     tie_periods: "frozenset[str] | None" = None,
 ) -> pl.DataFrame:
     """Collect wrapper for :func:`pd_non_anticipativity_lf` — always a
     typed frame, never ``None`` (design §2.5)."""
     return pd_non_anticipativity_lf(
         workdir, source, active_solve, ctx=ctx, provider=provider,
-        branch_start=branch_start, tie_periods=tie_periods).collect()
+        tie_periods=tie_periods).collect()
 
 
 # ---------------------------------------------------------------------------

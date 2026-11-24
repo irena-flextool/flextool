@@ -243,8 +243,6 @@ def build() -> dict:
          _pack(stochastic_branches, "map"), "stoch"],
         ["solve", "stoch_2p_free", "dispatch_realization_method",
          _pack("within_solve", "str"), "stoch"],
-        ["solve", "stoch_2p_free", "stochastic_invest_method",
-         _pack("none", "str"), "stoch"],
         ["node", "resv", "node_type", _pack("storage", "str"), "stoch"],
         ["node", "resv", "existing", _pack(1000.0, "float"), "stoch"],
         ["node", "resv", "storage_state_start",
@@ -261,9 +259,6 @@ def build() -> dict:
         ["unit", "discharge", "existing", _pack(100.0, "float"), "stoch"],
         ["unit__outputNode", ["discharge", "elec"], "other_operational_cost",
          _pack(0.01, "float"), "stoch"],
-        # ---- freeops: empty NA window (operations free from t0) --------
-        ["solve", "stoch_2p_free", "shared_operation_periods",
-         _pack({"value_type": "str", "data": []}, "array"), "freeops"],
     ]
     return spec
 

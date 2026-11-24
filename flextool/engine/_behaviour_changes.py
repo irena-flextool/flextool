@@ -96,6 +96,7 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
         BehaviourChange(id="minimum_time_method_written", since="4.7.0", published="24.11.2026"),
         BehaviourChange(id="rolling_within_solve_one_solve", since="4.7.0", published="24.11.2026"),
         BehaviourChange(id="separate_dispatch_realization_looks_ahead", since="4.7.0", published="24.11.2026"),
+        BehaviourChange(id="stochastic_invest_controls_rewritten", since="4.7.0", published="24.11.2026"),
         BehaviourChange(
             id="gui_solver_defaults",
             summary=("Runs started from the FlexTool GUI now use the same solver settings as terminal and Spine "

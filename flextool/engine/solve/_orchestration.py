@@ -2030,28 +2030,23 @@ def _emit_provider_obj_scale(state, effective_obj_scale: float) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _stochastic_invest_raw_guard(solve_cfg, base_name: str) -> None:
-    """Slice D Guard 1 — validate the RAW authored stochastic_invest_method.
+def _invest_branching_raw_guard(solve_cfg, base_name: str) -> None:
+    """Refuse an unrecognised authored ``solve.invest_solve_branching_method``.
 
-    ``'recourse'`` is now ACCEPTED (per-scenario stochastic investment
-    landed in Slice D).  The guard reads the RAW authored value rather than
-    the resolver's output: :meth:`SolveConfig.stochastic_invest_method_for`
-    silently collapses any UNrecognised value to ``'none'`` (a typo like
-    ``'recuorse'`` would then run deterministic), so an authoring-time check
-    must inspect the raw dict and reject anything that is neither blank /
-    ``'none'`` nor ``'recourse'``.  Blank / absent tolerate-as-none (matches
-    the resolver).  No-op when the solve authors nothing.
+    Reads the RAW authored value: :meth:`SolveConfig.invest_branching_method_for` reads an unknown value (a typo)
+    as ``operations_only``, so the check inspects the raw dict.  Blank / absent pass.  Where the value may be set
+    (investment solves with ``stochastic_branches``) is checked by :meth:`SolveConfig.check_invest_branching`.
     """
-    raw = solve_cfg.stochastic_invest_method.get(base_name)
+    from flextool.engine.input._solve_config import INVEST_SOLVE_BRANCHING_METHODS
+
+    raw = (getattr(solve_cfg, "invest_solve_branching_method", None) or {}).get(base_name)
     if raw is None:
         return
     val = str(raw).strip().lower()
-    if val not in ("", "none", "recourse"):
+    if val and val not in INVEST_SOLVE_BRANCHING_METHODS:
         raise FlexToolConfigError(
-            f"Solve '{base_name}' sets stochastic_invest_method='{raw}' — "
-            f"unrecognised value. Supported: 'none' (default), 'recourse' "
-            f"(per-scenario stochastic investment)."
-        )
+            f"Solve '{base_name}' sets invest_solve_branching_method='{raw}', an unrecognised value. Supported: "
+            + ", ".join(f"'{m}'" for m in INVEST_SOLVE_BRANCHING_METHODS) + " (the first is the default).")
 
 
 def _rolling_realization_fix(separate_dispatch: bool, stochastic: bool) -> str:
@@ -2137,6 +2132,11 @@ def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
             f"unrecognised value.  Supported: 'deterministic' (default), "
             f"'within_solve' and 'separate_dispatch'."
         )
+    # separate_dispatch on an investment solve: refused (a realization of it is a dispatch solve of its own).
+    from flextool.engine.input._solve_config import is_investment_solve
+
+    if is_investment_solve(solve_cfg, base_name):
+        raise FlexToolConfigError(_separate_dispatch_investment_message(base_name))
     # separate_dispatch — eligible ONLY for a single top-level single_solve.
     solve_modes = getattr(solve_cfg, "solve_modes", {}) or {}
     model_solve = getattr(solve_cfg, "model_solve", {}) or {}
@@ -2185,6 +2185,17 @@ def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
             f"dispatch solve of the realized branch, but its stochastic_branches have no branch with realized: "
             f"yes. Mark the branch to realize with realized: yes."
         )
+
+
+def _separate_dispatch_investment_message(solve: str) -> str:
+    """The error on ``dispatch_realization_method`` ``separate_dispatch`` on the investment solve *solve*."""
+    return (f"Solve '{solve}' invests (invest_periods) and sets dispatch_realization_method separate_dispatch, which "
+            f"applies to dispatch solves only. To dispatch in two steps, put a dispatch solve after '{solve}' in "
+            "model.solves: no invest_periods, realized_periods = the periods to dispatch, stochastic_branches with a "
+            "realized: yes branch, dispatch_realization_method separate_dispatch; leave those periods out of the "
+            f"realized_periods of '{solve}'. It starts from the capacity '{solve}' realized. Or remove "
+            f"dispatch_realization_method from '{solve}': with a realized: yes branch it gets a realization dispatch "
+            "of its own.")
 
 
 def _spawn_realized_dispatch_siblings(
@@ -2380,7 +2391,7 @@ def _spawn_realized_dispatch_siblings(
             continue
         if not _realization.designation_reaches_committed_window(solve_cfg, p):
             continue
-        if solve_cfg.stochastic_invest_method_for(p) == "recourse":
+        if solve_cfg.recourse_invest(p):
             _realization.warn_recourse_designation(p)
             continue
         if contains_solves.get(p) and _is_rolling(p):
@@ -2397,7 +2408,7 @@ def _spawn_realized_dispatch_siblings(
         _add(p, "a realized: yes designation in stochastic_branches")
     for c in sorted(contained):
         if (_realization.designation_reaches_committed_window(solve_cfg, c)
-                and solve_cfg.stochastic_invest_method_for(c) != "recourse"):
+                and not solve_cfg.recourse_invest(c)):
             if _is_rolling(c):
                 raise _rolling_nested_error(c)
             raise FlexToolConfigError(
@@ -2507,19 +2518,16 @@ def _validate_model_solve(state: RunnerState) -> list[str]:
     solves = next(iter(state.solve.model_solve.values()))
     if not solves:
         raise FlexToolConfigError("No solves in model.")
-    # Slice D Guard 1 (fail-fast pass): validate the RAW authored
-    # stochastic_invest_method for the model's top-level solves before any
-    # solve runs — 'recourse' is accepted; only unrecognised authored
-    # values raise.  This only sees the top-level ``solves`` array (not
-    # solves reached via ``contains_solves`` recursion), so it is a
-    # convenience — the authoritative per-solve guard lives at the top of
-    # ``run()``.
+    # Fail-fast pass: refuse an unrecognised invest_solve_branching_method for the model's top-level solves
+    # before any solve runs.  This only sees the top-level ``solves`` array (not solves reached via
+    # ``contains_solves`` recursion), so it is a convenience — the authoritative per-solve guard lives at the top
+    # of ``run()``.
     for _s in solves:
-        _stochastic_invest_raw_guard(state.solve, _s)
+        _invest_branching_raw_guard(state.solve, _s)
         # W4 Slice 1 Guard (fail-fast pass): reject an unrecognised
         # dispatch_realization_method, or 'separate_dispatch' on a solve
         # shape it does not support, for the model's top-level solves before
-        # any solve runs.  Like the stochastic_invest pass, this only sees the
+        # any solve runs.  Like the branching pass, this only sees the
         # top-level ``solves`` array (not solves reached via
         # ``contains_solves`` recursion / rolling), so it is a convenience —
         # the authoritative per-solve guard lives at the top of ``run()``.
@@ -3593,15 +3601,11 @@ def _drive_cascade(
 
         def _run_one(self, complete_solve_name: str) -> int:
             _phase_prof("run_enter")
-            # Slice D Guard 1 (authoritative): validate the RAW authored
-            # stochastic_invest_method for any solve that RUNS — including
-            # each roll of a rolling solve and each contained/chained solve
-            # — before building its FlexData/LP.  'recourse' is accepted
-            # (per-scenario stochastic investment); only unrecognised
-            # authored values raise.  The roll-suffix strip mirrors the
-            # base-name derivation below (``:2486``).
+            # Authoritative: refuse an unrecognised invest_solve_branching_method for any solve that RUNS —
+            # including each roll of a rolling solve and each contained/chained solve — before building its
+            # FlexData/LP.  The roll-suffix strip mirrors the base-name derivation below.
             _guard_base = re.sub(r"_roll_\d+$", "", complete_solve_name)
-            _stochastic_invest_raw_guard(state.solve, _guard_base)
+            _invest_branching_raw_guard(state.solve, _guard_base)
             # W4 Slice 1 Guard (authoritative): reject an unrecognised
             # dispatch_realization_method, or an unsupported
             # 'separate_dispatch', for any solve that RUNS — including each

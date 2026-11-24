@@ -6116,8 +6116,9 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
                 and _drv._recourse_invest_active(workdir_path, ctx=ctx, provider=provider)):
             from flextool.engine.input._solve_state import FlexToolConfigError
             raise FlexToolConfigError(
-                f"stochastic_invest_method = recourse in nested sub-solve '{active_solve}' is not "
-                f"supported: nested solves cannot hold recourse investments; make it a top-level solve.")
+                f"Nested sub-solve '{active_solve}' has an invest_solve_branching_method whose investments branch "
+                "(investments_after_reveal_period or investments_at_reveal_period), which a nested solve does not "
+                "support: make it a top-level solve, or use operations_only.")
         # Δ.28 — synthetic solve: apply_derived_a is skipped, but in the
         # slow path ``flex_data.dt`` is already populated from CSV (see
         # ``_load_time``).  Run pass 1b so broadcast-needing Direct

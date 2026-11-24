@@ -178,33 +178,25 @@ def emit_per_solve_sets(
     because the function still reads sister CSVs from disk via the
     Provider-only read helpers (which derive keys from the path).
 
-    *na_window* is the resolved Slice-G operational non-anticipativity
-    window for this solve (see
-    ``SolveConfig.non_anticipativity_periods_to_tristate``).  It drives
-    the ``dt_non_anticipativity_set.csv`` content — the single source of
+    *na_window* is the solve's operational non-anticipativity window
+    (``SolveConfig.operational_window_for``).  It drives the
+    ``dt_non_anticipativity_set.csv`` content — the single source of
     truth read back by ``_branch.dt_non_anticipativity_lf``:
 
-    * ``None`` (unset)      -> ``realized_dispatch u committed_in_fan u
-      fix_storage`` union (``committed_in_fan`` = the cells the solve
-      commits inside its fan, keyed on the period label, which has no
+    * ``None``  -> the committed window: ``realized_dispatch u
+      committed_in_fan u fix_storage`` (``committed_in_fan`` = the cells the
+      solve commits inside its fan, keyed on the period label, which has no
       dispatch of its own);
-    * ``[]`` (empty)        -> header-only (empty) set -> operations free
-      from t0 (all four non_anticipativity_* families off);
-    * ``[(p, p), ...]``     -> those periods' timesteps, intersected with
-      ``steps_in_use`` u ``label_steps`` (a period label keeps the steps
-      it had before the stochastic expansion; the ONLY domain guard for
-      the storage family, which joins the (d,t) set on ``d`` alone — F7).
+    * ``[]``    -> header-only (empty) set -> operations free from t0 (all
+      four non_anticipativity_* families off): an investment solve with
+      forecasts.
 
-    *na_invest_window* is the resolved v72 invest-NA window
-    (``SolveConfig.non_anticipativity_invest_periods``, plain
-    ``periods_to_tuples`` — unset == [] == no tie).  When non-empty it
+    *na_invest_window* is the solve's invest tie window
+    (``SolveConfig.invest_tie_periods_for``).  When non-empty it
     materialises ``pd_non_anticipativity_invest_periods.csv`` (a
     one-column period list), read back by
     ``_branch.pd_non_anticipativity_lf`` to populate the invest
-    tie-set.  When unset/empty NO file is emitted, so the frame builder's
-    reader returns ``None`` -> the legacy branch_start path -> a provably
-    empty frame -> zero constraints -> byte-identical to prior behaviour
-    (and no new CSV appears in any existing fixture's solve_data).
+    tie-set.  When empty NO file is emitted (no tie).
     """
     input_dir = solve_data_dir.parent / "input"
 
@@ -387,10 +379,8 @@ def emit_per_solve_sets(
     _emit_singles(provider, "solve_data/d_realized_period_set.csv", "period",
                   list(drp_seen.keys()))
 
-    # Slice G — window-driven operational non-anticipativity set.  This
-    # is the single source of truth: dt_non_anticipativity_lf reads it
-    # back.  The window (na_window) tri-states the content; see the
-    # emit_per_solve_sets docstring.
+    # The operational non-anticipativity set, the single source of truth that dt_non_anticipativity_lf reads
+    # back; see the emit_per_solve_sets docstring.
     dtna_seen: dict[tuple[str, str], None] = {}
     if na_window is None:
         # Unset -> the committed window: realized_dispatch u fix_storage
@@ -408,21 +398,7 @@ def emit_per_solve_sets(
             for d, t in zip(src["period"].to_list(), src["time"].to_list()):
                 if d and t and (d, t) not in dtna_seen and d not in label_steps_own:
                     dtna_seen[(d, t)] = None
-    elif len(na_window) == 0:
-        # Explicit empty window -> emit header-only (operations free
-        # from t0); dtna_seen stays empty.
-        pass
-    else:
-        # Curated period list -> those periods' timesteps, intersected
-        # with steps_in_use (the emit-time domain guard the storage NA
-        # family relies on — it joins the set on ``d`` only, F7).
-        na_periods = {p for (p, _p_in) in na_window}
-        su_df = pl.concat([
-            _read_csv(solve_data_dir / name, ["period", "time"], provider=provider).select(pl.all().cast(pl.Utf8))
-            for name in ("steps_in_use.csv", "label_steps.csv")])
-        for d, t in zip(su_df["period"].to_list(), su_df["time"].to_list()):
-            if d and t and d in na_periods and (d, t) not in dtna_seen and d not in label_steps_own:
-                dtna_seen[(d, t)] = None
+    # An empty window emits a header-only set: operations free from t0.
     _emit_tuples(provider, "solve_data/dt_non_anticipativity_set.csv",
                  ("period", "time"), list(dtna_seen.keys()))
 
