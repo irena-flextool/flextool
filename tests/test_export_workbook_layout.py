@@ -261,3 +261,48 @@ def test_empty_parameter_groups_start_collapsed(tmp_path: Path) -> None:
         # openpyxl's own reader drops outlineLevelCol, so look at the sheet XML (sheets are written in order).
         sheet_xml = archive.read(f"xl/worksheets/sheet{book.sheetnames.index('unit_c') + 1}.xml").decode("utf-8")
         assert 'outlineLevelCol="1"' in sheet_xml
+
+
+def _parameter_columns(ws, def_row: int) -> dict[str, int]:
+    """Parameter name -> column, right of the definition column up to the blank separator."""
+    def_col = _column_of(ws, def_row, "parameter")
+    cols = {}
+    for col in range(def_col + 1, ws.max_column + 1):
+        name = ws.cell(row=def_row, column=col).value
+        if not name:
+            break
+        cols[name] = col
+    return cols
+
+
+def _columns_with_values(ws, def_row: int) -> set[str]:
+    return {name for name, col in _parameter_columns(ws, def_row).items()
+            if any(ws.cell(row=r, column=col).value is not None for r in range(def_row + 1, ws.max_row + 1))}
+
+
+def test_omit_empty_columns(examples_db: Path, wb: openpyxl.Workbook, workbook_path: Path, tmp_path: Path) -> None:
+    out = tmp_path / "compact.xlsx"
+    export_to_excel(f"sqlite:///{examples_db}", str(out), include_advanced=True, omit_empty_columns=True)
+    compact = openpyxl.load_workbook(out)
+    try:
+        for sheet in ("node_c", "unit_c", "node_p", "solve"):
+            full_ws, compact_ws = wb[sheet], compact[sheet]
+            # The definition row is the last frozen row (a sheet loses its default row when no kept column has one).
+            full_row, compact_row = (int(w.freeze_panes.lstrip("ABCDEFGHIJ")) - 1 for w in (full_ws, compact_ws))
+            full_params = _parameter_columns(full_ws, full_row)
+            # The compact sheet keeps exactly the columns of the full export that hold a value.
+            assert set(_parameter_columns(compact_ws, compact_row)) == _columns_with_values(full_ws, full_row), sheet
+            assert len(_parameter_columns(compact_ws, compact_row)) < len(full_params), sheet
+            # The reference block still names every parameter of the sheet.
+            reference = {compact_ws.cell(row=r, column=c).value
+                         for r in range(1, compact_ws.max_row + 1) for c in range(1, compact_ws.max_column + 1)}
+            assert set(full_params) - {"entity existence"} <= reference, sheet
+    finally:
+        compact.close()
+    assert _reader_records(out) == _reader_records(workbook_path)
+
+
+def test_omit_empty_columns_needs_the_v2_format(examples_db: Path, tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="v2"):
+        export_to_excel(f"sqlite:///{examples_db}", str(tmp_path / "v1.xlsx"), use_new_format=False,
+                        omit_empty_columns=True)

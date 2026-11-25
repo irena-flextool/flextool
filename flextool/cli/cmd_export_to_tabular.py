@@ -45,9 +45,18 @@ def main() -> None:
             "note on its name (self-describing format only)"
         ),
     )
+    parser.add_argument(
+        "--omit-empty-columns",
+        action="store_true",
+        help=(
+            "Leave out the parameter columns that have no value on their sheet; the reference list to the right "
+            "of each sheet still names them (self-describing format only)"
+        ),
+    )
     args = parser.parse_args()
-    if args.old_format and args.no_description_row:
-        parser.error("--no-description-row needs the self-describing format (not --old-format)")
+    if args.old_format and (args.no_description_row or args.omit_empty_columns):
+        parser.error("--no-description-row and --omit-empty-columns need the self-describing format "
+                     "(not --old-format)")
     include_groups = (
         [g.strip() for g in args.groups.split(",") if g.strip()]
         if args.groups
@@ -60,6 +69,7 @@ def main() -> None:
         use_new_format=not args.old_format,
         include_groups=include_groups,
         description_row=not args.no_description_row,
+        omit_empty_columns=args.omit_empty_columns,
     )
 
 

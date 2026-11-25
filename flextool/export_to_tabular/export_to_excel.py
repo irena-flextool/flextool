@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from openpyxl import Workbook
+from openpyxl.worksheet.worksheet import Worksheet
 
 from flextool.export_to_tabular.db_reader import DatabaseContents, read_database
 from flextool.export_to_tabular.sheet_config import SheetSpec, build_sheet_specs, load_settings
@@ -42,6 +45,37 @@ def _build_tab_color_map(navigate_groups: list[dict[str, Any]]) -> dict[str, str
     return color_map
 
 
+def _write_parameter_sheet(
+    wb: Workbook,
+    ws: Worksheet,
+    writer: Callable[[Worksheet, SheetSpec, DatabaseContents], list[str]],
+    spec: SheetSpec,
+    db_contents: DatabaseContents,
+    omit_empty_columns: bool,
+) -> Worksheet:
+    """Write a constant or periodic v2 sheet; with *omit_empty_columns*, write it again without its empty columns.
+
+    The writer itself decides which values land on the sheet, so the columns it left empty are known only after
+    writing.  A sheet whose parameter columns are all empty keeps them: without any parameter column the reader
+    would take it for a link sheet.  Returns the sheet that holds the result.
+    """
+    empty = writer(ws, spec, db_contents)
+    all_params = list(spec.pre_ea_params) + list(spec.parameter_names)
+    if not omit_empty_columns or not empty or len(empty) == len(all_params):
+        return ws
+    index = wb.sheetnames.index(ws.title)
+    wb.remove(ws)
+    ws = wb.create_sheet(spec.sheet_name, index)
+    dropped = set(empty)
+    writer(ws, replace(
+        spec,
+        parameter_names=[p for p in spec.parameter_names if p not in dropped],
+        pre_ea_params=[p for p in spec.pre_ea_params if p not in dropped],
+        omitted_params=empty,
+    ), db_contents)
+    return ws
+
+
 def _cells_as_text(wb: Workbook) -> None:
     """Keep every string a string: openpyxl stores a string that starts with ``=`` as a formula.
 
@@ -64,6 +98,7 @@ def export_to_excel(
     include_stochastics: bool = False,  # deprecated alias for include_advanced
     include_groups: list[str] | None = None,
     description_row: bool = True,
+    omit_empty_columns: bool = False,
 ) -> None:
     """Export a FlexTool Spine DB to an Excel (.xlsx) file.
 
@@ -83,11 +118,16 @@ def export_to_excel(
             ``always_include_with_groups`` in ``export_settings.yaml``.
         description_row: When False, the standard sheets start with the data-type row; each parameter's
             description stays in the note on its name.  Only for the v2 format.
+        omit_empty_columns: When True, a parameter column with no value on its constant or periodic sheet is
+            left out (the reference block to the right still lists it).  A sheet whose parameter columns are all
+            empty keeps them.  Only for the v2 format.
     """
     if include_stochastics:
         include_advanced = True
     if not use_new_format and not description_row:
         raise ValueError("Leaving out the description row is only possible in the v2 (self-describing) format.")
+    if not use_new_format and omit_empty_columns:
+        raise ValueError("Leaving out empty columns is only possible in the v2 (self-describing) format.")
 
     # 1. Read all data from the database
     print(f"Reading database: {db_url}")
@@ -166,12 +206,14 @@ def export_to_excel(
                 if _is_array_sheet:
                     write_array_transposed_sheet_v2(ws, spec, db_contents)
                 else:
-                    write_constant_sheet_v2(ws, spec, db_contents)
+                    ws = _write_parameter_sheet(wb, ws, write_constant_sheet_v2, spec, db_contents,
+                                                omit_empty_columns)
             else:
                 write_constant_sheet(ws, spec, db_contents)
         elif layout == "periodic":
             if use_new_format:
-                write_periodic_sheet_v2(ws, spec, db_contents)
+                ws = _write_parameter_sheet(wb, ws, write_periodic_sheet_v2, spec, db_contents,
+                                            omit_empty_columns)
             else:
                 write_periodic_sheet(ws, spec, db_contents)
         elif layout == "nested_periodic":

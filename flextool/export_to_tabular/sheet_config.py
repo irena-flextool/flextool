@@ -42,6 +42,8 @@ class SheetSpec:
     # sheets (e.g. 'solve'), where scalar params have no constant home and the
     # scalar-only row is the only carrier.
     scalar_params_on_constant_sibling: set[str] = field(default_factory=set)
+    # Parameters left off the sheet by --omit-empty-columns: still listed in the reference block.
+    omitted_params: list[str] = field(default_factory=list)
 
 
 def load_settings() -> dict:

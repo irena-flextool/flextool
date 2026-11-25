@@ -2083,6 +2083,12 @@ def _outline_parameter_groups(
     ])
 
 
+def _params_without_values(data_rows: list[list[tuple[int, Any]]], param_col_map: dict[str, int]) -> list[str]:
+    """The parameters none of whose cells in *data_rows* holds a value."""
+    filled = {col for row in data_rows for col, value in row if value is not None}
+    return [pname for pname, col in param_col_map.items() if col not in filled]
+
+
 def _param_notes(
     spec: SheetSpec, db_contents: DatabaseContents, col_to_param: dict[int, str],
 ) -> dict[int, tuple[str, str]]:
@@ -2534,8 +2540,10 @@ def write_constant_sheet_v2(
     ws: Worksheet,
     spec: SheetSpec,
     db_contents: DatabaseContents,
-) -> None:
+) -> list[str]:
     """Write a constant-layout sheet in the v2 self-describing format.
+
+    Returns the parameters whose column holds no value on the sheet.
 
     Layout:
         Row 1: navigate | (empty) | description | desc/param descriptions...
@@ -2684,7 +2692,7 @@ def write_constant_sheet_v2(
     _write_param_reference(
         ws, last_data_col + 1, spec, db_contents, header_row=def_row,
         n_data_rows=len(data_rows), layout="constant",
-        shown_params=all_params,
+        shown_params=all_params + list(spec.omitted_params),
     )
 
     # --- Formatting ---
@@ -2743,6 +2751,7 @@ def write_constant_sheet_v2(
         data_start_row=data_start_row,
         data_start_col=1,
     )
+    return _params_without_values(data_rows, param_col_map)
 
 
 def _collect_constant_rows_v2(
@@ -2945,8 +2954,10 @@ def write_periodic_sheet_v2(
     ws: Worksheet,
     spec: SheetSpec,
     db_contents: DatabaseContents,
-) -> None:
+) -> list[str]:
     """Write a periodic-layout sheet in the v2 self-describing format.
+
+    Returns the parameters whose column holds no value on the sheet.
 
     Layout:
         Row 1: navigate | | | description | param descriptions...
@@ -3190,7 +3201,7 @@ def write_periodic_sheet_v2(
     _write_param_reference(
         ws, last_data_col + 1, spec, db_contents, header_row=def_row,
         n_data_rows=len(data_rows), layout="periodic",
-        shown_params=list(spec.parameter_names),
+        shown_params=list(spec.parameter_names) + list(spec.omitted_params),
     )
 
     # --- Formatting ---
@@ -3223,6 +3234,7 @@ def write_periodic_sheet_v2(
         data_start_row=data_start_row,
         data_start_col=1,
     )
+    return _params_without_values(data_rows, param_col_map)
 
 
 # ---------------------------------------------------------------------------
