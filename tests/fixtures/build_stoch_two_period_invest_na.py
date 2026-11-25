@@ -45,12 +45,17 @@ from __future__ import annotations
 
 import base64
 import json
+import sys
 from pathlib import Path
 
-from flextool.update_flextool.fixture_schema import schema_sections
-from flextool.update_flextool.test_fixtures import write_built_fixture
-
 FIXTURES = Path(__file__).resolve().parent
+if str(FIXTURES) not in sys.path:
+    sys.path.insert(0, str(FIXTURES))
+
+from build_stochastics_demo import strip  # noqa: E402
+
+from flextool.update_flextool.fixture_schema import schema_sections  # noqa: E402
+from flextool.update_flextool.test_fixtures import write_built_fixture  # noqa: E402
 
 
 def _pack(value: object, value_type: str) -> list:
@@ -61,7 +66,8 @@ def _pack(value: object, value_type: str) -> list:
 
 
 def build() -> dict:
-    spec = json.loads((FIXTURES / "stochastics.json").read_text())
+    # stochastics.json without its how-to examples (build_stochastics_demo)
+    spec = strip(json.loads((FIXTURES / "stochastics.json").read_text(encoding="utf-8")))
     spec.update(schema_sections("packed"))
 
     # The fixture's ``2day_dispatch`` fan designates the ``realized``

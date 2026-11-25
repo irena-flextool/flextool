@@ -72,6 +72,8 @@ from spinedb_api import Map, to_database  # noqa: E402
 
 from flextool.update_flextool.db_migration import migrate_database  # noqa: E402
 from flextool.update_flextool.test_fixtures import migrate_fixture  # noqa: E402
+sys.path.insert(0, str(REPO_ROOT / "tests" / "fixtures"))
+import build_stochastics_demo as demo  # noqa: E402
 
 
 SRC_JSON = REPO_ROOT / "tests/fixtures/stochastics.json"
@@ -126,10 +128,13 @@ def _augment_inflow(db_path: Path) -> None:
 
 
 # ``stochastics.json`` content added after this fixture was built: the
-# storage-drain alternative and its scenario.  Removed so a rebuild
-# reproduces the committed fixture.
-NOT_CARRIED_ALTERNATIVES = ("no_storage_override",)
-NOT_CARRIED_SCENARIOS = ("2_day_stochastic_dispatch_no_storage",)
+# storage-drain alternative and its scenario, and the how-to examples of
+# ``build_stochastics_demo``.  Removed so a rebuild reproduces the committed
+# fixture.
+NOT_CARRIED_ALTERNATIVES = ("no_storage_override", *demo.ALTERNATIVES)
+NOT_CARRIED_SCENARIOS = ("2_day_stochastic_dispatch_no_storage", *demo.SCENARIOS)
+#: 1-D entities (their relationships go with them).
+NOT_CARRIED_ENTITIES = tuple((c, n) for c, n in demo.ENTITIES if isinstance(n, str))
 
 
 def _realized_2day_branches() -> dict:
@@ -154,6 +159,10 @@ def _match_committed_baseline(db_path: Path) -> None:
             item = db.get_item("alternative", name=name)
             if item:
                 db.remove_item("alternative", item["id"])
+        for cls, name in NOT_CARRIED_ENTITIES:
+            item = db.get_item("entity", entity_class_name=cls, name=name)
+            if item:
+                db.remove_item("entity", item["id"])
         branches = db.get_item("parameter_value", entity_class_name="solve", entity_byname=("2day_dispatch",),
                                parameter_definition_name="stochastic_branches", alternative_name="2day")
         if not branches:

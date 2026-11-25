@@ -31,6 +31,7 @@ SPEC_BUILDERS: dict[str, str] = {
     "build_stoch_two_period_nreal0": "stoch_two_period_nreal0.json",
     "build_stoch_two_period_midhorizon_nreal0": "stoch_two_period_midhorizon_nreal0.json",
     "build_stoch_realized_dispatch": "stoch_realized_dispatch.json",
+    "build_stochastics_demo": "stochastics.json",
     "build_w4b_auto_dispatch": "w4b_auto_dispatch.json",
     "build_w4b_reserve_dispatch": "w4b_reserve_dispatch.json",
     "build_w4c_divergent_dispatch": "w4c_divergent_dispatch.json",
