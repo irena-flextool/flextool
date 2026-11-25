@@ -430,7 +430,7 @@ BEHAVIOUR_TEXTS: dict[str, tuple[str, str, str, str]] = {
          "shared the other units online, reserves and the storage use of the stochastic nodes. In a rolling solve "
          "the realization solve now also looks ahead after its jump with each forecast made at the end of the jump "
          "and its probability; before, it dispatched the jump alone. The rolling solves that keep the earlier "
-         "realization (a model with delayed units, investments that branch per forecast, or a realization solve you "
+         "realization (a model with delayed units, or a realization solve you "
          "configure) still dispatch the jump alone: only their first solve changed. Results change: units online, "
          "storage levels, prices and, with timeset weights that are not equal, the costs reported for the jump. A "
          "rolling solve whose realization looks ahead and that has no forecasts made at the start of each roll and "

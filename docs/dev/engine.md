@@ -1357,8 +1357,21 @@ Behaviours to know:
   exceeds a period length, branches continue into subsequent periods
   reusing the same `period + "_" + branch` naming.
 - **Single realized branch per period** (otherwise loud failure).
-- **Branches do NOT enter `invest_periods`.** Investment stays
-  realized-only; recourse investment is not supported.
+- **Investments of the branch copies** follow `solve.invest_solve_branching_method`
+  (investment solves only; `SolveConfig.invest_branching_method_for`, refused
+  elsewhere by `check_invest_branching`).  The resolver feeds the internal
+  switches the model reads: `recourse_invest` (written as
+  `solve_data/stochastic_invest_method.csv`), the invest tie periods
+  (`invest_tie_periods_for` → `pd_non_anticipativity_invest_periods`: the reveal
+  period under `investments_after_reveal_period`, tied by
+  `add_invest_constraints`) and the operational window
+  (`operational_window_for`: empty for an investment solve, so nothing
+  operational is tied; unset for a dispatch solve, which ties its committed
+  window).  Under `operations_only` the investments stay on the period labels.
+  A per-branch investment is never realized; the handoff realizes the tied
+  reveal-period copy under its label (`flex_data._label_tied_cohorts`), and the
+  realization solve of an investment solve starts at the reveal
+  (`SolveConfig.realization_window`).
 
 The non-anticipativity constraints (`add_dispatch_constraints`
 in `_non_anticipativity.py`) close the LP back together at the anchor period across
@@ -1371,7 +1384,7 @@ join routes the same Var through two key columns at once.
 
 A top-level rolling solve with `stochastic_branches` and an explicit
 `dispatch_realization_method` `within_solve` or `separate_dispatch`
-(`_realization_tail.realization_roll_method`; not with recourse, an
+(`_realization_tail.realization_roll_method`; not with an
 author-declared realization solve, nested solves or delayed units) is
 solved as realization rolls R_k (`roll_tail_plan` → `RollTail`, keyed on the
 sub-solve). R_k dispatches its jump once with the `realized: yes` branch's

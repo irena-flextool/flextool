@@ -194,10 +194,12 @@ as one solve over the same periods with the same decisions would report:
   retirement in a chain can differ from the same retirement in one solve over all the periods.
 - **Inside a stochastic fan** the investment-type costs and the fixed cost of the new capacity of the fan's branch
   periods are reported, weighted by each branch's probability weight, at the fan's period label (with or without a
-  `construction_lead_time`, and also without a realization solve). A shared investment (`stochastic_invest_method`
-  none) is one decision whose branch weights sum to 1, so it is reported at its full amount; under `recourse` each
-  forecast's own investment and retirement is reported times its branch weight (the expected cost, as in the
-  objective). The operations of the forecast branches are not reported, so for a stochastic solve *Total cost
+  `construction_lead_time`, and also without a realization solve). A shared investment (every period under
+  `invest_solve_branching_method` `operations_only`, the reveal period under `investments_after_reveal_period`) is
+  one decision whose branch weights sum to 1, so it is reported at its full amount. A per-forecast investment (the
+  periods after the reveal period under `investments_after_reveal_period`, from the reveal period on under
+  `investments_at_reveal_period`) is in a period that cannot be realized, so it is not in the normal results; the
+  `model.output_horizon` dump holds it. The operations of the forecast branches are not reported, so for a stochastic solve *Total cost
   counted in the objective* is the realized run's total, not the solver objective.
 - In a stochastic solve with a realization solve, the investments come from the stochastic solve and the
   operations and the fixed cost of existing capacity from the realization solve. A fan without a realization

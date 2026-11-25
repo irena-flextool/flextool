@@ -1,11 +1,11 @@
-## Release 4.7.0 (24.11.2026) — stochastic realization: rolling `within_solve` realizes each jump in one solve, `separate_dispatch` realization looks ahead, `deterministic` default; `startup_method` `_fix_in_uc` members; `minimum_time_method` gates min up / down times; outages end carried obligations; rounded carried units online (schema v83)
+## Release 4.7.0 (24.11.2026) — stochastic realization: rolling `within_solve` realizes each jump in one solve, `separate_dispatch` realization looks ahead, `deterministic` default; `startup_method` `_fix_in_uc` members; `minimum_time_method` gates min up / down times; outages end carried obligations; rounded carried units online; one branching setting for stochastic investment solves (schema v84)
 
-Input databases move to data version 83. The FlexTool window, the Spine Toolbox workflow and `flextool-run
+Input databases move to data version 84. The FlexTool window, the Spine Toolbox workflow and `flextool-run
 --migrate` migrate them. Requires `polar-high>=3.16.1`. Results change for stochastic solves (see the
-realization entries below), for units whose minimum up or down time its `minimum_time_method` leaves out, for
+realization and stochastic investment entries below), for units whose minimum up or down time its `minimum_time_method` leaves out, for
 rolling solves with a capacity margin, and for databases without a `Base` alternative upgraded from data version
 55 or older; upgraded databases keep their results elsewhere, and the upgrade notes (W-0601, W-0634, W-0635,
-W-0636) name what changed.
+W-0636, W-0637) name what changed.
 
 ### Behaviour changes — read before upgrading
 
@@ -83,14 +83,61 @@ W-0636) name what changed.
   with stochastic branches and no method uses the `realized: yes` branch only, as a deterministic solve (warning
   W-0593 names it): the forecasts and the realization solve are ignored. The method governs the dispatch model: an
   investment solve (not rolling, with `invest_periods` or `realized_invest_periods`) without a method solves its
-  forecasts as before, under its `stochastic_invest_method`. An explicit `deterministic` on an investment solve
-  makes it a perfect-foresight benchmark on the `realized: yes` branch (warning W-0637 names it; the forecasts and
-  `stochastic_invest_method` are ignored). The realized series of the
+  forecasts as before, under its `invest_solve_branching_method` (next entries). An explicit `deterministic` on an
+  investment solve makes it a perfect-foresight benchmark on the `realized: yes` branch (warning W-0638 names it;
+  the forecasts and `invest_solve_branching_method` are ignored). The realized series of the
   analysis times are read as one timeline (where they overlap, the one made nearest to the solve's or roll's
   start is used). Without a `realized: yes` branch, or at a time step no realized series covers, the run stops
   with an error naming the solve. Upgraded databases get `within_solve` written on the stochastic
   solves that relied on the default, so their results are unchanged. Tools and scripts that write stochastic
   solves must write `dispatch_realization_method` (`within_solve` or `separate_dispatch`) to solve the forecasts.
+- **One setting for stochastic investment solves: `invest_solve_branching_method`.** It replaces
+  `stochastic_invest_method`, `shared_invest_periods` and `shared_operation_periods`, and says which investments
+  all the forecasts of an investment solve share. The reveal period is the period where the forecasts start.
+  `operations_only` (the default, the old `none`): the investments of every period are one plan.
+  `investments_after_reveal_period`: the investments up to and including the reveal period are shared, and each
+  forecast invests on its own in the later periods. `investments_at_reveal_period`: only the periods before the
+  reveal period share their investments. In every case each forecast operates on its own from the reveal period.
+  The setting is read on investment solves with `stochastic_branches` only; on a rolling solve, a solve without
+  investments or one without `stochastic_branches` the run stops with an error naming the solve. A period whose
+  investments are per forecast cannot be realized: in `realized_periods` or `realized_invest_periods` it stops the
+  run with an error. The upgrade to data version 84 writes `investments_after_reveal_period` for `recourse` and
+  `operations_only` for the `none` rows of such a solve, each in its own alternative. Where `recourse` came with a
+  `shared_invest_periods` other than unset, empty or the reveal period, it writes nothing and prints the solve.
+  `recourse` on a rolling solve or one without investments (nothing to branch) is dropped. Note W-0637 lists the
+  solves whose results change (the next entries). Tools and scripts that write the old parameters must write
+  `invest_solve_branching_method`.
+- **`recourse` becomes `investments_after_reveal_period`.** The investment of the period where the forecasts start
+  is now one decision of all the forecasts, reported under its own period name. Before, with
+  `shared_invest_periods` unset or empty, each forecast invested on its own from that period (a wait-and-see run);
+  `investments_at_reveal_period` keeps that structure. With the forecasts starting at the solve's first period,
+  `investments_at_reveal_period` shares nothing: the solve gets no realization dispatch, the normal results hold
+  no investment or operation of the forecasts (only the `model.output_horizon` dump has them), and warning W-0639
+  names the solve at each run. A converted solve with `shared_invest_periods` equal to the reveal period keeps its
+  results.
+- **The forecasts of an investment solve operate on their own from the reveal period.** Before, with
+  `shared_operation_periods` unset (the default) or a list, an investment solve tied the storage, units online and
+  reserves of its forecasts over its realized periods (or the listed ones). Now nothing operational is tied, as
+  with `shared_operation_periods = []` before; there is no setting for the old tie. A dispatch solve no
+  longer reads `shared_operation_periods`: it ties its forecasts over its realized periods again. Note W-0637 names
+  both kinds of solve.
+- **The realization dispatch of an investment solve starts at the reveal period.** An investment solve with a
+  `realized: yes` branch whose investments branch after the reveal period (old `recourse`) now gets a realization
+  dispatch, as a solve with shared investments does (before, a warning said it got none). The realization of an
+  investment solve with a mid-horizon reveal no longer dispatches the periods before the reveal again: their
+  results come from the investment solve, which operates them once for every forecast. The realization starts at
+  the reveal period from the storage levels the investment solve ends the period before with (and, where the
+  reveal period continues that period in time, its units online, ramps and minimum up and down time history).
+  Results change in the realized operation of such solves. A realization solve you configure yourself keeps the
+  periods you give it.
+- **`dispatch_realization_method` `separate_dispatch` is refused on an investment solve.** The run stops with an
+  error that points to the structure that works: the investment solve followed in `model.solves` by a dispatch solve
+  (no `invest_periods`, the periods to dispatch in `realized_periods`, its own `stochastic_branches` with a
+  `realized: yes` branch, `separate_dispatch`) that starts from the capacity the investment solve realized. The
+  upgrade removes the value from investment solves (or writes `within_solve`, which reads as no value, where removing
+  it would let a lower-ranked `deterministic` win) and lists them in note W-0637: with a `realized: yes` branch they
+  now get the realization dispatch of an investment solve. Results change: the first solve no longer ties the
+  `_fix_in_uc` units online or the free storage start.
 - **A rolling `within_solve` solve realizes each jump in one solve.** Each roll of a rolling stochastic solve with
   `dispatch_realization_method` `within_solve` is now solved once: over its jump it dispatches the data of the
   `realized: yes` branch (one path, the same decisions in every forecast, reported under the period's own name),
@@ -120,11 +167,11 @@ W-0636) name what changed.
 - **Rolling stochastic solves with delayed units keep the realization without look-ahead.** In a model with units
   that have a `delay`, a rolling `within_solve` or `separate_dispatch` solve still realizes each jump in a separate
   realization solve that does not look past the jump; note W-0594 names the delayed units, once per run. A rolling
-  stochastic solve followed by a realization solve you configure yourself also keeps its two solves, and so does a
-  rolling `separate_dispatch` solve with `stochastic_invest_method` `recourse` (a rolling `within_solve` recourse
-  solve gets no realization solve, as before). Their first solve changes all the same (it shares only the
-  `_fix_in_uc` commitment, see above), so note W-0636 names the `separate_dispatch` ones; its full notice says
-  that their realization dispatches each jump alone.
+  stochastic solve followed by a realization solve you configure yourself also keeps its two solves. Their first
+  solve changes all the same (it shares only the `_fix_in_uc` commitment, see above), so note W-0636 names the
+  `separate_dispatch` ones; its full notice says that their realization dispatches each jump alone. A rolling
+  solve with `stochastic_invest_method` `recourse` loses the setting in the upgrade (see above) and is realized as
+  any other rolling solve.
 - **A `realized: yes` row where no roll fans out is read by a rolling solve whose realization looks ahead.** In a
   rolling `within_solve` or `separate_dispatch` solve (other than those that keep the earlier realization) each jump
   reads the realized branch over all its `realized: yes` rows as one timeline, so such a row is one more realized
@@ -176,9 +223,9 @@ W-0636) name what changed.
 ### Fixes
 
 - **A rolling solve without storage nodes and with `stochastic_invest_method` `recourse` no longer stops with
-  "recourse in nested sub-solve ... is not supported".** Its rolls were not recognised as rolls when the model had
-  no storage node. It now runs like the same solve with storage: its rolls build no investment, and a warning says
-  so (invest in a solve before the rolling solve).
+  "recourse in nested sub-solve ... is not supported".** The upgrade to data version 84 drops `recourse` from
+  rolling solves (their rolls build no investment; invest in a solve before the rolling solve), so such a solve
+  runs as any other rolling stochastic solve.
 - **A rolling solve with a `bind_intraperiod_blocks` storage node no longer stops with "no timeset blocks in this
   solve" when a roll holds only one time step of a period it holds in part** (e.g. the last roll with
   `rolling_solve_jump` 1). That step is the start of the roll's block chain and continues from the level carried

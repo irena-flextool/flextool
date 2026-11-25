@@ -1,7 +1,4 @@
-"""Slice C — recourse validation guards.
-
-Design: ``specs/sliceC_optin_guards_design.md`` §2/§4 (G1, G2a-c, G3).
-The guards around branching investments:
+"""The guards around investments that branch per forecast (``invest_solve_branching_method``):
 
 * Guard 1 — ``invest_solve_branching_method``: an unrecognised raw value is
   refused (``_invest_branching_raw_guard``, at the top of ``run()`` and in

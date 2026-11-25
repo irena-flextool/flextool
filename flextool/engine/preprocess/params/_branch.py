@@ -1612,9 +1612,10 @@ def pd_non_anticipativity_df(
 
 
 # ---------------------------------------------------------------------------
-# check_recourse_npv_preconditions — the three Slice A §2.2 NPV proof
-# obligations, shipped as a pure checker (Slice B design §6).  Exercised
-# by tests only until the Slice D activation sites wire it at runtime.
+# check_recourse_npv_preconditions — the three obligations that make the
+# lineage-filtered NPV walks correct when investments branch, as a pure
+# checker.  Run (raising) by the investment-cost builders of a solve whose
+# investments branch per forecast (``_derived``, ``_lifetime_costs``).
 # ---------------------------------------------------------------------------
 
 
@@ -1710,13 +1711,16 @@ def check_recourse_npv_preconditions(
         provider: "object | None" = None,
         weight_tol: float = 1e-9,
         ) -> list[str]:
-    """Return violation messages for the three recourse-NPV obligations;
-    empty list == all hold, deterministic order.  Raising wrapper:
-    :func:`assert_recourse_npv_preconditions`.  These obligations pin the
+    """Return violation messages for the three NPV obligations of a solve whose
+    investments branch per forecast (``invest_solve_branching_method``
+    ``investments_after_reveal_period`` or ``investments_at_reveal_period``:
+    ``SolveConfig.recourse_invest``); empty list == all hold, deterministic
+    order.  Raising wrapper: :func:`assert_recourse_npv_preconditions`, run
+    by the investment-cost builders (``_derived``, ``_lifetime_costs``) when
+    the branch invest axis is present.  These obligations pin the
     arithmetic that makes a SET-shaped (unweighted) lineage filter
     numerically correct for trunk-crossing and realized-anchor windows, on
-    the invest AND divest side.  Runtime wiring is the Slice D activation
-    site; until then this checker is exercised by tests only.
+    the invest AND divest side.
 
     The fan is forecasts-only (Σ = 1): a trunk period that is both a
     self-row and the parent of ≥1 forecast is a PHANTOM carrying weight 0,
@@ -1739,7 +1743,7 @@ def check_recourse_npv_preconditions(
     The checker does NO disk I/O — it reads frames through the Provider, so
     the CALLER must seed the true emitted CSVs onto the Provider first.  The
     check underwrites the filter arithmetic only if the walker's year/factor
-    source is those same CSVs (the Slice D year-threading prerequisite).
+    source is those same CSVs.
 
     Obligation (i)'s chains are defined against SBTB (which carries the
     realized branch's real-named members, so the trunk chain is covered).
