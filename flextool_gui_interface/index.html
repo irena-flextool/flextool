@@ -1053,6 +1053,18 @@
   </span>
 </a>
 </li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../solvers/option_trust_internals/">
+<span class="md-ellipsis">
+    
+  
+    Solver option trust (developer)
+  
+
+    
+  </span>
+</a>
+</li>
 </ul>
 </nav>
 </li>
@@ -1157,6 +1169,18 @@
     
   
     Testing
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../dev/assistant/">
+<span class="md-ellipsis">
+    
+  
+    The AI assistant (developer)
   
 
     
@@ -1542,17 +1566,17 @@
 <p>The <strong>Messages</strong> button at the top right opens the list of FlexTool's notices about the open project, its databases and this installation. The button shows how many messages there are, and it is highlighted while a message needs your attention or is new. The list shows one message at a time: <strong>Previous</strong> and <strong>Next</strong> page through them, and <strong>Open documentation</strong> opens the page that explains the message.</p>
 <p>When you open a project or press <strong>Refresh</strong>, the list opens by itself if a message is waiting that you have not seen yet. It also opens by itself when a database that needs checking is added. Otherwise only the button changes, so the list never pops up over a run.</p>
 <ul>
-<li><strong>Close for now</strong> (or Escape) closes the list. The messages come back the next time you open the project or start FlexTool.</li>
-<li><strong>Dismiss</strong> removes a message for good. Only messages that report something have it, such as "This database was upgraded" or "A newer FlexTool is available".</li>
-<li>A message without <strong>Dismiss</strong> stays as long as its cause does, and says in its text what ends it.</li>
+<li><strong>Close dialog</strong> (or Escape) closes the list. The messages come back the next time you open the project or start FlexTool.</li>
+<li><strong>Dismiss message</strong> removes a message for good. Only messages that report something have it, such as "This database was upgraded" or "A newer FlexTool is available".</li>
+<li>A message without <strong>Dismiss message</strong> stays as long as its cause does, and says in its text what ends it.</li>
 </ul>
 <p>A message that only reports something opens the list by itself at the first two project opens; after that it waits in the list until you dismiss it. A message that needs your attention ("Please check this database", "FlexTool cannot read this database file") opens the list at every project open.</p>
 <p>The list can show:</p>
 <ul>
-<li><strong>Please check this database</strong>: the database may have been changed by a library bug when it was upgraded (<a href="../reference/warnings/#w-0490">W-0490</a>). It also appears, with a general text, for a database whose upgrade history FlexTool cannot read (it reads it again at each refresh). It has no <strong>Dismiss</strong>: it ends only when a repaired copy is in the database's place. <strong>Copy repair command</strong> copies the command that repairs this database; paste it into a terminal (PowerShell on Windows) and follow <a href="../terminal_workflow/#repairing-a-value-list-w-0490">Repairing a value list (W-0490)</a>. The repair tool writes a repaired copy and never changes the database itself. On Linux, paste the command before you close FlexTool: the copied text is lost when FlexTool exits.</li>
-<li><strong>Shipped defaults lost in an old upgrade</strong>: an upgrade of this database before FlexTool 4.6.3 left some list-valued defaults empty (<a href="../reference/warnings/#w-0491">W-0491</a>). Results can differ only in how storage nodes start and end (<code>storage_start_end_method</code>); the text says whether that applies. It has no <strong>Dismiss</strong> and opens the list by itself at the first two project opens; it ends only when the database holds the repair tool's record, so use the copy the tool writes in place of the database. <strong>Copy repair command</strong> works as above.</li>
+<li><strong>Please check this database</strong>: the database may have been changed by a library bug when it was upgraded (<a href="../reference/warnings/#w-0490">W-0490</a>). It also appears, with a general text, for a database whose upgrade history FlexTool cannot read (it reads it again at each refresh). It has no <strong>Dismiss message</strong>: it ends only when a repaired copy is in the database's place. <strong>Copy repair command</strong> copies the command that repairs this database; paste it into a terminal (PowerShell on Windows) and follow <a href="../terminal_workflow/#repairing-a-value-list-w-0490">Repairing a value list (W-0490)</a>. The repair tool writes a repaired copy and never changes the database itself. On Linux, paste the command before you close FlexTool: the copied text is lost when FlexTool exits.</li>
+<li><strong>Method parameter defaults lost in an old upgrade</strong>: an upgrade of this database before FlexTool 4.6.3 left some method parameter defaults empty (<a href="../reference/warnings/#w-0491">W-0491</a>). Results can differ only in how storage nodes start and end (<code>storage_start_end_method</code>); the text says whether that applies. It has no <strong>Dismiss message</strong> and opens the list by itself at the first two project opens; it ends only when the database holds the repair tool's record, so use the copy the tool writes in place of the database. <strong>Copy repair command</strong> works as above.</li>
 <li><strong>FlexTool cannot read this database file</strong>: the data version or the frozen marker of a database could not be read. It goes away once FlexTool can read the file.</li>
-<li><strong>This database was upgraded</strong> (one per database): FlexTool upgraded it to the current data version (see <a href="#migration-and-frozen-databases">Migration and frozen databases</a>).</li>
+<li><strong>This database was upgraded</strong> (one per database): FlexTool upgraded it to the current data version (see <a href="#migration-and-frozen-databases">Migration and frozen databases</a>). It also lists the behaviour notes the upgrade added to the database, in two groups: the changes that affect the results of this model, and the other notes. The other notes are <a href="../reference/warnings/#w-0601">W-0601</a> and <a href="../reference/warnings/#w-0634">W-0634</a>: where the upgrade wrote a <code>storage_start_end_method</code> or a <code>minimum_time_method</code>, results stay the same; such a note is listed also when the upgrade wrote nothing and only left some entities undecided. The first group names the entities left undecided (the first ten of each kind). When the upgrade could not decide the minimum up/down time method of some units, they run without those limits until you choose a <code>minimum_time_method</code> (the run's <a href="../reference/warnings/#w-0231">W-0231</a> names all of them). When it could not decide the <code>storage_start_end_method</code> of some storage nodes, a run that uses them stops with an error naming them until you set <code>storage_state_start</code> / <code>storage_state_end</code> or choose another method. Each run names the affected entities in its Notes; delete a note's marker in the database's <strong>Metadata</strong> tab once checked. When a database is upgraded again before you dismiss the message, the new message keeps the earlier notes and names; it does not check whether a unit or node named earlier has been decided since.</li>
 <li><strong>This project's solver settings were updated</strong>: see <a href="#solver-options-on-this-computer">Solver options → On this computer</a>.</li>
 <li><strong>A newer FlexTool is available</strong>: see <a href="../install_gui/#update-notifications">Update notifications</a>.</li>
 </ul>
@@ -1593,7 +1617,7 @@
 <p>The <strong>checkbox</strong> column decides whether the source's scenarios appear in <strong>Available scenarios</strong>. The <strong>#</strong> column is the source's persistent number — it is assigned the first time the source is seen and stored in <code>settings.yaml</code> (<code>input_source_numbers</code>). When a source is deleted its number is freed only when no executed-scenario folder on disk still references it; the next new source picks the lowest free number, so a deleted slot is reused once its outputs are also cleaned up. Hovering over a row with an error, empty, "editing" or frozen status shows a Toplevel tooltip explaining the status; external references show their POSIX path relative to the project root and a reminder that <strong>Delete</strong> only removes the reference.</p>
 <p>Right-click a row for the same actions as the buttons. Column headers sort the list; the active sort direction is shown by a small arrow.</p>
 <h3 id="migration-and-frozen-databases">Migration and frozen databases</h3>
-<p>When the list is refreshed, a <code>.sqlite</code> source older than this FlexTool (or at the current version but with an older SpineDB schema, e.g. after a <code>spinedb_api</code> update) is migrated to the current version: a source in <code>input_sources/</code> without asking (a safety copy, <code>&lt;source&gt;.premigration.bak</code>, is kept until the migration has finished and put back if it fails, so the source is either migrated or as it was; see <a href="../terminal_workflow/#migrate-database-schema">Migrate database schema</a>), an external reference after asking whether to upgrade it in place or copy it into the project first (<strong>Upgrade in place</strong>, <strong>Copy into project and upgrade</strong>, the default, or <strong>Cancel</strong>). Checking the version reads the file read-only, so nothing in the file changes before you agree. Adding scenarios to the execution list, or opening <strong>Calibrate investments</strong>, checks their sources again and migrates any that changed since the last refresh; FlexTool does not run a database that is not at the current version. After an upgrade, the <a href="#messages">message list</a> has a "This database was upgraded" message for each upgraded database, with its data versions before and after; an upgrade that failed gets a box at once.</p>
+<p>When the list is refreshed, a <code>.sqlite</code> source older than this FlexTool (or at the current version but with an older SpineDB schema, e.g. after a <code>spinedb_api</code> update) is migrated to the current version: a source in <code>input_sources/</code> without asking (a safety copy, <code>&lt;source&gt;.premigration.bak</code>, is kept until the migration has finished and put back if it fails, so the source is either migrated or as it was; see <a href="../terminal_workflow/#migrate-database-schema">Migrate database schema</a>), an external reference after asking whether to upgrade it in place or copy it into the project first (<strong>Upgrade in place</strong>, <strong>Copy into project and upgrade</strong>, the default, or <strong>Cancel</strong>). Checking the version reads the file read-only, so nothing in the file changes before you agree. Adding scenarios to the execution list, or opening <strong>Calibrate investments</strong>, checks their sources again and migrates any that changed since the last refresh; FlexTool does not run a database that is not at the current version. After an upgrade, the <a href="#messages">message list</a> has a "This database was upgraded" message for each upgraded database, with its data versions before and after; an upgrade that failed gets a box at once. The message also lists the behaviour notes the upgrade added; an <code>.xlsx</code> source migrated when it is imported or converted gets the notes too, but no message: they appear in the run's Notes only.</p>
 <p>A released model can be <strong>frozen</strong> so that it is never migrated in place without asking: right-click a <code>.sqlite</code> source → <strong>Freeze database…</strong> and give a label, e.g. <code>Reference case 1.0</code> (at most 170 characters). Only a database at the current version can be frozen. A frozen source shows ❄ in the status column; the tooltip shows the label, the version and the date it was frozen. <strong>Unfreeze database</strong> removes the marker. The same can be done in a terminal with <code>flextool-freeze</code> (see <a href="../terminal_workflow/#freeze-a-released-database">Freeze a released database</a>).</p>
 <p>When a frozen source is older than this FlexTool (or has an older SpineDB schema), the refresh asks what to do with it. A frozen source newer than this FlexTool is left as it is; running it asks you to update FlexTool.</p>
 <ul>

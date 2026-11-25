@@ -1814,6 +1814,8 @@
       
         
       
+        
+      
     
     
     
@@ -2003,6 +2005,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/option_trust_internals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solver option trust (developer)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -2018,6 +2048,8 @@
   
     
     
+      
+        
       
         
       
@@ -2262,6 +2294,34 @@
     
   
     Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The AI assistant (developer)
   
 
     
@@ -2620,7 +2680,7 @@
 <li>its <code>other_operational_cost</code> is ignored (it would be a cost one way and a revenue the other), with a warning (W-0590). For a variable cost, use <em>variable_cost_only</em>, <em>regular</em> or <em>exact</em>.</li>
 </ul>
 </li>
-<li><code>startup_method</code> gives the connection online capacity. <em>linear</em>: the online capacity is anything between 0 and the built capacity; <em>binary</em>: whole units of the connection (of <code>virtual_unitsize</code>, else the whole connection), computationally more demanding. The connection's flow in each direction is limited by its online capacity × availability, its reserve by its online capacity, and <code>startup_cost</code> is paid per MW brought online. Connections have no minimum load or minimum up/down times. Not available for connections in a <code>dc_power_flow_with_angles</code> group, other than <code>is_DC</code> connections (an error: switching a DC power-flow line off would need line-switching constraints).</li>
+<li><code>startup_method</code> gives the connection online capacity. <em>linear</em>: the online capacity is anything between 0 and the built capacity; <em>integer</em>: whole units of the connection (of <code>virtual_unitsize</code>, else the whole connection), computationally more demanding; <em>linear_fix_in_uc</em> and <em>integer_fix_in_uc</em>: the same, and in a separate realization solve the online capacity over the jump (the realized periods) is kept at what the stochastic solve chose. The connection's flow in each direction is limited by its online capacity × availability, its reserve by its online capacity, and <code>startup_cost</code> is paid per MW brought online. Connections have no minimum load or minimum up/down times. Not available for connections in a <code>dc_power_flow_with_angles</code> group, other than <code>is_DC</code> connections (an error: switching a DC power-flow line off would need line-switching constraints).</li>
 <li><code>invest_method</code> to define investment and retirement limits: either <em>not_allowed</em> or then a combination of <ul>
 <li><em>invest</em> and/or <em>retire</em> </li>
 <li>investment limits for each <em>period</em> and/or for all periods (<em>total</em>) or <em>no_limit</em> </li>
@@ -2642,7 +2702,7 @@
 <li><code>constraint_capacity_coeff</code> - A map of coefficients (Index: constraint name, value: coefficient). Puts the connection's capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MW. Capacity in construction is not included. See <a href="../user_constraints/">User constraints</a>.</li>
 <li><code>constraint_retired_capacity_coeff</code> - A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity retired in each period on the left side of the user constraint. Coefficient per MW. See <a href="../user_constraints/">User constraints</a>.</li>
 <li><code>constraint_in_construction_capacity_coeff</code> - A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity in construction in each period on the left side of the user constraint. Capacity is in construction from the period of the investment decision until it comes online. It is zero without a construction lead time. Coefficient per MW. See <a href="../user_constraints/">User constraints</a>.</li>
-<li><code>constraint_online_coeff</code> - [unit of the constraint per unit online] A map of coefficients (Index: constraint name, value: coefficient). Puts the number of units of the connection online in each time step (both directions together) on the left side of the user constraint. One unit is <code>virtual_unitsize</code>; without it, the largest <code>existing</code> capacity, else 1000 MW — set <code>virtual_unitsize</code> on a connection that is invested in. Needs <code>startup_method</code> <em>linear</em> or <em>binary</em>; a coefficient on a connection without it is an error. With <em>linear</em> startup the number is continuous. For MW online, use the unit size as the coefficient. See <a href="../user_constraints/">User constraints</a>.</li>
+<li><code>constraint_online_coeff</code> - [unit of the constraint per unit online] A map of coefficients (Index: constraint name, value: coefficient). Puts the number of units of the connection online in each time step (both directions together) on the left side of the user constraint. One unit is <code>virtual_unitsize</code>; without it, the largest <code>existing</code> capacity, else 1000 MW — set <code>virtual_unitsize</code> on a connection that is invested in. Needs a <code>startup_method</code> other than <em>no_startup</em>; a coefficient on a connection without it is an error. With <em>linear</em> or <em>linear_fix_in_uc</em> the number is continuous. For MW online, use the unit size as the coefficient. See <a href="../user_constraints/">User constraints</a>.</li>
 <li><code>other_operational_cost</code> - [CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, period, time or period+time. Ignored on a <em>no_losses_no_variable_cost</em> connection (see <code>transfer_method</code>).</li>
 <li><code>fixed_cost</code> - [CUR/kW/a] Annual fixed cost. New capacity pays it only while it operates. Constant or period.</li>
 <li><code>invest_cost</code> - [CUR/kW] Overnight investment cost of new capacity. It is annualized over <code>payback_time</code> with <code>discount_rate</code>; with <code>lifetime_method</code> <em>reinvest_choice</em> or <em>no_reinvestment</em> that annuity is spread evenly over <code>lifetime_technical</code> and paid for each year the capacity is in service (with <em>reinvest_automatic</em>: each replacement at the <code>invest_cost</code> of the period it comes online, for its years in service). Construction time costs with their interest must be included here. Constant or period: the value of the period when the capacity is built (comes online) is used.</li>
@@ -2656,7 +2716,7 @@
 <li><code>life_extension_cost</code> - [CUR/kW] and <code>life_extension_years</code> - [years]: capacity reaching the end of its <code>lifetime_technical</code> can be kept in service <code>life_extension_years</code> longer for a one-off <code>life_extension_cost</code>, as for units, with <code>lifetime_method</code> <em>reinvest_choice</em> or <em>no_reinvestment</em> (see <a href="../units/#life-extension">life extension</a>). Give both or neither. Constant or period: the value of the period the extension starts in.</li>
 <li>other investment parameters: <code>invest_max_total</code>, <code>invest_max_period</code>, <code>invest_min_total</code>, <code>invest_min_period</code>, <code>retire_max_total</code>, <code>retire_max_period</code>, <code>retire_min_total</code>, <code>retire_min_period</code>, <code>net_salvage_value</code> (an income received in full when capacity is retired, and a level yearly credit in the yearly price of capacity kept to its end of life; <code>existing</code> capacity can be retired with an <code>invest_method</code> that allows retirement, and with <em>invest_retire_…</em> or <em>cumulative_limits</em> also the capacity the model builds; see <a href="../units/#retirements">retirements</a>). As for units, <code>inf</code> in <code>invest_max_period</code>, <code>retire_max_period</code> or <code>cumulative_max_capacity</code> means no limit in that period, and 0 or <code>-inf</code> in a minimum no minimum.</li>
 <li><code>is_DC</code> - A flag whether the connection is DC: its flow into a node of a group with a <em>non_synchronous_limit</em> counts as non-synchronous (both directions; between two nodes of the same group it does not count). Default false. An <code>is_DC</code> connection inside a <code>dc_power_flow_with_angles</code> group is not a DC power-flow line: it keeps its own <code>transfer_method</code> and needs no <code>reactance</code>.</li>
-<li><code>virtual_unitsize</code> - [MW] Size of one unit of the connection. With it, <code>existing</code> is the number of units. Binary startups commit whole units of this size. Investments and retirements are continuous; their limits are in MW. No value: the existing capacity, or 1000 MW without it.</li>
+<li><code>virtual_unitsize</code> - [MW] Size of one unit of the connection. With it, <code>existing</code> is the number of units. Integer start-ups (<em>integer</em>, <em>integer_fix_in_uc</em>) commit whole units of this size. Investments and retirements are continuous; their limits are in MW. No value: the existing capacity, or 1000 MW without it.</li>
 <li><code>availability</code> - [e.g. 0.9 means 90%] Fraction of capacity available for connection flows. Constant, period, time or period+time.</li>
 </ul>
 <h2 id="connection__profile">connection__profile</h2>

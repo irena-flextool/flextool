@@ -1869,6 +1869,8 @@
       
         
       
+        
+      
     
     
     
@@ -2058,6 +2060,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../solvers/option_trust_internals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solver option trust (developer)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -2073,6 +2103,8 @@
   
     
     
+      
+        
       
         
       
@@ -2317,6 +2349,34 @@
     
   
     Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The AI assistant (developer)
   
 
     
@@ -2741,8 +2801,8 @@ products (combined heat and power, cogeneration with desalination) are not split
 <li>
 <p><strong>Linear commitment is an approximation.</strong> With <code>startup_method</code> <em>linear</em>, a part of a unit can be online: with <code>min_load</code> 0.5, a 500 MW unit can run at 25 MW with 50 MW (10 %) of it online.</p>
 <p>Minimum load and start-up costs apply only to the part that is online, so a large unit looks more flexible and
-cheaper to cycle than it is. <em>binary</em> commits whole units (a mixed-integer problem): it is exact, but slower.
-<code>virtual_unitsize</code> splits a fleet into smaller units to keep a <em>binary</em> model fast.</p>
+cheaper to cycle than it is. <em>integer</em> commits whole units (a mixed-integer problem): it is exact, but slower.
+<code>virtual_unitsize</code> splits a fleet into smaller units to keep an <em>integer</em> model fast.</p>
 </li>
 <li>
 <p><strong>No start-up fuel.</strong> A start-up costs only <code>startup_cost</code> [CUR/MW]: it uses no fuel or heat, and there is no shut-down cost and no hot, warm or cold start.</p>
@@ -2759,7 +2819,7 @@ cheaper to cycle than it is. <em>binary</em> commits whole units (a mixed-intege
 <ul>
 <li>
 <p><strong>Inertia of units without online variables comes from their flow.</strong> A unit without online variables (no <code>startup_method</code> and no <code>minimum_time_method</code>) gives flow × <code>inertia_constant</code>, so a unit at half load gives half of its inertia.</p>
-<p>Give the synchronous units online variables (<code>startup_method</code> <em>linear</em> or <em>binary</em>) to count their inertia from
+<p>Give the synchronous units online variables (a <code>startup_method</code> other than <em>no_startup</em>) to count their inertia from
 the capacity online; see <a href="../how_to/emissions/#how-to-set-a-minimum-inertia">How to set a minimum inertia</a>.</p>
 </li>
 <li>

@@ -1803,6 +1803,8 @@
       
         
       
+        
+      
     
     
     
@@ -1992,6 +1994,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/option_trust_internals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solver option trust (developer)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -2007,6 +2037,8 @@
   
     
     
+      
+        
       
         
       
@@ -2251,6 +2283,34 @@
     
   
     Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The AI assistant (developer)
   
 
     
@@ -2741,7 +2801,7 @@ period of the solve.</p>
 <p><strong>How the inertia is counted.</strong> It depends on whether the unit has online variables:</p>
 <ul>
 <li>
-<p>With online variables (<code>startup_method</code> <em>linear</em> or <em>binary</em>): online capacity × <code>inertia_constant</code>.</p>
+<p>With online variables (a <code>startup_method</code> other than <em>no_startup</em>): online capacity × <code>inertia_constant</code>.</p>
 <p>A unit gives its full inertia whenever it is online, also at minimum load. This is the physically right
 measure, and it lets the model keep a plant online at low output to provide inertia.</p>
 </li>
@@ -2756,7 +2816,7 @@ inertia of part-loaded plants, and the model can only get inertia by producing. 
 <p>A unit with an <code>inertia_constant</code> on both its input and its output arc counts on both sides.</p>
 <p><strong>A synchronous condenser.</strong> A condenser gives inertia without producing power. Make it a unit with only an electricity input:</p>
 <ul>
-<li><code>unit</code> <em>sync_condenser</em> with <code>existing</code> [MW] and <code>startup_method</code> <em>linear</em> (or <em>binary</em> for whole machines), and no <code>unit__outputNode</code></li>
+<li><code>unit</code> <em>sync_condenser</em> with <code>existing</code> [MW] and <code>startup_method</code> <em>linear</em> (or <em>integer</em> for whole machines), and no <code>unit__outputNode</code></li>
 <li><code>unit__inputNode</code> (<em>sync_condenser</em>, <em>west</em>) with <code>inertia_constant</code>, for example 4</li>
 <li>
 <p><code>min_load</code>, for example 0.02, for its losses</p>

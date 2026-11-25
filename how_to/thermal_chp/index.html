@@ -1991,6 +1991,8 @@
       
         
       
+        
+      
     
     
     
@@ -2180,6 +2182,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/option_trust_internals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solver option trust (developer)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -2195,6 +2225,8 @@
   
     
     
+      
+        
       
         
       
@@ -2439,6 +2471,34 @@
     
   
     Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The AI assistant (developer)
   
 
     
@@ -3273,8 +3333,8 @@ Finally, make sure there are <em>up</em> and <em>down</em> entities in the `UpDo
 <p><strong>(ramp_and_start_up.sqlite)</strong></p>
 <p>Some plants cannot vary their output freely, but have some cost and limits associated with it. In this example we will add the minimum load behaviour to a <em>coal_plant</em> <code>unit</code> and add the cost and limits for starting up and ramping the plant respectively.</p>
 <p>Minimum load requires that the unit must have an online variable in addition to flow variables and therefore a <code>startup_method</code> needs to be defined and an optional <code>startup_cost</code> can be given. The <code>startup_cost</code> is added to the total cost every time the unit is required to start-up. Here we use a value 1000 (Currency/MW started up).</p>
-<p>The options for the <code>startup_method</code> are <em>no_startup</em>, <em>linear</em> and <em>binary</em>. <em>binary</em> would require an integer variable so <em>linear</em> is chosen. However, this means that the unit can startup partially. The minimum online will still apply, but it is the minimum of the online capacity in any given moment (<em>sum of output flows</em> &gt;= <em>min_load</em> x <em>capacity</em> x <em>online</em>), where 0 &lt;= <em>online</em> &lt;= 1. The minimum load applies once per unit, to the sum of its outputs; a unit with several inputs can run on any mix of them.</p>
-<p>The units online in a time step are linked to the units online in the previous step along the timeline, in the same way as ramp limits: also from the last step of a period into a period whose time steps continue it on the same timeline, and into the first step of a forecast branch. The first step of a solve, of each forecast branch that starts there and of a period that does not continue the previous one (e.g. a period that reuses the same timeset) has no previous step: the model chooses the units online there freely, with no start-up or shut-down in that step, so it pays no <code>startup_cost</code> and no start-up fuel there (the units online still use their no-load fuel and emit its CO2). The minimum up and down times count from the first start-up or shut-down after that step. There is no condition at the end of the horizon either. The samples of a timeline are treated as recurring operation instead: the first step after a gap in the timeline and the first step of a representative period (also when it is the first step of the solve, and the first timeblock of a period with gaps) are linked to the last step of their own stretch of the timeline (the steps up to the next gap or the end of the period). There the commitment cycles within the stretch, never across a gap, a representative-period start or into another period: a stretch that ends offline starts up (and pays <code>startup_cost</code>) at its first step when it needs the unit there, and one that ends online can shut down there. A period counts as a sample only when it has two or more timeblocks with a gap between them: a period with a single timeblock is continuous, so its first step starts free and nothing ties its end, even when that one block stands for a whole year (e.g. one representative week), while two such blocks both cycle. Only the start of a stretch wraps: the step before a gap has no next step, so no pre-shutdown output limit applies there. In a rolling solve the units online that the previous roll realized are carried to the steps of the next roll that continue its last realized step on the timeline (also when the next solve has longer time steps: it continues the finer step that ends where its previous step ends); a roll that starts at a new year that reuses the timeset takes no carry and starts free, also when the new year starts inside the roll. In a rolling two-stage solve the stochastic roll and its realization solve therefore start the same way at every roll. A realization solve that starts at a later period than its stochastic solve (a single-solve realization that dispatches only the realized periods, or a declared realization solve that starts later) starts free at that period, also where the stochastic solve continued it from the period before: a pinned binary commitment stays feasible, but a start-up the stochastic solve made at that step is not charged in the realization.</p>
+<p>The options for the <code>startup_method</code> are <em>no_startup</em>, <em>linear</em>, <em>linear_fix_in_uc</em>, <em>integer</em> and <em>integer_fix_in_uc</em> (the <code>_fix_in_uc</code> members differ from <em>linear</em> and <em>integer</em> only in a separate realization solve of a stochastic model, see <a href="../stochastics/">stochastics</a>). <em>integer</em> would require an integer variable so <em>linear</em> is chosen. However, this means that the unit can startup partially. The minimum online will still apply, but it is the minimum of the online capacity in any given moment (<em>sum of output flows</em> &gt;= <em>min_load</em> x <em>capacity</em> x <em>online</em>), where 0 &lt;= <em>online</em> &lt;= 1. The minimum load applies once per unit, to the sum of its outputs; a unit with several inputs can run on any mix of them.</p>
+<p>The units online in a time step are linked to the units online in the previous step along the timeline, in the same way as ramp limits: also from the last step of a period into a period whose time steps continue it on the same timeline, and into the first step of a forecast branch. The first step of a solve, of each forecast branch that starts there and of a period that does not continue the previous one (e.g. a period that reuses the same timeset) has no previous step: the model chooses the units online there freely, with no start-up or shut-down in that step, so it pays no <code>startup_cost</code> and no start-up fuel there (the units online still use their no-load fuel and emit its CO2). The minimum up and down times count from the first start-up or shut-down after that step. There is no condition at the end of the horizon either. The samples of a timeline are treated as recurring operation instead: the first step after a gap in the timeline and the first step of a representative period (also when it is the first step of the solve, and the first timeblock of a period with gaps) are linked to the last step of their own stretch of the timeline (the steps up to the next gap or the end of the period). There the commitment cycles within the stretch, never across a gap, a representative-period start or into another period: a stretch that ends offline starts up (and pays <code>startup_cost</code>) at its first step when it needs the unit there, and one that ends online can shut down there. A period counts as a sample only when it has two or more timeblocks with a gap between them: a period with a single timeblock is continuous, so its first step starts free and nothing ties its end, even when that one block stands for a whole year (e.g. one representative week), while two such blocks both cycle. Only the start of a stretch wraps: the step before a gap has no next step, so no pre-shutdown output limit applies there. In a rolling solve the units online that the previous roll realized are carried to the steps of the next roll that continue its last realized step on the timeline (also when the next solve has longer time steps: it continues the finer step that ends where its previous step ends); a roll that starts at a new year that reuses the timeset takes no carry and starts free, also when the new year starts inside the roll. In a rolling two-stage solve the stochastic roll and its realization solve therefore start the same way at every roll. A realization solve that starts at a later period than its stochastic solve (a single-solve realization that dispatches only the realized periods, or a declared realization solve that starts later) starts free at that period, also where the stochastic solve continued it from the period before: a pinned commitment (<code>startup_method</code> <em>linear_fix_in_uc</em> or <em>integer_fix_in_uc</em>) stays feasible, but a start-up the stochastic solve made at that step is not charged in the realization.</p>
 <p>The online variable also allows to change the efficiency of the plant between the minimum and full loads. A unit with a part-load efficiency will obey the following equation:</p>
 <div class="highlight"><pre><span></span><code>  + sum_i[ input(i) * input_coefficient(i) ]
   =
@@ -3336,7 +3396,7 @@ where   slope = 1 / efficiency - section
 </tr>
 </tbody>
 </table>
-<p>Between the points the slope of the fuel use is the incremental heat rate: (175.0 − 133.3) / 30 = 1.389 from 40 to 70 MW and (238.1 − 175.0) / 30 = 2.103 from 70 to 100 MW. It must not fall from one segment to the next (the curve must be convex); a curve where it falls is an error, and the message gives the nearest curve that is accepted. Extended down to zero output, the first segment reaches 133.3 − 1.389 × 40 = 77.8 MW: the fuel the unit burns per 100 MW online even at zero output. So the unit needs online variables. Without a <code>startup_method</code> it gets <em>linear</em> start-ups (an info line says so); with <code>startup_method</code> <em>binary</em> it commits whole 100 MW units, as assumed below. One unit online at 60 MW (load share 0.6) burns 77.8 + 1.389 × 60 = 161.1 MW of fuel (efficiency 0.372); two units at 130 MW (load share 0.65 each) burn 2 × 77.8 + 1.389 × 130 = 336.1 MW.</p>
+<p>Between the points the slope of the fuel use is the incremental heat rate: (175.0 − 133.3) / 30 = 1.389 from 40 to 70 MW and (238.1 − 175.0) / 30 = 2.103 from 70 to 100 MW. It must not fall from one segment to the next (the curve must be convex); a curve where it falls is an error, and the message gives the nearest curve that is accepted. Extended down to zero output, the first segment reaches 133.3 − 1.389 × 40 = 77.8 MW: the fuel the unit burns per 100 MW online even at zero output. So the unit needs online variables. Without a <code>startup_method</code> it gets <em>linear</em> start-ups (an info line says so); with <code>startup_method</code> <em>integer</em> it commits whole 100 MW units, as assumed below. One unit online at 60 MW (load share 0.6) burns 77.8 + 1.389 × 60 = 161.1 MW of fuel (efficiency 0.372); two units at 130 MW (load share 0.65 each) burn 2 × 77.8 + 1.389 × 130 = 336.1 MW.</p>
 <p><strong>From heat rates.</strong> Data sheets often give heat rates. The efficiency at a load is 1 / heat rate (3.333 → 0.30). When the data gives a full-load heat rate and incremental heat rates, compute the fuel use at each point from the full-load point backwards (fuel = output × heat rate at full load, then subtract incremental heat rate × the output step of each segment) and take efficiency = output / fuel at each point.</p>
 <p><strong>min_load.</strong> <code>min_load</code> does not move the curve. Set it to the first point's load share (0.4 here): with a lower <code>min_load</code> the first segment is extended below the first point, and without any the unit could be online at zero output burning 77.8 MW of fuel per 100 MW (a warning says so). On a unit with several outputs, the curve's load share is the output weighted by <code>conversion_flow_coeff</code>, while <code>min_load</code> is on the plain sum of the outputs.</p>
 <p><strong>An electrolyser.</strong> An electrolyser is most efficient at low load. The 100 MW <em>electrolyser</em> with <code>{0.2: 0.70, 0.6: 0.66, 1.0: 0.60}</code> (no <code>startup_method</code>) needs no online variables: its curve is scaled by its built capacity. At 30 MW of hydrogen (load share 0.3) it takes 100 × (0.2 / 0.70 + 0.1 × 1.558) = 44.2 MW of power. In hours when power is free (curtailment) or the input node has a surplus, the model may take more power than the curve needs: the input can only be at least the curve's fuel use. A warning after the solve gives the amount; see <em>Input above the curve</em> in <a href="../../reference/units/#part-load-efficiency-curve-piecewise_linear">Units</a>.</p>
@@ -3348,7 +3408,7 @@ where   slope = 1 / efficiency - section
 <li><em>startup_and_input</em> - the normal input flow, and each start-up also takes <code>startup_energy</code> × MW started from the node;</li>
 <li><em>startup_only</em> - only the start-up energy: the arc has no flow, and it takes no part in the unit's conversion, capacity, input shares or ramps.</li>
 </ul>
-<p><code>startup_energy</code> is in MWh per MW started (constant or period). The unit needs online variables: <code>startup_method</code> <em>linear</em> or <em>binary</em> (or a <code>minimum_time_method</code>). With <em>linear</em> start-ups a start-up of 0.6 units of a 100 MW unit is 60 MW started; the model stays an LP.</p>
+<p><code>startup_energy</code> is in MWh per MW started (constant or period). The unit needs online variables: a <code>startup_method</code> other than <em>no_startup</em> (or a <code>minimum_time_method</code>). With <em>linear</em> start-ups a start-up of 0.6 units of a 100 MW unit is 60 MW started; the model stays an LP.</p>
 <p><strong>Coal started on oil.</strong> A coal unit <em>coal_plant</em> with its fuel input (<em>coal_plant</em>, <em>coal_market</em>) gets a second input arc (<em>coal_plant</em>, <em>oil_market</em>) with <code>startup_input_method</code> <em>startup_only</em> and <code>startup_energy</code> 2. A start-up of 60 MW then takes 120 MWh of oil from <em>oil_market</em> in the step it starts in, priced as the oil commodity and with the oil's <code>co2_content</code>. The oil arc is not a flow, so the unit stays a one-input, one-output unit (no extra flow variable, no conversion row), and the oil cannot be used to run the unit.</p>
 <p><strong>CSP turbine started on tank heat.</strong> A turbine whose start-up heat comes from the tank uses its normal input: on (<em>csp_turbine</em>, <em>csp_heat</em>) set <code>startup_input_method</code> <em>startup_and_input</em> and <code>startup_energy</code> (for example 0.5 MWh_th per MW_e started). A start-up of 20 MW takes 10 MWh_th from the tank on top of the heat the turbine converts.</p>
 <p><strong>Results.</strong> <code>unit_startup_energy__dt</code> [MWh in the step] and <code>unit_startup_energy__d</code> [MWh/a] show the start-up input per unit and node. The unit's input from the node (<code>unit__inputNode__dt</code> / <code>__d</code>), the commodity costs, the CO2 emissions and costs and the node balance include it.</p>
@@ -3374,7 +3434,7 @@ where   slope = 1 / efficiency - section
 </ul>
 </li>
 </ol>
-<p>Setting <code>minimum_time_method</code> to anything other than <em>none</em> will automatically activate online variables for the unit (at least linear startup), even if <code>startup_method</code> is not explicitly defined. This means you do not need to separately set <code>startup_method</code> to <em>linear</em> or <em>binary</em>, although you can if you also want startup costs or binary commitment.</p>
+<p>Setting <code>minimum_time_method</code> to anything other than <em>none</em> will automatically activate online variables for the unit (at least linear startup), even if <code>startup_method</code> is not explicitly defined. This means you do not need to separately set <code>startup_method</code> to <em>linear</em> or <em>integer</em>, although you can if you also want startup costs or whole-unit commitment.</p>
 <p>The minimum time constraints work with variable timestep durations. The constraint checks that the cumulative duration of consecutive online (or offline) timesteps meets the minimum requirement, rather than simply counting timesteps.</p>
 <p>The look-back follows the timeline in the same way as ramp limits: it continues into a period whose time steps continue the previous period's on the same timeline and into the steps before a forecast branch starts, and stops at a gap in the timeline (the minimum time restarts after the gap), at the start of a representative period, at a period that reuses the same timeset as the previous one and at the first step of a solve. In rolling window solves, the start-ups and shut-downs that the previous roll realized count for the time steps of the next roll that continue its last realized step on the timeline, in the same way as the ramp continues: the same period, a period that continues it and every forecast branch that starts there (not a period that reuses the same timeset, a step after a gap or a representative-period start). So the solve horizon overlap does not need to cover the minimum times. A solve with longer time steps (for example a 6-hour storage roll after an hourly dispatch) continues the realized hourly step that ends where its own previous step ends, by position in time. A warning is printed only when a solve continues the timeline of an earlier solve but its first step neither follows nor ends at the earlier solve's last realized step (a hole or an overlap between the two), since no realized on-line history reaches it then.</p>
 <p>If the unit also has ramp limits (<code>ramp_method</code> with <code>ramp_speed_up</code>, <code>ramp_speed_down</code>), the model additionally tightens the maximum output in the startup and pre-shutdown timesteps based on how fast the unit can ramp within one timestep. A unit that starts in a timestep reaches on average at most <code>min_load + ½ × ramp_speed_up × 60 × timestep duration</code> of the started capacity in that step (it synchronises at minimum load and then ramps up: half a step's ramp on average), and in the step before it shuts down at most <code>min_load + ½ × ramp_speed_down × 60 × timestep duration</code> (both capped at full output and by <code>availability</code>). A unit online for a single step gets the smaller of the two. On an input with a ramp limit of a unit with several inputs or outputs, the limit is on the input it draws (at minimum load it needs the input of its minimum-load output). Without ramp limits, the unit can reach full output immediately after starting.</p>
@@ -3432,7 +3492,7 @@ where   slope = 1 / efficiency - section
 <tr>
 <td>6. User constraint on the units online</td>
 <td><code>constraint</code> + <code>constraint_online_coeff</code> on <code>unit</code></td>
-<td>MIP with <em>binary</em> startup (LP with <em>linear</em>)</td>
+<td>MIP with <em>integer</em> startup (LP with <em>linear</em>)</td>
 <td>at least N units online, each at least at <code>min_load</code></td>
 <td>A requirement for N machines on line, for example for system strength</td>
 </tr>
@@ -3582,15 +3642,15 @@ where   slope = 1 / efficiency - section
 <h3 id="option-6-user-constraint-on-the-units-online">Option 6: user constraint on the units online</h3>
 <p><strong>(examples.sqlite scenario: must_run_fleet_two_online)</strong>
 <strong><em>init - west - coal - wind - must_run_system - must_run_fleet - must_run_fleet_two_online</em></strong></p>
-<p><strong>The data.</strong> On each of <em>steam_1</em>, <em>steam_2</em> and <em>steam_3</em> set <code>startup_method</code> <em>binary</em>, <code>min_load</code> 0.5 and <code>constraint_online_coeff</code> (<em>steam_fleet_two_online</em> | 1). Create a <code>constraint</code> <em>steam_fleet_two_online</em> with <code>sense</code> <em>greater_than</em> and <code>constant</code> 2. The example also sets <code>solver_mip_gap</code> 0 on the solve, so the solver proves the best integer solution.</p>
+<p><strong>The data.</strong> On each of <em>steam_1</em>, <em>steam_2</em> and <em>steam_3</em> set <code>startup_method</code> <em>integer</em> (the example data has <em>integer_fix_in_uc</em>, the same model here), <code>min_load</code> 0.5 and <code>constraint_online_coeff</code> (<em>steam_fleet_two_online</em> | 1). Create a <code>constraint</code> <em>steam_fleet_two_online</em> with <code>sense</code> <em>greater_than</em> and <code>constant</code> 2. The example also sets <code>solver_mip_gap</code> 0 on the solve, so the solver proves the best integer solution.</p>
 <p><strong>What it does.</strong> In every time step at least two of the three units are online, and each online unit makes at least its minimum load: <em>steam_1</em> and <em>steam_2</em> are online at 50 MW each. The count is in units of <code>virtual_unitsize</code>; without it, of the unit's existing capacity (here 100 MW, so each unit is one), else of 1000 MW. Set <code>virtual_unitsize</code> on a unit that is invested. A <code>constraint_online_coeff</code> on a unit without online variables is an error. See the <a href="../../reference/user_constraints/#example-two-of-three-units-online">two of three units online</a> example.</p>
 <p><strong>Output floor or count.</strong> The output floor of option 3 and this count cost almost the same here (5 200 against 5 250 CUR/h), but they force different things. The floor asks for 100 MW from any units; the count asks for two machines on line, whatever their output. Use the count only when the requirement really is about machines (for example inertia or short-circuit power from several units); it needs integer online variables, which makes the solve slower.</p>
-<p><strong>Binary or linear.</strong> With <em>binary</em> startup the count is a whole number, so ≥ 1.5 needs two units online. With <em>linear</em> startup the count is continuous: ≥ 1.5 keeps 1.5 units' worth of capacity online (150 MW here), with the minimum load applying to that capacity, not two whole machines. Linear is an LP and solves fast; binary gives the exact count.</p>
+<p><strong>Integer or linear.</strong> With <em>integer</em> or <em>integer_fix_in_uc</em> the count is a whole number, so ≥ 1.5 needs two units online. With <em>linear</em> startup the count is continuous: ≥ 1.5 keeps 1.5 units' worth of capacity online (150 MW here), with the minimum load applying to that capacity, not two whole machines. Linear is an LP and solves fast; integer gives the exact count.</p>
 <p><strong>An exact count.</strong> To fix the number of units online, use the same data with <code>sense</code> <em>equal</em> and <code>constant</code> N. The <code>constant</code> can be a constant or a period map, not a time series. There is no parameter that fixes a unit's online status directly; only a stochastic realization solve fixes it internally.</p>
 <h3 id="min_load-is-not-a-must-run">min_load is not a must-run</h3>
 <p><strong>(examples.sqlite scenario: must_run_min_load_only)</strong>
 <strong><em>init - west - coal - wind - must_run_system - must_run_fleet - must_run_min_load_only</em></strong></p>
-<p><strong>What it does.</strong> The steam units have <code>startup_method</code> <em>binary</em> and <code>min_load</code> 0.5, but no floor. The minimum load applies only while a unit is online, and the model is free to keep it offline, so all three stay off and wind covers the demand (the same result as <em>must_run_none</em>). <code>min_load</code> limits how low an online unit can go; it does not make the unit run.</p>
+<p><strong>What it does.</strong> The steam units have <code>startup_method</code> <em>integer_fix_in_uc</em> (the same model as <em>integer</em> here) and <code>min_load</code> 0.5, but no floor. The minimum load applies only while a unit is online, and the model is free to keep it offline, so all three stay off and wind covers the demand (the same result as <em>must_run_none</em>). <code>min_load</code> limits how low an online unit can go; it does not make the unit run.</p>
 <h3 id="avoid-a-negative-cost-as-a-must-run-bonus">Avoid a negative cost as a must-run bonus</h3>
 <p><strong>Why not.</strong> A large negative <code>other_operational_cost</code> makes the unit run, but it pays the unit for every MWh it makes. The bonus is then in the node prices, the cost results and the objective, so none of them is the system's real cost.</p>
 <p><strong>Dumped energy.</strong> Once the bonus, less the unit's own costs, is larger than the node's <code>penalty_down</code>, the unit runs above the demand and the extra energy is dumped through the downward slack. Use one of the floors above instead: they force exactly the output you want and show it as a constraint.</p>

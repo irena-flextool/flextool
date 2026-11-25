@@ -1864,6 +1864,8 @@
       
         
       
+        
+      
     
     
     
@@ -2053,6 +2055,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/option_trust_internals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solver option trust (developer)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -2068,6 +2098,8 @@
   
     
     
+      
+        
       
         
       
@@ -2312,6 +2344,34 @@
     
   
     Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The AI assistant (developer)
   
 
     
@@ -2738,14 +2798,14 @@
 <li><code>has_non_synchronous</code> - A flag whether the group of nodes has the non-synchronous share constraint active. Default <em>no</em>. Without <em>yes</em> the group has no non-synchronous constraint, even if <code>non_synchronous_limit</code> is given.</li>
 <li><code>non_synchronous_limit</code> - [share, e.g. 0.8 means 80%] The maximum share of non-synchronous generation in the node group, of the group's supply measured with the real demand (without an energy margin). Flows between the group's nodes are excluded. Used only when <code>has_non_synchronous</code> is <em>yes</em>; with the flag and no value (or 0), no non-synchronous infeed is allowed (violations are penalised). Constant, period, time or period+time. A time map (or the time level of a period+time map) of a group with <code>has_non_synchronous</code> <em>yes</em> must give a value for every time step of the solve, look-ahead included (a missing time step is an error, reported before the first solve; an authored 0 is a limit of 0, give 1 for an hour without a limit). A solve whose <code>reduce_system_detail_method</code> leaves the non-synchronous limit out is not checked. A period map (or the period level of a period+time map) must give a value for every period of the solve, look-ahead periods included (a missing period is an error). <code>inf</code> means no limit in that period or time step (a constant <code>inf</code>: nowhere); its row is left out. A very large finite number is used as a limit and makes the solve numerically unstable; FlexTool warns about a value of 1e15 or more. <code>-inf</code> is an error. With a solve's <code>new_stepduration</code>, a solve step that combines <code>inf</code> time steps with finite ones takes their mean, which is <code>inf</code>: the limit is dropped for the whole solve step, and FlexTool warns (naming the entity, the periods and the solve steps). To keep the limit, give <code>inf</code> in all or none of the time steps of a solve step, or use a shorter <code>new_stepduration</code>.</li>
 <li><code>penalty_non_synchronous</code> - [CUR/MWh] Penalty for violating the non synchronous constraint. Default 5000, applied to every group without a value of its own (and to the periods a map leaves out); 0 makes the violation free. Constant or period.</li>
-<li><code>capacity_margin_method</code> - Whether the group of nodes has a capacity margin in investment solves, and how the margin is given. Options: <em>none</em> (default, no margin), <em>absolute</em> (the margin is <code>capacity_margin_absolute</code> MW) and <em>relative_of_peak_demand</em> (the margin is <code>capacity_margin_relative</code> times the group's peak demand). The margin applies in the investment periods of each solve (and their stochastic branch periods); a solve without <code>invest_periods</code> (dispatch, rolling dispatch) has none. See <a href="#the-capacity-margin">The capacity margin</a> below for what counts and how.</li>
+<li><code>capacity_margin_method</code> - Whether the group of nodes has a capacity margin in investment solves, and how the margin is given. Options: <em>none</em> (default, no margin), <em>absolute</em> (the margin is <code>capacity_margin_absolute</code> MW) and <em>relative_of_peak_demand</em> (the margin is <code>capacity_margin_relative</code> times the group's peak demand). The margin applies in the investment periods of each solve (and their stochastic branch periods); a solve without <code>invest_periods</code> (dispatch) has none, and neither has a rolling solve, whose rolls build no investment even with <code>invest_periods</code> (invest in a solve before it). A single solve with <code>invest_periods</code> keeps its margin also when nothing in it can be invested, which checks the existing capacity. See <a href="#the-capacity-margin">The capacity margin</a> below for what counts and how.</li>
 <li><code>capacity_margin_absolute</code> - [MW] The margin of a group with <code>capacity_margin_method</code> <em>absolute</em>: the capacity the group needs above its demand at every time step of an investment period. Without that method the value is ignored (a warning says so). No value (or 0) means the capacity must still cover the demand. Constant or period. A period map must give a value for every investment period of the solve (a missing period is an error). <code>-inf</code> means no capacity-margin requirement in that period: the group's row and its shortfall are left out (with 0 the capacity must still cover the demand). <code>inf</code> is an error.</li>
 <li><code>capacity_margin_relative</code> - [share, e.g. 0.15 means 15%] The margin of a group with <code>capacity_margin_method</code> <em>relative_of_peak_demand</em>, as a share of the group's peak demand in the period. Without that method the value is ignored (a warning says so). No value (or 0) means no margin. Constant or period. A period map must give a value for every investment period of the solve. <code>-inf</code> means no capacity-margin requirement in that period: the group's row and its shortfall are left out (with 0 the capacity must still cover the demand). <code>inf</code> is an error.</li>
 <li><code>penalty_capacity_margin</code> - [CUR/kW/a] Penalty for violating the capacity margin constraint. Uses operational discounting (not annualized over lifetime like investment costs), so a penalty of e.g. 1000 CUR/kW is not comparable to an investment cost of 1000 CUR/kW which would be annualized to a much lower annual cost. Default 5000, applied to every group without a value of its own (and to the periods a map leaves out); 0 makes the violation free. In a stochastic fan each forecast branch period has its own shortfall, and its penalty is weighted by the forecast's probability. Constant or period.</li>
 <li><code>share_loss_of_load</code> - Force the upward slack of the nodes in this group to be equal or inflow (demand) weighted</li>
 </ul>
 <h3 id="the-capacity-margin">The capacity margin</h3>
-<p>At every time step of an investment period, the capacity margin row of a group asks:</p>
+<p>At every time step of an investment period of a solve that is not rolling, the capacity margin row of a group asks:</p>
 <p><em>firm capacity + VRE potential + what the group's other entities deliver or take at that step ≥ the group's demand + the margin.</em></p>
 <p>The demand is the real demand of the group's nodes (the negative inflow, without an energy margin). Storage nodes have no demand in the row: a storage node of the group with demand gets a warning (model that demand on a balance node of the group), a group of storage nodes only is an error, and so is a <code>balance_within_period</code> node in the group (its balance is per period, the margin per time step). The entities count as follows:</p>
 <table>
@@ -2802,13 +2862,13 @@
 <li><strong>Unserved energy is priced once.</strong> Load the group does not serve leaves the row unchanged where firm capacity would have served it, and is priced by <code>penalty_up</code> only.</li>
 <li><strong>The energy margin does not change the capacity margin.</strong> The row uses the real demand. Storage and imports count with the power they deliver at the step, also when it serves the energy margin's added demand: that power is real capability at that step. Firm output that serves the added demand leaves the row unchanged.</li>
 </ul>
-<p>The margin of a <em>relative_of_peak_demand</em> group is <code>capacity_margin_relative</code> × the group's peak demand: the largest sum of the demand of the group's nodes over the period's full time series, on the period's original timeline (before representative periods and <code>new_stepduration</code>, and the same in every roll of a solve). If the representative periods leave the peak out, the margin still uses the real peak. When several investment periods of a solve use different parts of one timeline (a multi-year timeline, one block per period), each period's peak is over its own part: the time steps of its timeset blocks, or, with representative periods, of the base periods they stand for. A stochastic branch period has its own peak, from its own branch data.</p>
+<p>The margin of a <em>relative_of_peak_demand</em> group is <code>capacity_margin_relative</code> × the group's peak demand: the largest sum of the demand of the group's nodes over the period's full time series, on the period's original timeline (before representative periods and <code>new_stepduration</code>). If the representative periods leave the peak out, the margin still uses the real peak. When several investment periods of a solve use different parts of one timeline (a multi-year timeline, one block per period), each period's peak is over its own part: the time steps of its timeset blocks, or, with representative periods, of the base periods they stand for. A stochastic branch period has its own peak, from its own branch data.</p>
 <p><strong>Reading the result.</strong> After each investment solve that leaves a shortfall, the run log prints <code>capacity margin shortfall: solve …, group …, period …: … MW at … (penalty … M CUR)</code>. The table <a href="../../results/#slack-and-penalty-values"><code>capacity_margin__d</code></a> has, per solve, group and investment period, the binding time step, the requirement, what each class above counts there and the shortfall; <code>capacity_margin_entity__d</code> has what each unit, connection and node counts, which shows which rule applies to it. <code>slack__capacity_margin__d</code> and the <em>capacity margin penalty</em> of the costs are those of the solve that decided the investments.</p>
 <p>With representative periods, the row holds at the sampled time steps only, and the storage that counts is the storage of the sampled days: force-include the peak days. Over a coarse time step (<code>new_stepduration</code>) the row may be averaged (see below).</p>
 <p>Under spatial Benders decomposition (<code>decomposition_method</code> <em>benders_regional</em>), a capacity margin group (and an inertia or non-synchronous group) with nodes in more than one region is an error: each region would have to hold the whole margin. Use one group per region. The same holds for a group investment, retirement or cumulative-capacity limit with a value set (a method alone makes no limit): a minimum over entities of more than one region is an error, and so is a maximum (each region could use all of it), except a maximum of 0, which splits exactly. A flow limit of a flowGroup, or a user constraint's <code>constraint_flow_coeff</code>, on a connection between two regions is an error too: the decomposition replaces that connection with import and export flows in each region, which neither sees. A unit whose nodes are in more than one region, that no region group lists and that converts through the unit itself (several inputs or outputs, or one input and one output with a <code>piecewise_linear_efficiency</code> curve of two or more segments), is an error as well; put its nodes in one region. A unit with one input and one output and a single efficiency (one direct flow) between two regions is cut like a connection, except with online variables (a <code>startup_method</code>) or reserves, which are an error, as they are on a connection between regions. A DC power-flow line (a connection between two nodes of a <code>dc_power_flow_with_angles</code> group) between two regions, or between a region and the master, is an error: the decomposition cannot carry the voltage angles across the regions. Put both nodes of the line in one region, or take the nodes out of the <code>dc_power_flow_with_angles</code> group. A one-variable connection (<code>no_losses_no_variable_cost</code>) between regions works in both directions.</p>
 <h2 id="co2-costs-and-limits">CO2 costs and limits</h2>
 <ul>
-<li><code>co2_method</code> - Choice of the CO2 method or a combination of methods: no_method, price, period, total, price_period, price_total, period_total, price_period_total. A method with <em>period</em> in it needs <code>co2_max_period</code> and a method with <em>total</em> in it needs <code>co2_max_total</code>; a group without that value is an error.</li>
+<li><code>co2_method</code> - Choice of the CO2 method or a combination of methods: none, price, period, total, price_period, price_total, period_total, price_period_total. A method with <em>period</em> in it needs <code>co2_max_period</code> and a method with <em>total</em> in it needs <code>co2_max_total</code>; a group without that value is an error.</li>
 <li><code>co2_price</code> [CUR/tCO2] CO2 price for a group of nodes. Constant or period. A period-indexed Map may cover <em>more</em> periods than the current solve realises — extra entries are silently ignored, so the same shared CO2-price dataset can drive solves with different period subsets. If the active solve activates <code>co2_price</code> topology (a priced commodity is wired up) but no <code>co2_price</code> or <code>co2_content</code> value is supplied for a needed period, the engine logs a warning and skips the CO2 cost term for that period rather than raising an error.</li>
 <li><code>co2_max_period</code> [tCO2/a] Annualized maximum limit for emitted CO2 in each period (tonnes per year of the period). Constant or period. A period map must give a value for every period of the solve, look-ahead periods included (a missing period is an error). In a rolling solve each roll applies the limit to its own window (realized part and look-ahead): its emissions are annualised over the window's hours of each period. The limit is carried across the rolls: each roll may emit the share of the period's limit reached by the end of its horizon, minus the emissions earlier rolls already realized in the period, so the realized emissions of a period stay within the limit. In a rolling solve the reported CO2 price of a period is the shadow price of the last roll that covers the period. <code>inf</code> means no limit in that period (a constant <code>inf</code>: in no period); its row is left out. A very large finite number is used as a limit and makes the solve numerically unstable; FlexTool warns about a value of 1e15 or more. <code>-inf</code> is an error.</li>
 <li><code>co2_max_total</code> [tCO2] Cumulative limit for emitted CO2 over the whole solve horizon: each period's annualized emissions times the years it represents (<code>years_represented</code>), summed over the periods, so the model chooses when to emit. In a rolling solve or a chain of solves the limit is carried: each roll or solve may emit the part of the limit allotted to the periods it reaches (in a rolling solve, the <code>years_represented</code>-weighted share of the solve's periods reached by the end of the roll's horizon; a solve of a chain reaches all of its own periods) minus what earlier rolls and solves already realized, counted the same way (annualized and times <code>years_represented</code>). The realized emissions of the whole chain therefore stay within the limit, but an early solve of a chain may use up what later solves would have needed. In a stochastic solve each forecast path gets the whole remaining limit.</li>

@@ -1903,6 +1903,8 @@
       
         
       
+        
+      
     
     
     
@@ -2092,6 +2094,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/option_trust_internals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solver option trust (developer)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -2107,6 +2137,8 @@
   
     
     
+      
+        
       
         
       
@@ -2351,6 +2383,34 @@
     
   
     Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The AI assistant (developer)
   
 
     
@@ -2794,7 +2854,7 @@
 <strong><em>init - west - wind - battery - battery_invest</em></strong></p>
 <p>Here we will use the previous battery scenario to represent the investment options in the tool.</p>
 <p>The solve will invest only if it has an array of <code>invest_periods</code> set, telling the periods where it is allowed to make investment decisions. In a multi solve investment model (rolling investments) it can be useful to separately set <code>realized_invest_periods</code> so that the investment results get reported only from the chosen periods from each solve (in order to avoid overlapping reporting of investment decisions that are replaced by  investment decisions in later solves). Furthermore, <code>realized_periods</code> will define the solves and periods from which the dispatch results are output into results.</p>
-<p>A period in <code>realized_invest_periods</code> must also be in the same solve's <code>invest_periods</code>; FlexTool stops with an error naming the solve and the periods otherwise. Each period's investments should be realized by only one solve: do not list the same period in the <code>realized_invest_periods</code> of two solves. If you do, FlexTool logs a warning naming both solves and the period. Dispatch timesteps, on the other hand, may be realized by more than one solve (for example an investment solve and a dispatch solve nested inside it that both have the same period in <code>realized_periods</code>). For the overlapping timesteps the solve that runs later is kept and the earlier solve's results are not reported. FlexTool logs one warning per pair of solves and period, giving the number of overlapping timesteps. Timesteps that only the earlier solve realizes are still reported from the earlier solve.</p>
+<p>A period in <code>realized_invest_periods</code> must also be in the same solve's <code>invest_periods</code>; FlexTool stops with an error naming the solve and the periods otherwise. A solve dispatches a period (<code>realized_periods</code>) only once its investments are realized: when another solve lists the period in <code>invest_periods</code>, a solve up to and including the dispatching one (not a rolling one) must list it in <code>realized_invest_periods</code> (a solve without <code>realized_invest_periods</code> realizes the investments of its <code>realized_periods</code> that are also in its <code>invest_periods</code>), otherwise FlexTool stops with an error naming the solve and the period, before anything solves. A solve's own <code>invest_periods</code> count as decided for its own dispatch: a solve that dispatches a period it invests in without listing it in <code>realized_invest_periods</code> runs, with warning W-0641, since the investments that dispatch used are neither reported nor handed to later solves. Without investments, and in a chain where each solve realizes the investments and the dispatch of its own period, nothing changes. Each period's investments should be realized by only one solve: do not list the same period in the <code>realized_invest_periods</code> of two solves. If you do, FlexTool logs a warning naming both solves and the period. Dispatch timesteps, on the other hand, may be realized by more than one solve (for example an investment solve and a dispatch solve nested inside it that both have the same period in <code>realized_periods</code>). For the overlapping timesteps the solve that runs later is kept and the earlier solve's results are not reported. FlexTool logs one warning per pair of solves and period, giving the number of overlapping timesteps. Timesteps that only the earlier solve realizes are still reported from the earlier solve.</p>
 <p>First, the investment parameters need to be included both for the <em>battery_inverter</em> and <em>battery</em> entities:</p>
 <ul>
 <li>
@@ -2841,7 +2901,7 @@
 <li><code>previous_seam</code> — the period start before.</li>
 <li>
 <p><code>next_seam</code> — the period start after.</p>
-<p><strong>Construction lead time and stochastics compose automatically.</strong> Under recourse (<code>stochastic_invest_method = recourse</code>) with an invest non-anticipativity window (<code>shared_invest_periods</code>, see the stochastics how-to), a long-lead technology that must be online <em>after</em> the branch reveal has to be <em>ordered</em> before it — in a pre-reveal, tied period — so its investment is a single shared here-and-now decision, while a short-lead technology can be ordered at/after the reveal and react per scenario. This staging is emergent (no extra parameter): set the window to the pre-reveal periods and the lead time stages the technologies for you. Note the two knobs stay orthogonal — the window is the <em>information</em> boundary (which order periods are shared), the lead time is the <em>physics</em> (how early you must order); you need both, set consistently, for staging.</p>
+<p><strong>Construction lead time and stochastics compose automatically.</strong> When the investments of a stochastic investment solve are per forecast after the reveal (<code>invest_solve_branching_method</code> <code>investments_after_reveal_period</code> or <code>investments_at_reveal_period</code>, see <a href="../stochastics/#stochastic-investment">Stochastic investment</a>), a long-lead technology that must be online <em>after</em> the reveal has to be <em>ordered</em> in a period whose investments are shared, so its investment is a single here-and-now decision, while a short-lead technology can be ordered in a per-forecast period and react per forecast. This staging is emergent (no extra parameter). The two stay separate: the branching method is the <em>information</em> boundary (which order periods are shared), the lead time is the <em>physics</em> (how early you must order); set both consistently for staging.</p>
 </li>
 <li>
 <p><code>net_salvage_value</code>: the value received when capacity stops operating [CUR/kW]: scrap value minus decommissioning cost (an income when positive, a cost when decommissioning costs more). Existing capacity can be retired with an <code>invest_method</code> that allows retirement (<em>retire_…</em>, <em>invest_retire_…</em>, <em>cumulative_limits</em>), and with <em>invest_retire_…</em> or <em>cumulative_limits</em> also the capacity the model builds. A retirement happens at the start of a period: the investment is sunk (a built plant pays the rest of its loan then), the full net salvage value of that period is received, and the fixed costs stop. Capacity kept to its end of life gets its salvage value as a level yearly credit in its yearly price. A period map can express a resale value that falls with age or time. See <a href="../../reference/units/#retirements">retirements</a> and the example below.</p>
@@ -3318,7 +3378,7 @@ of the investor's payments changes the cost, which can also make a retirement pa
 <li><strong>Capacity margin.</strong> The turbine runs from the heat tank, so the capacity margin counts it by its actual flow at each time step, not at its capacity. With a gas backup input whose <code>input_share_max</code> is 1 (the gas can run the turbine alone), it counts at its capacity.</li>
 <li><strong>Representative periods.</strong> The tank cycles every day. Use hourly representative days or weeks with a <code>*_blended_weights</code> <code>storage_binding_method</code> (see <a href="../solve_sequences/#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage">Nested Rolling window solves</a>); a long <code>new_stepduration</code> loses the daily cycle.</li>
 <li><strong>Annual fossil share in rolling dispatch.</strong> A <em>period_total</em> share (see <a href="#gas-backup">Gas backup</a>) holds in an investment solve, in a single dispatch solve and in a rolling dispatch solve whose <code>rolling_solve_jump</code> is a whole number of periods. A rolling dispatch solve whose rolls are shorter than the period leaves it out, with a warning in the run log; if no solve of the run enforces it, the run stops with an error.</li>
-<li><strong>Start-up heat.</strong> A turbine that warms up on tank heat before it delivers power: give it online variables (<code>startup_method</code> <em>linear</em> or <em>binary</em>) and set, on its <code>unit__inputNode</code> (<em>csp_turbine</em>, <em>csp_heat</em>), <code>startup_input_method</code> <em>startup_and_input</em> and <code>startup_energy</code> [MWh_th per MW_e started]. Each start-up then takes that heat from the tank on top of the turbine's flow, and the tank's reported input to the turbine includes it. See <a href="../thermal_chp/#how-to-give-a-unit-a-start-up-fuel-or-start-up-heat">How to give a unit a start-up fuel or start-up heat</a>.</li>
+<li><strong>Start-up heat.</strong> A turbine that warms up on tank heat before it delivers power: give it online variables (a <code>startup_method</code> other than <em>no_startup</em>) and set, on its <code>unit__inputNode</code> (<em>csp_turbine</em>, <em>csp_heat</em>), <code>startup_input_method</code> <em>startup_and_input</em> and <code>startup_energy</code> [MWh_th per MW_e started]. Each start-up then takes that heat from the tank on top of the turbine's flow, and the tank's reported input to the turbine includes it. See <a href="../thermal_chp/#how-to-give-a-unit-a-start-up-fuel-or-start-up-heat">How to give a unit a start-up fuel or start-up heat</a>.</li>
 <li><strong>Standing losses.</strong> <code>self_discharge_loss</code> is a share of the content; a loss proportional to the tank's size is not available.</li>
 </ul>
 

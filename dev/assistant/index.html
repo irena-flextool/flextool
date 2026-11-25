@@ -1,0 +1,2872 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems. It performs capacity expansion planning as well as operational planning.">
+      
+      
+        <meta name="author" content="Juha Kiviluoma, VTT Technical Centre of Finland">
+      
+      
+      
+        <link rel="prev" href="../testing/">
+      
+      
+        <link rel="next" href="../assistant_evaluation/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../img/irena_flextool_favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
+    
+    
+      
+        <title>The AI assistant (developer) - IRENA FlexTool</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#the-ai-assistant-developer" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="IRENA FlexTool" class="md-header__button md-logo" aria-label="IRENA FlexTool" data-md-component="logo">
+      
+  <img src="../../img/irena_flextool_favicon.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            IRENA FlexTool
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              The AI assistant (developer)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/irena-flextool/flextool" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="IRENA FlexTool" class="md-nav__button md-logo" aria-label="IRENA FlexTool" data-md-component="logo">
+      
+  <img src="../../img/irena_flextool_favicon.png" alt="logo">
+
+    </a>
+    IRENA FlexTool
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/irena-flextool/flextool" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../interface_overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Choosing an interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install_gui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install with FlexTool GUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install_toolbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install with Spine Toolbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model parameters
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Model parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/entities_and_time/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Entities and time structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/nodes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Nodes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/units/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Units
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/connections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/commodities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Commodities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Groups
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/flow_groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Flow groups
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/reserves/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reserves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/user_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/parameter_groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameter groups and conventions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parameter_catalogue/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameter catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/warnings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Warnings and notes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../how_to/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How-to recipes
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How-to recipes
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basics: time, VRE, network and demand
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/storage_hydro/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storage and hydro
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/thermal_chp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Thermal, CHP and reserves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/investment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Investment and multi-year models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/solve_sequences/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solve sequences, rolling and nested solves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/stochastics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stochastics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/emissions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emissions and system limits
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/outputs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Outputs, diagnostics and Excel templates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance and solvers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model outputs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reading_results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reading results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../results_catalogue/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../formulation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model formulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../advanced_concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../limitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model limitations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interfaces
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Interfaces
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../flextool_gui_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FlexTool GUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../spine_toolbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spine Toolbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../spine_database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spine database editor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../excel_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Excel as input/output
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../terminal_workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Terminal / CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ai_assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../solvers/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solvers
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_8" id="__nav_8_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Solvers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/highs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HiGHS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/gurobi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gurobi
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/cplex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CPLEX
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/xpress/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Xpress
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/copt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    COPT
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/option_trust_internals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solver option trust (developer)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The engine pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LP scaling pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../slack_convention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Slack convention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../decomposition/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Decomposition
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../db_schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database schema and migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The AI assistant (developer)
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The AI assistant (developer)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#read-only-tools-and-the-connection-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Read-only tools and the connection server
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ai-assistant-chat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AI assistant chat
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ai-assistant-in-the-flextool-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AI assistant in the FlexTool window
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../assistant_evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluating the AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables (developer)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../inject_between_solves/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Injecting parameters between solves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_11" >
+        
+          
+          <label class="md-nav__link" for="__nav_11" id="__nav_11_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Archived
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_11">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Archived
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../archived/browser_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web interface (deprecated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../archived/install_web_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web interface install (deprecated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#read-only-tools-and-the-connection-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Read-only tools and the connection server
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ai-assistant-chat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AI assistant chat
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ai-assistant-in-the-flextool-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AI assistant in the FlexTool window
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="the-ai-assistant-developer">The AI assistant (developer)</h1>
+<h2 id="read-only-tools-and-the-connection-server">Read-only tools and the connection server</h2>
+<p><code>flextool/assistant/</code> holds read-only tools that let an AI assistant answer questions about one project: input data
+by scenario, results, run logs and slack, and the documentation; the connection server that gives them to an AI
+agent; and FlexTool's own chat with an AI service ("AI assistant chat" below). User page:
+<a href="../../ai_assistant/">The AI assistant</a>.
+<code>flextool/assistant/__init__.py</code> imports nothing; every module imports what it needs when first used.</p>
+<ul>
+<li><strong>Registry</strong> (<code>registry.py</code>). Each tool module (<code>tools/orientation</code>, <code>discovery</code>, <code>inputs</code>, <code>results</code>,
+  <code>diagnostics</code>) lists its <code>Tool</code>s in <code>TOOLS</code> (name, title, description ending with the data-not-instructions
+  sentence, a closed JSON schema without ranges, handler, area, <code>small_tier</code>). <code>call_tool(ctx, name, args)</code> is the
+  only way to run one and never raises: it clamps the caps arguments (<code>caps.py</code>: <code>--result-cap</code> presets and hard
+  ceilings), validates against the schema with <code>jsonschema</code> (mcp does not validate on stdio), runs the handler and
+  fits the payload with <code>fit_json</code> (compact JSON, whole trailing rows dropped with a <code>truncated</code> note). A
+  <code>ToolError</code> carries a message key of <code>errors.MESSAGES</code>, the one table of user-facing texts; any other exception
+  becomes the fault message, with the traceback on stderr only. <code>tools_for_tier("small")</code> is the basic set.</li>
+<li><strong>Redaction</strong> (<code>redact.py</code>) runs once, in <code>fit_json</code>, on every string of every payload and every message: the
+  project folder → <code>&lt;project&gt;</code>, home → <code>~</code>, host and user names, other absolute paths → their last part.</li>
+<li><strong>Inputs</strong> (<code>inputs/_db.py</code>). One read-only, percent-encoded SQLite URI open per file (<code>mode=ro</code> counts only
+  with <code>uri=true</code>; a raw <code>#</code> or <code>%</code> makes SQLite create another file), <code>sqlite_timeout=5</code>; a fixed list of item
+  types is fetched and the mapping closed, so no file handle stays open. The scenario view (rank order,
+  <code>entity_alternative</code>, <code>is_enabled</code>) is computed in our code; spinedb-api's scenario filter is only the oracle of
+  its test. Input sources and their numbers come from <code>gui.input_sources</code> / <code>gui.settings_io</code> (Tk-free), read
+  only; a spreadsheet is read through its conversion <code>intermediate/&lt;stem&gt;.sqlite</code>.</li>
+<li><strong>Results</strong> (<code>results/</code>). A run folder is offered only when <code>run_record.results_usable</code> says so (architecture.md <a href="../architecture/#run-record">Run record</a>); the message comes from <code>unusable_code</code>. Tables are read and aggregated wide (<code>flextool/lean_parquet.py</code>
+  footer layout); only a reduced frame is unpivoted. <code>check_aggregation</code> refuses sums with no meaning (power over
+  time, annual values over periods, levels, ratios). Units are worded only by <code>unit_wording.py</code>, as the default
+  convention (units are not enforced by FlexTool). Comparison files are used while their <code>_metadata.json</code> members
+  match the current successful runs, else the member folders.</li>
+<li><strong>Docs</strong> (<code>docs_store.py</code>, <code>flextool/docs_build/</code>). The build step <code>_flextool_build.BuildPy</code> copies the curated
+  Markdown (<code>docs_build/scope.CURATED_DOCS</code>) into <code>flextool/assistant/_docs/md/</code>; an editable install reads the
+  clone's <code>docs/</code>. On first use the formulation page, the results catalogue and the BM25 index are generated by the
+  installed FlexTool into the user cache folder, keyed by FlexTool version + source hash. The web docs generate the
+  same two pages with the same generator (<code>tools/mkdocs_hooks.py</code>), plus the web-only parameter catalogue
+  (<code>scope.WEB_ONLY_PAGES</code>, <code>docs_build/parameters.py</code>: one large table per class, which <code>describe_parameter</code>
+  already serves, so it stays out of the assistant's index); <code>python -m flextool.docs_build --xlsx</code> writes it as an
+  Excel data dictionary.</li>
+</ul>
+<p><strong>The connection server for agents</strong> (<code>flextool-assistant --mcp</code>, <code>mcp_server.py</code>, mcp 2.x low-level <code>Server</code>,
+telemetry middleware removed). The protocol uses stdin and stdout, so <code>flextool_assistant_entry.py</code>, a
+standard-library-only top-level module, keeps private duplicates of fd 0 and fd 1 for the protocol, then points
+fd 1 and <code>sys.stdout</code> at stderr and fd 0 at the null device (on Windows also the Win32 standard handles, and
+binary mode on the duplicates) <strong>before</strong> <code>import flextool</code>, whose dependencies and start-up checks may print.
+The server's streams are explicit <code>anyio</code> wrappers over those duplicates (UTF-8, <code>\n</code>), so mcp's own stdio claim
+is skipped. Tool calls run in a worker thread that takes the context's lock, so <code>ping</code> and <code>tools/list</code> answer
+during a slow call. The server sends the instructions of <code>prompt.instructions</code> (data use, units convention,
+vocabulary), lists the tools with read-only annotations, serves the docs pages as <code>flextool-docs:///&lt;page&gt;</code>
+resources and the level texts (<code>prompt.ADDENDA</code>) as the prompts <code>basic</code>, <code>standard</code>, <code>advanced</code>. <code>--tier basic</code>
+lists and runs only the basic set and defaults to the small result cap.</p>
+<p>When <code>import flextool</code> stops with <code>CompatRuntimeRequired</code> (env_check: this processor needs the compatible polars
+build), the entry module loads <code>mcp_server.py</code> by path (it imports only the standard library at module level) and
+serves one tool, <code>flextool_setup_problem</code>, that returns the fix. The assistant options have no environment-variable
+twins.</p>
+<p><code>--call TOOL [JSON | @file.json]</code> runs one tool through the same <code>call_tool</code> and prints its text (support and
+testing). Tests: <code>tests/assistant/</code> (<code>test_server_stdio.py</code> drives the installed command over real stdio and fails
+on any non-protocol byte on stdout); CI smoke: <code>.github/scripts/mcp_smoke.py</code> (wheel check in <code>publish.yml</code>, the
+Toolbox bundle, the old-CPU emulation's degraded server).</p>
+<h2 id="ai-assistant-chat">AI assistant chat</h2>
+<p><code>flextool-assistant</code> without <code>--mcp</code> / <code>--call</code> is the chat (<code>chat_cli.py</code>); the same layers serve the FlexTool
+window ("AI assistant in the FlexTool window" below). <code>--mcp</code> and <code>--call</code> import none of the service libraries (<code>anthropic</code>, <code>openai</code>, <code>keyring</code>)
+nor the chat (<code>tests/assistant/test_import_hygiene.py</code>).</p>
+<ul>
+<li><strong>Neutral model</strong> (<code>llm_adapter.py</code>): <code>Message</code>, <code>ToolCall</code>, <code>Request</code>, <code>Reply</code>, <code>Usage</code>, the events a front
+  end shows (<code>TextDelta</code>, <code>ToolDone</code>, <code>Waiting</code>, <code>RetryWait</code>, …) and the <code>Backend</code> protocol. Data only one provider
+  understands (Anthropic thinking blocks, Gemini thought signatures, OpenRouter reasoning details) travels in
+  <code>provider_extra</code>, stamped with its origin (preset, base URL, model), and is replayed only to that origin; on a
+  switch it is dropped and tool-call ids are re-mapped. Ollama's reasoning string (the preset's
+  <code>reasoning_wire_key</code>, <code>delta.reasoning</code> joined) is kept as <code>provider_extra["reasoning_text"]</code>: never shown,
+  saved with the conversation, and sent back as <code>reasoning</code> only on the assistant messages after the last user
+  message (gpt-oss's template renders it only there; without it the model leaks its analysis into tool calls). It
+  does not make a turn's history uneditable, and like all message data a compaction drops it — also one in the
+  middle of a turn, after which this turn's earlier reasoning is not sent again.</li>
+<li><strong>Backends</strong> (<code>backends/</code>): Anthropic Messages and OpenAI Chat Completions (also Mistral, OpenRouter, Gemini,
+  Ollama, LM Studio and any compatible endpoint). The provider libraries are imported only in <code>make_backend</code>.
+  <code>net.py</code> builds each library's HTTP client: headers rebuilt from an allow-list (the libraries' identification
+  headers and the variables they read add nothing), our own proxy decision (a local endpoint is never proxied), no
+  redirects, cancel by shutting the open sockets. Presets (<code>providers.py</code>) name no models; they say which request
+  fields a service accepts and which privacy fields are sent (<code>store: false</code>, OpenRouter
+  <code>provider.data_collection</code>).</li>
+<li><strong>Errors and retries</strong> (<code>llm_errors.py</code>, <code>llm_retry.py</code>): every library error becomes one <code>LLMError</code> subclass
+  with a plain-English message; our own retry loop (no library retries), never after the first streamed output.</li>
+<li><strong>Probes</strong> (<code>probes.py</code>): before the first question, the model's context and tool support (Ollama <code>/api/show</code>,
+  load, <code>/api/ps</code>; LM Studio; the OpenRouter model list; Anthropic limits), standard library only and proxy-less
+  for local servers. A model Ollama forwards to another host (its cloud) gives a remote route.</li>
+<li><strong>Session</strong> (<code>session.py</code>): the agent loop — rounds of tool calls per question capped by level, tool calls under
+  the process-wide tool lock, the history kept valid for every provider after a cut-off, refusal, stop or error;
+  compaction points (every <code>compaction_every</code> questions, a context overflow, a rejected signature, a resume with
+  changed instructions) drop all provider data. <code>TurnWorker</code> runs turns in a daemon thread; a stop returns at once.</li>
+<li><strong>Prompt</strong> (<code>prompt.py</code>): five byte-stable layers (core rules, orientation, documentation map, level text,
+  front-end note) and the context block (project, input source, scenario) at the start of a user message; the
+  agent connection's instructions reuse the same rules.</li>
+<li><strong>Levels</strong> (<code>tiers.py</code>, standard library only): <code>resolve_tier</code> places a model from <code>TIER_RULES</code> (data, first
+  match wins: small-model words, the reported or named size, family words, GPT major ≥ 5, a fallback guess by
+  route) and caps it by the context window (<code>WINDOW_LEVELS</code>; below <code>MIN_WINDOW</code> it raises <code>WindowTooSmall</code>). The
+  automatic level is the lower of the two; <code>allowed_levels</code> is it and below, or up to the window's level for an
+  unrecognised model (<code>ALLOW_HIGHER_WHEN_UNRECOGNISED</code>). There is no bypass in shipped code: a stored or <code>--tier</code>
+  level above the allowed ones is lowered with a notice (<code>-q</code> with <code>--tier</code> exits 2). Before a probe the front ends
+  use <code>probes.cached_facts</code> (user cache); the settings dialog never probes. The level changes only the prompt
+  (<code>prompt.ADDENDA</code>), the tool list (<code>registry.tools_for_tier</code>; basic = the <code>small_tier</code> tools, any other name
+  refused by the session before the registry) and the budget — never what a tool returns. Agents choose a level
+  with the connection prompts or <code>--mcp --tier</code> (not checked against their model).</li>
+<li><strong>Budgets</strong> (<code>budget.py</code>, standard library only): <code>LevelBudget</code> per level (<code>LEVEL_BUDGETS</code>, the free plan's
+  <code>FREE_TIER_BUDGETS</code>): rounds, tool calls per question and per round, the output limit (≤ window / 4 for a known
+  window), planned calls and the prefix budget the shipped layers and schemas must fit
+  (<code>tests/assistant/test_prompt_budget.py</code>). <code>resolve_budget</code> adds the window's class (<code>WINDOW_CLASSES</code>: result-cap
+  ceiling, <code>fit_caps</code> for windows under 32 768, and the compaction rhythm; settings <code>compaction_every</code> /
+  <code>keep_recent_turns</code> <code>null</code> = automatic). <code>approx_tokens</code> is a digit-aware estimate (<code>JSON_CHARS_PER_TOKEN</code>,
+  pinned by <code>tests/assistant/llm/test_token_estimate.py</code> against real tokenizer counts) corrected per session by the
+  reported prompt tokens (<code>TokenCorrection</code>); the session's pre-send fit compacts or, for origins with replay data,
+  asks for an answer without tools, and sends nothing when the estimate plus the answer limit stays above 95 % of
+  the window (a reported one, or the assumed local one). The free plan
+  (<code>free_tier_on</code>: the setting, else on only for an OpenRouter <code>:free</code> id) lowers rounds and calls, caps results at
+  medium and, in the FlexTool window, gives the chat's gated backend a limit of one request at a time; the first rate-limit reply on a route with it off
+  shows the hint once (<code>settings.free_tier_suggested</code>).</li>
+<li><strong>Local files</strong> (<code>_files.py</code>, <code>settings.py</code>, <code>store.py</code>, <code>usage.py</code>, <code>keys.py</code>, <code>endpoint.py</code>), in
+  <code>platformdirs.user_config_dir("flextool")/assistant/</code>: settings, conversations per project (lock file per open
+  conversation, purge by age at every start), the usage ledger, the key file (opt-in; the keyring first, the
+  preset's environment variable before both) and <code>acknowledgements.json</code>. Every read-modify-write runs under a
+  lock file; every time is UTC.</li>
+<li><strong>Data notice</strong> (<code>endpoint.py</code>): the route (loopback, local network, remote; the proxy; the forwarded host), the
+  indicator line, and the notice a remote route needs before the first question. An acceptance is kept per
+  preset, normalised address, proxy host, forwarded host and notice wording.</li>
+<li><strong>Terminal</strong> (<code>chat_cli.py</code>): the REPL (a terminal only) and <code>-q</code> (only the answer on stdout; exit codes 0 / 1 /
+  2 / 3 / 130). The question and the probe run in daemon threads, so Ctrl-C stops them at once. The banner gives the
+  level and why (<code>level_lines</code>); <code>/context</code> the window, the result cap and the compaction rhythm of the session's
+  budget; <code>--free-tier on|off|auto</code> overrides <code>settings.free_tier</code> for the session.</li>
+</ul>
+<h2 id="ai-assistant-in-the-flextool-window">AI assistant in the FlexTool window</h2>
+<p><code>flextool/gui/assistant/</code> is the window's front end on the same session, store, settings, keys, notices and ledger
+(user page: <a href="../../ai_assistant/">The AI assistant</a>, "Chat in the FlexTool window"). Everything without Tk — the
+worker, the provider gate, the Markdown parser, the window geometry, the strings — is tested in the sharded job
+(<code>tests/assistant/gui_support/</code>); the Tk modules in the <code>gui-tests</code> job (<a href="../testing/">Testing</a>, "GUI tests").</p>
+<ul>
+<li><strong>Entry and lifecycle</strong> (<code>entry.py</code>, <code>AssistantEntry</code>, created by <code>MainWindow</code>): "AI assistant…" + ⚙ in side-menu
+  row 5. Building it only runs <code>importlib.util.find_spec</code>; the chat window, the dialogs, the SDKs, the keyring and
+  the store are imported on the first click. It closes the chat window on a project switch, rename or deletion
+  (one window per project) and waits for its workers (5 s; the Project dialog and the project combo refuse a
+  rename or deletion while one still runs a tool call, <code>before_project_change</code>); <code>project_utils.rename_project</code>
+  moves the saved chats (<code>store.rename_project</code>), <code>notify_assistant_project_deleted</code> deletes them
+  (<code>store.forget_project</code>). At FlexTool close (<code>MainWindow._on_close</code>, before the settings save) it withdraws the
+  windows, shuts the workers down, deletes the runtime file and purges, within 3 s; at start (after 3 s) it purges
+  and removes runtime files of gone processes.</li>
+<li><strong>Threads</strong>: one <code>AssistantWorker</code> daemon thread per chat tab owns its <code>Session</code>, conversation and lock; the Tk
+  thread never calls the network, keyring, probes, store or ledger (except reading the settings and the welcome
+  flag when a window opens). Worker → Tk only through queues drained by one <code>after(50)</code> poll. The process-wide
+  <code>ProviderGate</code> (<code>gate.py</code>) lets <code>parallel_requests</code> (1–4) model requests per provider run at once (a free-plan
+  chat's own <code>limit</code> is 1), gives slots in arrival order and shares a rate-limit cool-down between chats; tool
+  calls run outside it, under the process-wide tool lock. A shut-down worker saves a checkpoint in which a running
+  tool call is "Not run: FlexTool was closed…", so the file is always a resumable history. A project rename or
+  deletion moves or deletes its chats on one FIFO daemon thread (<code>project_utils</code>); every store user waits for the
+  queued hooks first (<code>wait_project_hooks</code>). The Tk thread's blocking waits (project change, close) pump
+  <code>dooneevent(FILE_EVENTS | DONT_WAIT)</code>, so a worker's Tcl call (a finalizer collected on its thread) finishes;
+  closed assistant dialogs retire their Tk variables on the Tk thread.</li>
+<li><strong>Window</strong> (<code>chat_window.py</code>, <code>chat_tab.py</code>, <code>transcript.py</code>, <code>notices.py</code>, <code>settings_dialog.py</code>): chats as
+  <code>ttk.Notebook</code> tabs with an overflow budget (the Chats menu shows the hidden ones), restored when the window
+  opens again (<code>store.open_chats</code>); one data notice at a time; the size per monitor configuration in
+  <code>GlobalSettings.assistant_window_geometry</code>; a key shield on every assistant Toplevel so the main window's
+  <code>bind_all</code> shortcuts never fire from it. The settings' level rows list "Automatic" and only
+  <code>TierChoice.allowed</code> (from cached facts; ttk cannot grey single entries) with <code>TierChoice.lines()</code>, and the free
+  plan as a three-entry list (automatic / on / off → <code>free_tier</code> null / true / false); the worker's setup
+  fingerprint includes <code>free_tier</code>, so a saved change applies from the next question.</li>
+<li><strong>What the window shows</strong> (<code>gui_state.py</code>): <code>snapshot_from_main</code> reads the main window's checks and highlights
+  and <code>ResultViewer.view_state()</code> on the Tk thread (each part on its own, about 2 ms); every Send takes its own
+  snapshot (<code>ContextSnapshot.gui</code>), which the prompt renders as the context block. While a project is open,
+  <code>ContextPublisher</code> polls it every second and hands a changed payload to the <code>RuntimeContextWriter</code>
+  (<code>flextool/assistant/runtime_context.py</code>): one file per process,
+  <code>&lt;config&gt;/assistant/runtime/&lt;project key&gt;.&lt;pid&gt;.json</code>, names and selections only, rewritten every 30 s while the
+  poll ticks (a hung Tk thread's file goes stale), deleted by the writer thread at close. An agent's
+  <code>get_gui_context</code> (<code>--mcp</code>, <code>--call</code>) reads the file of the window in use (<code>read_runtime_context</code>: process alive,
+  written within 120 s; the latest focus <code>active_at</code>, then <code>changed_at</code>, then <code>written_at</code>); a live process with
+  only a stale file reads as open but not answering (<code>responding: false</code>).</li>
+</ul>
+<p>Tests: <code>tests/assistant/llm/</code> — no network (a socket guard refuses anything but loopback), synthetic provider
+payloads through <code>httpx2.MockTransport</code>, a scripted <code>FakeBackend</code> for the session and the chat, loopback servers
+for the probes and the cancel. Real provider replies are recorded by hand with <code>tools/record_llm_replies.py</code> on
+the synthetic test project only, scrubbed, checked and replayed in CI (<a href="../testing/">Testing</a>, "Recorded provider
+replies").</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      IRENA
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "navigation.indexes"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
+      
+        <script src="../../assets/mathjaxhelper.js"></script>
+      
+        <script src="../../assets/moved_doc_anchors.js"></script>
+      
+    
+  </body>
+</html>

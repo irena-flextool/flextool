@@ -1847,6 +1847,8 @@
       
         
       
+        
+      
     
     
     
@@ -2036,6 +2038,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/option_trust_internals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solver option trust (developer)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -2051,6 +2081,8 @@
   
     
     
+      
+        
       
         
       
@@ -2295,6 +2327,34 @@
     
   
     Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The AI assistant (developer)
   
 
     
@@ -2720,7 +2780,7 @@
 <tr>
 <td><code>constraint_online_coeff</code></td>
 <td><code>unit</code>, <code>connection</code> (with online variables)</td>
-<td>The number of units online, in each time step. One unit is <code>virtual_unitsize</code>; without it, the largest <code>existing</code> capacity, else 1000 MW. Whole numbers with <em>binary</em> startup, continuous with <em>linear</em>.</td>
+<td>The number of units online, in each time step. One unit is <code>virtual_unitsize</code>; without it, the largest <code>existing</code> capacity, else 1000 MW. Whole numbers with <em>integer</em> or <em>integer_fix_in_uc</em>, continuous with <em>linear</em> or <em>linear_fix_in_uc</em>.</td>
 <td>count of units</td>
 </tr>
 <tr>
@@ -2804,7 +2864,7 @@
 <p><strong>Data.</strong></p>
 <ul>
 <li><code>constraint</code> <em>two_online</em>: <code>sense</code> <em>greater_than</em>, <code>constant</code> 2</li>
-<li><code>unit</code> <em>g1</em>, <em>g2</em>, <em>g3</em>: <code>startup_method</code> <em>binary</em>, <code>constraint_online_coeff</code> Map (<em>two_online</em> | 1)</li>
+<li><code>unit</code> <em>g1</em>, <em>g2</em>, <em>g3</em>: <code>startup_method</code> <em>integer</em>, <code>constraint_online_coeff</code> Map (<em>two_online</em> | 1)</li>
 </ul>
 <p><strong>The row.</strong> In each time step: online(g1) + online(g2) + online(g3) ≥ 2. The row counts units, so it is the same for one entity of three units: <code>existing</code> 3, <code>virtual_unitsize</code> 100 and <code>constraint_online_coeff</code> Map (<em>two_online</em> | 1). With <em>linear</em> startup, the count is continuous: ≥ 2 then means at least two units' worth of online capacity, with the minimum load applying to it, not two whole machines. A coefficient on a unit without online variables (<code>startup_method</code> unset and no <code>minimum_time_method</code>) stops the run with an error naming the unit and the constraint.</p>
 

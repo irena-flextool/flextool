@@ -1792,6 +1792,8 @@
       
         
       
+        
+      
     
     
     
@@ -1981,6 +1983,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/option_trust_internals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solver option trust (developer)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1996,6 +2026,8 @@
   
     
     
+      
+        
       
         
       
@@ -2240,6 +2272,34 @@
     
   
     Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The AI assistant (developer)
   
 
     
@@ -2598,10 +2658,10 @@
 <li>Get rid of integer variables. Mixed integer programming can increase the solving time manyfold compared to the linear version especially if commercial solver is not available. MIP parameters are:</li>
 <li><code>transfer_method</code>: <em>exact</em>, change to <em>reqular</em></li>
 <li>
-<p><code>startup_method</code>: <em>binary</em>, change to <em>linear</em></p>
+<p><code>startup_method</code>: <em>integer</em> or <em>integer_fix_in_uc</em>, change to <em>linear</em> or <em>linear_fix_in_uc</em></p>
 </li>
 <li>
-<p><strong>Set <code>virtual_unitsize</code> to the actual sub-unit size of the modeled plant when <code>startup_method = binary</code>.</strong>  If you do not set it, FlexTool uses the full <code>existing</code> capacity as the commitment granularity — every on/off decision moves the entire plant at once.  For a large plant (say 1000 MW), that granularity is usually too coarse for the MIP to close to a useful tolerance in reasonable time: a realistic 3-day 3-representative-period UC problem with ~1 GW whole-unit commitment may run up against solver time limits at several percent MIP gap, while the same plant modelled with <code>virtual_unitsize</code> matching its real sub-units (e.g. five × 200 MW boilers → <code>existing = 5</code>, <code>virtual_unitsize = 200</code>) closes to &lt; 0.2 % in about a minute.  <strong><code>virtual_unitsize</code> is not a free tuning knob</strong> — picking an arbitrarily small value (say 50 MW for a plant with no 50 MW sub-units) would let the solver commit fractions that don't physically exist, mis-representing minimum load and startup behavior.  Choose the value that reflects the actual physical unit granularity of the modeled entity (e.g. individual boilers / turbines / strings).  The clustered unit-commitment approach (Palmintier &amp; Webster 2012) is just this: represent each real sub-unit as one unit in the integer count.  When the modeled entity is inherently a single indivisible plant, leave <code>virtual_unitsize</code> unset (or use <code>existing = 1</code> with <code>virtual_unitsize</code> = the plant size) — and you may have to accept that the MIP is slow, use <code>startup_method = linear</code>, or aggregate differently.</p>
+<p><strong>Set <code>virtual_unitsize</code> to the actual sub-unit size of the modeled plant when <code>startup_method</code> is <em>integer</em> or <em>integer_fix_in_uc</em>.</strong>  If you do not set it, FlexTool uses the full <code>existing</code> capacity as the commitment granularity — every on/off decision moves the entire plant at once.  For a large plant (say 1000 MW), that granularity is usually too coarse for the MIP to close to a useful tolerance in reasonable time: a realistic 3-day 3-representative-period UC problem with ~1 GW whole-unit commitment may run up against solver time limits at several percent MIP gap, while the same plant modelled with <code>virtual_unitsize</code> matching its real sub-units (e.g. five × 200 MW boilers → <code>existing = 5</code>, <code>virtual_unitsize = 200</code>) closes to &lt; 0.2 % in about a minute.  <strong><code>virtual_unitsize</code> is not a free tuning knob</strong> — picking an arbitrarily small value (say 50 MW for a plant with no 50 MW sub-units) would let the solver commit fractions that don't physically exist, mis-representing minimum load and startup behavior.  Choose the value that reflects the actual physical unit granularity of the modeled entity (e.g. individual boilers / turbines / strings).  The clustered unit-commitment approach (Palmintier &amp; Webster 2012) is just this: represent each real sub-unit as one unit in the integer count.  When the modeled entity is inherently a single indivisible plant, leave <code>virtual_unitsize</code> unset (or use <code>existing = 1</code> with <code>virtual_unitsize</code> = the plant size) — and you may have to accept that the MIP is slow, use <code>startup_method = linear</code>, or aggregate differently.</p>
 </li>
 </ul>
 <p>Model changes (potentially large changes to the results --&gt; need to understand how the particular analysis will be affected):</p>
@@ -2668,7 +2728,7 @@ it.</p>
 <p>Connections between regions (or between a region and the master) are
 replaced by trade flows in the decomposition, so they cannot have a
 <code>startup_method</code>, the <em>exact</em> transfer method or reserve: the run stops with
-an error naming them. Binary online variables or <em>exact</em> connections inside a
+an error naming them. Integer online variables or <em>exact</em> connections inside a
 region make the region subproblem a mixed-integer problem; the cuts are then
 not exact (a warning is printed), so prefer <code>startup_method</code> <em>linear</em> in
 decomposed solves.</p>

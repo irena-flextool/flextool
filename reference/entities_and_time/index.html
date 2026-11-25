@@ -1842,6 +1842,8 @@
       
         
       
+        
+      
     
     
     
@@ -2031,6 +2033,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/option_trust_internals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solver option trust (developer)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -2046,6 +2076,8 @@
   
     
     
+      
+        
       
         
       
@@ -2290,6 +2322,34 @@
     
   
     Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dev/assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The AI assistant (developer)
   
 
     
@@ -2740,7 +2800,7 @@
 </li>
 <li><em>realized_invest_periods</em> Array of the periods that will realize the investment decisions. If this is not defined when the invest_periods exist, the realized_periods that are also invest_periods are used to realize the invests as well. Every realized investment period must be one of the solve's invest_periods: FlexTool stops with an error naming the solve and the periods otherwise (also for a solve that has realized_invest_periods but no invest_periods). When invest_periods is a 2D map, realized_invest_periods must be a 2D map with the same solve names.</li>
 <li><em>invest_periods</em>: array of periods in which investments can be decided in this solve (applies only to entities that can be invested in). With a construction lead time, the capacity comes online later.</li>
-<li><em>invest_periods</em>, <em>realized_invest_periods</em>, <em>realized_periods</em> and <em>fix_storage_periods</em> can also be a 2D map that splits the solve into one solve per row: the first column names the solve (it becomes <code>&lt;solve&gt;_&lt;name&gt;</code>), the second lists its periods. Each of these split solves has every other parameter of the solve (<code>stochastic_branches</code>, <code>new_stepduration</code>, <code>dispatch_realization_method</code>, the solver settings, ...), the timesets of its own periods, and of a 1D period list (and <code>shared_operation_periods</code> / <code>shared_invest_periods</code>) only its own periods; <code>years_represented</code> gives the years of its own periods, and like every solve it discounts from the start of the run. See <a href="../../how_to/solve_sequences/#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage">How to use Nested Rolling window solves</a>. Only a solve in <code>model.solves</code> can be split, a split solve's name must not be the name of another solve, and each period can be realized by one split solve only; FlexTool stops with an error otherwise. <code>period_timeset</code> cannot be a 2D map.</li>
+<li><em>invest_periods</em>, <em>realized_invest_periods</em>, <em>realized_periods</em> and <em>fix_storage_periods</em> can also be a 2D map that splits the solve into one solve per row: the first column names the solve (it becomes <code>&lt;solve&gt;_&lt;name&gt;</code>), the second lists its periods. Each of these split solves has every other parameter of the solve (<code>stochastic_branches</code>, <code>new_stepduration</code>, <code>dispatch_realization_method</code>, the solver settings, ...), the timesets of its own periods, and of a 1D period list only its own periods; <code>years_represented</code> gives the years of its own periods, and like every solve it discounts from the start of the run. See <a href="../../how_to/solve_sequences/#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage">How to use Nested Rolling window solves</a>. Only a solve in <code>model.solves</code> can be split, a split solve's name must not be the name of another solve, and each period can be realized by one split solve only; FlexTool stops with an error otherwise. <code>period_timeset</code> cannot be a 2D map.</li>
 <li><em>years_represented</em>: Map to indicate how many years the period represents before the next period in the solve. Used for discounting: every solve discounts from the start of the run (the first period of the model's first solve), with the years of the earlier solves' periods before its own. Can be below one (multiple periods in one year). Index: period (or no index name), value: years. An index with another name is an error.</li>
 <li><em>solver</em>: choice of a solver. HiGHS is the default and only fully supported backend (called via the <code>highspy</code> Python bindings). Gurobi, CPLEX, Xpress and COPT can be used by licensed users, with their own options in <code>solver_arguments</code>; see <a href="../../solvers/">Solvers</a>.</li>
 <li><em>solver_arguments</em>: Map of solver option name → value, forwarded verbatim to the active solver. This is where the former <code>highs_*</code> shortcuts now live. For HiGHS, set <code>solver</code> to choose the method ('simplex' or 'ipm' which is interior point method; use 'choose' for MIP models, since 'simplex' and 'ipm' will not work), <code>parallel</code> ('on' or 'off') to control parallelisation of single solves (it can be better to turn it off when executing multiple scenarios in parallel), and <code>presolve</code> ('on' or 'off') to toggle presolve (which can have a large impact on solution time when solves are large). These only affect speed, not results.</li>
@@ -2765,7 +2825,8 @@
 <p>Stochastic parameters:</p>
 <ul>
 <li><em>stochastic_branches</em>: 4D-map defining the solve's <strong>forecast branches</strong> — the probability-weighted possible futures. Index columns: <em>period</em>, <em>branch</em>, <em>analysis_time</em> (the branch's start timestep), <em>realized</em> (yes/no), and the value is the branch's <strong>probability weight</strong>. The weights are normalized to sum to one across the forecast branches at each start time. The <em>realized</em> flag is an <strong>optional designation</strong> (at most one branch per start time) marking which branch's data are treated as the actuals for the committed / realized-dispatch results; a realized-flagged branch is <strong>not</strong> a weighted member of the forecast fan. A period-indexed value (a map keyed by period, e.g. efficiency, startup cost, commodity price, availability, variable cost or a per-period limit) also applies to that period's forecast branches; a value authored for a branch period itself takes precedence. A branch may have the name of another period, but FlexTool warns: the two are easy to confuse in the results; a branch named like the period where it fans out is an error (rename the branch). See 'How to use stochastics' for more information.</li>
-<li><em>stochastic_invest_method</em>: <code>none</code> (default) or <code>recourse</code>. <code>none</code> makes a single shared here-and-now investment plan across all forecast branches (operations still fan per branch). <code>recourse</code> gives per-branch (wait-and-see) investment: each forecast branch invests on its own data at and after the branching period, with probability-weighted investment costs and per-branch investment limits, and reports EVPI/VSS-style stochastic value. Forecast-branch (unrealized) investments are not in the normal outputs, only in the raw dump of <code>model.output_horizon</code> (a debug flag). Incompatible with Benders decomposition. See 'How to use stochastics' for the interpretation caveats.</li>
+<li><em>dispatch_realization_method</em>: how a solve with <em>stochastic_branches</em> is solved. <code>deterministic</code> (default): the forecasts are ignored and the solve uses only the data of the <code>realized: yes</code> branch, with a warning (an error without that branch). <code>within_solve</code>: the forecasts are solved together; a rolling solve realizes each jump with the <code>realized: yes</code> branch and looks ahead with the forecasts made at the end of the jump, and a single solve with a <code>realized: yes</code> branch gets a realization dispatch. <code>separate_dispatch</code>: a first, stochastic solve decides the units online of the <em>_fix_in_uc</em> units; a realization solve keeps them and dispatches the <code>realized: yes</code> branch over the jump and, in a rolling solve, looks ahead with the forecasts made at the end of the jump (a single solve realizes its realized periods only; an error without that branch). Without <em>stochastic_branches</em>, <code>deterministic</code> and <code>within_solve</code> give the same model. An investment solve (not rolling, with <em>invest_periods</em> or <em>realized_invest_periods</em>) does not read it, <code>deterministic</code> included: its forecasts are solved (<em>invest_solve_branching_method</em>), and <code>separate_dispatch</code> there is ignored with a warning (W-0640). See 'How to use stochastics'.</li>
+<li><em>invest_solve_branching_method</em>: choice, investment solves only (a solve that is not rolling and has <em>invest_periods</em> or <em>realized_invest_periods</em>, with <em>stochastic_branches</em>): which investments all the forecast branches share. The reveal period is the first period (in the solve's period order) with a forecast row in <em>stochastic_branches</em>. <code>operations_only</code> (default): the investments of every period are one plan for all the forecasts. <code>investments_after_reveal_period</code>: the investments up to and including the reveal period are shared; each forecast invests on its own in the later periods. <code>investments_at_reveal_period</code>: the investments before the reveal period are shared; each forecast invests on its own from the reveal period on (with the reveal at the solve's first period nothing is shared, a wait-and-see run whose per-forecast results are only in the <code>model.output_horizon</code> dump; warning W-0639). In every case each forecast operates on its own from the reveal period on. A period whose investments are per forecast cannot be in <em>realized_periods</em> or <em>realized_invest_periods</em> (an error). Set on a rolling solve, on a solve without investments or without <em>stochastic_branches</em>, it is an error. See 'How to use stochastics', Stochastic investment.</li>
 </ul>
 </li>
 <li>
@@ -2886,7 +2947,7 @@ the feature is untouched. A level that finds nothing to leave out says so in the
 <p>The parts in detail:</p>
 <ul>
 <li>
-<p><strong>Integer units online.</strong> Units and connections with <code>startup_method</code> <em>binary</em> get continuous units online.</p>
+<p><strong>Integer units online.</strong> Units and connections with <code>startup_method</code> <em>integer</em> or <em>integer_fix_in_uc</em> get continuous units online.</p>
 <p>The rows stay the same, so units online, start-ups and shut-downs can be fractional. A connection with
 <code>transfer_method</code> <em>exact</em> behaves as <em>regular</em>: both directions keep their own flow and losses, only the binary
 that blocks simultaneous flow in both directions goes. Without other integer variables the solve is an LP: node
@@ -2934,7 +2995,7 @@ floors, the minimum up and down times, the part-load curve of a <em>min_load_eff
 <em>piecewise_linear</em> unit whose efficiency rises from the first point of its curve to the second, a
 <code>constraint_online_coeff</code> term in a user constraint of the solve, a reserve that the unit or connection holds,
 inertia (an <code>inertia_constant</code> at a node of a group with <code>has_inertia</code>), ramp limits (their start-up and
-shut-down allowance) and, in a realization solve, the units online of binary units that it takes from its parent solve. A reserve or
+shut-down allowance) and, in a realization solve, the units online that it takes from its parent solve (<code>startup_method</code> <em>linear_fix_in_uc</em> or <em>integer_fix_in_uc</em>). A reserve or
 an inertia limit that <code>reduce_system_detail_method</code> leaves out is no use. The ties that make the forecast branches
 of a stochastic solve have the same units online are no use either. For example, under <code>integers_min_limits</code> a
 unit with only a <code>min_load</code> loses its online variables, a unit with a start-up cost or a reserve keeps them; under
