@@ -7537,16 +7537,6 @@
     [
       "solve",
       "stoch_rd",
-      "dispatch_realization_method",
-      [
-        "IndpdGhpbl9zb2x2ZSI=",
-        "str"
-      ],
-      "init"
-    ],
-    [
-      "solve",
-      "stoch_rd",
       "invest_periods",
       [
         "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAzNSJdfQ==",

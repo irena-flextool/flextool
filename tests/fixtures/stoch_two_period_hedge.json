@@ -7632,6 +7632,16 @@
         "ImludmVzdG1lbnRzX2FmdGVyX3JldmVhbF9wZXJpb2Qi",
         "str"
       ],
+      "na_window"
+    ],
+    [
+      "solve",
+      "stoch_2p_hedge",
+      "invest_solve_branching_method",
+      [
+        "ImludmVzdG1lbnRzX2F0X3JldmVhbF9wZXJpb2Qi",
+        "str"
+      ],
       "stoch"
     ],
     [
@@ -7657,12 +7667,92 @@
     [
       "solve",
       "stoch_2p_hedge",
+      "realized_invest_periods",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAzNSIsICJwMjA0MCJdfQ==",
+        "array"
+      ],
+      "invest_none"
+    ],
+    [
+      "solve",
+      "stoch_2p_hedge",
+      "realized_invest_periods",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAzNSJdfQ==",
+        "array"
+      ],
+      "na_window"
+    ],
+    [
+      "solve",
+      "stoch_2p_hedge",
+      "realized_invest_periods",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAzNSJdfQ==",
+        "array"
+      ],
+      "stoch"
+    ],
+    [
+      "solve",
+      "stoch_2p_hedge",
+      "realized_invest_periods",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogW119",
+        "array"
+      ],
+      "ws"
+    ],
+    [
+      "solve",
+      "stoch_2p_hedge",
       "realized_periods",
       [
         "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAzNSIsICJwMjA0MCJdfQ==",
         "array"
       ],
       "init"
+    ],
+    [
+      "solve",
+      "stoch_2p_hedge",
+      "realized_periods",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAzNSIsICJwMjA0MCJdfQ==",
+        "array"
+      ],
+      "invest_none"
+    ],
+    [
+      "solve",
+      "stoch_2p_hedge",
+      "realized_periods",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAzNSJdfQ==",
+        "array"
+      ],
+      "na_window"
+    ],
+    [
+      "solve",
+      "stoch_2p_hedge",
+      "realized_periods",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAzNSJdfQ==",
+        "array"
+      ],
+      "stoch"
+    ],
+    [
+      "solve",
+      "stoch_2p_hedge",
+      "realized_periods",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogW119",
+        "array"
+      ],
+      "ws"
     ],
     [
       "solve",
@@ -7971,11 +8061,11 @@
     ],
     [
       "invest_none",
-      "stochastic_invest_method=none (T-None: window is a graceful no-op)"
+      "invest_solve_branching_method operations_only (T-None: every investment shared)"
     ],
     [
       "na_window",
-      "invest-NA window = [p2035] + ops free (the standard two-stage mode, v72)"
+      "investments_after_reveal_period: the p2035 investment shared (the standard two-stage mode)"
     ],
     [
       "rp",
@@ -7983,7 +8073,7 @@
     ],
     [
       "stoch",
-      "include_stochastics + branch-varying wind + recourse"
+      "include_stochastics + branch-varying wind + investments_at_reveal_period"
     ],
     [
       "storage",
@@ -8008,12 +8098,12 @@
     [
       "hedge_na_none",
       false,
-      "T-None: window set on a stochastic_invest_method=none solve \u2014 graceful no-op (no invest-NA rows)"
+      "T-None: operations_only over the na_window layers \u2014 every investment one plan (no invest-NA rows)"
     ],
     [
       "hedge_na_window",
       false,
-      "Invest-NA window main mode: fan-at-t0 + shared_invest_periods=[p2035] (RP = 165 000)"
+      "Invest-NA window main mode: fan-at-t0 + investments_after_reveal_period (RP = 165 000)"
     ],
     [
       "hedge_storage",

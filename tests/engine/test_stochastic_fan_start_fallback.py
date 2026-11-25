@@ -459,7 +459,6 @@ def _two_realized(first: str, second: str) -> str:
             r"in every realized: yes row\.$")
 
 
-_RECOURSE = (("solve", "sol", "stochastic_invest_method", "recourse"),)
 #: invest_periods without realized_periods: the solve realizes nothing, so no realization solve is added.
 _INVEST_ONLY = (("solve", "sol", "invest_periods", api.Array(["p1"])),)
 
@@ -472,10 +471,6 @@ _INVEST_ONLY = (("solve", "sol", "invest_periods", api.Array(["p1"])),)
     pytest.param("separate_dispatch", (8.0, 12.0), (), [*_realized_rolls("real"),
                                                         ("p2", "real", "t0005", "yes", 0.0)],
                  None, id="same-branch-not-fan-read-by-the-realization-roll"),
-    pytest.param("separate_dispatch", (8.0, 12.0), _RECOURSE, [*_realized_rolls("real"),
-                                                               ("p2", "real", "t0005", "yes", 0.0)],
-                 "^" + re.escape(_not_fanned_error("Roll 'sol_roll_0' of rolling solve 'sol'")) + "$",
-                 id="same-branch-not-fan-keeps-the-old-realization"),
     pytest.param("separate_dispatch", (8.0, 12.0), _INVEST_ONLY, [*_realized_rolls("real"),
                                                                   ("p2", "real", "t0005", "yes", 0.0)],
                  "^" + re.escape(_not_fanned_error("Roll 'sol_roll_0' of rolling solve 'sol'")) + "$",
@@ -496,9 +491,8 @@ def test_realized_row_where_no_roll_fans_out_or_switching_branch(tmp_path_factor
     row of the same branch where no roll fans out (p2/t0005): in a solve with realization rolls every jump reads it
     as one more tier of the realized series (D24), so it is valid with either method.  Where the realization reads
     the realized branch made at the fan, nothing reads the row and the item-248b error names the roll that fans:
-    a rolling ``separate_dispatch`` recourse solve (it keeps the earlier realization; solve (1) of roll 0 fans at
-    p1/t0001), and a rolling ``separate_dispatch`` solve with ``invest_periods`` and no ``realized_periods`` (no
-    realization solve is added, so no realization roll reads the row).  (A single solve refuses such a row earlier:
+    a rolling ``separate_dispatch`` solve with ``invest_periods`` and no ``realized_periods`` (no realization solve
+    is added, so no realization roll reads the row; solve (1) of roll 0 fans at p1/t0001).  (A single solve refuses such a row earlier:
     each of its cohorts needs a forecast.)"""
     with_realized_periods = extra is not _INVEST_ONLY
     if expected is None:

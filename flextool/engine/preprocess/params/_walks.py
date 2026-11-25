@@ -283,7 +283,7 @@ def period_walk_iterator(
             factor=pl.lit(0.0, dtype=pl.Float64))
     # Lazy import to avoid circular dependency at module-load time.
     from flextool.engine.preprocess.params._derived import _p_years_d_lf
-    # With branch periods (any stochastic_invest_method) ``provider`` is set,
+    # With branch periods (any invest_solve_branching_method) ``provider`` is set,
     # so the canonical ``p_years_d.csv`` arm — which copies each label's year
     # onto its fan members — gives every branch period its label's
     # year-from-start (availability, lifetime and annuity windows).  Without

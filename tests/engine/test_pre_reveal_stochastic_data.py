@@ -10,7 +10,7 @@ error, while plain (non-stochastic) data runs.
 
 Witnesses, on the ``stoch_two_period_midhorizon_nreal0`` fixture
 (p2035 = t0001-t0003 before the reveal, p2040 fans out at t0004 into high /
-low, weights 1 : 3, DEFAULT ``stochastic_invest_method = none``):
+low, weights 1 : 3, DEFAULT ``invest_solve_branching_method`` ``operations_only``):
 
 * ``test_forecasts_only_fan_binds_no_forecast_before_the_reveal`` --
   solver-free: ``create_stochastic_periods`` gives the pre-reveal period no

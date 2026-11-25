@@ -2,12 +2,12 @@
 stochastic model's defining structure).
 
 Owner decision 6 / the Q1 coverage gap: under the DEFAULT
-``stochastic_invest_method = none``, a solve carrying BOTH an invest
+``invest_solve_branching_method`` ``operations_only``, a solve carrying BOTH an invest
 decision AND a genuinely divergent operational forecast fan must produce
 
   * a SINGLE here-and-now ``v_invest`` per REAL period — one unambiguous
     capacity decision, NOT branch-suffixed copies (that would be the
-    opt-in ``recourse`` wait-and-see structure, which this test must
+    opt-in ``investments_at_reveal_period`` wait-and-see structure, which this test must
     genuinely reject); while
   * ``v_flow`` fans across the forecast branches (the branch-suffixed
     forecast periods own their own operational LP variables and the
@@ -136,7 +136,7 @@ def test_invest_is_single_here_and_now(chain) -> None:
     assert not (invest_periods & FORECAST_PERIODS), (
         f"v_invest carries forecast-branch periods "
         f"{sorted(invest_periods & FORECAST_PERIODS)} — invest must not fan "
-        f"under stochastic_invest_method=none"
+        f"under operations_only"
     )
     # Exactly one invested (entity, period) row — a single capacity decision.
     assert inv.height == 1, (

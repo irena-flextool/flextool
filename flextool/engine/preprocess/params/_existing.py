@@ -641,7 +641,7 @@ def lead_time_sets(source: "InputSource",
 
     ``commission_lf`` is the frame of :func:`commissioning_year_lf` (offered decisions keep a finite ``yr_c``).
     The period years are those of the in-construction walk (the boundary's walker Provider), so a branch period has
-    the year of its period label under every ``stochastic_invest_method``.
+    the year of its period label under every ``invest_solve_branching_method``.
     """
     from flextool.engine.preprocess.params._run_calendar import YEAR_TOL
 

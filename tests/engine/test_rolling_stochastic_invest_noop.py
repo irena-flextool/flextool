@@ -83,20 +83,18 @@ def _pack(value, value_type):
     ]
 
 
-def _build_invest_spec(method: str = "none", realization: str = "separate_dispatch",
+def _build_invest_spec(method: str | None = None, realization: str = "separate_dispatch",
                        margin: bool = False) -> dict:
     """Extend the rolling-stochastic fixture with investment intent.
 
     Mirrors the exploration setup: gas_plant becomes invest-eligible and the
-    ``1week_rolling`` solve authors ``stochastic_invest_method=<method>`` +
-    ``invest_periods`` + ``realized_invest_periods`` over ``period1``.  The
+    ``1week_rolling`` solve authors ``invest_periods`` + ``realized_invest_periods``
+    over ``period1`` (and ``invest_solve_branching_method=<method>`` when *method*
+    is given: refused on a rolling solve, see
+    :func:`test_invest_branching_on_a_rolling_solve_is_refused`).  The
     invest params land on a NEW ``invest`` alternative wired into the end of
     the ``1_week_rolling_wind`` scenario chain, so the original fixture
-    alternatives are not mutated.  The no-build does not depend on the
-    method; ``none`` keeps the fixture's ``realized: yes`` designation
-    realized by its realization solve (under ``recourse`` no realization
-    solve is added, so the committed window is unrealized — see
-    :func:`test_rolling_recourse_designation_without_realization_raises`).
+    alternatives are not mutated.
     *realization* is the solve's ``dispatch_realization_method``; *margin* adds
     the group ``cm_g`` on ``demand_node`` with an absolute capacity margin.
     """
@@ -127,9 +125,7 @@ def _build_invest_spec(method: str = "none", realization: str = "separate_dispat
          "invest"],
         # Its 1000 MW as 10 units of 100 MW.
         ["unit", "gas_plant", "existing", _pack(10.0, "float"), "invest"],
-        # Solve-level investment intent (recourse over the single period).
-        ["solve", "1week_rolling", "stochastic_invest_method",
-         _pack(method, "str"), "invest"],
+        # Solve-level investment intent over the single period.
         ["solve", "1week_rolling", "invest_periods",
          _pack({"value_type": "str", "data": ["period1"]}, "array"),
          "invest"],
@@ -139,6 +135,9 @@ def _build_invest_spec(method: str = "none", realization: str = "separate_dispat
         ["solve", "1week_rolling", "dispatch_realization_method",
          _pack(realization, "str"), "invest"],
     ])
+    if method is not None:
+        src["parameter_values"].append(["solve", "1week_rolling", "invest_solve_branching_method",
+                                        _pack(method, "str"), "invest"])
     if margin:
         src["entities"] += [["group", "cm_g", None], ["group__node", ["cm_g", "demand_node"], None]]
         src["parameter_values"] += [
@@ -235,15 +234,19 @@ def _steps(result):
     return without_realization(result["steps"])
 
 
-def test_rolling_recourse_designation_without_realization_raises(tmp_path_factory, test_solver_config_dir):
-    """Under ``recourse`` a ``realized: yes`` designation adds no realization solve, so each roll's committed
-    window inside the forecasts-only fan is realized by no solve while the next roll continues from it: the run
-    stops before the first roll's LP, naming the storage state."""
-    work = tmp_path_factory.mktemp("rolling_stoch_recourse")
-    url = _db_url(_build_invest_spec("recourse", realization="within_solve"), work)
-    with pytest.raises(FlexToolConfigError, match=r"1week_rolling_roll_0.*storage state"):
+@pytest.mark.parametrize("method", ["investments_after_reveal_period", "investments_at_reveal_period"])
+def test_invest_branching_on_a_rolling_solve_is_refused(tmp_path_factory, test_solver_config_dir, method):
+    """A rolling solve is a dispatch solve whatever its ``invest_periods``: ``invest_solve_branching_method`` applies
+    to investment solves only, so the run stops before any roll and points to ``dispatch_realization_method``."""
+    work = tmp_path_factory.mktemp("rolling_stoch_branching")
+    url = _db_url(_build_invest_spec(method, realization="within_solve"), work)
+    with pytest.raises(FlexToolConfigError) as err:
         run_chain_from_db(input_db_url=url, scenario_name=SCENARIO, work_folder=work / "w",
                           solver_config_dir=test_solver_config_dir, warm=False, keep_solutions=True)
+    assert str(err.value) == (
+        f"Solve '1week_rolling' sets invest_solve_branching_method {method}, which applies to investment solves "
+        "only, but it is a rolling solve. Remove invest_solve_branching_method from '1week_rolling': a dispatch "
+        "solve with stochastic_branches is set up with dispatch_realization_method.")
 
 
 def _invest_warnings(result: dict) -> list[str]:
@@ -279,25 +282,6 @@ def test_within_solve_with_invest_periods_runs_without_margin(tmp_path_factory, 
         assert slack is None or slack.height == 0, name
         assert float(s.solution.obj) == pytest.approx(float(without_cm[name].solution.obj), rel=1e-9), name
     assert len(_invest_warnings(runs[True])) == 1
-
-
-@pytest.mark.parametrize("realization", ["within_solve", "separate_dispatch"])
-def test_rolling_recourse_without_storage_runs_with_the_rolling_invest_warning(tmp_path_factory,
-                                                                             test_solver_config_dir, realization):
-    """The recourse vehicle without a storage node (``hydro_reservoir`` a commodity node): every roll is recognised
-    as a roll without storage data, so the nested-sub-solve recourse guard (which a roll is exempt from) does not
-    stop it; the solve runs, builds no investment and warns once (the rolling-invest warning).  With storage the
-    within_solve case stops on its unrealized storage state
-    (:func:`test_rolling_recourse_designation_without_realization_raises`)."""
-    spec = _build_invest_spec("recourse", realization=realization)
-    spec["parameter_values"].append(["node", "hydro_reservoir", "node_type", _pack("commodity", "str"), "invest"])
-    work = tmp_path_factory.mktemp(f"rolling_recourse_no_storage_{realization}")
-    result = _run_collecting(_db_url(spec, work), work / "w", test_solver_config_dir)
-    assert result["error"] is None, result["error"]
-    steps = result["steps"]
-    assert all(s.flex_data.solve_is_rolling for s in steps.values())
-    assert all(s.flex_data.pd_invest_set is None for s in steps.values())
-    assert len(_invest_warnings(result)) == 1
 
 
 def test_rolling_invest_all_rolls_optimal(rolling_invest_result):

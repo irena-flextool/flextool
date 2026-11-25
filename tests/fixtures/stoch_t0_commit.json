@@ -7425,18 +7425,8 @@
       "stoch_rd",
       "dispatch_realization_method",
       [
-        "IndpdGhpbl9zb2x2ZSI=",
+        "InNlcGFyYXRlX2Rpc3BhdGNoIg==",
         "str"
-      ],
-      "init"
-    ],
-    [
-      "solve",
-      "stoch_rd",
-      "invest_periods",
-      [
-        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAzNSJdfQ==",
-        "array"
       ],
       "init"
     ],
@@ -7447,16 +7437,6 @@
       [
         "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sicDIwMzUiLCAidHMxIl1dfQ==",
         "map"
-      ],
-      "init"
-    ],
-    [
-      "solve",
-      "stoch_rd",
-      "realized_invest_periods",
-      [
-        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAzNSJdfQ==",
-        "array"
       ],
       "init"
     ],

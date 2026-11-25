@@ -282,20 +282,17 @@ def test_listed_single_separate_dispatch_gets_w0636(tmp_path, monkeypatch, coded
     assert "Affected solves: st." in text and "keeps the earlier realization" not in text
 
 
-def test_listed_rolling_recourse_separate_dispatch_gets_w0636_without_look_ahead(tmp_path, monkeypatch, coded_log):
-    """D21: T-w1 as ``separate_dispatch`` (forecasts made at t01 and t02) with ``stochastic_invest_method`` recourse.
-    A recourse solve gets no realization roll (``realization_roll_method``), so its engine-added realization solve
-    dispatches each jump alone, as before 4.7.0; its solve (1) changed all the same, so W-0636 names 'st' and its full
-    notice says that this solve keeps the earlier realization.  No W-0635 (no ``within_solve``)."""
-    from tests._support.coded_warnings import capture_coded
-
+def test_rolling_separate_dispatch_with_invest_branching_is_refused(tmp_path, monkeypatch):
+    """T-w1 as ``separate_dispatch`` with ``invest_solve_branching_method`` investments_after_reveal_period: the
+    setting applies to investment solves only, and a rolling solve is never one, so the run stops before any solve
+    with an error that names 'st', says it is a rolling solve and points to ``dispatch_realization_method``
+    (``SolveConfig.check_invest_branching``).  The delayed-unit case above keeps the rolling realization without
+    look-ahead and its notice."""
     _listed(monkeypatch)
-    spec = _set_solve(_separate(srl._tw1(0.5)), "stochastic_invest_method", pack("recourse", "str"))
-    coded_log.notices()
-    with capture_coded() as got:
-        built, _steps = scm.run_spec(spec, tmp_path)
-    assert any("__realized_dispatch" in s for s, _, _ in built)
-    assert got.names("W-0636") == ["st"] and not got.names("W-0635")
-    (text,) = [n for n in coded_log.notices() if "separate_dispatch" in n]
-    assert ("Affected solves: st. Solve 'st' keeps the earlier realization: its realization solve dispatches each "
-            "jump alone, without the look-ahead; only its first solve changed.") in text
+    spec = _set_solve(_separate(srl._tw1(0.5)), "invest_solve_branching_method",
+                      pack("investments_after_reveal_period", "str"))
+    with pytest.raises(FlexToolConfigError) as err:
+        scm.run_spec(spec, tmp_path)
+    text = str(err.value)
+    assert "Solve 'st' sets invest_solve_branching_method investments_after_reveal_period" in text
+    assert "it is a rolling solve" in text and "dispatch_realization_method" in text

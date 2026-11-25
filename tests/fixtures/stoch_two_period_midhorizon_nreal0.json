@@ -7763,7 +7763,7 @@
     [
       "midhorizon",
       false,
-      "Mid-horizon reveal at p2040, genuine n_real=0 {high,low} fan, stochastic_invest_method=none, plain wind profile"
+      "Mid-horizon reveal at p2040, genuine n_real=0 {high,low} fan, operations_only (the default), plain wind profile"
     ],
     [
       "midhorizon_realized",

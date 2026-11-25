@@ -11,16 +11,15 @@ equal over the committed window — all with no realised/trunk period tied.
 
 Structure (reuses the Slice G ``stoch_two_period_free_ops`` topology — two
 3-step periods ``p2035`` / ``p2040``, branch-asymmetric wind timing, a
-stochastic-group storage node ``resv``, a shared investable ``base`` unit),
-with two changes:
+stochastic-group storage node ``resv``), with two changes:
 
 * ``stochastic_branches`` — all three branches ``mid`` / ``up`` / ``low`` are
   FORECASTS (``realized: no``), each with nonzero weight 1.0 (probabilities
   1/3 each).  No ``realized: yes`` row ⟹ ``n_real = 0``.
-* ``shared_operation_periods`` — a CURATED window ``[p2035, p2040]`` (the
-  reveal periods) so ``dt_non_anticipativity`` populates from the window
-  independently of any ``realized_dispatch`` (there is no realised branch to
-  seed the legacy union at ``n_real = 0``; design B1).
+* a DISPATCH solve: no ``invest_periods``; ``base`` has an existing 12 MW
+  instead of being investable (an investment solve ties no operations).  A
+  dispatch solve ties its forecasts over its committed window, the steps of
+  its ``realized_periods`` p2035 / p2040.
 
 Behaviour: the storage NA family re-grounds each anchor group to a forecast
 star keyed on the lexicographically-smallest forecast (``p2035_low`` /
@@ -73,6 +72,15 @@ def build() -> dict:
 
     new_pv = []
     for row in spec["parameter_values"]:
+        # A dispatch solve: no invest periods, base existing 12 MW (the shared capacity of the free_ops optimum
+        # is 2 MW; 12 MW covers the demand in every step without the storage).
+        if row[0] == "solve" and row[2] in ("invest_periods", "realized_invest_periods"):
+            continue
+        if row[0] == "unit" and row[1] == "base" and row[2] in (
+                "invest_method", "invest_cost", "discount_rate", "lifetime_technical", "invest_max_total"):
+            continue
+        if row[0] == "unit" and row[1] == "base" and row[2] == "existing":
+            row = [row[0], row[1], row[2], _pack(12.0, "float"), row[4]]
         # Swap the stochastic_branches payload for the all-forecast fan.
         if row[0] == "solve" and row[2] == "stochastic_branches":
             row = [row[0], row[1], row[2], _pack(stochastic_branches, "map"),
@@ -80,14 +88,10 @@ def build() -> dict:
         new_pv.append(row)
     spec["parameter_values"] = new_pv
 
-    # Single n_real=0 scenario (drop the free_ops / pinned_ops pair and the
-    # ``freeops`` alternative — unused here).
-    spec["alternatives"] = [
-        a for a in spec["alternatives"] if a[0] != "freeops"
-    ]
+    # Single n_real=0 scenario (the free_ops scenario is unused here).
     spec["scenarios"] = [
         ["nreal0", False,
-         "n_real=0: three forecasts (realized:no), curated NA window — "
+         "n_real=0: three forecasts (realized:no) in a dispatch solve — "
          "forecast-to-forecast storage NA with no realised branch"],
     ]
     spec["scenario_alternatives"] = [

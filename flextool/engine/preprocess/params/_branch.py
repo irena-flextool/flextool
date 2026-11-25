@@ -1418,7 +1418,7 @@ def d_leaf_lf(
     With a fan there is one leaf per forecast time-branch: its own branch
     periods, the shared pre-reveal periods and the period labels of its fan
     periods (period-level ancestors: no dispatch, a here-and-now investment
-    under ``stochastic_invest_method = none``); no ``"__anchor"`` leaf.  Because the
+    under ``invest_solve_branching_method = operations_only``); no ``"__anchor"`` leaf.  Because the
     continuation fan starts at the solve's first step (§K), leaves
     PARTITION the invest axis — no period is on two leaves — so the map
     is well-defined and the per-leaf invest sums are disjoint.
@@ -1456,8 +1456,9 @@ def d_leaf_lf(
     if synthetic:
         # A fan's period labels have no dispatch, so the ``__anchor`` chain (pre-reveal periods + labels) is not
         # an operational path.  Each branch leaf holds the labels of its own fan periods as their period-level
-        # ancestors instead: a here-and-now investment at a label (stochastic_invest_method = none) counts on
-        # every branch path; under recourse the label has no investment column, so nothing is double counted.
+        # ancestors instead: a here-and-now investment at a label (invest_solve_branching_method operations_only)
+        # counts on every branch path; when the investments branch the label has no investment column, so nothing
+        # is double counted.
         labels = fan_period_labels(set(pb_rows))
         joined: list[tuple[str, list[str]]] = []
         for label, members in labeled:

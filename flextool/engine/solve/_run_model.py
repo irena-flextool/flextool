@@ -1761,9 +1761,9 @@ def native_run_model(state, solver) -> int:
     # 3.1 Realization plan per sub-solve.  A period label has no dispatch, so
     # the cells a sub-solve commits inside its fan (its pre-stochastic
     # realized and fix-storage cells of the labels) are kept as
-    # ``committed_in_fan``: the non-anticipativity window of an unset
-    # ``non_anticipativity_periods`` and the trigger of the committed-window
-    # check.  The labels' pre-stochastic steps are kept for a curated window.
+    # ``committed_in_fan``: the non-anticipativity window of a dispatch solve
+    # and the trigger of the committed-window check.  The labels'
+    # pre-stochastic steps are kept as ``label_steps``.
     # ------------------------------------------------------------------
     _rdp_registry = getattr(state.solve, "realized_dispatch_parent", {}) or {}
     committed_in_fan_frames: dict[str, pl.DataFrame] = {}

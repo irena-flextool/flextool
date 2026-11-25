@@ -7587,16 +7587,6 @@
     [
       "solve",
       "stoch_2p_free",
-      "invest_periods",
-      [
-        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAzNSJdfQ==",
-        "array"
-      ],
-      "init"
-    ],
-    [
-      "solve",
-      "stoch_2p_free",
       "period_timeset",
       [
         "eyJpbmRleF90eXBlIjogInN0ciIsICJkYXRhIjogW1sicDIwMzUiLCAidHMxIl0sIFsicDIwNDAiLCAidHMyIl1dfQ==",
@@ -7697,16 +7687,6 @@
     [
       "unit",
       "base",
-      "discount_rate",
-      [
-        "MC4wNQ==",
-        "float"
-      ],
-      "base"
-    ],
-    [
-      "unit",
-      "base",
       "efficiency",
       [
         "MS4w",
@@ -7719,47 +7699,7 @@
       "base",
       "existing",
       [
-        "MC4w",
-        "float"
-      ],
-      "base"
-    ],
-    [
-      "unit",
-      "base",
-      "invest_cost",
-      [
-        "MjAuMA==",
-        "float"
-      ],
-      "base"
-    ],
-    [
-      "unit",
-      "base",
-      "invest_max_total",
-      [
-        "MTUwLjA=",
-        "float"
-      ],
-      "base"
-    ],
-    [
-      "unit",
-      "base",
-      "invest_method",
-      [
-        "ImludmVzdF90b3RhbCI=",
-        "str"
-      ],
-      "base"
-    ],
-    [
-      "unit",
-      "base",
-      "lifetime_technical",
-      [
-        "MS4w",
+        "MTIuMA==",
         "float"
       ],
       "base"
@@ -7890,14 +7830,14 @@
     ],
     [
       "stoch",
-      "include_stochastics + branch-varying wind + t0 branches + stochastic-group storage (stochastic_invest_method=none)"
+      "include_stochastics + branch-varying wind + t0 branches + stochastic-group storage (investments shared)"
     ]
   ],
   "scenarios": [
     [
       "nreal0",
       false,
-      "n_real=0: three forecasts (realized:no), curated NA window \u2014 forecast-to-forecast storage NA with no realised branch"
+      "n_real=0: three forecasts (realized:no) in a dispatch solve \u2014 forecast-to-forecast storage NA with no realised branch"
     ]
   ],
   "scenario_alternatives": [

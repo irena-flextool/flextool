@@ -397,7 +397,7 @@ def test_retiring_a_shared_cohort_in_every_branch_pays_its_contract_once(tmp_pat
 
 @pytest.mark.solver
 def test_retirement_inside_the_shared_investment_window_is_the_same_in_every_branch(tmp_path_factory) -> None:
-    """The fan opens in p2035 and p2035 is a shared investment period (shared_invest_periods): each branch has its
+    """The fan opens in p2035 and p2035 is a shared investment period (investments_after_reveal_period): each branch has its
     own copy of the 50 MW built there, and the retirement of at least 10 MW in p2035 is the same in every branch —
     one tie per branch pair, between the cohorts the branches build in their copies of p2035."""
     step = _hedge(tmp_path_factory, "rb_fan_window", ["init", "base", "stoch", "ws", "na_window"],
@@ -416,11 +416,13 @@ def test_retirement_inside_the_shared_investment_window_is_the_same_in_every_bra
 @pytest.mark.parametrize("retired", [12.0, 30.0])
 def test_an_investment_and_the_extensions_of_one_shared_period_each_tie_to_their_own_twin(tmp_path_factory,
                                                                                           retired) -> None:
-    """The fan opens in p2035; p2035 and p2040 are shared investment periods.  base has 50 MW existing and 50 MW
-    built in p2035 (each branch's copy), both with a 1-year life that ends at p2040, a life extension of 1 year,
-    and at most 5 MW built in p2040.  In each branch's p2040 three different cohorts are decided: the extension of
-    the existing cohort, the extension of the branch's own p2035 investment, and the p2040 investment.  Each ties
-    only to its own twin in the other branch (same kind, twin parent): four ties in all with the p2035 investment.
+    """The fan opens in p2040 (the ``rp`` reveal) under ``investments_after_reveal_period``, so the reveal period
+    p2040's decisions are shared by the branches: each branch has its copy p2040_high / p2040_low, tied to the
+    other.  base has 50 MW existing and 50 MW built in p2035 (one decision: p2035 is before the reveal), both with a
+    1-year life that ends at p2040, a life extension of 1 year, and at most 5 MW built in p2040.  In each branch's
+    p2040 three different cohorts are decided: the extension of the existing cohort, the extension of the p2035
+    investment, and the p2040 investment.  Each ties only to its own twin in the other branch (same kind, twin
+    parent): three ties in all (the p2035 investment has one copy, nothing to tie).
     A retirement of ``retired`` MW in p2040 is then free to come from any cohort (30 MW needs more than the 5 MW the
     p2040 investment can hold, so tying every cohort to every other one made it infeasible), the same in each
     branch."""
@@ -432,16 +434,15 @@ def test_an_investment_and_the_extensions_of_one_shared_period_each_tie_to_their
                ["unit", "base", "retire_max_period", _period_map({"p2035": 0.0, "p2040": retired})],
                ["unit", "base", "life_extension_cost", b64(0.5, "float")],
                ["unit", "base", "life_extension_years", b64(1.0, "float")],
-               ["solve", "stoch_2p_hedge", "shared_invest_periods",
-                b64({"value_type": "str", "data": ["p2035", "p2040"]}, "array")]]
-    step = _hedge(tmp_path_factory, f"rb_fan_twins_{int(retired)}", ["init", "base", "stoch", "ws", "na_window"],
-                  values)
+               ["solve", "stoch_2p_hedge", "invest_solve_branching_method",
+                b64("investments_after_reveal_period", "str")]]
+    step = _hedge(tmp_path_factory, f"rb_fan_twins_{int(retired)}", ["init", "base", "stoch", "rp"], values)
     rows = cstr_over(build(step.flex_data), "non_anticipativity_divest_built_p")
     assert rows is not None
     ties = {(c, d, cb, b) for c, d, cb, b in utf8(rows).select("cohort", "d", "cohort_b", "b").iter_rows()}
 
-    shared = [("invest:p2035_{}", "p2035_{}"), ("invest:p2040_{}", "p2040_{}"),
-              ("extend:p2040_{}:existing:p2035", "p2040_{}"), ("extend:p2040_{}:invest:p2035_{}", "p2040_{}")]
+    shared = [("invest:p2040_{}", "p2040_{}"), ("extend:p2040_{}:existing:p2035", "p2040_{}"),
+              ("extend:p2040_{}:invest:p2035", "p2040_{}")]
     want = {(c.format("high", "high"), d.format("high"), c.format("low", "low"), d.format("low")) for c, d in shared}
     assert ties == want, ties
     built = {(c, dd): v for c, dd, v in utf8(step.solution.value("v_divest_built_p"))

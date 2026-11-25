@@ -31,7 +31,6 @@ def _cfg(rows, *, method="within_solve", mode="rolling_window", model_solve=None
     sc.solve_modes = {S: mode}
     sc.stochastic_branches = {S: rows}
     sc.dispatch_realization_method = {} if method is None else {S: method}
-    sc.stochastic_invest_method = {}
     sc.contains_solves = {}
     sc.realized_dispatch_parent = {}
     sc.derived_solves = {}
@@ -241,7 +240,7 @@ def test_jump_not_at_the_start_of_the_horizon_is_an_internal_error():
 
 @pytest.mark.parametrize("case", [
     "deterministic_absent", "deterministic_explicit", "single_within_solve", "single_separate_dispatch",
-    "recourse", "author_declared", "nested", "contains", "no_branches",
+    "author_declared", "nested", "contains", "no_branches",
 ])
 def test_gate_rows_get_no_plan(case):
     # A rolling solve with forecasts and a realized branch at every step: only the gate decides.
@@ -256,8 +255,6 @@ def test_gate_rows_get_no_plan(case):
         kw["mode"] = "single_solve"
     elif case == "single_separate_dispatch":
         kw.update(mode="single_solve", method="separate_dispatch")
-    elif case == "recourse":
-        kw["stochastic_invest_method"] = {S: "recourse"}
     elif case == "nested":
         kw.update(model_solve={"flextool": ["outer"]}, contains_solves={"outer": [S]})
     elif case == "contains":

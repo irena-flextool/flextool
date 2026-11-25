@@ -2,20 +2,21 @@
 "engine-automatic realized dispatch" fixture.
 
 This is W8.1's ``stoch_realized_dispatch`` fixture collapsed to a SINGLE
-top-level solve that authors ``dispatch_realization_method =
-separate_dispatch``.  Where W8.1 hand-declares a second
+top-level investment solve.  Where W8.1 hand-declares a second
 ``stoch_rd_realized_dispatch`` solve, W4b removes that author-declared
 solve entirely and lets the engine AUTOMATICALLY register the
-deterministic realized-dispatch sibling ``stoch_rd__realized_dispatch``.
+deterministic realized-dispatch sibling ``stoch_rd__realized_dispatch``:
+an investment solve whose ``stochastic_branches`` has a ``realized: yes``
+branch reaching its realized periods gets a realization solve without any
+``dispatch_realization_method`` (an investment solve reads only an explicit
+``deterministic`` there, and ``separate_dispatch`` is refused on it).
 
 Transforms applied to the W8.1 spec (so the two never drift):
 
   1. ``model.solves`` = ``[stoch_rd]`` (drop the author-declared
      ``stoch_rd_realized_dispatch``);
   2. remove the ``stoch_rd_realized_dispatch`` solve entity + its
-     parameter values;
-  3. set ``solve.stoch_rd.dispatch_realization_method =
-     separate_dispatch`` (W4a schema).
+     parameter values, and the parent's ``dispatch_realization_method``.
 
 The engine then spawns ``stoch_rd__realized_dispatch`` in memory and it
 reproduces the four W8.1 oracles.
@@ -56,7 +57,7 @@ def build() -> dict:
             pv[3] = [_enc({"value_type": "str", "data": [PARENT]}), "array"]
 
     # 2. drop the author-declared dispatch solve entity + its params, and the
-    #    parent's within_solve (its method is authored in step 3).
+    #    parent's within_solve (an investment solve reads no method but an explicit deterministic).
     spec["entities"] = [
         e for e in spec["entities"]
         if not (e[0] == "solve" and e[1] == AUTHOR_DISPATCH)
@@ -67,12 +68,6 @@ def build() -> dict:
         and not (pv[0] == "solve" and pv[1] == PARENT and pv[2] == "dispatch_realization_method")
     ]
 
-    # 3. author separate_dispatch on the surviving single top-level solve,
-    #    on the same alternative its other params use ("init").
-    spec["parameter_values"].append(
-        ["solve", PARENT, "dispatch_realization_method",
-         [_enc("separate_dispatch"), "str"], "init"]
-    )
     return spec
 
 

@@ -16,6 +16,10 @@ The parameter is Array-shaped (``default_value``/``default_type`` both
 ``fix_storage_periods``) and grouped under ``solve_advanced``.  Migrating
 a DB adds the definition only (no per-solve value), so every migrated
 solve stays on the unset -> legacy-window path.
+
+v75 renames it (``shared_*``) and v84 replaces it by
+``solve.invest_solve_branching_method`` (``test_v84_branching``), so the
+step is tested on a database migrated to 83 at most.
 """
 
 from __future__ import annotations
@@ -32,10 +36,7 @@ from flextool.update_flextool.sync_master_json_template import (
     sync_master_template,
 )
 
-from tests.db_utils import json_to_db
 
-TEST_DIR = Path(__file__).resolve().parents[1]
-FIXTURES_DIR = TEST_DIR / "fixtures"
 
 
 def test_v72_version_constant_is_at_least_72() -> None:
@@ -47,12 +48,13 @@ def test_v72_version_constant_is_at_least_72() -> None:
 
 
 def _migrated_db(tmp_path: Path) -> DatabaseMapping:
-    """Build a fixture DB from JSON (at the fixture's old version, which
-    predates v72 so the parameter can ONLY appear via the v72 block),
-    migrate it to HEAD, and return an open mapping."""
-    db_path = tmp_path / "lh2.sqlite"
-    url = json_to_db(FIXTURES_DIR / "lh2_three_region.json", db_path)
-    migrate_database(url)
+    """A minimal v71 database (:func:`_build_v71_solve_db`) migrated to 83, the last data version that has the
+    parameter (v84 replaces it by ``invest_solve_branching_method``: ``test_v84_branching``), as an open mapping.
+    The fixture corpus is at the head, so it cannot start below v72."""
+    db_path = tmp_path / "v71.sqlite"
+    url = f"sqlite:///{db_path.resolve()}"
+    _build_v71_solve_db(url)
+    migrate_database(url, up_to=83)
     db = DatabaseMapping(url, create=False)
     db.fetch_all()
     return db
@@ -76,10 +78,10 @@ def _db_version(url: str) -> int:
 
 
 def test_non_anticipativity_periods_definition_present(tmp_path: Path) -> None:
-    """At HEAD the operational shared-window param exists as an unset Array
+    """At 83 the operational shared-window param exists as an unset Array
     (no default, no value list) grouped under ``solve_advanced``.  Added at
     v72 as ``non_anticipativity_periods`` and renamed to
-    ``shared_operation_periods`` at v75 — this fixture migrates to HEAD, so
+    ``shared_operation_periods`` at v75 — the database migrates to 83, so
     it carries the current (renamed) name."""
     db = _migrated_db(tmp_path)
     try:
@@ -87,7 +89,7 @@ def test_non_anticipativity_periods_definition_present(tmp_path: Path) -> None:
             entity_class_name="solve",
             name="shared_operation_periods",
         )
-        assert pdef, "shared_operation_periods not present at HEAD"
+        assert pdef, "shared_operation_periods not present at 83"
         # Array param — no scalar default, no bound value list.
         assert pdef["default_value"] is None
         assert pdef["default_type"] is None
@@ -101,7 +103,7 @@ def test_migration_adds_no_per_solve_value(tmp_path: Path) -> None:
     """The v72 migration adds the definition ONLY — never a per-solve
     value — so every migrated solve resolves to the unset (legacy-window)
     case and stays byte-identical.  (Param renamed to
-    ``shared_operation_periods`` at v75; this fixture is at HEAD.)"""
+    ``shared_operation_periods`` at v75; the database is at 83.)"""
     db = _migrated_db(tmp_path)
     try:
         values = [

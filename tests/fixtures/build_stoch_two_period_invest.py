@@ -42,6 +42,12 @@ windows 2000 (branching) / 1000 (continuation); weighted objective
 
 (The design's 196 875 was at the year-end payment 1050: 187 500 = 196 875 · 1000 / 1050.)
 
+Scenarios: ``recourse`` / ``recourse_horizon`` — ``investments_at_reveal_period`` (the reveal p2035 is the first
+period, so nothing is realized), 187 500; ``after_reveal`` — ``investments_after_reveal_period``, realized p2035:
+the shared p2035 build 80, p2040 high 10 / low 40, 80·2000 + 0.25·10·1000 + 0.75·40·1000 = 192 500;
+``operations_only`` — the default, one plan: 80 + 40, 80·2000 + 40·1000 = 200 000
+(``tests/engine/test_invest_solve_branching.py``).
+
 Run:  ~/venv-spi/bin/python tests/fixtures/build_stoch_two_period_invest.py
 """
 from __future__ import annotations
@@ -83,15 +89,25 @@ def build() -> dict:
         ["init", "Model, solve and time structure"],
         ["base", "System data (peaker invest + wind + elec demand)"],
         ["stoch", "Stochastic branches + branch-varying wind profile"],
-        ["recourse", "stochastic_invest_method = recourse"],
+        ["recourse", "invest_solve_branching_method = investments_at_reveal_period; nothing realized"],
         ["horizon", "model.output_horizon = yes (branch invest rows)"],
+        ["after_reveal", "invest_solve_branching_method = investments_after_reveal_period; p2035 realized"],
     ]
     spec["scenarios"] = [
-        ["recourse", False, "Per-scenario stochastic investment (flag on)"],
+        ["recourse", False, "Per-scenario stochastic investment (investments_at_reveal_period)"],
         ["recourse_horizon", False,
          "Recourse + output_horizon (non-realized branch invest visible)"],
+        ["operations_only", False, "Shared investments, operations branch at the reveal (the default)"],
+        ["after_reveal", False, "The p2035 investment shared, p2040 per branch"],
     ]
     spec["scenario_alternatives"] = [
+        ["operations_only", "init", "base"],
+        ["operations_only", "base", "stoch"],
+        ["operations_only", "stoch", None],
+        ["after_reveal", "init", "base"],
+        ["after_reveal", "base", "stoch"],
+        ["after_reveal", "stoch", "after_reveal"],
+        ["after_reveal", "after_reveal", None],
         ["recourse", "init", "base"],
         ["recourse", "base", "stoch"],
         ["recourse", "stoch", "recourse"],
@@ -214,8 +230,21 @@ def build() -> dict:
         ["profile", "wprof", "profile", _pack(profile_stoch, "map"),
          "stoch"],
         # ---- recourse: opt-in flag -------------------------------------
+        # The reveal is p2035, the first period: every investment is per branch (wait-and-see), so no period can
+        # be realized (a per-branch decision cannot be realized).
         ["solve", "stoch_2p_inv", "invest_solve_branching_method",
-         _pack("investments_after_reveal_period", "str"), "recourse"],
+         _pack("investments_at_reveal_period", "str"), "recourse"],
+        ["solve", "stoch_2p_inv", "realized_periods",
+         _pack({"value_type": "str", "data": []}, "array"), "recourse"],
+        ["solve", "stoch_2p_inv", "realized_invest_periods",
+         _pack({"value_type": "str", "data": []}, "array"), "recourse"],
+        # ---- after_reveal: the p2035 investment shared, p2040 per branch -
+        ["solve", "stoch_2p_inv", "invest_solve_branching_method",
+         _pack("investments_after_reveal_period", "str"), "after_reveal"],
+        ["solve", "stoch_2p_inv", "realized_periods",
+         _pack({"value_type": "str", "data": ["p2035"]}, "array"), "after_reveal"],
+        ["solve", "stoch_2p_inv", "realized_invest_periods",
+         _pack({"value_type": "str", "data": ["p2035"]}, "array"), "after_reveal"],
         # ---- horizon: surface non-realized branch invest (§11.2) -------
         ["model", "flextool", "output_horizon", _pack("yes", "str"),
          "horizon"],

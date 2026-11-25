@@ -159,8 +159,8 @@ def announce_realization_notices(solve_cfg: Any) -> None:
 
     W-0635: a solve with ``within_solve`` realization rolls.  W-0636: a ``separate_dispatch`` solve with an
     engine-added realization solve: its solve (1) changed, and with ``separate_dispatch`` realization rolls its
-    realization also looks ahead.  A rolling one without them (delayed units, recourse, a realization solve the
-    author declared) keeps the earlier realization; the full notice says so for it.  W-0594 (every run, not only
+    realization also looks ahead.  A rolling one without them (delayed units, a realization solve the author
+    declared) keeps the earlier realization; the full notice says so for it.  W-0594 (every run, not only
     upgraded databases): a solve with an engine-added realization solve that the delayed units alone keep from
     realization rolls (:func:`delay_gated_units`).
     """

@@ -207,7 +207,8 @@ def _add_online_ties(b: "_Build", star: pl.DataFrame, tie_dt: pl.DataFrame,
     #   role uc_only (na_role, solve (1) of separate_dispatch): only p ∈ process_online_fix_in_uc
     # Units online are the same in every forecast over the tied steps, the committed section decided before the
     # forecast is known (inside a fan: the committed cells of its period label, solve_data/committed_in_fan).
-    # With no tied step (shared_operation_periods = [], or a rolling fan only in the look-ahead) they are free.
+    # With no tied step (an investment solve, whose forecasts operate each on their own from the reveal, or a rolling
+    # fan only in the look-ahead) they are free.
     # Solve (1) of separate_dispatch commits only what its realization solve takes over (the fix_online pins of the
     # _fix_in_uc units); the realization solve decides the other units online again with the realized data, so
     # they are free per forecast here.

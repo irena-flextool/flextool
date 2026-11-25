@@ -144,7 +144,8 @@ def test_a_cohort_whose_extension_was_realized_is_not_extended_again() -> None:
 #: ``base`` has 50 MW existing with lifetime 1 (it ends at p2040), reinvest_choice, no investment, discount_rate 5 %,
 #: life_extension_cost 0.5 CUR/kW (E = 500 CUR/MW) for 1 year.  The fan opens in p2035 (``ws``) and both periods are
 #: shared investment periods: the extension in each branch's copy of p2040 is one decision.
-HEDGE_CHAIN = ["init", "base", "stoch", "ws", "na_window"]
+#: The fan opens in p2040 (``rp``); under investments_after_reveal_period the reveal period's decisions are shared.
+HEDGE_CHAIN = ["init", "base", "stoch", "rp"]
 
 
 @pytest.mark.solver
@@ -162,8 +163,8 @@ def test_extension_inside_the_shared_window_is_the_same_in_every_branch(tmp_path
               ["unit", "base", "discount_rate", b64(0.05, "float")],
               ["unit", "base", "life_extension_cost", b64(0.5, "float")],
               ["unit", "base", "life_extension_years", b64(1.0, "float")],
-              ["solve", "stoch_2p_hedge", "shared_invest_periods",
-               b64({"value_type": "str", "data": ["p2035", "p2040"]}, "array")]]
+              ["solve", "stoch_2p_hedge", "invest_solve_branching_method",
+               b64("investments_after_reveal_period", "str")]]
     steps, _, _ = _RUNS.get(tmp_path_factory, alt="lec_fan", values=values, base_chain=HEDGE_CHAIN,
                             fixture_json=HEDGE_JSON)
     step = [s for name, s in steps.items() if "realized" not in name][-1]

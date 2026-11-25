@@ -475,46 +475,38 @@ def test_committed_output_realized_only(hedge_wf) -> None:
     output carries only the real-named (trunk) periods — branch rows are
     dropped.  The committed INVESTMENT is the single here-and-now
     PRE-REVEAL decision: the shared first stage p2035 = 60.  The recourse
-    period p2040 is a period label: no investment column under recourse,
-    so its committed investment row is 0 — the per-forecast recourse
-    lives on the branch rows p2040_high / p2040_low, which the committed
-    output does not surface."""
+    period p2040 is invested per forecast (``investments_at_reveal_period``,
+    the reveal at p2040), so it cannot be realized: the fixture realizes
+    p2035 only and the committed output holds no p2040 row — the
+    per-forecast recourse lives on the branch rows p2040_high / p2040_low,
+    which the committed output does not surface."""
     inv = pl.read_parquet(
         hedge_wf / "output_raw" / f"v_invest__{SOLVE}.parquet")
     got = {r["period"]: round(float(r["base"]), 6)
            for r in inv.iter_rows(named=True)}
-    assert got == {"p2035": 60.0, "p2040": 0.0}
+    assert got == {"p2035": 60.0}
 
 
 # --- T-S (storage): NA fires + branch copy links to shared trunk -----------
 
 
 @pytest.mark.solver
-def test_storage_na_forecast_star_on_two_forecast_reveal(
+def test_storage_of_an_investment_solve_branches_at_the_reveal(
         hedge_storage_run) -> None:
-    """T-S (§5.1, §9.1), R3 re-grounded: the hedge fixture is now a genuine
-    2-forecast fan (``high``, ``low``; n_real = 0) revealing at p2040, so
-    under the forecasts-only model the storage non-anticipativity family
-    ties the two forecasts forecast-to-forecast at the reveal step — the
-    branch copies ``p2040_high`` and ``p2040_low`` are pinned to share the
-    pre-reveal net-charge.  The tie is NOT anchored on the weight-0 phantom
-    trunk ``p2040`` (the realised/reference trunk is never an NA hub); the
-    star is the forecast pair only."""
+    """T-S (§5.1, §9.1): the hedge fixture is a genuine 2-forecast fan
+    (``high``, ``low``; n_real = 0) revealing at p2040.  In an investment
+    solve each forecast operates on its own from the reveal on (spec
+    revision 5: the operational window is empty), so the stochastic-group
+    storage gets no non-anticipativity tie: the forecasts' storage use at
+    p2040_high / p2040_low is free.  (The two-stage storage linkage to the
+    shared trunk p2035 stays: test_storage_branch_copy_predecessor_is_shared_trunk.)"""
     from polar_high import Problem
     from flextool.engine import build_flextool
 
     data = load_scenario(hedge_storage_run)
     pb = Problem()
     build_flextool(pb, data)
-    names = pb.cstr_names()
-    assert "non_anticipativity_storage_use" in names, (
-        "a genuine 2-forecast reveal must emit a forecast-to-forecast "
-        "storage NA tie")
-    over = pb.cstrs_named("non_anticipativity_storage_use")[0].over
-    pairs = {(str(r["d"]), str(r["b"]))
-             for r in over.iter_rows(named=True)}
-    assert pairs == {("p2040_high", "p2040_low")}, (
-        f"forecast-to-forecast star expected; got {pairs}")
+    assert "non_anticipativity_storage_use" not in pb.cstr_names()
 
 
 def test_storage_branch_copy_predecessor_is_shared_trunk(

@@ -53,9 +53,9 @@ def _solve_config_with_method(
     # exercises the non-single_solve / nested shapes.
     sc.solve_modes = solve_modes if solve_modes is not None else {}
     sc.contains_solves = contains_solves if contains_solves is not None else {}
-    # ``_validate_model_solve`` also runs the sibling stochastic_invest
+    # ``_validate_model_solve`` also runs the invest_solve_branching_method
     # fail-fast pass; keep it inert.
-    sc.stochastic_invest_method = {}
+    sc.invest_solve_branching_method = {}
     # separate_dispatch dispatches the realized branch: by default every solve gets one ``realized: yes`` row
     # (period, branch, analysis_time, realized, weight).
     sc.stochastic_branches = (stochastic_branches if stochastic_branches is not None

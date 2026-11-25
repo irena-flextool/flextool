@@ -50,7 +50,7 @@ def _spec(*, stochastic: bool, rolling: bool | tuple[float, float] = False, real
     else *plain* (default the series made at t01) as a plain profile.  *rolling*: ``(jump, horizon)``, ``True`` =
     ``(2, 4)``.  *start*: the first step of the timeset (it runs to t06).  *invest*: ``gen`` starts at 0 MW and
     invests (``invest_periods`` = ``realized_invest_periods`` = [p1]), so a single solve is an investment solve;
-    *invest_method*: its ``stochastic_invest_method``."""
+    *invest_method*: its ``invest_solve_branching_method``."""
     forecasts = forecasts or {"t01": STEPS}
     plain = plain or _made_at("t01")
     from flextool.update_flextool.fixture_schema import schema_sections
@@ -112,7 +112,7 @@ def _spec(*, stochastic: bool, rolling: bool | tuple[float, float] = False, real
                ["solve", "st", "invest_periods", scm.array(["p1"]), "init"],
                ["solve", "st", "realized_invest_periods", scm.array(["p1"]), "init"]]
     if invest_method is not None:
-        pv.append(["solve", "st", "stochastic_invest_method", pack(invest_method, "str"), "init"])
+        pv.append(["solve", "st", "invest_solve_branching_method", pack(invest_method, "str"), "init"])
     if rolling:
         jump, horizon = (2.0, 4.0) if rolling is True else rolling
         pv += [["solve", "st", "rolling_solve_jump", pack(jump, "float"), "init"],
@@ -280,8 +280,8 @@ def test_resolver_and_guard() -> None:
         _dispatch_realization_raw_guard(cfg, "x")
 
 
-def _w0637(caplog) -> list[str]:
-    return [r.getMessage() for r in caplog.records if "[W-0637]" in r.getMessage()]
+def _w0638(caplog) -> list[str]:
+    return [r.getMessage() for r in caplog.records if "[W-0638]" in r.getMessage()]
 
 
 def _has_forecast_columns(mps) -> bool:
@@ -289,39 +289,41 @@ def _has_forecast_columns(mps) -> bool:
     return any("p1_high" in c for c in cols) and any("p1_low" in c for c in cols)
 
 
-@pytest.mark.parametrize("invest_method", [None, "recourse"])
+@pytest.mark.parametrize("invest_method", [None, "investments_after_reveal_period"])
 def test_investment_solve_without_method_solves_its_forecasts(tmp_path_factory, caplog, invest_method) -> None:
     """The method governs the dispatch model: an investment solve (single, ``invest_periods`` [p1]) without
     ``dispatch_realization_method`` builds the LPs of the same solve with ``within_solve`` byte for byte, as it did
     before ``deterministic`` became the default.  It keeps its forecasts (the branch periods p1_high / p1_low) and
-    gives no W-0593 or W-0637.  Under ``stochastic_invest_method`` ``none`` the ``realized: yes`` branch adds the
-    realization solve; under ``recourse`` there is none (each forecast invests on its own, nothing to realize)."""
+    gives no W-0593 or W-0638.  Under ``invest_solve_branching_method`` ``operations_only`` (absent) the
+    ``realized: yes`` branch adds the realization solve; under ``investments_after_reveal_period`` (p1 is the
+    reveal period, its investment shared, so it may be realized) the engine adds none today."""
     caplog.set_level(logging.WARNING)
     case, _ = scm.run_spec(_spec(stochastic=True, invest=True, invest_method=invest_method),
                            tmp_path_factory.mktemp("case"))
-    lines = _w0593(caplog) + _w0637(caplog)
+    lines = _w0593(caplog) + _w0638(caplog)
     twin, _ = scm.run_spec(_spec(stochastic=True, invest=True, invest_method=invest_method, method="within_solve"),
                            tmp_path_factory.mktemp("twin"))
-    expected = ["st"] if invest_method == "recourse" else ["st", "st__realized_dispatch"]
+    expected = ["st"] if invest_method == "investments_after_reveal_period" else ["st", "st__realized_dispatch"]
     assert [s for s, _, _ in case] == expected
     assert _has_forecast_columns(case[0][1])
     _assert_same_lp(case, twin)
     assert lines == [], lines
 
 
-@pytest.mark.parametrize("invest_method", [None, "recourse"])
+@pytest.mark.parametrize("invest_method", [None, "investments_at_reveal_period"])
 def test_explicit_deterministic_on_an_investment_solve(tmp_path_factory, caplog, invest_method) -> None:
     """An explicit ``deterministic`` on an investment solve is honoured: one build ``st`` with the LP of the same
     model without ``stochastic_branches`` (the realized series made at t01 as a plain profile, the same investment;
-    ``stochastic_invest_method`` is ignored), and one W-0637 line naming the solve (not W-0593)."""
+    ``invest_solve_branching_method`` is ignored, so ``investments_at_reveal_period`` with the realized reveal
+    period p1 is not refused), and one W-0638 line naming the solve (not W-0593)."""
     caplog.set_level(logging.WARNING)
     case, _ = scm.run_spec(_spec(stochastic=True, invest=True, invest_method=invest_method, method="deterministic"),
                            tmp_path_factory.mktemp("case"))
-    lines = _w0593(caplog) + _w0637(caplog)
+    lines = _w0593(caplog) + _w0638(caplog)
     oracle, _ = scm.run_spec(_spec(stochastic=False, invest=True), tmp_path_factory.mktemp("oracle"))
     assert [s for s, _, _ in case] == ["st"]
     _assert_same_lp(case, oracle)
-    assert lines == ["Warning: investment solve 'st' has dispatch_realization_method deterministic [W-0637]"], lines
+    assert lines == ["Warning: investment solve 'st' has dispatch_realization_method deterministic [W-0638]"], lines
 
 
 def test_explicit_deterministic_investment_solve_needs_a_realized_branch(tmp_path_factory) -> None:
@@ -337,7 +339,7 @@ def test_rolling_solve_with_invest_periods_is_a_dispatch_solve(tmp_path_factory,
     without a method it runs ``deterministic`` (W-0593), each roll the LP of the plain-profile model."""
     caplog.set_level(logging.WARNING)
     case, _ = scm.run_spec(_spec(stochastic=True, rolling=True, invest=True), tmp_path_factory.mktemp("case"))
-    lines = _w0593(caplog) + _w0637(caplog)
+    lines = _w0593(caplog) + _w0638(caplog)
     oracle, _ = scm.run_spec(_spec(stochastic=False, rolling=True, invest=True), tmp_path_factory.mktemp("oracle"))
     assert [s for s, _, _ in case] == ["st"] * 3
     _assert_same_lp(case, oracle)

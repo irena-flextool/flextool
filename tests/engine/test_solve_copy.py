@@ -3,8 +3,9 @@
 The docs (``how_to/solve_sequences.md``) say that a 2-D map of ``invest_periods`` / ``realized_invest_periods`` /
 ``realized_periods`` "generates these solves, with the periods given".  Before, the split solves lost the
 parameters their database solve had besides the period lists: ``new_stepduration`` (they ran on the aggregated
-steps with hourly data), ``stochastic_branches`` and ``stochastic_invest_method`` (they ran deterministic),
-``dispatch_realization_method`` (no realization solve), ``shared_*`` and a 1-D ``fix_storage_periods``.
+steps with hourly data), ``stochastic_branches`` and the stochastic investment setting (they ran
+deterministic), ``dispatch_realization_method`` (no realization solve), the shared-decision windows and a 1-D
+``fix_storage_periods``.
 
 Each case builds the split and the hand-written model in separate databases (``_solve_copy_models``) and compares
 every LP of the chain (canonical, up to row / column order) and the solve list.  The objectives are the

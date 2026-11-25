@@ -1,8 +1,8 @@
 """The period labels of a solve's stochastic fans, and the label rows of its branch-keyed investment inputs.
 
-Under ``stochastic_invest_method = recourse`` the investment inputs of the reported costs (the discounted
-investment and lifetime fixed-cost lumps, the yearly annuity, the start of operation and the operating window)
-are keyed by the fan's branch periods.  The reported costs carry the fan's investment at its label (the
+When the investments branch (``invest_solve_branching_method`` other than ``operations_only``) the investment
+inputs of the reported costs (the discounted investment and lifetime fixed-cost lumps, the yearly annuity, the
+start of operation and the operating window) are keyed by the fan's branch periods.  The reported costs carry the fan's investment at its label (the
 branch-weighted amount, ``v_invest_fan``), so they read these inputs at the label: a branch period takes its
 label's years and period parameters, so the rows of a fan's branches are the same as the label's.
 """

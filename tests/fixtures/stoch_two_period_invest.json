@@ -7473,6 +7473,16 @@
         "ImludmVzdG1lbnRzX2FmdGVyX3JldmVhbF9wZXJpb2Qi",
         "str"
       ],
+      "after_reveal"
+    ],
+    [
+      "solve",
+      "stoch_2p_inv",
+      "invest_solve_branching_method",
+      [
+        "ImludmVzdG1lbnRzX2F0X3JldmVhbF9wZXJpb2Qi",
+        "str"
+      ],
       "recourse"
     ],
     [
@@ -7490,10 +7500,40 @@
       "stoch_2p_inv",
       "realized_invest_periods",
       [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAzNSJdfQ==",
+        "array"
+      ],
+      "after_reveal"
+    ],
+    [
+      "solve",
+      "stoch_2p_inv",
+      "realized_invest_periods",
+      [
         "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAzNSIsICJwMjA0MCJdfQ==",
         "array"
       ],
       "init"
+    ],
+    [
+      "solve",
+      "stoch_2p_inv",
+      "realized_invest_periods",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogW119",
+        "array"
+      ],
+      "recourse"
+    ],
+    [
+      "solve",
+      "stoch_2p_inv",
+      "realized_periods",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAzNSJdfQ==",
+        "array"
+      ],
+      "after_reveal"
     ],
     [
       "solve",
@@ -7504,6 +7544,16 @@
         "array"
       ],
       "init"
+    ],
+    [
+      "solve",
+      "stoch_2p_inv",
+      "realized_periods",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogW119",
+        "array"
+      ],
+      "recourse"
     ],
     [
       "solve",
@@ -7719,6 +7769,10 @@
       "Base alternative"
     ],
     [
+      "after_reveal",
+      "invest_solve_branching_method = investments_after_reveal_period; p2035 realized"
+    ],
+    [
       "base",
       "System data (peaker invest + wind + elec demand)"
     ],
@@ -7732,7 +7786,7 @@
     ],
     [
       "recourse",
-      "stochastic_invest_method = recourse"
+      "invest_solve_branching_method = investments_at_reveal_period; nothing realized"
     ],
     [
       "stoch",
@@ -7741,9 +7795,19 @@
   ],
   "scenarios": [
     [
+      "after_reveal",
+      false,
+      "The p2035 investment shared, p2040 per branch"
+    ],
+    [
+      "operations_only",
+      false,
+      "Shared investments, operations branch at the reveal (the default)"
+    ],
+    [
       "recourse",
       false,
-      "Per-scenario stochastic investment (flag on)"
+      "Per-scenario stochastic investment (investments_at_reveal_period)"
     ],
     [
       "recourse_horizon",
@@ -7752,6 +7816,41 @@
     ]
   ],
   "scenario_alternatives": [
+    [
+      "after_reveal",
+      "init",
+      "base"
+    ],
+    [
+      "after_reveal",
+      "base",
+      "stoch"
+    ],
+    [
+      "after_reveal",
+      "stoch",
+      "after_reveal"
+    ],
+    [
+      "after_reveal",
+      "after_reveal",
+      null
+    ],
+    [
+      "operations_only",
+      "init",
+      "base"
+    ],
+    [
+      "operations_only",
+      "base",
+      "stoch"
+    ],
+    [
+      "operations_only",
+      "stoch",
+      null
+    ],
     [
       "recourse",
       "init",

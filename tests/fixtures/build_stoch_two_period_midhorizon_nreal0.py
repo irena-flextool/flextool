@@ -1,6 +1,6 @@
 """Build ``tests/fixtures/stoch_two_period_midhorizon_nreal0.json`` -- a
 mid-horizon reveal with a genuine forecasts-only fan (n_real=0) on the
-DEFAULT ``stochastic_invest_method = none`` path, plus two variants that
+DEFAULT ``invest_solve_branching_method`` (``operations_only``) path, plus two variants that
 witness how a period before the reveal reads stochastic data (item 250).
 
 Topology (one 3-step pre-reveal trunk + one 3-step fanned period):
@@ -86,7 +86,7 @@ def build() -> dict:
     spec["scenarios"] = [
         ["midhorizon", False,
          "Mid-horizon reveal at p2040, genuine n_real=0 {high,low} fan, "
-         "stochastic_invest_method=none, plain wind profile"],
+         "operations_only (the default), plain wind profile"],
         ["midhorizon_stoch_profile", False,
          "midhorizon with a stochastic wind profile and no realized branch "
          "(configuration error)"],
@@ -225,7 +225,7 @@ def build() -> dict:
         ["unit__outputNode", ["base", "elec"], "other_operational_cost",
          _pack(1.0, "float"), "base"],
         # ---- stoch: branches + plain profile ---------------------------
-        # Default invest path: stochastic_invest_method = none (single
+        # Default invest path: operations_only (single
         # invest var per period; ops fan across the forecasts).
         ["group", "stoch_g", "include_stochastics", _pack("yes", "str"),
          "stoch"],

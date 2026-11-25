@@ -38,11 +38,12 @@ def _strict_autoscale(monkeypatch):
 
 
 def _deterministic_json(tmp_path_factory) -> Path:
-    """The fixture without its stochastic fan (branches, group flag and invest method removed)."""
+    """The fixture without its stochastic fan (branches, group flag and the ``recourse`` alternative's branching
+    method and realized periods removed: the deterministic solve realizes both periods, as in ``init``)."""
     data = json.loads(RECOURSE_JSON.read_text())
     data["parameter_values"] = [pv for pv in data["parameter_values"]
-                                if pv[2] not in ("stochastic_branches", "include_stochastics",
-                                                 "stochastic_invest_method")]
+                                if pv[2] not in ("stochastic_branches", "include_stochastics")
+                                and pv[4] != "recourse"]
     out = tmp_path_factory.mktemp("cm_det_json") / "stoch_two_period_invest_det.json"
     out.write_text(json.dumps(data))
     return out

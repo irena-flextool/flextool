@@ -256,6 +256,7 @@
  "tests/engine/test_intraperiod_blocks.py": 121.3,
  "tests/engine/test_invest_dispatch_handoff.py": 16.3,
  "tests/engine/test_invest_na_window.py": 14.3,
+ "tests/engine/test_invest_solve_branching.py": 20.0,
  "tests/engine/test_ladder_by_shape.py": 50.7,
  "tests/engine/test_ladder_tier_labels.py": 104.2,
  "tests/engine/test_max_flow_unconstrained_override.py": 1.0,
@@ -599,5 +600,6 @@
  "tests/update_flextool/test_v83_realization_notices.py": 19.4,
  "tests/update_flextool/test_v83_schema_batch.py": 41.7,
  "tests/update_flextool/test_v83_startup_method.py": 21.8,
+ "tests/update_flextool/test_v84_branching.py": 24.4,
  "tests/update_flextool/test_value_list_repair_block.py": 1.8
 }

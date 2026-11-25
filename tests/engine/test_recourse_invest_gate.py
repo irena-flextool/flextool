@@ -180,9 +180,10 @@ def test_recourse_committed_output_realized_only(recourse_wf):
     reveal is at the first period p2035, so there is NO pre-reveal
     here-and-now committed stage — every investment is a per-forecast
     wait-and-see decision on the branch rows (p2035_high/low, p2040_high/
-    low).  The real-named trunk periods p2035/p2040 are weight-0 phantoms,
-    so the committed (realized-only) investment is 0 on both: there is no
-    non-anticipative here-and-now capacity to commit.  The actual
+    low).  Under ``investments_at_reveal_period`` with the reveal at the
+    first period no period can be realized (a per-branch decision cannot
+    be), so the fixture realizes none and the committed (realized-only)
+    output holds no row: there is no here-and-now capacity to commit.  The actual
     per-forecast investment (high 60/30, low 80/40) is in the raw horizon
     dump of ``output_horizon`` only (tests/engine/test_output_horizon_dump.py::
     test_recourse_branch_invest_in_dump)."""
@@ -190,7 +191,7 @@ def test_recourse_committed_output_realized_only(recourse_wf):
         recourse_wf / "output_raw" / f"v_invest__{SOLVE}.parquet")
     got = {r["period"]: round(float(r["peaker"]), 6)
            for r in inv.iter_rows(named=True)}
-    assert got == {"p2035": 0.0, "p2040": 0.0}
+    assert got == {}
 
 
 @pytest.mark.solver

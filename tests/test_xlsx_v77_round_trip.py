@@ -58,8 +58,12 @@ VALUES = [
     ("unit", ("u1",), "startup_cost", _period({"p2030": 10.0, "p2040": 12.0})),
     ("node", ("n1",), "penalty_method", "off"),
     ("node", ("n1",), "energy_margin_adder", _period_time({"p2030": {"t01": 1.0, "t02": 2.0}})),
-    ("solve", ("s_empty",), "shared_operation_periods", Array([], value_type=str)),
-    ("solve", ("s_one",), "shared_operation_periods", Array(["p2030"])),
+    # A solve's period Array: empty and with one period (realized_periods takes over from the v84-removed
+    # shared_operation_periods, the same shape).
+    ("solve", ("s_empty",), "realized_periods", Array([], value_type=str)),
+    ("solve", ("s_one",), "realized_periods", Array(["p2030"])),
+    # v84: the investment-solve branching choice.
+    ("solve", ("s_one",), "invest_solve_branching_method", "investments_after_reveal_period"),
     ("group", ("g_retire",), "retire_max_period", 75.0),
     ("group", ("g_retire",), "invest_method", "retire_period"),
     ("group", ("g_off",), "invest_method", "not_active"),

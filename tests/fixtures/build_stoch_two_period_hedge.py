@@ -102,15 +102,15 @@ def build() -> dict:
     spec["alternatives"] = [
         ["init", "Model, solve and time structure"],
         ["base", "System data (base invest + wind + elec demand)"],
-        ["stoch", "include_stochastics + branch-varying wind + recourse"],
+        ["stoch", "include_stochastics + branch-varying wind + investments_at_reveal_period"],
         ["rp", "stochastic_branches at p2040 (mid-horizon reveal)"],
         ["ws", "stochastic_branches at p2035 (wait-and-see / fan-at-first)"],
-        ["na_window", "invest-NA window = [p2035] + ops free "
-                      "(the standard two-stage mode, v72)"],
+        ["na_window", "investments_after_reveal_period: the p2035 "
+                      "investment shared (the standard two-stage mode)"],
         ["divest", "base invest_retire_total + existing 50 so v_divest "
                    "exists (T-Divest: divest tied too, F2)"],
-        ["invest_none", "stochastic_invest_method=none (T-None: window is "
-                        "a graceful no-op)"],
+        ["invest_none", "invest_solve_branching_method operations_only "
+                        "(T-None: every investment shared)"],
         ["storage", "stochastic-group storage node (T-S: storage NA + "
                     "mid-horizon predecessor linkage)"],
     ]
@@ -122,13 +122,13 @@ def build() -> dict:
          "Mid-horizon reveal + stochastic-group storage node (T-S)"],
         ["hedge_na_window", False,
          "Invest-NA window main mode: fan-at-t0 + "
-         "shared_invest_periods=[p2035] (RP = 165 000)"],
+         "investments_after_reveal_period (RP = 165 000)"],
         ["hedge_na_divest", False,
          "T-Divest: divest-eligible base under recourse+window — "
          "non_anticipativity_divest_p ties first-period divest too (F2)"],
         ["hedge_na_none", False,
-         "T-None: window set on a stochastic_invest_method=none solve "
-         "— graceful no-op (no invest-NA rows)"],
+         "T-None: operations_only over the na_window layers "
+         "— every investment one plan (no invest-NA rows)"],
     ]
     spec["scenario_alternatives"] = [
         ["hedge", "init", "base"],
@@ -307,8 +307,15 @@ def build() -> dict:
          "stoch"],
         ["profile", "wprof", "profile", _pack(profile_stoch, "map"),
          "stoch"],
+        # The investments before the reveal are shared, each branch invests on its own from the reveal on (the
+        # wait-and-see after the reveal).  A per-branch period cannot be realized: under the
+        # mid-horizon reveal (rp) only p2035 is realized.
         ["solve", "stoch_2p_hedge", "invest_solve_branching_method",
-         _pack("investments_after_reveal_period", "str"), "stoch"],
+         _pack("investments_at_reveal_period", "str"), "stoch"],
+        ["solve", "stoch_2p_hedge", "realized_periods",
+         _pack({"value_type": "str", "data": ["p2035"]}, "array"), "stoch"],
+        ["solve", "stoch_2p_hedge", "realized_invest_periods",
+         _pack({"value_type": "str", "data": ["p2035"]}, "array"), "stoch"],
         # ---- rp: mid-horizon reveal at p2040 ---------------------------
         ["solve", "stoch_2p_hedge", "stochastic_branches",
          _pack(stochastic_branches_rp, "map"), "rp"],
@@ -320,12 +327,24 @@ def build() -> dict:
          _pack(stochastic_branches_ws, "map"), "ws"],
         ["solve", "stoch_2p_hedge", "dispatch_realization_method",
          _pack("within_solve", "str"), "ws"],
+        # The reveal at the first period: every investment is per branch, nothing can be realized.
+        ["solve", "stoch_2p_hedge", "realized_periods",
+         _pack({"value_type": "str", "data": []}, "array"), "ws"],
+        ["solve", "stoch_2p_hedge", "realized_invest_periods",
+         _pack({"value_type": "str", "data": []}, "array"), "ws"],
         # ---- na_window: invest-NA window main mode (v72) ---------------
-        # Layered on ``ws`` (fan-at-t0 recourse): tie v_invest/v_divest at
-        # p2035 across branches (shared first stage) while p2040 invests
-        # per-branch (recourse), and free operations from t0.  The tie
-        # reproduces the Option-B hedge RP = 165 000 by CONSTRAINT (vs the
-        # mid-horizon ``hedge`` scenario's shared trunk by construction).
+        # Layered on ``ws`` (fan-at-t0): investments_after_reveal_period
+        # ties v_invest/v_divest at the reveal p2035 across branches (shared
+        # first stage) while p2040 invests per-branch; operations branch
+        # from t0.  The tie reproduces the Option-B hedge RP = 165 000 by
+        # CONSTRAINT (vs the mid-horizon ``hedge`` scenario's shared trunk
+        # by construction).  p2035 is shared, so it is realized.
+        ["solve", "stoch_2p_hedge", "invest_solve_branching_method",
+         _pack("investments_after_reveal_period", "str"), "na_window"],
+        ["solve", "stoch_2p_hedge", "realized_periods",
+         _pack({"value_type": "str", "data": ["p2035"]}, "array"), "na_window"],
+        ["solve", "stoch_2p_hedge", "realized_invest_periods",
+         _pack({"value_type": "str", "data": ["p2035"]}, "array"), "na_window"],
         # ---- divest: base divest-eligible (T-Divest, F2) ---------------
         # invest_retire_total is in BOTH the invest- and divest-allowed
         # method sets; a non-zero salvage_value makes the divest annuity
@@ -341,6 +360,10 @@ def build() -> dict:
         # ---- invest_none: none composition (T-None) --------------------
         ["solve", "stoch_2p_hedge", "invest_solve_branching_method",
          _pack("operations_only", "str"), "invest_none"],
+        ["solve", "stoch_2p_hedge", "realized_periods",
+         _pack({"value_type": "str", "data": ["p2035", "p2040"]}, "array"), "invest_none"],
+        ["solve", "stoch_2p_hedge", "realized_invest_periods",
+         _pack({"value_type": "str", "data": ["p2035", "p2040"]}, "array"), "invest_none"],
         # ---- storage: a stochastic-group storage node (T-S) ------------
         # ``resv`` is a storage node in ``stoch_g`` (via group__node), so
         # under recourse mid-horizon the dispatch NA net-charge pinning

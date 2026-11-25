@@ -282,9 +282,14 @@ def _unit(data: dict, name: str, cost: float, extra: dict, reserve: bool) -> Non
 def _reserve_variant(demand: float, cf: dict, units) -> "callable":
     """``w4b_reserve_dispatch.json`` with its peaker (an investment) replaced by *units*
     ``(name, cost, extra, reserve)``,
-    demand *demand* MW, reservation 30 MW and a stochastic wind CF per branch (*cf*)."""
+    demand *demand* MW, reservation 30 MW and a stochastic wind CF per branch (*cf*).  With nothing to invest in,
+    the solve is made a dispatch solve (no invest periods) solved ``within_solve``: its forecasts are tied over the
+    committed window, and its realization pins what a dispatch solve's realization pins (an investment solve's
+    operations branch at the reveal, so its realization has no tied commitment to keep)."""
     def mutate(data: dict) -> None:
-        _drop_separate_dispatch(data)
+        data["parameter_values"] = [r for r in data["parameter_values"] if not (
+            r[0] == "solve" and r[2] in ("invest_periods", "realized_invest_periods", "dispatch_realization_method"))]
+        data["parameter_values"].append(["solve", PARENT, "dispatch_realization_method", _enc("within_solve"), "init"])
         t0 = json.loads(T0_FIXTURE.read_text(encoding="utf-8"))
         wprof = next(r for r in t0["parameter_values"] if r[1] == "wprof" and r[2] == "profile")
         data["entities"] = [e for e in data["entities"] if "peaker" not in json.dumps(e[1])]
@@ -460,13 +465,14 @@ def _config(**over):
         stochastic_branches={"p": [["d1", "rlz", "t0001", "yes", 0.0], ["d1", "a", "t0001", "no", 1.0]]},
         realized_periods=defaultdict(list, {"p": [("d1", "d1")]}),
         timesets_used_by_solves={"p": [("d1", "ts")]}, solve_period_years_represented={},
-        stochastic_invest_method={},
+        invest_solve_branching_method={}, deterministic_branches={},
         dispatch_realization_method={}, fix_storage_periods={}, realized_dispatch_parent={},
         reduce_unit_detail_method={}, reduce_system_detail_method={},
     )
     for k, v in over.items():
         setattr(cfg, k, v)
-    for name in ("dispatch_realization_method_for", "stochastic_invest_method_for", "register_realization_solve",
+    for name in ("dispatch_realization_method_for", "invest_branching_method_for", "recourse_invest",
+                 "register_realization_solve",
                  "spawn_realized_dispatch_sibling", "realization_reader_values", "realization_window",
                  "reduce_detail_overridden", "_reduce_detail_for",
                  "reduce_unit_detail_for", "reduce_system_detail_for"):
@@ -514,14 +520,15 @@ def test_configured_solve_missing_the_fan_period_is_not_registered() -> None:
     assert cfg.model_solve["m"] == ["p", "p__realized_dispatch", "q"]
 
 
-def test_recourse_designation_warns_and_adds_nothing(caplog) -> None:
-    """Under recourse there is no realized post-reveal investment to fix: a warning, no realization solve."""
+def test_branched_investment_designation_warns_and_adds_nothing(caplog) -> None:
+    """Under ``investments_at_reveal_period`` with the reveal at the solve's first period (d1) every forecast
+    invests on its own: there is no realized investment to fix, so a warning and no realization solve."""
     from flextool.engine.solve._orchestration import _spawn_realized_dispatch_siblings
-    cfg = _config(stochastic_invest_method={"p": "recourse"})
+    cfg = _config(invest_solve_branching_method={"p": "investments_at_reveal_period"})
     with caplog.at_level(logging.WARNING, logger="flextool.engine.solve._realization"):
         _spawn_realized_dispatch_siblings(cfg, _Reader(), logger=None)
     assert cfg.realized_dispatch_parent == {}
-    assert any("recourse" in r.getMessage() for r in caplog.records)
+    assert any("invest_solve_branching_method" in r.getMessage() for r in caplog.records)
 
 
 @pytest.mark.parametrize("nesting", ["parent", "child"])
@@ -684,7 +691,8 @@ def test_designation_leaves_the_stochastic_lp_unchanged(tmp_path_factory, design
 
 @pytest.mark.solver
 def test_recourse_label_has_no_investment(tmp_path_factory) -> None:
-    """Under recourse a period label invests nothing here-and-now: ``stoch_two_period_invest`` has no ``v_invest``
+    """Under ``investments_at_reveal_period`` with the reveal at the first period (the fixture's ``recourse``
+    alternative) a period label invests nothing here-and-now: ``stoch_two_period_invest`` has no ``v_invest``
     column at p2035 / p2040, only at the forecast branch periods, and the objective is the hand calculation of
     ``build_stoch_two_period_invest.py``: with the annuity 1000 CUR/MW per year (invest_cost 1 CUR/kW, discount_rate
     0.05, lifetime 1: 1000·0.05 / (1 − 1.05^−1) / 1.05, paid at the start of the year) the branching periods'
@@ -700,9 +708,9 @@ def test_recourse_label_has_no_investment(tmp_path_factory) -> None:
 
 @pytest.mark.solver
 def test_recourse_shared_investment_ties_forecasts_to_each_other(tmp_path_factory) -> None:
-    """``hedge_na_window`` (recourse, fan at p2035, shared_invest_periods p2035): the shared-investment window ties
-    the forecasts in the forecast star of each window period, members − 1 rows per entity and window period, never a
-    forecast to the period label (which has no investment column under recourse)."""
+    """``hedge_na_window`` (``investments_after_reveal_period``, fan at p2035): the reveal period's investment ties
+    the forecasts in the forecast star of p2035, members − 1 rows per entity, never a forecast to the period label
+    (which has no investment column when the investments branch)."""
     tmp = tmp_path_factory.mktemp("label_recourse_na")
     steps, mps = _run(HEDGE, tmp, scenario="hedge_na_window", capture_mps=True)
     (solve,) = [s for s in steps if not is_realization(s)]
@@ -731,6 +739,9 @@ def _rolling_hedge(data: dict) -> None:
         if sa[0] == "hedge_storage" and sa[1] == "storage" and sa[2] is None:
             sa[2] = "roll"
     data["scenario_alternatives"].append(["hedge_storage", "roll", None])
+    # A rolling solve is a dispatch solve: invest_solve_branching_method is refused on it.
+    data["parameter_values"] = [r for r in data["parameter_values"]
+                                if not (r[0] == "solve" and r[2] == "invest_solve_branching_method")]
 
     def enc(value, kind):
         return [base64.b64encode(json.dumps(value).encode()).decode(), kind]
@@ -747,8 +758,7 @@ def _rolling_hedge(data: dict) -> None:
         ["profile", "wprof", "profile", enc(profile, "map"), "roll"],
         ["solve", "stoch_2p_hedge", "solve_mode", enc("rolling_window", "str"), "roll"],
         ["solve", "stoch_2p_hedge", "rolling_solve_horizon", enc(4.0, "float"), "roll"],
-        ["solve", "stoch_2p_hedge", "rolling_solve_jump", enc(3.0, "float"), "roll"],
-        ["solve", "stoch_2p_hedge", "stochastic_invest_method", enc("none", "str"), "roll"]]
+        ["solve", "stoch_2p_hedge", "rolling_solve_jump", enc(3.0, "float"), "roll"]]
 
 
 def _rolling_hedge_online(data: dict) -> None:
@@ -917,14 +927,6 @@ def _flowgroup_path(invest_method: str):
 
 
 
-def _rolling_online_only_free(data: dict) -> None:
-    """:func:`_rolling_online_only` with ``shared_operation_periods = []``: nothing is tied, units online included."""
-    _rolling_online_only(data)
-    data["parameter_values"].append(["solve", "stoch_rd", "shared_operation_periods",
-                                     [base64.b64encode(json.dumps({"value_type": "str", "data": []}).encode()).decode(),
-                                      "array"], "init"])
-
-
 def _w3(solve: str) -> str:
     return (f"Solve '{solve}' is a rolling stochastic solve with dispatch_realization_method within_solve, but its "
             "stochastic_branches have no branch with realized: yes. Since FlexTool 4.7.0 such a solve dispatches "
@@ -945,17 +947,15 @@ def _w3(solve: str) -> str:
      "1_week_rolling_wind", "1week_rolling"),
     ("t0", "rolling_online_only", _rolling_online_only, "stoch_t0_commit", "stoch_rd"),
     ("t0", "rolling_online_only_min_uptime", _rolling_online_only_min_uptime, "stoch_t0_commit", "stoch_rd"),
-    ("t0", "rolling_online_only_free", _rolling_online_only_free, "stoch_t0_commit", "stoch_rd"),
 ], ids=["lookahead_fan_storage", "lookahead_fan_online", "lookahead_fan_period_carry", "committed_storage",
-        "committed_co2_period_cap", "committed_annual_ladder", "committed_online", "committed_min_uptime",
-        "committed_online_untied"])
+        "committed_co2_period_cap", "committed_annual_ladder", "committed_online", "committed_min_uptime"])
 def test_rolling_forecasts_only_within_solve_stops(tmp_path_factory, fixture, name, mutate, scenario,
                                                    solve) -> None:
     """W3 (design rev 7.1 §2.6, §8.2 T-w4): since 4.7.0 a rolling stochastic ``within_solve`` solve realizes each
     jump on its ``realized: yes`` branch, so a forecasts-only fan stops the run before any roll, whether the fan is
     only in a roll's look-ahead (``hedge_storage`` rolling, fan at t0004) or each roll commits its jump inside it
     (``1_week_rolling_wind`` with every branch a forecast; ``stoch_t0_commit`` rolling, horizon 2 / jump 1) and
-    whatever the committed families (storage, CO2 period cap, annual ladder, units online tied or not).  Before,
+    whatever the committed families (storage, CO2 period cap, annual ladder, units online).  Before,
     these ran a roll-start fan (and the committed-window checks stopped the ones that left a carry undecided)."""
     from flextool.engine.input._solve_state import FlexToolConfigError
     tmp = tmp_path_factory.mktemp(f"w3_{name}")

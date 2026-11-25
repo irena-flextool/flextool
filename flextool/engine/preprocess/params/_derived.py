@@ -190,7 +190,7 @@ _RECOURSE_ANCHOR_PAIRS: "pl.DataFrame | None" = None
 # Boundary-scoped Provider (+ its workdir, which the canonical readers need
 # to key the Provider path) for the period walks' year / factor arms.  Set at
 # each Layer-4 boundary alongside the anchor pairs whenever the solve has a
-# stochastic fan (branch periods), under every ``stochastic_invest_method``,
+# stochastic fan (branch periods), under every ``invest_solve_branching_method``,
 # so ``period_walk_iterator`` and ``_existing._solve_walk_years`` read the
 # canonical ``p_years_d.csv`` / ``p_years_represented.csv`` arms, which give
 # each branch period the years of its period label, WITHOUT threading
@@ -242,7 +242,7 @@ def _fan_branch_pairs(
     provider: "object | None" = None,
 ) -> "pl.DataFrame | None":
     """(anchor, br) pairs of the solve's in-use synthetic branch periods,
-    under every ``stochastic_invest_method``; ``None`` without any.
+    under every ``invest_solve_branching_method``; ``None`` without any.
 
     Mirrors :func:`_expand_branch_periods`' acquisition (ctx-first, then
     provider/workdir ``period__branch`` + ``period_in_use``); keeps only
@@ -323,7 +323,7 @@ def _enter_recourse_anchor_scope(
     per-period producer OR walker runs.  Overwrites unconditionally (to
     ``None`` when flag-off) so no stale value from a prior solve can leak.
     Also arms the boundary-scoped walker Provider whenever the solve has
-    branch periods (any ``stochastic_invest_method``) or is under recourse,
+    branch periods (any ``invest_solve_branching_method``) or its investments branch,
     so every period walk gives a branch period its label's years; the
     anchor pairs stay recourse-only.
     """

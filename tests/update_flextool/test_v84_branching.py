@@ -32,7 +32,8 @@ from spinedb_api import Array, DatabaseMapping, Map, to_database
 
 from flextool.engine.input._solve_config import INVEST_SOLVE_BRANCHING_METHODS
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
-from flextool.update_flextool import db_migration as m
+from flextool.update_flextool import db_migration as dm
+from flextool.update_flextool import v84_branching as m
 from flextool.update_flextool.db_migration import migrate_database
 
 AFTER = "investments_after_reveal_period"
@@ -211,7 +212,7 @@ def test_step_converts_lists_and_removes(v83_db: Path, tmp_path: Path) -> None:
         values = _solve_values(db)
         names = {d["name"] for d in db.get_items("parameter_definition", entity_class_name="solve")}
         marker = [md for md in db.get_items("metadata")
-                  if md["name"] == m.BEHAVIOUR_CHANGE_MARKER_PREFIX + m.V84_MARKER]
+                  if md["name"] == dm.BEHAVIOUR_CHANGE_MARKER_PREFIX + m.V84_MARKER]
     assert values["invest_solve_branching_method"] == AFTER
     assert "dispatch_realization_method" not in values
     assert not names & set(m._V84_OLD_PARAMETERS)
@@ -235,8 +236,8 @@ def test_head_refresh_adds_the_missing_v84_definition(v83_db: Path, tmp_path: Pa
                                name="invest_solve_branching_method")
         db.remove_item("parameter_definition", pdef["id"])
         db.commit_session("a database at 84 without the v84 definition")
-    assert m._head_schema_missing_ro(path)
+    assert dm._head_schema_missing_ro(path)
     with contextlib.redirect_stdout(io.StringIO()):
         migrate_database(url)
-    assert not m._head_schema_missing_ro(path)
-    assert m._current_version_ro(path, None) == FLEXTOOL_DB_VERSION
+    assert not dm._head_schema_missing_ro(path)
+    assert dm._current_version_ro(path, None) == FLEXTOOL_DB_VERSION

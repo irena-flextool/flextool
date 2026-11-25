@@ -779,28 +779,6 @@ def test_fan_without_realization_reports_investment_and_existing_fixed_cost(tmp_
 FAN_LEAD_TIME = [["unit", "peaker", "construction_lead_time", b64(1.0, "float")]]
 
 
-def _assert_fan_investment(fan: dict[str, pd.DataFrame], built: dict[str, float], operating: dict[str, float]) -> None:
-    """The peaker's reported investment costs: ``built[d]`` MW decided in d (branch-weighted), operating in the
-    run periods after their start ``operating[d']`` MW.  Discounted: lifetime_technical 1 year, so every MW
-    operating in d is a plant of d: a new one (investment built[d] · 1000 · F_inv(d)) or the replacement of an
-    earlier build ((operating[d] − built[d]) · 1000 · F_inv(d)); the fixed cost invested in d = operating[d] ·
-    20 000 · F_ops(d); annualized: each event divided by F_inv(d) and operating[d] · 20 000 per year."""
-    discounted, annualized = fan["cost_unit_discounted__d"], fan["cost_unit_annualized__d"]
-    for d in ("p2035", "p2040"):
-        new = built.get(d, 0.0)
-        want_fix = operating[d] * FAN_FIXED * FAN_F_OPS[d]
-        row = _row(discounted, d, "peaker")
-        assert row["investment"] * MEGA == pytest.approx(new * FAN_ANNUITY * FAN_F_INV[d], rel=1e-7, abs=1e-6), d
-        assert row["replacement"] * MEGA == pytest.approx((operating[d] - new) * FAN_ANNUITY * FAN_F_INV[d],
-                                                          rel=1e-7, abs=1e-6), d
-        assert row["fixed cost invested"] * MEGA == pytest.approx(want_fix, rel=1e-7, abs=1e-6), d
-        row = _row(annualized, d, "peaker")
-        assert row["investment"] * MEGA == pytest.approx(new * FAN_ANNUITY, rel=1e-7, abs=1e-6), d
-        assert row["replacement"] * MEGA == pytest.approx((operating[d] - new) * FAN_ANNUITY, rel=1e-7, abs=1e-6), d
-        assert row["fixed cost invested"] * MEGA == pytest.approx(operating[d] * FAN_FIXED, rel=1e-7, abs=1e-6), d
-    _assert_fan_reports_no_operations(fan)
-
-
 @pytest.mark.solver
 def test_fan_without_realization_reports_lead_time_investment(tmp_path_factory) -> None:
     """The fan of :func:`test_fan_without_realization_reports_investment_and_existing_fixed_cost` with a
@@ -827,41 +805,28 @@ def test_fan_without_realization_reports_lead_time_investment(tmp_path_factory) 
 
 
 @pytest.mark.solver
-@pytest.mark.parametrize("lead_time", [False, True], ids=["no_lead_time", "lead_time"])
-def test_recourse_fan_reports_the_branch_weighted_investment(tmp_path_factory, lead_time) -> None:
-    """The fan under ``stochastic_invest_method = recourse``: each forecast decides its own investment, and the
-    reported investment costs are each branch's investment weighted by its branch weight (high 0.25, low 0.75),
-    at the label of the period the capacity starts to operate in.
+def test_after_reveal_fan_reports_the_shared_reveal_period_investment(tmp_path_factory) -> None:
+    """The fan under ``invest_solve_branching_method = investments_after_reveal_period`` (alternative
+    ``after_reveal``: realized periods [p2035]): the reveal period's investment is one decision of both forecasts,
+    the p2040 investments are per forecast and are not realized.
 
-    No lead time: each branch builds its p2035 deficit in p2035 and adds the rest of its p2040 deficit in p2040
-    (cheaper there: no p2035 annuity or fixed cost): high 60 + 30, low 80 + 40 MW.  Weighted: p2035
-    0.25 · 60 + 0.75 · 80 = 75 MW (operates in p2035 and p2040), p2040 0.25 · 30 + 0.75 · 40 = 37.5 MW;
-    operating 75 MW in p2035 and 112.5 MW in p2040.
-
-    Lead time of 1 year: only p2035 decisions are offered, and they start in p2040; nothing operates in p2035,
-    so each branch builds its p2040 deficit: high 90, low 120 MW.  Weighted: 0.25 · 90 + 0.75 · 120 = 112.5 MW
-    decided in p2035, reported at p2040 with F_inv / F_ops of p2040 only; operating 112.5 MW in p2040.
-
-    Before: no investment cost was reported under recourse (the branch investment was not in the outputs)."""
-    values = FAN_VALUES + (FAN_LEAD_TIME if lead_time else [])
-    fan = _results(tmp_path_factory, f"stoch_recourse_{lead_time}", values, ["init", "base", "stoch", "recourse"],
+    The p2035 deficits are 60 (high) / 80 (low) MW at penalty 1e4 per MWh, far above a MW's yearly annuity 1000 and
+    fixed cost 20 000, so the shared p2035 build covers the larger one: 80 MW.  Its weights 0.25 + 0.75 sum to 1,
+    so the reported cost is the unweighted amount: investment 80 · 1000 · F_inv(p2035), fixed cost invested
+    80 · 20 000 · F_ops(p2035); annualized 80 · 1000 and 80 · 20 000.  The fixed cost of the existing wind is
+    reported in p2035.  Under ``investments_at_reveal_period`` with the reveal at the first period every
+    investment is per forecast and none is realized (``test_recourse_invest_gate``)."""
+    fan = _results(tmp_path_factory, "stoch_after_reveal", FAN_VALUES, ["init", "base", "stoch", "after_reveal"],
                    fixture_json=FAN_JSON)
-    if lead_time:
-        discounted = fan["cost_unit_discounted__d"]
-        assert _row(discounted, "p2035", "peaker")["investment"] == pytest.approx(0.0, abs=1e-12)
-        second = _row(discounted, "p2040", "peaker")
-        assert second["investment"] * MEGA == pytest.approx(112.5 * FAN_ANNUITY * FAN_F_INV["p2040"], rel=1e-7)
-        assert second["fixed cost invested"] * MEGA == pytest.approx(112.5 * FAN_FIXED * FAN_F_OPS["p2040"],
-                                                                     rel=1e-7)
-        annualized = fan["cost_unit_annualized__d"]
-        for d, mw in {"p2035": 0.0, "p2040": 112.5}.items():
-            row = _row(annualized, d, "peaker")
-            assert row["investment"] * MEGA == pytest.approx(mw * FAN_ANNUITY, rel=1e-7, abs=1e-6), d
-            assert row["fixed cost invested"] * MEGA == pytest.approx(mw * FAN_FIXED, rel=1e-7, abs=1e-6), d
-        _assert_fan_reports_no_operations(fan)
-    else:
-        _assert_fan_investment(fan, built={"p2035": 75.0, "p2040": 37.5}, operating={"p2035": 75.0,
-                                                                                      "p2040": 112.5})
+    discounted = fan["cost_unit_discounted__d"]
+    first = _row(discounted, "p2035", "peaker")
+    assert first["investment"] * MEGA == pytest.approx(80.0 * FAN_ANNUITY * FAN_F_INV["p2035"], rel=1e-7)
+    assert first["fixed cost invested"] * MEGA == pytest.approx(80.0 * FAN_FIXED * FAN_F_OPS["p2035"], rel=1e-7)
+    assert _row(discounted, "p2035", "wind")["fixed cost pre-existing"] * MEGA == pytest.approx(
+        100.0 * 10.0e3 * FAN_F_OPS["p2035"], rel=1e-7)
+    annualized = _row(fan["cost_unit_annualized__d"], "p2035", "peaker")
+    assert annualized["investment"] * MEGA == pytest.approx(80.0 * FAN_ANNUITY, rel=1e-7)
+    assert annualized["fixed cost invested"] * MEGA == pytest.approx(80.0 * FAN_FIXED, rel=1e-7)
 
 
 # ---------------------------------------------------------------------------

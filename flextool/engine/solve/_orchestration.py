@@ -2210,7 +2210,8 @@ def _spawn_realized_dispatch_siblings(
       realization solve (``configured_realization_solve``) has that solve
       registered (``SolveConfig.register_realization_solve``);
     * otherwise a single_solve / rolling_window solve with
-      ``stochastic_invest_method = none`` whose ``realized: yes``
+      investments that do not branch (``invest_solve_branching_method``
+      ``operations_only``) whose ``realized: yes``
       designation reaches its committed window
       (``designation_reaches_committed_window``) gets the sibling too.  A
       designated recourse solve gets a warning and no sibling; a designated
@@ -3190,7 +3191,7 @@ def _drive_cascade(
             # periods would double-count exclusive branch futures — recourse
             # plan §4).  Flag-independent: it closes the today-untested
             # Benders x stochastics combination regardless of
-            # stochastic_invest_method.  The detector reads two FlexData
+            # invest_solve_branching_method.  The detector reads two FlexData
             # frames already in scope on ``data``.
             if _is_genuinely_stochastic(data):
                 raise FlexToolConfigError(

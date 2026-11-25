@@ -7885,28 +7885,19 @@
       "System data (elec demand + wind + investable base)"
     ],
     [
-      "freeops",
-      "shared_operation_periods = [] (operations free from t0)"
-    ],
-    [
       "init",
       "Model, solve and time structure"
     ],
     [
       "stoch",
-      "include_stochastics + branch-varying wind + t0 branches + stochastic-group storage (stochastic_invest_method=none)"
+      "include_stochastics + branch-varying wind + t0 branches + stochastic-group storage (investments shared)"
     ]
   ],
   "scenarios": [
     [
       "free_ops",
       false,
-      "shared_operation_periods = [] -> operations branch freely; shared invest, divergent v_state"
-    ],
-    [
-      "pinned_ops",
-      false,
-      "shared_operation_periods UNSET -> legacy window; storage NA pins v_state equal across branches (byte-parity guard)"
+      "Operations branch from the reveal (t0); shared invest, divergent v_state"
     ]
   ],
   "scenario_alternatives": [
@@ -7922,26 +7913,6 @@
     ],
     [
       "free_ops",
-      "stoch",
-      "freeops"
-    ],
-    [
-      "free_ops",
-      "freeops",
-      null
-    ],
-    [
-      "pinned_ops",
-      "init",
-      "base"
-    ],
-    [
-      "pinned_ops",
-      "base",
-      "stoch"
-    ],
-    [
-      "pinned_ops",
       "stoch",
       null
     ]

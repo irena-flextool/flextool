@@ -2,7 +2,8 @@
 at 83 (plan §0 "Head-step rules at 83", §7 V1b).
 
 Databases: the v82 schema (``v82_schema_db_url``: the bundled v25 template migrated to 82), the current schema
-(``schema_db_url``, at 83), v75b (``_rerun.build_v75b``) and ``tests.json`` data imported into the v82 schema; all
+(``schema_db_url``, at the head version 84, whose refresh also carries the v83 members and texts), v75b
+(``_rerun.build_v75b``) and ``tests.json`` data imported into the v82 schema; all
 built in ``tmp_path``.  Expected values come from the plan's rules: the members appended at the end in their plan order, the
 shipped default ``deterministic``, the description texts of plan §2 (``test_v83_startup_method.NEW``, copied from
 the plan), the hash of the empty-default names as ``list_default_restore.empty_hash`` defines it (sha1 of the sorted
@@ -118,7 +119,7 @@ def _assert_second_refresh_commits_nothing(url: str, values_before: dict) -> Non
             m._refresh_head_schema(db)
             db.commit_session("rerun")
     commits = _commit_count(url)
-    assert "already up-to-date at version 83" in _migrate(url)
+    assert f"already up-to-date at version {FLEXTOOL_DB_VERSION}" in _migrate(url)
     assert _commit_count(url) == commits
 
 
@@ -131,7 +132,7 @@ def test_v25_to_83_lists_defaults_and_texts(v82_schema_db_url: str, tmp_path: Pa
     url = _copy(v82_schema_db_url, tmp_path)
     _migrate(url)
     with DatabaseMapping(url) as db:
-        assert _definition(db, "model", "version")["parsed_value"] == 83.0
+        assert _definition(db, "model", "version")["parsed_value"] == FLEXTOOL_DB_VERSION
         assert [(d["entity_class_name"], d["name"]) for d in db.get_items("parameter_definition")
                 if "binary" in (d["description"] or "")] == []
         assert _members(db, "startup_methods") == STARTUP_MEMBERS
@@ -315,7 +316,7 @@ def test_part_b_record_stays_valid_across_the_upgrade(v82_schema_db_url: str, tm
     url = f"sqlite:///{case.path.resolve().as_posix()}"
     _migrate(url)
     with DatabaseMapping(url) as db:
-        assert _definition(db, "model", "version")["parsed_value"] == 83.0
+        assert _definition(db, "model", "version")["parsed_value"] == FLEXTOOL_DB_VERSION
     with contextlib.closing(sqlite3.connect(case.path)) as con:
         assert ldr.empty_shipped_defaults(con) == sorted(names)
         assert ldr.parse_part_b_record(con).empty == empty
