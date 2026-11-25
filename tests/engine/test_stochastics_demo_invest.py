@@ -51,19 +51,22 @@ REALIZATION = {"invest_operations_only": "invest_plan__realized_dispatch",
 Y2030 = ("t0001", "t0002", "t0003", "t0004")
 
 
-@pytest.fixture(scope="module")
-def runs(tmp_path_factory):
-    """``{scenario: (steps, coded warnings, output CSV folder)}``."""
+#: The solve that realizes the y2030 investment: the ``solve`` column of the capacity tables (docs/results.md).
+INVEST_SOLVE = {"invest_operations_only": "invest_plan", "invest_after_reveal_period": "invest_plan",
+                "invest_then_dispatch": "invest_first"}
+
+
+def _run(fixture: Path, folder: Path, scenarios) -> dict:
+    """``{scenario: (steps, coded warnings, output CSV folder)}`` of *scenarios* of the database of *fixture*."""
     from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
     from flextool.process_outputs.write_outputs import write_outputs
     from tests._support.coded_warnings import capture_coded
 
-    folder = tmp_path_factory.mktemp("stochastics_demo_invest")
-    url = scm.build_db(FIXTURE, folder)
+    url = scm.build_db(fixture, folder)
     out = {}
     with pytest.MonkeyPatch.context() as mp:
         mp.setenv("FLEXTOOL_AUTOSCALE_STRICT", "1")
-        for scenario in SCENARIOS:
+        for scenario in scenarios:
             work = folder / scenario
             work.mkdir()
             mp.chdir(work)
@@ -81,6 +84,12 @@ def runs(tmp_path_factory):
     return out
 
 
+@pytest.fixture(scope="module")
+def runs(tmp_path_factory):
+    """``{scenario: (steps, coded warnings, output CSV folder)}``."""
+    return _run(FIXTURE, tmp_path_factory.mktemp("stochastics_demo_invest"), SCENARIOS)
+
+
 def _invest(step) -> dict[str, float]:
     frame = step.solution.value("v_invest_p").filter(pl.col("p").cast(pl.Utf8) == "new_plant")
     return {str(d): v for d, v in frame.select("d", "value").rows()}
@@ -88,6 +97,17 @@ def _invest(step) -> dict[str, float]:
 
 def _csv(folder: Path, name: str) -> pl.DataFrame:
     return pl.read_csv(folder / name, infer_schema_length=0)
+
+
+def _capacity_rows(capacity: pl.DataFrame) -> list[tuple]:
+    """``(unit, solve, period, existing, invested, in_construction, divested, total)`` of each row of a
+    ``unit_capacity__d`` table; an empty cell is None."""
+    def number(value):
+        return None if value is None else float(value)
+
+    return [(r["unit"], r["solve"], r["period"], *(number(r[c]) for c in
+                                                    ("existing", "invested", "in_construction", "divested", "total")))
+            for r in capacity.iter_rows(named=True)]
 
 
 def test_solves(runs):
@@ -128,7 +148,9 @@ def test_adapting_later_is_worth_five_million(runs):
 
 @pytest.mark.parametrize("scenario", SCENARIOS)
 def test_reported_results_are_the_y2030_investment_and_dispatch(runs, scenario):
-    """The y2030 investment x1 is reported (cohort table and total capacity), y2035 is not (look-ahead); its yearly
+    """The y2030 investment x1 is reported (cohort table, and the capacity table's invested and total, under the
+    investment solve: under investments_after_reveal_period the decision is on the forecasts' copies of y2030,
+    tied to one value, and reported under the period label), y2035 is not (look-ahead); its yearly
     cost is x1 x 100 000 EUR and its cost over the 5 years of y2030 x1 x 500 000 EUR (M EUR in the tables); the
     realization dispatches 100 MW in each y2030 hour with no unserved energy, and nothing in y2035."""
     _steps, _got, csv = runs[scenario]
@@ -137,7 +159,8 @@ def test_reported_results_are_the_y2030_investment_and_dispatch(runs, scenario):
     assert [(r["kind"], r["period_online"], float(r["capacity"])) for r in cohorts.iter_rows(named=True)] \
         == [("invested", "y2030", x1)]
     capacity = _csv(csv, "unit_capacity__d.csv")
-    assert [(r["period"], float(r["total"])) for r in capacity.iter_rows(named=True)] == [("y2030", x1)]
+    assert _capacity_rows(capacity) == [("new_plant", INVEST_SOLVE[scenario], "y2030", 0.0, x1, None, None, x1)]
+    assert set(cohorts["solve"]) == {INVEST_SOLVE[scenario]}
     annual = _csv(csv, "annualized_costs__d.csv")
     assert [(r["period"], float(r["investment"])) for r in annual.iter_rows(named=True)] == [("y2030", x1 * 0.1)]
     discounted = {r["category"]: float(r["0"]) for r in _csv(csv, "costs_discounted.csv").iter_rows(named=True)}
@@ -151,13 +174,14 @@ def test_reported_results_are_the_y2030_investment_and_dispatch(runs, scenario):
 
 def test_dispatch_solve_starts_from_the_realized_investment(runs):
     """In invest_then_dispatch the dispatch solve invests nothing and dispatches y2030 on the 120 MW the investment
-    solve realized; its objective is 0 (no operating cost, no unserved energy)."""
+    solve realized; its objective is 0 (no operating cost, no unserved energy).  The capacity table names the
+    solve that realized the investment, invest_first, and reports its 120 MW as invested."""
     steps, _got, csv = runs["invest_then_dispatch"]
     for name in ("dispatch_2030", "dispatch_2030__realized_dispatch"):
         assert steps[name].solution.obj == pytest.approx(0.0, abs=1e-6), name
     capacity = _csv(csv, "unit_capacity__d.csv")
-    assert [(r["solve"], float(r["existing"]), float(r["total"])) for r in capacity.iter_rows(named=True)] \
-        == [("dispatch_2030__realized_dispatch", 0.0, 120.0)]
+    assert [(r["solve"], float(r["existing"]), float(r["invested"]), float(r["total"]))
+            for r in capacity.iter_rows(named=True)] == [("invest_first", 0.0, 120.0, 120.0)]
 
 
 def test_notices(runs):
@@ -169,3 +193,48 @@ def test_notices(runs):
         _steps, got, _csv_dir = runs[scenario]
         expected = {"W-0553"} | ({"W-0588"} if scenario == "invest_then_dispatch" else set())
         assert set(got.codes()) == expected, (scenario, got.codes())
+
+
+# --- a retirement in the reveal period --------------------------------------------------------------------------
+
+RETIRE_SCENARIOS = ("invest_operations_only", "invest_after_reveal_period")
+
+
+@pytest.fixture(scope="module")
+def retire_runs(tmp_path_factory):
+    """The investment scenarios with one more unit, ``old_plant`` -> town: 50 MW existing, retired at the start of
+    y2030 (``retire_period``, ``retire_min_period`` = ``retire_max_period`` = 50 MW in y2030, 0 in y2035), no costs.
+    It adds no capacity to any period, so the investments and objectives are those of the module docstring."""
+    import json
+
+    from tests.engine._unit_db import b64
+    from tests.engine.test_chain_costs import _period_map
+
+    folder = tmp_path_factory.mktemp("stochastics_demo_retire")
+    data = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    data["entities"] += [["unit", "old_plant", None], ["unit__outputNode", ["old_plant", "town"], None]]
+    data["entity_alternatives"].append(["unit", ["old_plant"], "invest_demo", True])
+    retire = _period_map({"y2030": 50.0, "y2035": 0.0})
+    for par, value in (("existing", b64(50.0, "float")), ("efficiency", b64(1.0, "float")),
+                       ("virtual_unitsize", b64(1.0, "float")), ("invest_method", b64("retire_period", "str")),
+                       ("retire_min_period", retire), ("retire_max_period", retire)):
+        data["parameter_values"].append(["unit", "old_plant", par, value, "invest_demo"])
+    fixture = folder / "stochastics_retire.json"
+    fixture.write_text(json.dumps(data), encoding="utf-8")
+    return _run(fixture, folder, RETIRE_SCENARIOS)
+
+
+@pytest.mark.parametrize("scenario", RETIRE_SCENARIOS)
+def test_reveal_period_retirement_is_reported(retire_runs, scenario):
+    """The 50 MW retired in y2030 are reported as divested in y2030 under the investment solve, with nothing in
+    service after (total 0); under investments_after_reveal_period the retirement, like the investment, is on the
+    forecasts' copies of y2030 and is reported under the period label.  new_plant is unchanged."""
+    steps, _got, csv = retire_runs[scenario]
+    x1 = X1[scenario]
+    assert steps["invest_plan"].solution.obj == pytest.approx(
+        x1 * K1 + (0.5 * 40 * K2 if scenario == "invest_after_reveal_period" else 0.0), rel=1e-9)
+    rows = {r[0]: r for r in _capacity_rows(_csv(csv, "unit_capacity__d.csv"))}
+    assert rows["new_plant"] == ("new_plant", "invest_plan", "y2030", 0.0, x1, None, None, x1)
+    unit, solve, period, _existing, invested, in_construction, divested, total = rows["old_plant"]
+    assert (unit, solve, period, invested, in_construction, divested, total) \
+        == ("old_plant", "invest_plan", "y2030", None, None, 50.0, 0.0)

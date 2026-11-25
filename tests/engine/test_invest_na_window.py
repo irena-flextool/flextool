@@ -349,8 +349,10 @@ def test_recourse_fan_invest_marginals_stay_on_forecast_branches(tmp_path, monke
     assert by_period["p2040_low"] == pytest.approx(1000.0, rel=1e-6), duals
     # No 0-filled rows at the fan's period labels.
     assert not {"p2035", "p2040"} & set(by_period), duals
-    # Nothing is invested, and no marginal table of -0 rows with an empty solve label is written.
+    # The realized p2035 investment is the shared first stage, 60 MW on both forecasts' copies
+    # (test_main_invest_shared_first_stage), reported under the period label; no marginal table of -0 rows with an
+    # empty solve label is written.
     csv_dir = wf / "output_csv" / "out"
     capacity = pl.read_csv(csv_dir / "unit_capacity__d.csv").filter(pl.col("unit") == "base")
-    assert capacity["invested"].null_count() == capacity.height, capacity
+    assert capacity.select("solve", "period", "invested").rows() == [(SOLVE, "p2035", 60)], capacity
     assert not (csv_dir / "unit_invest_marginal__d.csv").exists()

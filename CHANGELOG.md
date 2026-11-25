@@ -10,6 +10,15 @@
   solve followed by a dispatch solve (`invest_operations_only`, `invest_after_reveal_period`,
   `invest_then_dispatch`). The other scenarios of the database are unchanged.
 
+### Fixes
+
+- **Capacity tables under `investments_after_reveal_period`.** The investment and the retirement of the reveal
+  period were missing from the `invested` and `divested` columns of `unit_capacity__d`, `connection_capacity__d`
+  and `node_capacity__d` (`total` was right); they are now reported under the period label, as the costs already
+  were. The `solve` column of the capacity, cohort capacity, retirement and capacity-margin tables now names the
+  investment solve, as for the other settings, instead of the dispatch solve. The model and its solution are
+  unchanged.
+
 ## Release 4.7.0 (24.11.2026) — stochastic realization: rolling `within_solve` realizes each jump in one solve, `separate_dispatch` realization looks ahead, `deterministic` default; `startup_method` `_fix_in_uc` members; `minimum_time_method` gates min up / down times; outages end carried obligations; rounded carried units online; one branching setting for stochastic investment solves (schema v84)
 
 Input databases move to data version 84. The FlexTool window, the Spine Toolbox workflow and `flextool-run
