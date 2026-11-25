@@ -1244,13 +1244,14 @@ def _write_charge_limit(db: DatabaseMapping, charger: str, storage_node: str, ef
                         counters: _Counters, *, sensitivity: bool = False) -> None:
     """FT2 limits the grid-side charge to the unit capacity (``flexModel.mod`` 639-645, ``v_charge <= capacity``); a
     FlexTool unit's capacity is on its output (storage) side, so the charger's output gets ``capacity_max_coeff`` =
-    ``eff charge``: storage-side flow <= eff charge x capacity, grid-side <= capacity.  Its ramp limit is then on
-    the grid side too, as FT2's (680-698).  A ``sensitivity`` writes 1 for an ``eff charge`` of 1 or more, over
-    the base's coefficient."""
-    below_one = isinstance(eff_charge, (int, float)) and 0 < eff_charge < 1
-    if below_one or sensitivity:
-        _add_param(db, "unit__outputNode", (charger, storage_node), "capacity_max_coeff",
-                   float(eff_charge) if below_one else 1.0, alt_name, counters)
+    ``eff charge`` (below or above 1): storage-side flow <= eff charge x capacity, grid-side <= capacity.  Its ramp
+    limit is then on the grid side too, as FT2's (680-698).  An ``eff charge`` of 1 needs none, but a
+    ``sensitivity`` writes it over the base's coefficient."""
+    if not isinstance(eff_charge, (int, float)) or eff_charge <= 0:
+        return
+    if eff_charge != 1 or sensitivity:
+        _add_param(db, "unit__outputNode", (charger, storage_node), "capacity_max_coeff", float(eff_charge),
+                   alt_name, counters)
 
 
 def _write_storage_units(
@@ -3878,6 +3879,15 @@ def write_sensitivities_to_db(
 
         counters.unmapped.extend(
             _sensitivity_invested_capacity_items(sensitivities, data))
+        unit_only = sorted({f"{ov.entity_ids.get('unittype')}_{ov.entity_ids.get('output node')} "
+                            f"'{ov.param_name}' [{name}]"
+                            for name, overrides in sensitivities.items() for ov in overrides
+                            if ov.section == "units" and _norm_key(ov.param_name) in ("min load", "efficiency")})
+        if unit_only:
+            counters.assumptions.append(
+                f"Sensitivities of 'min load' or 'efficiency' on the units sheet ({', '.join(unit_only)}): "
+                "FlexTool 2 reads these only from unit_type, so it ignored them; FlexTool 4 applies them to the "
+                "unit (a min load with its online variables and start-ups, as a unit_type min load).")
         if _get_master_param(data, "mode invest") != 1:
             invest_scenarios = [name for name, overrides in sensitivities.items()
                                 if any(ov.section == "master" and _norm_key(ov.param_name) == "mode invest"

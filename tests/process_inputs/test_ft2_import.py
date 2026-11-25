@@ -1451,3 +1451,74 @@ def test_report_says_online_stays_in_the_investment_solve(tmp_path: Path) -> Non
     xlsm = write_workbook(tmp_path / "model.xlsx", ft2_sheets())
     report = import_old_flextool_xlsm(str(xlsm), f"sqlite:///{tmp_path / 'm.sqlite'}", strict=True)
     assert any("investment solve" in note and "coal_nodeA" in note for note in report.assumptions)
+
+
+@pytest.mark.solver
+def test_charging_with_eff_charge_above_one(
+    test_solver_config_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``eff charge`` 3 on a 10 MW battery: FT2 charges 10 MW from the grid (flexModel.mod 639-645) and stores
+    30 MWh.  Demand 10 MW for 4 h; pv 100 MW with cf 1 / 0 / 0 / 0; gas 50 MW at 20 per MWh; storage 100 MWh,
+    efficiency 1, wrapping.  At t0000 the battery takes 10 MW and stores 30 MWh, then gives 10 MW in each of the
+    next 3 h, so gas makes nothing.  Without the coefficient the storage side was capped at 10 MW, the grid side
+    at 3.3 MW: 10 MWh stored, gas 20 MWh."""
+    import polars as pl
+
+    sheets = _dispatch_sheets(
+        [10, 10, 10, 10], [1, 0, 0, 0],
+        [_PV_TYPE, _unit_type("gas", efficiency=1, availability=1),
+         _unit_type("battery", **{"efficiency": 1, "eff charge": 3, "availability": 1})],
+        [_PV_UNIT, _unit(**{"unit type": "gas", "fuel": "gas", "output grid": "elec", "output node": "nodeA",
+                            "capacity (MW)": 50}),
+         _unit(**{"unit type": "battery", "output grid": "elec", "output node": "nodeA",
+                  "capacity (MW)": 10, "storage (MWh)": 100})])
+    xlsm = write_workbook(tmp_path / "model.xlsx", sheets)
+    url = f"sqlite:///{tmp_path / 'model.sqlite'}"
+    import_old_flextool_xlsm(str(xlsm), url, strict=True)
+    work = tmp_path / "run"
+    work.mkdir()
+    raw = _solve(url, test_solver_config_dir, work, monkeypatch)
+    flow = pl.read_parquet(raw / "v_flow__dispatch.parquet")
+    stored = flow["('battery_nodeA_charger', 'nodeA', 'battery_nodeA_storage')"] * 10
+    discharged = flow["('battery_nodeA_discharger', 'battery_nodeA_storage', 'nodeA')"] * 10
+    gas = flow["('gas_nodeA', 'gas_market', 'nodeA')"] * 50
+    assert stored.to_list() == pytest.approx([30.0, 0.0, 0.0, 0.0], abs=1e-6)
+    assert discharged.to_list() == pytest.approx([0.0, 10.0, 10.0, 10.0], abs=1e-6)
+    assert gas.to_list() == pytest.approx([0.0] * 4, abs=1e-6)
+
+
+def test_units_sheet_min_load_sensitivity_is_applied(tmp_path: Path) -> None:
+    """FT2 reads min load only from unit_type (flexModel.mod 187-189 use ``p_unittype``), so it ignores a units-sheet
+    ``min load`` sensitivity; FlexTool 4 applies it (owner decision) under the same ``use online`` rule as a
+    unit_type min load: engine gets min_load 0.5, linear start-ups and constant_efficiency, and the report says FT2
+    ignored it."""
+    xlsm = write_workbook(tmp_path / "model.xlsx", ft2_sheets())
+    master = write_workbook(tmp_path / "flexTool.xlsx", {"Sensitivity definitions": [
+        ["Scenario definitions units:", "Sheet", "unittype", "output node", "min load"],
+        ["UnitMinLoad", "units", "engine", "nodeA", 0.5], []]})
+    url = f"sqlite:///{tmp_path / 'model.sqlite'}"
+    report = import_old_flextool_xlsm(str(xlsm), url, master=str(master), strict=True)
+    assert not report.failed
+    key = (("engine_nodeA",), "UnitMinLoad")
+    assert _values(url, "unit", "min_load")[key] == 0.5
+    assert _values(url, "unit", "startup_method")[key] == "linear"
+    assert _values(url, "unit", "conversion_method")[key] == "constant_efficiency"
+    assert any("ignored them" in note and "engine_nodeA" in note for note in report.assumptions)
+
+
+def test_formula_scan_skips_a_workbook_excel_calculated(tmp_path: Path) -> None:
+    """Excel writes ``xl/calcChain.xml`` whenever it saves formulas with their values; openpyxl never does.  The
+    same uncached formula is reported without it and not with it."""
+    import zipfile
+
+    from flextool.process_inputs.read_old_flextool import uncached_formulas
+
+    plain = write_workbook(tmp_path / "plain.xlsx", {"gridNode": [["grid", "demand (MWh)"], ["elec", "=2*3"]]})
+    assert [c.cell for c in uncached_formulas(str(plain), ["gridNode"])] == ["B2"]
+    calculated = tmp_path / "calculated.xlsx"
+    with zipfile.ZipFile(plain) as source, zipfile.ZipFile(calculated, "w") as target:
+        for item in source.infolist():
+            target.writestr(item, source.read(item.filename))
+        target.writestr("xl/calcChain.xml", '<calcChain xmlns="http://schemas.openxmlformats.org/'
+                        'spreadsheetml/2006/main"><c r="B2" i="1"/></calcChain>')
+    assert uncached_formulas(str(calculated), ["gridNode"]) == []

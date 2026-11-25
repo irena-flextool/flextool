@@ -8,7 +8,9 @@
   minimum load, start-ups or `min_load_efficiency`: FlexTool 2 has no online variables then and ignores `eff at min
   load`. A sensitivity of `min load`, `eff at min load`, `efficiency`, `startup cost`, `min uptime (h)`, `min
   downtime (h)` or `use online` now sets the unit's online parameters to match (before, a `min load` sensitivity on
-  a unit without a base min load had no effect, and min up / down time sensitivities were not translated).
+  a unit without a base min load had no effect, and min up / down time sensitivities were not translated). A `min
+  load` or `efficiency` sensitivity on the units sheet is applied to the unit the same way, although FlexTool 2
+  ignored it (it reads them only from unit_type); the import report says so.
 - **FlexTool 2 import: online variables in the investment solve.** FlexTool 2 leaves online variables, minimum
   load, start-ups and reserves out of its investment run; FlexTool 4 keeps them in the investment solve, so the
   investments take them into account. The import report now says so and names the units and reserves.
@@ -17,7 +19,8 @@
 - **FlexTool 2 import: storage fixed cost.** A storage unit's `fixed cost/kW/year` was dropped; it now goes to the
   discharger, which carries the unit's capacity and investment.
 - **FlexTool 2 import: charging capacity.** The charger could draw capacity / `eff charge` from the grid; its output
-  now has `capacity_max_coeff` = `eff charge`, so the grid-side charge is limited to the capacity, as in FlexTool 2.
+  now has `capacity_max_coeff` = `eff charge` (any value other than 1, also above 1), so the grid-side charge is
+  limited to the capacity, as in FlexTool 2.
 - **FlexTool 2 import: node-level capacity margin and non-synchronous share.** The gridNode `capacity margin (MW)`
   and `non synchronous share` were dropped; they now go to a group `<node>_group` with that node. A gridNode
   sensitivity of either now lands on that group; before, it overwrote the values of the node's nodeGroups.

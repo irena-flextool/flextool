@@ -8,7 +8,10 @@ for database import.
 from __future__ import annotations
 
 import logging
+import posixpath
 import re
+import zipfile
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from itertools import zip_longest
 from typing import Any
@@ -1210,11 +1213,39 @@ def _is_template_annuity(sheet: str, header: str | None, formula: str, row: int,
     return int(life_row) == row == int(interest_row) and head(lifetime) == "lifetime" and head(interest) == "interest"
 
 
+_PACKAGE_RELS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+_FORMULA_ELEMENT = re.compile(rb"<(?:\w+:)?f[ >/]")
+
+
+def _sheets_with_formulas(file_path: str) -> set[str]:
+    """The sheets whose XML has a formula element; none when the package has ``xl/calcChain.xml``.  Excel writes
+    the calculation chain whenever it saves a workbook with formulas, with their values; openpyxl (and so a
+    script) never writes it.  Reads only the zip, not the cells."""
+    with zipfile.ZipFile(file_path) as package:
+        names = set(package.namelist())
+        if "xl/calcChain.xml" in names:
+            return set()
+        workbook = ET.fromstring(package.read("xl/workbook.xml"))
+        rels = ET.fromstring(package.read("xl/_rels/workbook.xml.rels"))
+        targets = {rel.get("Id"): rel.get("Target", "") for rel in rels}
+        found = set()
+        for sheet in workbook.iter("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}sheet"):
+            target = targets.get(sheet.get(_PACKAGE_RELS), "")
+            path = target.lstrip("/") if target.startswith("/") else posixpath.normpath(posixpath.join("xl", target))
+            if path in names and _FORMULA_ELEMENT.search(package.read(path)):
+                found.add(sheet.get("name"))
+        return found
+
+
 def uncached_formulas(file_path: str, sheets: list[str], values: Any = None) -> list[UncachedFormula]:
     """The formula cells of ``sheets`` without a stored value, which openpyxl (and so the reader) reads as empty:
     a workbook written by a script and never calculated in Excel has none.  Leaves out the formulas whose value
     FlexTool 4 does not need (:data:`_UNNEEDED_FORMULA_COLUMNS`, :func:`_is_template_annuity`).  ``values`` is
-    the workbook already open with ``data_only=True``, else it is opened here."""
+    the workbook already open with ``data_only=True``, else it is opened here.  Only the sheets with a formula
+    are walked (:func:`_sheets_with_formulas`), none in a workbook Excel calculated."""
+    sheets = [name for name in sheets if name in _sheets_with_formulas(file_path)]
+    if not sheets:
+        return []
     formulas = openpyxl.load_workbook(file_path, read_only=True, data_only=False)
     own = values is None
     if own:
