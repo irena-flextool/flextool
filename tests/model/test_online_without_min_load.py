@@ -64,7 +64,7 @@ def tmap(values: dict) -> list:
 
 
 def _chain(fixture_json: Path, scenario: str) -> list[str]:
-    rows = [r for r in json.loads(fixture_json.read_text())["scenario_alternatives"] if r[0] == scenario]
+    rows = [r for r in json.loads(fixture_json.read_text(encoding="utf-8"))["scenario_alternatives"] if r[0] == scenario]
     nxt = {a: b for _, a, b in rows}
     alt = next(a for a in nxt if a not in set(nxt.values()))
     chain = []
@@ -163,7 +163,7 @@ def _assert_floor_holds(step, unit: str, min_load: float) -> None:
 
 def _online(veh: str, method: str = "linear") -> list:
     u = UNIT[veh]
-    vals = [["unit", u, "startup_method", s("binary" if method == "binary" else "linear")]]
+    vals = [["unit", u, "startup_method", s("integer_fix_in_uc" if method == "integer_fix_in_uc" else "linear")]]
     if method == "min_uptime":
         vals += [["unit", u, "minimum_time_method", s("min_uptime")], ["unit", u, "min_uptime", scalar(3.0)]]
     return vals
@@ -182,7 +182,7 @@ def _mle(unit: str, *, eta_min: float | None = None, min_load: float | None = No
 # Online units without min_load
 
 
-@pytest.mark.parametrize("method", ["linear", "binary", "min_uptime"])
+@pytest.mark.parametrize("method", ["linear", "integer_fix_in_uc", "min_uptime"])
 @pytest.mark.parametrize("veh", VEHICLES)
 def test_online_without_min_load(tmp_path_factory, veh, method) -> None:
     """An online unit with no ``min_load`` anywhere builds and solves like the same model with ``min_load 0``.

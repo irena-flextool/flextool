@@ -116,7 +116,7 @@ def test_p_entity_divested_first_solve(tmp_path: Path) -> None:
         h, solve_name="s1", work_folder=work, flex_data=fd,
         is_first_solve=True, writer_state=OutputWriterState(), csv_dump=True,
     )
-    rows = list(csv.DictReader(open(work / "solve_data" / "p_entity_divested.csv")))
+    rows = list(csv.DictReader(open(work / "solve_data" / "p_entity_divested.csv", encoding="utf-8")))
     assert len(rows) == 2
     by_entity = {r["entity"]: float(r["p_entity_divested"]) for r in rows}
     assert by_entity == {"unit_a": 200.0, "unit_b": 0.0}
@@ -151,7 +151,7 @@ def test_p_entity_divested_second_solve_accumulates(tmp_path: Path) -> None:
         h, solve_name="s2", work_folder=work, flex_data=fd,
         is_first_solve=False, writer_state=writer_state, csv_dump=True,
     )
-    rows = list(csv.DictReader(open(work / "solve_data" / "p_entity_divested.csv")))
+    rows = list(csv.DictReader(open(work / "solve_data" / "p_entity_divested.csv", encoding="utf-8")))
     assert {r["entity"]: float(r["p_entity_divested"]) for r in rows} == {"unit_a": 250.0}
 
 
@@ -169,7 +169,7 @@ def test_p_entity_divested_prior_from_writer_state(tmp_path: Path) -> None:
         h1, solve_name="s1", work_folder=work, flex_data=fd,
         is_first_solve=True, writer_state=writer_state, csv_dump=True,
     )
-    rows = list(csv.DictReader(open(work / "solve_data" / "p_entity_divested.csv")))
+    rows = list(csv.DictReader(open(work / "solve_data" / "p_entity_divested.csv", encoding="utf-8")))
     assert {r["entity"]: float(r["p_entity_divested"]) for r in rows} == {"unit_a": 100.0}
 
     (work / "solve_data" / "p_entity_divested.csv").unlink()
@@ -179,7 +179,7 @@ def test_p_entity_divested_prior_from_writer_state(tmp_path: Path) -> None:
         h2, solve_name="s2", work_folder=work, flex_data=fd,
         is_first_solve=False, prior_handoff=None, writer_state=writer_state, csv_dump=True,
     )
-    rows = list(csv.DictReader(open(work / "solve_data" / "p_entity_divested.csv")))
+    rows = list(csv.DictReader(open(work / "solve_data" / "p_entity_divested.csv", encoding="utf-8")))
     assert {r["entity"]: float(r["p_entity_divested"]) for r in rows} == {"unit_a": 250.0}
 
 
@@ -213,7 +213,7 @@ def test_fix_storage_quantity_writes_only_for_target_method(tmp_path: Path) -> N
         h, solve_name="s1", work_folder=work, flex_data=fd,
         is_first_solve=True, writer_state=OutputWriterState(), csv_dump=True,
     )
-    rows = list(csv.DictReader(open(work / "solve_data" / "fix_storage_quantity.csv")))
+    rows = list(csv.DictReader(open(work / "solve_data" / "fix_storage_quantity.csv", encoding="utf-8")))
     assert {(r["period"], r["step"], r["node"], r["p_fix_storage_quantity"]) for r in rows} == {
         ("p2020", "t0001", "battery", "50"),  # 5 x 10
         ("p2020", "t0024", "battery", "70"),  # 7 x 10
@@ -286,7 +286,7 @@ def test_p_roll_continue_state_uses_last_realized_step(tmp_path: Path) -> None:
         h, solve_name="s1", work_folder=work, flex_data=fd,
         writer_state=OutputWriterState(), csv_dump=True,
     )
-    rows = list(csv.DictReader(open(work / "solve_data" / "p_roll_continue_state.csv")))
+    rows = list(csv.DictReader(open(work / "solve_data" / "p_roll_continue_state.csv", encoding="utf-8")))
     # Last (period, time) pair is (p2025, t0048); v_state=7.5 x 2 = 15.0.
     assert rows == [{"node": "battery", "p_roll_continue_state": "15"}]
 
@@ -321,7 +321,7 @@ def test_fix_storage_usage_net_flow_through_storage_node(tmp_path: Path) -> None
         h, solve_name="s1", work_folder=work, flex_data=fd,
         is_first_solve=True, writer_state=OutputWriterState(), csv_dump=True,
     )
-    rows = list(csv.DictReader(open(work / "solve_data" / "fix_storage_usage.csv")))
+    rows = list(csv.DictReader(open(work / "solve_data" / "fix_storage_usage.csv", encoding="utf-8")))
     assert rows == [{
         "period": "p2020", "step": "t0024",
         "node": "battery_node", "p_fix_storage_usage": "6",

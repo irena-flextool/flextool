@@ -72,7 +72,7 @@ def _ramps_dt(tmp_path_factory, alt: str, values: list, chain=("init", "west", "
 
 def _read_ramps(out) -> dict[tuple[str, str], float]:
     """``{(period, time): ramps}`` from ``costs__dt.csv`` in the CSV folder ``out``."""
-    with open(out / "costs__dt.csv", newline="") as fh:
+    with open(out / "costs__dt.csv", encoding="utf-8", newline="") as fh:
         rows = list(csv.DictReader(fh))
     return {(r["period"], r["time"]): float(r["ramps"]) for r in rows}
 
@@ -140,9 +140,9 @@ def test_both_directions_charged_first_step_free(tmp_path_factory) -> None:
     infl = float(utf8(fd.p_inflation_op.frame).filter(pl.col("d") == "p2020")["value"][0])
     share = float(utf8(fd.p_period_share.frame).filter(pl.col("d") == "p2020")["value"][0])
     assert step.solution.obj - without.solution.obj == pytest.approx(1200.0 * infl / share, rel=1e-6)
-    with open(out / "costs_discounted.csv", newline="") as fh:
+    with open(out / "costs_discounted.csv", encoding="utf-8", newline="") as fh:
         system = {r["category"]: float(r["0"]) for r in csv.DictReader(fh)}
-    with open(out / "cost_unit_discounted__d.csv", newline="") as fh:
+    with open(out / "cost_unit_discounted__d.csv", encoding="utf-8", newline="") as fh:
         unit = [r for r in csv.DictReader(fh) if r["unit"] == PLANT]
     discount = sum(system.values()) * 1e6 / step.solution.obj
     expected = 1200.0 * infl / share * discount / 1e6

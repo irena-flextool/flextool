@@ -19,7 +19,7 @@ Fixture (``tests/fixtures/stoch_realized_dispatch.json``, built by
 ``tests/fixtures/build_stoch_realized_dispatch.py``):
 
   * ``stoch_rd`` — GENUINELY stochastic, ``solve_mode=single_solve``
-    (fan-at-first), ``stochastic_invest_method`` at the DEFAULT ``none``
+    (fan-at-first), ``invest_solve_branching_method`` at the DEFAULT ``operations_only``
     (shared first-stage invest).  Three branches rlz/high/low with
     weights SUMMING TO 1.0 (0.25 / 0.375 / 0.375).  Invests a peaker to
     cover the per-step residual (60 MW).

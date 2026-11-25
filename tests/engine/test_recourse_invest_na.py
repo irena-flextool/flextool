@@ -6,9 +6,9 @@ Fixture ``stoch_two_period_invest_na.json`` (built via
 ``build_stoch_two_period_invest_na.py``): the proven ``stochastics.json``
 storage shape (``2_day_stochastic_dispatch``) extended with a
 ``recourse_na`` scenario that makes the stochastic-group storage node
-``hydro_reservoir`` investable under ``recourse``.  Unlike variant A the
-LP is NOT separable: a stochastic-group NODE fires the dispatch
-non-anticipativity net-charge pinning (``non_anticipativity_storage_use``).
+``hydro_reservoir`` investable under ``investments_after_reveal_period``.
+The stochastic-group NODE is tied in the dispatch solve, but not in this
+investment solve: its forecasts operate on their own from the reveal.
 """
 from __future__ import annotations
 
@@ -40,7 +40,8 @@ def _built(na_run):
     from polar_high import Problem
     from flextool.engine import build_flextool
 
-    data = load_scenario(na_run)
+    # The investment solve itself: its realized: yes branch adds the realization solve after it (the last step).
+    data = load_scenario(na_run, step=SOLVE)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()
@@ -49,15 +50,16 @@ def _built(na_run):
 
 
 @pytest.mark.solver
-def test_na_coupling_active(_built):
-    """§15.6 witness 1: the storage non-anticipativity family fires (the
-    flag-on LP is NOT separable per leaf)."""
+def test_investment_solve_storage_is_untied(_built):
+    """§15.6 witness 1, under the v84 rule: in an investment solve each
+    forecast operates on its own from the reveal on (the operational
+    window is empty), so the stochastic-group storage node gets no
+    non-anticipativity tie, although the same storage is tied in the
+    dispatch solve of ``2_day_stochastic_dispatch``
+    (``tests/engine/emission/test_non_anticipativity_storage_use_emits.py``)."""
     data, pb, _sol = _built
-    assert data.dt_non_anticipativity is not None
-    assert data.dt_non_anticipativity.height > 0
-    recs = pb.cstrs_named("non_anticipativity_storage_use")
-    n_rows = sum(r.over.height for r in recs)
-    assert n_rows > 0
+    assert data.dt_non_anticipativity is None or data.dt_non_anticipativity.height == 0
+    assert "non_anticipativity_storage_use" not in pb.cstr_names()
 
 
 @pytest.mark.solver
@@ -124,65 +126,6 @@ def test_na_node_invest_coefficient_branch_weighted(_built):
 
 
 @pytest.mark.solver
-def test_na_forecasts_v_state_equal(_built):
-    """§15.6 witness 2 (re-grounded, forecast-to-forecast): at the NA-tied
-    timesteps the FORECAST-leaf ``v_state`` values are equal to EACH OTHER.
-
-    Corrected model: non-anticipativity ties the forecasts together via a
-    deterministic reference forecast (``period1_lower`` here), NEVER to the
-    realized trunk ``period1``.  So the coupling asserted is across the
-    forecast copies only; the untied trunk is excluded (it floats).  The
-    tied forecast set is read off the emitted ``non_anticipativity_storage_use``
-    cohort, so the assertion is pinned to exactly what fired.
-    """
-    import polars as pl
-
-    data, pb, sol = _built
-    if "v_state" not in sol._vars:
-        pytest.skip("fixture has no v_state variable")
-
-    recs = pb.cstrs_named("non_anticipativity_storage_use")
-    assert recs, "non_anticipativity_storage_use did not fire"
-    over = pl.concat([r.over for r in recs]).with_columns(
-        pl.col("d").cast(pl.Utf8), pl.col("b").cast(pl.Utf8))
-    d_ref = set(over["d"].unique().to_list())
-    b_vals = set(over["b"].unique().to_list())
-    # Forecast-to-forecast: the reference forecast is the lexicographically
-    # smallest; the trunk ``period1`` is tied to nothing.
-    assert d_ref == {"period1_lower"}, d_ref
-    assert b_vals and "period1" not in b_vals, b_vals
-    assert "period1" not in d_ref
-    tied_periods = d_ref | b_vals
-    assert all(p.startswith("period1_") for p in tied_periods), tied_periods
-
-    # Group v_state by (node, time) RESTRICTED to the tied forecast periods;
-    # every forecast sharing a (node, time) tie must carry the same value.
-    from collections import defaultdict
-
-    tol = 1e-6
-    vs = sol.value("v_state")
-    cols = vs.columns
-    ncol = "n" if "n" in cols else ("node" if "node" in cols else cols[0])
-    tcol = "t" if "t" in cols else ("time" if "time" in cols else None)
-    dcol = "d" if "d" in cols else ("period" if "period" in cols else None)
-    if tcol is None or dcol is None:
-        pytest.skip("v_state frame has no time/period column")
-    by_nt: dict[tuple[str, str], list[float]] = defaultdict(list)
-    for r in vs.iter_rows(named=True):
-        if str(r[dcol]) not in tied_periods:
-            continue
-        by_nt[(str(r[ncol]), str(r[tcol]))].append(float(r["value"]))
-    coupled = 0
-    for (_n, _t), vals in by_nt.items():
-        if len(vals) > 1:
-            assert max(vals) - min(vals) <= tol + 1e-6 * max(1.0, max(abs(v) for v in vals))
-            coupled += 1
-    assert coupled > 0, (
-        "no shared (node, time) v_state rows across forecasts to witness "
-        "coupling")
-
-
-@pytest.mark.solver
 def test_na_preconditions_clean(_built):
     """§15.6 witness 4: recourse NPV preconditions hold on this fixture.
 
@@ -229,6 +172,6 @@ def test_nested_recourse_sub_solve_is_refused(tmp_path_factory):
                         entities=[["solve", outer, None]],
                         fixture_json=fixture)
     with pytest.raises(FlexToolConfigError, match=(
-            r"recourse in nested sub-solve '2day_dispatch_period1'.*nested solves cannot hold recourse "
-            r"investments")):
+            r"Nested sub-solve '2day_dispatch_period1' has an invest_solve_branching_method whose investments "
+            r"branch.*a nested solve does not support")):
         run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp("nested_recourse_w"))

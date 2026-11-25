@@ -12,14 +12,15 @@ output's folder) is ever written; the source is never opened for writing, and th
    the ``.txt`` side file), and writes each record that is due (``RECORD_KEY``, ``PART_B_RECORD_KEY``).
 2. Verify, read-only with ``sqlite3``: every ``set:`` reads its member as a ``list_value_ref`` with an ASCII-digit
    payload; every other suspect row and every row no suspect names is unchanged; R's list holds every shipped
-   member and ``cumulative_limits``; the empty shipped defaults are the expected ones (the storage default stays
-   empty while a storage question has no answer); no text-form default is left; the metadata rows (name and value)
-   changed only by the records and the frozen marker; at most one commit was added; each written record is valid.
+   member and ``cumulative_limits``; the empty method parameter defaults are the expected ones (the storage default
+   stays empty while a storage question has no answer); no text-form default is left; the metadata rows (name and
+   value) changed only by the records and the frozen marker; at most one commit was added; each written record is
+   valid.
 3. Publish: the side files ``<output>.value_list_repair.csv`` (the applied answers, replayable with ``--answers``)
-   and ``.txt`` (provenance) are written to temporary names, the snapshot is renamed to the output without ever
-   replacing a file (a hard link on POSIX, ``os.rename`` on Windows, retried while Windows holds the file), then the
-   side files are renamed.  On any exception (``KeyboardInterrupt`` too) the snapshot, its journal files, the
-   temporary side files and an output this run created are deleted.
+   and ``.txt`` (provenance, and the entities to check by hand) are written to temporary names, the snapshot is
+   renamed to the output without ever replacing a file (a hard link on POSIX, ``os.rename`` on Windows, retried
+   while Windows holds the file), then the side files are renamed.  On any exception (``KeyboardInterrupt`` too)
+   the snapshot, its journal files, the temporary side files and an output this run created are deleted.
 
 TODO(v5.0.0): remove with W-0490 (see ``value_list_history``), except the part B rules.
 """
@@ -236,7 +237,7 @@ def _apply(a: vr.Analysis, plan: va.Plan, before: _State, previous: Previous | N
             else:
                 db.add_parameter_value(entity_class_name=s.cls, entity_byname=(s.entity,), parameter_definition_name=
                                        s.parameter, alternative_name=s.alternative, value=value, type=typ)
-            where = f" {s.entity} [{s.alternative}]" if s.entity else " (class default)"
+            where = f" {s.entity} [{s.alternative}]" if s.entity else vs.DEFAULT_WHERE
             lines.append(f"{s.cls}.{s.parameter}{where}: {s.current or 'empty'} -> {d.answer.member}")
         if frozen is not None:
             _replace_rows(db, FROZEN_KEY, None)
@@ -282,7 +283,7 @@ def _verify(a: vr.Analysis, plan: va.Plan, before: _State, done: dict) -> None:
         if not {*vlh.PRIOR_MEMBERS[a.finding.step], vlh.APPENDED[a.finding.step]} <= listed:
             bad.append("the list is not complete")
     if after.empty != done["empty"]:
-        bad.append(f"the empty shipped defaults are {list(after.empty)}, expected {list(done['empty'])}")
+        bad.append(f"the empty method parameter defaults are {list(after.empty)}, expected {list(done['empty'])}")
     keys = set(done["records"])
     expected = sorted([r for r in before.metadata if r[0] not in keys and r[0] != FROZEN_KEY]
                       + [(k, done["records"][k]) for k in keys])
@@ -349,6 +350,12 @@ def _report(a: vr.Analysis, plan: va.Plan, source: Path, sha: str, frozen, archi
     out += [f"write: {line}" for line in lines] or ["write: nothing"]
     out += [f"not answered: {d.suspect.item}" for d in plan.decisions if d.answer is None]
     out += [f"stale: {item}: {why}" for item, why in plan.stale] + [f"warning: {w}" for w in plan.warnings]
+    check = ldr.check_lines(
+        [d.suspect for d in plan.sets if d.suspect.kind == vs.DEFAULT and not d.suspect.part_b
+         and d.answer.member == vs.FLEXTOOL_DEFAULT],
+        [d.suspect for d in plan.decisions if d.suspect.kind == ldr.STORAGE_KIND and d.action == va.KEEP], limit=None)
+    if check:
+        out += ["Check by hand (give these entities their own value where needed):", *check]
     return "\n".join(out) + "\n"
 
 

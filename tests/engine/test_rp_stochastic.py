@@ -112,6 +112,8 @@ def _tiny(tmp_path_factory, *, n_steps: int, timesets: dict, period_timeset: dic
         ("solve", "sol", "realized_periods", api.Array(periods)),
         ("solve", "sol", "years_represented", _m({p: 1.0 for p in periods}, "period")),
         ("solve", "sol", "stochastic_branches", branches),
+        # The forecasts are solved: deterministic, the default since 4.7.0, would ignore them.
+        ("solve", "sol", "dispatch_realization_method", "within_solve"),
     ]
     for ts, (duration, weights) in timesets.items():
         values += [("timeset", ts, "timeline", "tl"),
@@ -537,6 +539,13 @@ def _lh2_run(tmp_path_factory, values: list, *, drop: tuple = (), patch=None) ->
     return steps
 
 
+def _lh2_fan(period: str, step: str) -> list:
+    """The overlay rows of the two forecasts opening at *period* / *step*."""
+    return [["solve", LH2_SOLVE, "stochastic_branches", _branches(period, step)],
+            # The forecasts are solved: deterministic, the default since 4.7.0, would ignore them.
+            ["solve", LH2_SOLVE, "dispatch_realization_method", "within_solve"]]
+
+
 def _branches(period: str, step: str) -> dict:
     def level(name, data):
         return {"type": "map", "index_type": "str", "index_name": name, "data": data}
@@ -565,7 +574,7 @@ def test_o1_identical_forecasts_equal_the_deterministic_objective(tmp_path_facto
         det = _lh2_run(tmp_path_factory, _lh2_methods(method))[LH2_SOLVE]
         _O1_DET[method] = float(det.solution.obj)
     steps = _lh2_run(tmp_path_factory, _lh2_methods(method)
-                     + [["solve", LH2_SOLVE, "stochastic_branches", _branches(*fan)]])
+                     + _lh2_fan(*fan))
     step = steps[LH2_SOLVE]
     assert float(step.solution.obj) == pytest.approx(_O1_DET[method], rel=1e-7)
     branch_periods = {d for d in _u(step.flex_data.rp_block_first)["d"].unique().to_list() if d.endswith(("_a", "_b"))}
@@ -592,7 +601,7 @@ def test_lh2_identical_forecasts_plain_within_solve(tmp_path_factory, fan):
     last-listed branch did and the other battery ends were free: 8.93e9 vs 9.39e9)."""
     if not _LH2_DET:
         _LH2_DET.append(float(_lh2_run(tmp_path_factory, [])[LH2_SOLVE].solution.obj))
-    step = _lh2_run(tmp_path_factory, [["solve", LH2_SOLVE, "stochastic_branches", _branches(*fan)]])[LH2_SOLVE]
+    step = _lh2_run(tmp_path_factory, _lh2_fan(*fan))[LH2_SOLVE]
     assert float(step.solution.obj) == pytest.approx(_LH2_DET[0], rel=1e-9)
 
 
@@ -611,7 +620,7 @@ def test_plain_within_solve_on_representative_periods_warns(tmp_path_factory, co
         _PLAIN_BWS_DET.append(float(_lh2_run(tmp_path_factory, _PLAIN_BWS,
                                              patch=L._patch_rp_multi_base_solve)[LH2_SOLVE].solution.obj))
     coded_log()
-    step = _lh2_run(tmp_path_factory, [["solve", LH2_SOLVE, "stochastic_branches", _branches(*fan)]] + _PLAIN_BWS,
+    step = _lh2_run(tmp_path_factory, _lh2_fan(*fan) + _PLAIN_BWS,
                     patch=L._patch_rp_multi_base_solve)[LH2_SOLVE]
     # One line: how many nodes and the first (review L4; the full list goes to the debug log).
     log = coded_log()

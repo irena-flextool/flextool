@@ -86,7 +86,7 @@ def _run(tpf, alt: str, values: list, entities: list | None = None, *, inactive:
     from flextool.update_flextool.db_migration import migrate_database
     from tests.db_utils import json_to_db
 
-    data = json.loads(Path(BASE_FIXTURE_JSON).read_text())
+    data = json.loads(Path(BASE_FIXTURE_JSON).read_text(encoding="utf-8"))
     scenario = add_override_alternative(data, alt, values, LL, entities)
     for conn in inactive:
         data["entity_alternatives"].append(["connection", [conn], alt, False])

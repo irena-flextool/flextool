@@ -279,7 +279,7 @@ def test_investment_without_the_row(tmp_path_factory) -> None:
 GAS_ONLINE = ("unit", ("gas",), "constraint_online_coeff")
 
 
-@pytest.mark.parametrize("startup", ["binary", "linear"])
+@pytest.mark.parametrize("startup", ["integer_fix_in_uc", "linear"])
 def test_online_unit_hours(tmp_path_factory, startup: str) -> None:
     """online(gas) ≥ 6570 unit-hours per year, gas with min_load 0.5 (one unit of 100 MW): each step's units
     online count w = 2190 h, so Σ_t online ≥ 3.  Without the row gas is online only in steps 3 and 4 (residual 50
@@ -289,7 +289,7 @@ def test_online_unit_hours(tmp_path_factory, startup: str) -> None:
              ["solve", SOLVE, "solver_mip_gap", _f(0.0)]]
     step = _step(tmp_path_factory, f"pt_online_{startup}",
                  _values(terms={GAS_ONLINE: 1.0}, constant=3 * W, sense="greater_than", extra=extra))
-    var = "v_online_integer" if startup == "binary" else "v_online_linear"
+    var = "v_online_integer" if startup == "integer_fix_in_uc" else "v_online_linear"
     online = utf8(step.solution.value(var)).filter(pl.col("p") == "gas").sort("t")
     assert float(online["value"].sum()) == pytest.approx(3.0, abs=TOL)
     assert online.filter(pl.col("t").is_in(["t0003", "t0004"]))["value"].to_list() == pytest.approx([1.0, 1.0],
@@ -467,6 +467,8 @@ def _stochastic() -> list:
     values = [v for v in _values() if not (v[0] == "profile" or (v[1] == "c" and v[2] == "constant"))]
     return values + [["profile", "csp_prof", "profile", b64(prof, "map")],
                      ["solve", SOLVE, "stochastic_branches", b64(branches, "map")],
+                     # The forecasts are solved: deterministic, the default since 4.7.0, would ignore them.
+                     ["solve", SOLVE, "dispatch_realization_method", _s("within_solve")],
                      ["group", "b7_stoch", "include_stochastics", _s("yes")],
                      ["constraint", "c", "constant", _map({"p2020": 21900.0}, "period")]]
 

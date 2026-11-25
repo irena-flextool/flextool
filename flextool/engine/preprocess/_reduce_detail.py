@@ -202,16 +202,18 @@ class ReduceReport:
     """What :func:`apply_reduce_detail` left out of one sub-solve.
 
     ``removed``: feature -> sorted names of the entities (processes, or user constraints for
-    ``user_constraints``) it was left out for; only features with something left out appear.  Keys: ``integer_online``
-    (binary units / connections now continuous), ``exact`` (exact connections now regular), ``ramp_limits``,
-    ``ramp_costs``, ``min_load``, ``capacity_min_coeff``, ``min_up_down``, ``online``, ``startup_energy`` (units whose
-    start-up input draw went with the online variables), ``online_unused`` (online
-    variables without a use left out under ``integers*``), ``min_load_efficiency``
-    (run at their full-load efficiency: every one under ``online*``, those more efficient at min load under
-    ``*_min_limits``),``piecewise_linear`` (multi-line curves run at their full-load efficiency),
-    ``piecewise_capacity_form`` (under ``integers*``: curves rebuilt without online variables), ``user_constraints`` (left out whole); system keys ``reserves`` (the reserve
+    ``user_constraints``) it was left out for; only features with something left out appear.  Keys:
+    ``integer_online`` (units / connections with startup_method integer or integer_fix_in_uc now continuous),
+    ``exact`` (exact connections now regular), ``ramp_limits``, ``ramp_costs``, ``min_load``,
+    ``capacity_min_coeff``, ``min_up_down``, ``online``, ``startup_energy`` (units whose start-up input draw went
+    with the online variables), ``online_unused`` (online variables without a use left out under ``integers*``),
+    ``min_load_efficiency`` (run at their full-load efficiency: every one under ``online*``, those more efficient
+    at min load under ``*_min_limits``), ``piecewise_linear`` (multi-line curves run at their full-load
+    efficiency), ``piecewise_capacity_form`` (under ``integers*``: curves rebuilt without online variables),
+    ``user_constraints`` (left out whole); system keys ``reserves`` (the reserve
     groups with a requirement as ``reserve__upDown__group``, or every reserve group when none has one),
-    ``inertia`` / ``non_synchronous`` (the groups), ``dc_power_flow`` (the connections now lossless transport).  ``notes``: interaction facts for the run log, each present only when both
+    ``inertia`` / ``non_synchronous`` (the groups), ``dc_power_flow`` (the connections now lossless transport).
+    ``notes``: interaction facts for the run log, each present only when both
     sides are in the solve: ``fractional_online_constraints`` (user constraints that now count fractional units
     online), ``reserves_from_capacity`` (units / connections left without online variables that keep a reserve:
     it now comes from built capacity, not online capacity), ``inertia_from_flows`` (inertia groups whose providers

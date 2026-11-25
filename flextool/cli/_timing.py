@@ -55,7 +55,7 @@ class TimingRecorder:
 
     def _open_for_write(self) -> None:
         """Create the file (truncate any pre-existing one) and write the header."""
-        with open(self._path, "w", newline="") as f:
+        with open(self._path, "w", encoding="utf-8", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(_HEADER)
 
@@ -99,7 +99,7 @@ class TimingRecorder:
         )
         # Atomic append — open/write/close per row so a crash leaves the
         # file in a parseable state.
-        with open(self._path, "a", newline="") as f:
+        with open(self._path, "a", encoding="utf-8", newline="") as f:
             csv.writer(f).writerow(row)
 
     @contextmanager

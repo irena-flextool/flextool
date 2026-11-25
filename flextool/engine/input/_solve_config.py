@@ -48,6 +48,11 @@ REDUCE_SYSTEM_DETAIL_METHODS: tuple[str, ...] = (
     "none", "reserves", "inertia", "non_synchronous", "inertia_non_synchronous",
     "reserves_inertia_non_synchronous", "dc_power_flow", "reserves_inertia_non_synchronous_dc_power_flow")
 
+#: The members of ``solve.invest_solve_branching_method`` (value list ``invest_solve_branching_methods``, data version
+#: 84), the default first: which decisions of an investment solve are shared across its forecasts.
+INVEST_SOLVE_BRANCHING_METHODS: tuple[str, ...] = (
+    "operations_only", "investments_after_reveal_period", "investments_at_reveal_period")
+
 if TYPE_CHECKING:
     from spinedb_api import DatabaseMapping
 
@@ -253,11 +258,9 @@ PER_SOLVE_FIELDS: tuple[str, ...] = (
     "realized_periods",
     "realized_invest_periods",
     "fix_storage_periods",
-    "non_anticipativity_periods",
-    "non_anticipativity_invest_periods",
     "solve_period_years_represented",
     "stochastic_branches",
-    "stochastic_invest_method",
+    "invest_solve_branching_method",
     "dispatch_realization_method",
     "hole_multipliers",
     "decomposition",
@@ -280,6 +283,8 @@ PER_SOLVE_FIELDS: tuple[str, ...] = (
 #: Attributes keyed by solve name that a solve made from another one does not get, with the reason.
 NOT_COPIED_FIELDS: dict[str, str] = {
     "solver_settings.precommand": "never run (item 236); FlexTool names it once per database solve in a warning",
+    "deterministic_branches": "set after the solves are made (apply_deterministic_realization); a solve made from "
+                              "a deterministic solve is never stochastic",
 }
 
 #: Dict attributes that are not keyed by solve name, with what they are keyed by.
@@ -290,6 +295,8 @@ OTHER_DICT_FIELDS: dict[str, str] = {
     "map2d_period_parents": "period parameter (the solves split by a 2-D map of it)",
     "map2d_duplicate_of": "solve of a 2-D period map (set per copy: its database solve and outer key)",
     "realized_dispatch_parent": "realization solve (set per copy: its parent)",
+    "roll_tail_plan": "sub-solve (a realization roll; set per run by native_run_model)",
+    "roll_branch_rows": "sub-solve (a realization roll; set per run by native_run_model)",
     "derived_solves": "solve made from another solve (its parent and the fields it does not copy)",
     "_split_records": "database solve with a 2-D period map (read, not yet split)",
 }
@@ -311,9 +318,7 @@ REALIZATION_SOLVE_DROPS: frozenset[str] = frozenset((
     "realized_invest_periods",
     "fix_storage_periods",
     "stochastic_branches",
-    "stochastic_invest_method",
-    "non_anticipativity_periods",
-    "non_anticipativity_invest_periods",
+    "invest_solve_branching_method",
     "decomposition",
     "benders_max_iter",
     "benders_tolerance",
@@ -339,8 +344,7 @@ _ABSENT = object()
 
 def _entry_of(values: dict, key: str) -> Any:
     """The entry of *key* in *values*; a missing key of a ``defaultdict`` is its empty default (a read through
-    ``[]`` creates it), of a plain dict a marker of its own (the tri-state ``non_anticipativity_periods`` keeps
-    unset apart from empty)."""
+    ``[]`` creates it), of a plain dict a marker of its own (an absent entry stays absent)."""
     if key in values:
         return values[key]
     factory = getattr(values, "default_factory", None)
@@ -369,6 +373,22 @@ def _check_field_registry(cfg: object) -> None:
 # ---------------------------------------------------------------------------
 # SolveConfig — main container
 # ---------------------------------------------------------------------------
+
+
+def solve_decides_investments(solve_cfg, solve: str) -> bool:
+    """Whether *solve* authors investment decisions: ``invest_periods`` or ``realized_invest_periods`` non-empty
+    (the test of the rolling-invest warning in ``_recursive_solve``)."""
+    if (getattr(solve_cfg, "invest_periods", None) or {}).get(solve):
+        return True
+    return bool((getattr(solve_cfg, "realized_invest_periods", None) or {}).get(solve))
+
+
+def is_investment_solve(solve_cfg, solve: str) -> bool:
+    """Whether *solve* is an investment solve: it decides investments (:func:`solve_decides_investments`) and is not
+    rolling (the rolls of a rolling solve build no investment).  A solve of a 2-D period map is one when its own
+    rows are.  Every other solve is a dispatch solve."""
+    return (solve_decides_investments(solve_cfg, solve)
+            and (getattr(solve_cfg, "solve_modes", None) or {}).get(solve) != "rolling_window")
 
 
 class SolveConfig:
@@ -403,7 +423,7 @@ class SolveConfig:
         benders_tolerance: dict | None = None,
         benders_in_out_weight: dict | None = None,
         scaling: dict | None = None,
-        stochastic_invest_method: dict | None = None,
+        invest_solve_branching_method: dict | None = None,
         dispatch_realization_method: dict | None = None,
         reduce_unit_detail_method: dict | None = None,
         reduce_system_detail_method: dict | None = None,
@@ -461,22 +481,25 @@ class SolveConfig:
             scaling if scaling is not None else {}
         )
 
-        # v70 per-solve recourse-invest opt-in (solve-name -> "none"/
-        # "recourse"); only authored solves appear.  Resolved at access
-        # time via :meth:`stochastic_invest_method_for` (absent -> "none").
-        self.stochastic_invest_method: dict = (
-            stochastic_invest_method
-            if stochastic_invest_method is not None else {}
+        # v84 per-solve branching of an investment solve (solve-name -> a member of
+        # :data:`INVEST_SOLVE_BRANCHING_METHODS`); only authored solves appear.  Resolved at access time via
+        # :meth:`invest_branching_method_for` (absent -> "operations_only").
+        self.invest_solve_branching_method: dict = (
+            invest_solve_branching_method if invest_solve_branching_method is not None else {}
         )
 
         # v75 per-solve dispatch-realization method (solve-name ->
-        # "within_solve"/"separate_dispatch"); only authored solves appear.
-        # Resolved at access time via :meth:`dispatch_realization_method_for`
-        # (absent -> "within_solve").
+        # "within_solve"/"separate_dispatch"/"deterministic"); only authored
+        # solves appear.  Resolved at access time via
+        # :meth:`dispatch_realization_method_for` (absent -> "deterministic").
         self.dispatch_realization_method: dict = (
             dispatch_realization_method
             if dispatch_realization_method is not None else {}
         )
+        # The ``stochastic_branches`` rows of the solves that run
+        # ``deterministic``, moved aside by :meth:`apply_deterministic_realization`:
+        # such a solve reads its ``realized: yes`` branch only.
+        self.deterministic_branches: dict[str, list] = {}
 
         # v79 per-solve detail reductions (solve-name -> value-list string); only authored solves appear.
         # Resolved at access time via :meth:`reduce_unit_detail_for` / :meth:`reduce_system_detail_for`.
@@ -510,21 +533,6 @@ class SolveConfig:
         self._split_records: dict[str, dict[str, dict[str, list]]] = {}
         # The ``solve`` entities of the database (load_from_db): a split solve's name must not be one of them.
         self.database_solves: list[str] = []
-        # Slice G (Axis B) — operational non-anticipativity window.
-        # TRI-STATE per solve, distinct from the period dicts above:
-        #   absent key / None -> unset -> legacy realized u fix window;
-        #   []                -> explicit empty -> operations free from t0;
-        #   [(p, p), ...]     -> tie only over those periods.
-        # A plain dict (not a defaultdict) so a missing key reads back as
-        # None (unset) rather than an empty list ([] = the free-ops mode).
-        self.non_anticipativity_periods: dict[str, list | None] = {}
-        # Invest-NA window — the standard two-stage stochastic-investment
-        # mode.  Periods over which v_invest / v_divest are TIED across
-        # stochastic branches (a single shared here-and-now decision).
-        # Unlike the operational window above, unset == [] == NO tie, so a
-        # plain defaultdict(list) (from ``periods_to_tuples``) is
-        # byte-parity-safe (both empty-ish states resolve to no ties).
-        self.non_anticipativity_invest_periods: defaultdict = defaultdict(list)
 
         # Realization registry: maps a realization solve to the stochastic
         # solve whose committed window it realizes.  Populated by
@@ -543,6 +551,13 @@ class SolveConfig:
         # no stochastic solve has a realization solve (the consumers then
         # no-op, preserving byte-parity on deterministic fixtures).
         self.realized_dispatch_parent: dict[str, str] = {}
+
+        # The realization roll R_k of each roll of a rolling within_solve / separate_dispatch solve
+        # (``solve._realization_tail``), keyed by sub-solve: its plan (``RollTail``) and the ``stochastic_branches``
+        # rows it reads (a list in database order).  Set by ``native_run_model`` before the stochastic expansion;
+        # empty without realization rolls (the readers then take the complete solve's rows).
+        self.roll_tail_plan: dict[str, Any] = {}
+        self.roll_branch_rows: dict[str, list] = {}
 
         # User constraints with constraint_period_method period_total (load_from_db); the rolls that leave their
         # rows out and the solves that write them (RecursiveSolveBuilder._check_period_total_rolls).
@@ -728,12 +743,11 @@ class SolveConfig:
             db=db, cl="solve", par="scaling", mode=DictMode.DICT
         )
 
-        # v70 per-solve recourse-invest opt-in.  Only solves that
-        # explicitly author solve.stochastic_invest_method appear; absent
-        # solves resolve to "none" via ``stochastic_invest_method_for``.
-        stochastic_invest_method: dict = params_to_dict(
-            db=db, cl="solve", par="stochastic_invest_method",
-            mode=DictMode.DICT,
+        # v84 per-solve branching of an investment solve.  Only solves that author
+        # solve.invest_solve_branching_method appear; absent solves resolve to "operations_only" via
+        # ``invest_branching_method_for``.
+        invest_solve_branching_method: dict = params_to_dict(
+            db=db, cl="solve", par="invest_solve_branching_method", mode=DictMode.DICT,
         )
 
         # v75 per-solve dispatch-realization method.  Only solves that
@@ -842,7 +856,7 @@ class SolveConfig:
             benders_tolerance=benders_tolerance,
             benders_in_out_weight=benders_in_out_weight,
             scaling=scaling,
-            stochastic_invest_method=stochastic_invest_method,
+            invest_solve_branching_method=invest_solve_branching_method,
             dispatch_realization_method=dispatch_realization_method,
             reduce_unit_detail_method=reduce_unit_detail_method,
             reduce_system_detail_method=reduce_system_detail_method,
@@ -872,24 +886,14 @@ class SolveConfig:
             name for name, value in period_method.items()
             if value == "period_total" and name not in disabled and name in with_sense
         )
-        # Slice G — tri-state operational non-anticipativity window.
-        obj.non_anticipativity_periods = (
-            obj.non_anticipativity_periods_to_tristate(
-                db=db, cl="solve", par="shared_operation_periods"
-            )
-        )
-        # Invest-NA window (v72) — plain periods_to_tuples: unset == [] ==
-        # no tie, so a defaultdict(list) is byte-parity-safe (no tri-state
-        # needed).
-        obj.non_anticipativity_invest_periods = obj.periods_to_tuples(
-            db=db, cl="solve", par="shared_invest_periods"
-        )
         # Before the 2-D map split, so the message names the solve of the database.
         obj._check_branches_named_like_their_fan_period()
         obj._split_2d_period_maps()
         # After every period dict, so the 2D-map duplicate solves exist.
         obj._check_realized_invest_periods()
         obj._check_split_realized_periods()
+        obj.apply_deterministic_realization()
+        obj.check_invest_branching()
         obj.check_derived_solves()
 
         return obj
@@ -1203,9 +1207,7 @@ class SolveConfig:
           such outer key);
         * the solve's periods: the inner lists of all its 2-D parameters;
         * ``timesets_used_by_solves``: the database solve's entries of those periods;
-        * each 1-D period list of ``s`` (and ``shared_invest_periods``): its periods that the solve has (no
-          entry when none);
-        * ``shared_operation_periods``: likewise, keeping unset (``None``) apart from the empty list (no ties);
+        * each 1-D period list of ``s``: its periods that the solve has (no entry when none);
         * ``years_represented``: the whole map, as before (``_run_model`` keeps a solve's own periods);
         * ``stochastic_branches``: the rows of the periods it realizes (:meth:`_split_fan_rows`), as the solve written
           by hand has them.  A row that no split solve keeps raises :class:`FlexToolConfigError`: it would be
@@ -1258,12 +1260,6 @@ class SolveConfig:
                     elif parent in getattr(self, field_name):
                         kept = [t for t in getattr(self, field_name)[parent] if t[1] in own]
                         overrides[field_name] = kept if kept else NO_ENTRY
-                if parent in self.non_anticipativity_invest_periods:
-                    kept = [t for t in self.non_anticipativity_invest_periods[parent] if t[1] in own]
-                    overrides["non_anticipativity_invest_periods"] = kept if kept else NO_ENTRY
-                na = self.non_anticipativity_periods.get(parent)
-                if na is not None:
-                    overrides["non_anticipativity_periods"] = [t for t in na if t[1] in own]
                 timesets: list = []
                 for p in periods:
                     for entry in parent_timesets:
@@ -1405,10 +1401,6 @@ class SolveConfig:
 
         out: dict[str, Any] = {par: as_array(getattr(self, field_name).get(copy_name))
                                for par, field_name in SPLIT_PERIOD_PARAMS.items()}
-        out["shared_invest_periods"] = as_array(self.non_anticipativity_invest_periods.get(copy_name))
-        na = self.non_anticipativity_periods.get(copy_name)
-        out["shared_operation_periods"] = (None if na is None
-                                           else api.Array([str(t[1]) for t in na], value_type=str))
         timesets = self.timesets_used_by_solves.get(copy_name, [])
         out["period_timeset"] = (api.Map([str(p) for p, _ in timesets], [str(ts) for _, ts in timesets],
                                          index_name="period") if timesets else None)
@@ -1479,14 +1471,20 @@ class SolveConfig:
         ``solver_arguments``, ``solver_mip_gap`` and ``scaling``."""
         parent_mode = self.solve_modes.get(parent, "single_solve")
         mode = "rolling_window" if parent_mode == "rolling_window" else "single_solve"
+        realized = copy.deepcopy(self.realized_periods.get(parent, []))
+        if mode == "single_solve":
+            # The realization of an investment solve starts at its reveal: the periods before it are the parent's.
+            window = {str(p) for p, _ts in SolveConfig.realization_window(self, parent)[0]}
+            realized = [t for t in realized if str(t[1]) in window]
         overrides: dict[str, Any] = {
             "solve_modes": mode,
-            "realized_periods": copy.deepcopy(self.realized_periods.get(parent, [])),
+            "realized_periods": realized,
         }
         if mode == "single_solve":
             # Only the committed periods: a look-ahead period dispatched with the realized data would let the
             # committed periods' operation (storage) use information the stochastic solve did not have (item
-            # 255).  A rolling sibling's rolls are trimmed to each roll's jump instead (``_run_model`` OC1 fix).
+            # 255).  A rolling sibling's rolls take the windows of the rolls they realize instead (``_run_model``
+            # step 1b): the whole horizon for a realization roll (``_realization_tail``), else the jump.
             timesets, years = SolveConfig.realization_window(self, parent)
             overrides["timesets_used_by_solves"] = timesets
             overrides["solve_period_years_represented"] = years
@@ -1499,16 +1497,25 @@ class SolveConfig:
     def realization_window(self, parent: str) -> "tuple[list, list]":
         """The ``timesets_used_by_solves`` and ``solve_period_years_represented`` entries of the realization solve
         of the single solve *parent*: the parent's entries from its first to its last realized period, in the
-        parent's order (item 255: the realization dispatches the committed periods, not the look-ahead).
+        parent's order (item 255: the realization dispatches the committed periods, not the look-ahead).  For an
+        investment solve (:func:`is_investment_solve`) the window starts at the later of its first realized period
+        and its reveal period (:meth:`reveal_period`): the investment solve realizes the operations before the
+        reveal itself, so its realization does not dispatch them again, and starts from the storage they end with
+        (``_carry_routing``).
 
         A period the parent does not realize between two it realizes is dispatched too, so storage runs through
-        it as in the parent, but not reported: the realization solve's ``realized_periods`` are the parent's.  It
-        lies before the last committed period, so dispatching it with the realized data uses no later actuals.
+        it as in the parent, but not reported: the realization solve's ``realized_periods`` are the parent's in the
+        window.  It lies before the last committed period, so dispatching it with the realized data uses no later
+        actuals.
         """
         realized = {str(t[1]) for t in (getattr(self, "realized_periods", None) or {}).get(parent, [])}
         timesets = (getattr(self, "timesets_used_by_solves", None) or {}).get(parent, [])
         order = list(dict.fromkeys(str(p) for p, _ts in timesets))
         positions = [i for i, p in enumerate(order) if p in realized]
+        if positions and is_investment_solve(self, parent):
+            reveal = SolveConfig.reveal_period(self, parent)
+            if reveal in order:
+                positions = [i for i in positions if i >= order.index(reveal)]
         span = set(order[positions[0]:positions[-1] + 1]) if positions else set()
         return ([copy.deepcopy(row) for row in timesets if str(row[0]) in span],
                 [copy.deepcopy(row) for row in
@@ -1519,8 +1526,8 @@ class SolveConfig:
         """The ``solve`` parameter values the reader gives the realization solve of *parent* instead of the
         parent's, for ``SpineDbReader.register_derived_solve(replace=...)``: for a single solve, ``period_timeset``
         and ``years_represented`` of its first to last realized period (:meth:`realization_window`), as maps with the
-        index name ``period`` (as :meth:`copy_reader_values`); empty for a rolling solve (its realization rolls
-        are trimmed to each roll's jump)."""
+        index name ``period`` (as :meth:`copy_reader_values`); empty for a rolling solve (each roll of its
+        realization solve takes the window of the roll it realizes, ``_run_model`` step 1b)."""
         if (getattr(self, "solve_modes", None) or {}).get(parent, "single_solve") == "rolling_window":
             return {}
         timesets, years = SolveConfig.realization_window(self, parent)
@@ -1595,49 +1602,196 @@ class SolveConfig:
             "off", "solver_only", "basic", "full"
         ) else None
 
-    def stochastic_invest_method_for(self, solve_name: str) -> str:
-        """Resolve ``solve.stochastic_invest_method`` for *solve_name*.
+    def invest_branching_method_for(self, solve_name: str) -> str:
+        """Resolve ``solve.invest_solve_branching_method`` for *solve_name*: a member of
+        :data:`INVEST_SOLVE_BRANCHING_METHODS`.  Absent, blank or unknown -> ``"operations_only"``, the shipped
+        default (like every ``solve`` parameter of this class, the definition default is not read), and so is every
+        value of a solve that runs ``deterministic`` (:attr:`deterministic_branches`: it has no forecasts left).
+        Authoring case is ignored.  ``_invest_branching_raw_guard`` refuses an unknown value before the solve runs, and
+        :meth:`check_invest_branching` a value on a dispatch solve or on a solve without ``stochastic_branches``."""
+        raw = None if solve_name in self.deterministic_branches else self.invest_solve_branching_method.get(solve_name)
+        value = "" if raw is None else str(raw).strip().lower()
+        return value if value in INVEST_SOLVE_BRANCHING_METHODS else INVEST_SOLVE_BRANCHING_METHODS[0]
 
-        Returns the normalised lower-case mode (``"none"`` or
-        ``"recourse"``).  Absent / blank / unrecognised -> ``"none"``
-        (the schema default, byte-identical prior behaviour).  Authoring
-        case is ignored.
+    def recourse_invest(self, solve_name: str) -> bool:
+        """Whether the investments of *solve_name* branch after its reveal (``investments_after_reveal_period`` or
+        ``investments_at_reveal_period``): the model's recourse switch, emitted as
+        ``solve_data/stochastic_invest_method.csv`` (``recourse`` / ``none``) and read back by
+        ``_derived._recourse_invest_active``."""
+        return self.invest_branching_method_for(solve_name) != INVEST_SOLVE_BRANCHING_METHODS[0]
 
-        Unlike :meth:`scaling_for` (which returns ``None`` for absent so
-        a CLI/env override can win) there is no run-time override for
-        this knob, so absent resolves to the concrete default ``"none"``.
-        Guard 1 (`_orchestration.run`) keys off this resolver.
-        """
-        raw = self.stochastic_invest_method.get(solve_name)
-        if raw is None:
-            return "none"
-        value = str(raw).strip().lower()
-        return value if value in ("none", "recourse") else "none"
+    def reveal_period(self, solve_name: str) -> str | None:
+        """The period where the fan of *solve_name* opens: the first period, in the solve's period order
+        (``timesets_used_by_solves``), of a forecast row (``realized`` other than ``yes``) of its
+        ``stochastic_branches``.  ``None`` without a forecast row.  A row period the solve does not have comes after
+        the solve's own periods, in row order."""
+        rows = self.stochastic_branches.get(solve_name) or []
+        periods = list(dict.fromkeys(str(row[0]) for row in rows
+                                     if not (len(row) > 3 and str(row[3]).strip().lower() == "yes")))
+        if not periods:
+            return None
+        order = [str(p) for p, _ts in self.timesets_used_by_solves.get(solve_name, [])]
+        return min(periods, key=lambda p: (order.index(p), 0) if p in order else (len(order), periods.index(p)))
+
+    def invest_tie_periods_for(self, solve_name: str) -> list[tuple[str, str]]:
+        """The periods whose investment decisions *solve_name* shares across its forecasts as one decision of every
+        branch copy, as ``(p, p)`` tuples: the reveal period under ``investments_after_reveal_period``, none
+        otherwise.  Under ``operations_only`` the investments are on the real period names (one decision by
+        construction); under ``investments_at_reveal_period`` every forecast invests on its own from the reveal
+        period on.  The periods before the reveal have one copy each.  Emitted as
+        ``solve_data/pd_non_anticipativity_invest_periods.csv`` (``_per_solve.emit_per_solve_sets``)."""
+        if self.invest_branching_method_for(solve_name) != "investments_after_reveal_period":
+            return []
+        reveal = self.reveal_period(solve_name)
+        return [] if reveal is None else [(reveal, reveal)]
+
+    def per_forecast_invest_periods(self, solve_name: str) -> list[str]:
+        """The periods of *solve_name* (in its period order, ``timesets_used_by_solves``) whose investments are per
+        forecast branch, so cannot be realized: those after the reveal period under
+        ``investments_after_reveal_period``, the reveal period and later ones under ``investments_at_reveal_period``,
+        none under ``operations_only`` or without a reveal period the solve has."""
+        method = self.invest_branching_method_for(solve_name)
+        if method == INVEST_SOLVE_BRANCHING_METHODS[0]:
+            return []
+        reveal = self.reveal_period(solve_name)
+        order = [str(p) for p, _ts in self.timesets_used_by_solves.get(solve_name, [])]
+        if reveal is None or reveal not in order:
+            return []
+        return order[order.index(reveal) + (1 if method == "investments_after_reveal_period" else 0):]
+
+    def operational_window_for(self, solve_name: str) -> list[tuple[str, str]] | None:
+        """The operational non-anticipativity window of *solve_name* (``_per_solve.emit_per_solve_sets``):
+        ``[]`` for an investment solve (:func:`is_investment_solve`) with ``stochastic_branches``, whose forecasts
+        operate each on their own from the reveal (nothing tied); ``None`` for every other solve, which ties the
+        storage, units online and reserve of its forecasts over its committed window (the realized-dispatch,
+        committed-in-fan and fix-storage steps)."""
+        if self.stochastic_branches.get(solve_name) and is_investment_solve(self, solve_name):
+            return []
+        return None
+
+    def check_invest_branching(self) -> None:
+        """Raise :class:`FlexToolConfigError` naming the solve (the solve the user wrote for a solve of a 2-D period
+        map) when ``invest_solve_branching_method`` is set on a solve that is not an investment solve
+        (:func:`is_investment_solve`: a rolling solve, or one without ``invest_periods`` /
+        ``realized_invest_periods``), when it is set on a solve without ``stochastic_branches``, or when a solve whose
+        investments branch realizes a period whose investments are per branch: under
+        ``investments_after_reveal_period`` a period after the reveal period, under
+        ``investments_at_reveal_period`` the reveal period or a later one.  Over the solves the model runs
+        (:meth:`solves_in_run`), after the 2-D map split."""
+        problems: list[str] = []
+        for s in self.solves_in_run():
+            raw = self.invest_solve_branching_method.get(s)
+            if raw is None or not str(raw).strip():
+                continue
+            name = self.map2d_duplicate_of.get(s, (s,))[0]
+            method = self.invest_branching_method_for(s)
+            if not is_investment_solve(self, s):
+                kind = ("it is a rolling solve" if self.solve_modes.get(s) == "rolling_window"
+                        else "it has no invest_periods or realized_invest_periods")
+                problems.append(
+                    f"Solve '{name}' sets invest_solve_branching_method {method}, which applies to investment solves "
+                    f"only, but {kind}. Remove invest_solve_branching_method from '{name}': a dispatch solve with "
+                    "stochastic_branches is set up with dispatch_realization_method.")
+                continue
+            if not self.stochastic_branches.get(s):
+                problems.append(
+                    f"Solve '{name}' sets invest_solve_branching_method {method} but has no stochastic_branches, "
+                    "so there is nothing to branch. Add stochastic_branches to the solve, or remove "
+                    "invest_solve_branching_method.")
+                continue
+            branched = set(self.per_forecast_invest_periods(s))
+            if not branched:
+                continue
+            reveal = self.reveal_period(s)
+            for par, field_name in (("realized_invest_periods", "realized_invest_periods"),
+                                    ("realized_periods", "realized_periods")):
+                bad = list(dict.fromkeys(str(t[1]) for t in getattr(self, field_name).get(s, [])
+                                         if str(t[1]) in branched))
+                if bad:
+                    which = ("after the reveal period" if method == "investments_after_reveal_period"
+                             else "from the reveal period on")
+                    problems.append(
+                        f"Solve '{name}' sets invest_solve_branching_method {method}, so its investments "
+                        f"{which} ('{reveal}') are per forecast branch, but its {par} include "
+                        f"{', '.join(repr(p) for p in bad)}. A per-branch decision cannot be realized: leave "
+                        f"{'that period' if len(bad) == 1 else 'those periods'} out of {par}, and realize "
+                        f"{'it' if len(bad) == 1 else 'them'} in a later solve.")
+        if problems:
+            raise FlexToolConfigError(" ".join(problems))
 
     def dispatch_realization_method_for(self, solve_name: str) -> str:
         """Resolve ``solve.dispatch_realization_method`` for *solve_name*.
 
-        Returns the normalised lower-case mode (``"within_solve"`` or
-        ``"separate_dispatch"``).  Absent / blank / unrecognised ->
-        ``"within_solve"`` (the schema default, byte-identical prior
-        behaviour).  Authoring case is ignored.
-
-        This knob is the 2-stage seed of a future multi-stage market
-        structure: ``"within_solve"`` resolves branch realization inside a
-        single optimisation (today's behaviour); ``"separate_dispatch"``
-        will split realization into a dedicated downstream dispatch stage
-        (a second market-clearing pass over the revealed branch) — not yet
-        implemented, hard-rejected by the W4 Slice 1 guard until a later
-        slice lands the machinery.  There is no run-time override for this
-        knob, so absent resolves to the concrete default ``"within_solve"``.
+        Returns the normalised lower-case member: ``"deterministic"``,
+        ``"within_solve"`` or ``"separate_dispatch"``.  Absent / blank ->
+        ``"deterministic"``, the shipped default: like every ``solve``
+        parameter of this class, the definition default is not read, so the
+        fall-back is hard-coded.  An unrecognised value also reads
+        ``"deterministic"`` here; ``_dispatch_realization_raw_guard`` refuses
+        it before the solve runs.  An investment solve (:func:`is_investment_solve`) does not read the
+        method: it reads ``"within_solve"`` (it solves its forecasts; a ``separate_dispatch`` there is ignored,
+        warning W-0640 from :meth:`apply_deterministic_realization`).  Authoring case is ignored.  Without
+        ``stochastic_branches``, ``deterministic`` and ``within_solve`` give
+        the same model (``separate_dispatch`` needs a ``realized: yes``
+        branch).
         """
-        raw = self.dispatch_realization_method.get(solve_name)
-        if raw is None:
+        if is_investment_solve(self, solve_name):
             return "within_solve"
-        value = str(raw).strip().lower()
-        return value if value in (
-            "within_solve", "separate_dispatch"
-        ) else "within_solve"
+        raw = self.dispatch_realization_method.get(solve_name)
+        value = "" if raw is None else str(raw).strip().lower()
+        return value if value in ("within_solve", "separate_dispatch") else "deterministic"
+
+    def apply_deterministic_realization(self) -> None:
+        """Make each solve with ``stochastic_branches`` that runs ``deterministic`` a deterministic solve.
+
+        The forecasts, ``invest_solve_branching_method`` and the realization solve are ignored: the solve's
+        ``stochastic_branches`` rows move to :attr:`deterministic_branches` (the solve then reads only its
+        ``realized: yes`` branch, flattened into one timeline, ``native_run_model`` step 3.7), and
+        :meth:`invest_branching_method_for` reads it as ``operations_only``.  A dispatch solve runs ``deterministic`` when its method is blank,
+        absent or ``deterministic``, with one warning W-0593 per database solve (a solve of a 2-D period map is named
+        by the solve the user wrote).  An investment solve (:func:`is_investment_solve`) never does: it does not read
+        the method and solves its forecasts; a ``separate_dispatch`` on it is ignored with one warning W-0640 per
+        database solve.  Raises :class:`FlexToolConfigError` naming the solve when no
+        row says ``realized: yes`` (the same exact match as the stochastic pass), or when the ``realized: yes``
+        rows name more than one branch (one realized series per solve, as for ``within_solve``).  Only a blank,
+        absent or ``deterministic`` value counts; an unknown value is left for ``_dispatch_realization_raw_guard``.
+        Over the solves the model runs (:meth:`solves_in_run`, after the 2-D map split)."""
+        from flextool import run_warnings
+
+        warned: set[str] = set()
+        for s in self.solves_in_run():
+            rows = self.stochastic_branches.get(s) or []
+            raw = self.dispatch_realization_method.get(s)
+            # A realization solve has no rows here (engine-spawned ones drop stochastic_branches, an author-declared
+            # one is deterministic; a realization roll's forecasts come from its plan), so it is never made
+            # deterministic.
+            method = str("" if raw is None else raw).strip().lower()
+            name = self.map2d_duplicate_of.get(s, (s,))[0]
+            if is_investment_solve(self, s):
+                if method == "separate_dispatch" and name not in warned:
+                    warned.add(name)
+                    run_warnings.warn("W-0640", solve=name)
+                continue
+            if not rows or method not in ("", "deterministic"):
+                continue
+            realized = list(dict.fromkeys(row[1] for row in rows if len(row) > 3 and row[3] == "yes"))
+            if not realized:
+                raise FlexToolConfigError(
+                    f"Solve '{name}' has stochastic_branches and dispatch_realization_method deterministic (the "
+                    "default of a dispatch solve since FlexTool 4.7.0), "
+                    "but no branch with realized: yes. Mark the branch that holds "
+                    "the realized data with realized: yes, or set dispatch_realization_method within_solve or "
+                    "separate_dispatch to solve the forecasts.")
+            if len(realized) > 1:
+                raise FlexToolConfigError(
+                    f"Solve '{name}' has stochastic_branches and dispatch_realization_method deterministic, and its "
+                    f"realized: yes rows name different branches: {', '.join(repr(str(b)) for b in realized)}. "
+                    "A deterministic solve reads one realized series: name the same branch in every realized: yes "
+                    "row. Check stochastic_branches.")
+            self.deterministic_branches[s] = self.stochastic_branches.pop(s)
+            if name not in warned:
+                warned.add(name)
+                run_warnings.warn("W-0593", solve=name)
 
     def _reduce_detail_for(self, solve_name: str, values: dict, param: str, valid: tuple[str, ...]) -> str:
         """The authored ``solve.<param>`` of *solve_name*: its roll suffix stripped, a realization solve mapped to
@@ -1753,60 +1907,6 @@ class SolveConfig:
                     entries[outer] = list(inner.indexes)
                 self._split_records.setdefault(param["entity_name"], {})[par] = entries
         return result_dict
-
-    def non_anticipativity_periods_to_tristate(
-        self,
-        db: "DatabaseMapping",
-        cl: str = "solve",
-        par: str = "shared_operation_periods",
-    ) -> dict[str, list | None]:
-        """Read ``shared_operation_periods`` as a TRI-STATE dict (Slice G).
-
-        Unlike :meth:`periods_to_tuples` (which returns a
-        ``defaultdict(list)`` that cannot tell "no parameter row" apart
-        from "stored empty Array" — both collapse to ``[]``), this reader
-        keys off raw parameter-value presence so the byte-parity default
-        (unset) and the free-operations opt-in (empty Array) are distinct:
-
-        * no ``parameter_value`` row  -> ``None``  (unset -> legacy window)
-        * stored empty Array ``[]``   -> ``[]``    (operations free from t0)
-        * ``["p", ...]``              -> ``[(p, p), ...]``  (curated window)
-
-        The tuple shape ``[(p, p), ...]`` matches
-        :meth:`periods_to_tuples` so the emit site can treat both readers
-        the same.  Only real ``solve`` entities are enumerated here; a solve
-        made from another one gets its value through :meth:`derive_solve`
-        (the solves of a 2-D period map: the periods they have, an unset
-        value staying unset and an empty list empty).
-
-        A malformed value that is not an Array (e.g. a stray scalar) is
-        treated as unset (legacy window), never as the behaviour-changing
-        empty-Array free-operations opt-in.
-        """
-        entities = db.find_entities(entity_class_name=cl)
-        params = db.find_parameter_values(
-            entity_class_name=cl,
-            parameter_definition_name=par,
-        )
-        # Map entity_name -> resolved value for solves that DO carry a row.
-        present: dict[str, list] = {}
-        for param in params:
-            param_value = api.from_database(param["value"], param["type"])
-            # An empty Array has an empty ``.values`` ([]); a populated one
-            # yields one (p, p) per element (mirrors periods_to_tuples). A
-            # value that is not an Array has no ``.values`` (None) — malformed
-            # authoring; skip it so it resolves to the legacy window rather
-            # than silently freeing operations from t0.
-            values = getattr(param_value, "values", None)
-            if values is None:
-                continue
-            tuples: list = [(row, row) for row in values]
-            present[param["entity_name"]] = tuples
-        result: dict[str, list | None] = {}
-        for entity in entities:
-            name = entity["name"]
-            result[name] = present[name] if name in present else None
-        return result
 
 
 def _fan_rows_to_map(rows: list) -> "api.Map | None":

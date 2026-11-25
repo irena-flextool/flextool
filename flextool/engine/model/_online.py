@@ -549,6 +549,8 @@ def add_constraints(b: "_Build") -> None:
         # v_online[p,d,t]  ≥  Σ_{(p,d′,t′,d,t) ∈ uptime_lookback} v_startup[p,d′,t′] + carry_up[p,d,t]
         #   ∀ (p,d,t) ∈ pdt_uptime_set ∩ this class ∩ online_rows
         # A unit started within the minimum uptime stays online.
+        # pdt_uptime_set = the steps of the units with minimum_time_method ∈ {min_uptime, both} and min_uptime > 0
+        #   (_derived._process_min_time; an unset method is none, which builds no row).
         # uptime_lookback = {(p,d′,t′,d,t) : (d′,t′) = (d,t), or (d′,t′) an ancestor of (d,t) along dt_ramp_link
         #   with elapsed(d′,t′ → d,t) = Σ step_duration over the chain from (d′,t′) up to, not including, (d,t)
         #   < min_uptime[p]} — the chain stops at a step without a ramp predecessor (solve start, a period that
@@ -556,7 +558,19 @@ def add_constraints(b: "_Build") -> None:
         #   branch that starts the solve); no cyclic wrap.
         # carry_up[p,d,t] = Σ_{h ∈ online_history} startup[p,h] over the root r ∈ dt_ramp_carry that is (d,t) or an
         #   ancestor of it along dt_ramp_link, with elapsed(r → d,t) + hours_to_end[h] < min_uptime[p]
-        #   (d.uptime_carry, 0-filled; absent where no step continues the previous solve's last realized step).
+        #   (d.uptime_carry, 0-filled; absent where no step continues the previous solve's last realized step),
+        #   and 0 at and after the first step it reaches in B = {min_load[p,d,t] > 0, availability[p,d,t] · κ[p] <
+        #   min_load[p,d,t]}, κ = Σ_{A_p} capacity_max_coeff (min(Σ, 1) for an indirect unit, maxOutputSum_online)
+        #   (_mintime.online_blocked_cells: the unit cannot be online there; a coarse process at the first fine step
+        #   b of each coarse step on ā_b, m̄l_b, as its rows): a carried obligation yields to an outage the solve
+        #   that started the unit did not see (W-0592; not under a reduce_unit_detail_method with min_limits).
+        #   Then capped: carry_up[p,d,t] ≤ ĉ[p] = p_roll_continue_online[p] (the units online carried in), so an
+        #   obligation cut in an earlier solve does not come back in a later one (the outage forced ĉ to count only
+        #   the start-ups after it).  Without such a cut the earlier solve's minimum_uptime row at the carried step
+        #   already gives carry_up ≤ ĉ.
+        #   A start-up within this solve keeps its full minimum up-time (the solve sees the outage), except a start-up
+        #   at a realization pin kept before the unit's first blocked pinned step: uptime_lookback holds no term of it
+        #   at and after that step (its up-time ends at the outage, as the pinned commitment did not see it).
         # A coarse process: rows and look-back only at the first fine steps of its coarse steps (its only start-ups),
         #   so elapsed(b′ → b) = Σ of the coarse durations from b′ up to b: a start-up counts while the steps since
         #   its start last less than min_uptime, i.e. min_uptime in whole coarse steps, rounded up.  A row whose
@@ -594,6 +608,8 @@ def add_constraints(b: "_Build") -> None:
         # A unit shut down within the minimum downtime stays offline: existing − v_online ≥
         # Σ v_shutdown, with the invest/divest terms of maxOnline (without them an invest-only
         # unit with existing = 0 could never be online).
+        # pdt_downtime_set = the steps of the units with minimum_time_method ∈ {min_downtime, both} and
+        #   min_downtime > 0 (_derived._process_min_time).
         # downtime_lookback: as uptime_lookback with min_downtime[p] (a coarse process as in minimum_uptime; a row
         #   whose look-back holds only its own step and no carry is implied by maxShutdown / online_change).
         # carry_dn: as carry_up with shutdown[p,h] and min_downtime[p] (d.downtime_carry, 0-filled).
@@ -632,13 +648,18 @@ def add_constraints(b: "_Build") -> None:
     # v_online[p,d,t] = p_fix_online[p,d,t]   ∀ (p,d,t) ∈ online_rows with a p_fix_online value
     #   (a coarse process: at the first fine step of each coarse step; its pin is the same on every fine step of
     #   the step, or the process keeps the solve's step, flex_data.coarse_pin_varies)
-    # In a realization solve, pins the units online of the processes with integer (binary) online variables to the
-    # parent's commitment, also when the solve relaxes integers (reduce_unit_detail_method integers*); linear units
-    # online are not pinned (p_fix_online has none: the realization re-decides them with the realized data), so
-    # online_fix_eq_linear has no rows.  At a free start of the realization (its roll 0, a single-solve realization,
+    # In a realization solve, pins the units online of the processes with startup_method linear_fix_in_uc
+    # (online_fix_eq_linear) or integer_fix_in_uc (online_fix_eq_integer, also when the solve relaxes integers:
+    # reduce_unit_detail_method integers*) to the parent's commitment; the units online of linear and integer
+    # processes are not pinned (p_fix_online has none: the realization re-decides them with the realized data).
+    # At a free start of the realization (its roll 0, a single-solve realization,
     # a period that does not continue the previous one) its units online are free like the parent's; a free start
     # relaxes any predecessor the parent had, so the pinned commitment stays feasible.  A later roll carries the
     # previous realization's units online in both stages (the stochastic roll k and realization roll k).
+    # A unit pinned > 0 at a step of B (B as in minimum_uptime; an outage only the realized data have) keeps its
+    #   pins before the first such step and loses them there and at every later step it reaches along the timeline
+    #   (dt_ramp_link): it is decided again under its own rows from the outage on
+    #   (flex_data.carried_obligations_yield_to_outages, W-0592).
     # Only declared v_online cells are pinned.  p_fix_online is Utf8-keyed: it is joined to
     # the native-typed index through Utf8 copies of (p, d, t).
     if d.p_fix_online is not None and d.p_fix_online.frame.height > 0:

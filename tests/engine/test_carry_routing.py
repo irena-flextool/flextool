@@ -2,7 +2,8 @@
 solve trees: no LP, no database.
 
 A sub-solve continues from the latest state realised before it at its own nesting level or deeper; a level's first
-appearance has none (fix_start); a realised-dispatch sibling starts where its parent starts.
+appearance has none (fix_start); a realised-dispatch sibling starts where its parent starts, or after the dispatch its
+parent realised when it starts later.
 """
 from __future__ import annotations
 
@@ -83,6 +84,18 @@ def test_sibling_starts_where_its_parent_starts():
                 "d1": (8.0, ("p1", "t48"))},
                {"uc0": ("p1", "t01"), "d0": ("p1", "t01"), "uc1": ("p1", "t25"), "d1": ("p1", "t25")})
     assert got == {"uc0": None, "d0": None, "uc1": 7.0, "d1": 7.0}
+
+
+def test_sibling_starting_after_its_parents_dispatch_continues_from_it():
+    """The realization of an investment solve starts at the reveal (p2) when the investment solve realized p1 itself:
+    the sibling continues from the parent's p1 end (as a later solve does), while a sibling over its parent's own
+    window still does not (the parent's end lies at or after its start)."""
+    router = CarryRouter({"inv": None, "real": None}, siblings={"real": "inv"}, position=_pos)
+    got = _run(router, ["inv", "real"], {"inv": (40.0, ("p1", "t02"))}, {"inv": ("p1", "t01"), "real": ("p2", "t03")})
+    assert got == {"inv": None, "real": 40.0}
+    router = CarryRouter({"inv": None, "real": None}, siblings={"real": "inv"}, position=_pos)
+    got = _run(router, ["inv", "real"], {"inv": (40.0, ("p1", "t02"))}, {"inv": ("p1", "t01"), "real": ("p1", "t01")})
+    assert got == {"inv": None, "real": None}
 
 
 def test_per_node_latest():

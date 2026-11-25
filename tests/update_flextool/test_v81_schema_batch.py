@@ -1,6 +1,7 @@
 """Database migration to version 81 (all schema changes of one release in one step).
 
-A v80 database (built from the v75 seed JSON and migrated up to 80, never a checked-in ``.sqlite``) carries
+A v80 database (v75b, ``_rerun.build_v75b``: the v2 template migrated to 75 plus the v75 seed data,
+migrated up to 80; never a checked-in ``.sqlite``) carries
 ``lifetime`` (a constant, a ``period`` map, an unnamed ``x`` map and a ``time``-labelled map on a unit, constants on a
 connection and a node), ``salvage_value`` (a constant and a ``period`` map) and ``lifetime_method`` values
 ``no_investment`` (two alternatives) and ``reinvest_choice``; the ``node.lifetime_method`` default is
@@ -39,9 +40,9 @@ connection and a node), ``salvage_value`` (a constant and a ``period`` map) and 
   invest_no_limit only; not city: retire_no_limit without a lifetime_method).
 
 Nothing else changes, and a rerun commits nothing.  Where a database already has a value under a new name, that
-value is kept (and printed).  A database already at 81 that lacks a definition of the step gets it without a migration of its
-values, and its own descriptions are kept; one that still has the shipped ``end_of_life_method`` default
-``next_seam`` with its shipped description gets the current default and description, both together.
+value is kept (and printed).  A database migrated to 81 by a development build gets the v81 definitions and list
+members it lacks inside step 82 (:func:`db_migration._v81_refresh`); since data version 83 the refresh of a database
+already at the current version no longer covers the v81 entries (``test_v83_schema_batch.py`` tests that refresh).
 """
 from __future__ import annotations
 
@@ -56,12 +57,11 @@ from spinedb_api import DatabaseMapping, Map, from_database, to_database
 from spinedb_api.exception import NothingToCommit
 
 from flextool._resources import package_data_path
-from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool import db_migration as m
 from flextool.update_flextool.db_migration import migrate_database
 from tests.db_utils import json_to_db
+from tests.update_flextool._rerun import v75b_url
 
-SEED = Path(__file__).resolve().parent / "data" / "v75_seed_stoch_two_period.json"
 TESTS_JSON = Path(__file__).resolve().parents[1] / "fixtures" / "tests.json"
 CLASSES = ("unit", "connection", "node")
 AGE_DEFINITIONS = {(cls, name) for cls in CLASSES for name in ("age_at_model_start", "build_year",
@@ -133,14 +133,9 @@ def _shipped(*, as_v81: bool = False) -> tuple[dict, dict[str, list[str]]]:
     return texts, lists
 
 
-def _head_texts() -> dict[tuple[str, str], str]:
-    """The descriptions the refresh of the current version writes: v81's, with v82's where v82 rewrites one."""
-    return {**m._v81_texts(), **m._v82_texts()}
-
-
 @pytest.fixture(scope="module")
 def migrated(tmp_path_factory: pytest.TempPathFactory) -> dict:
-    url = json_to_db(SEED, tmp_path_factory.mktemp("v81") / "seed.sqlite")
+    url = v75b_url(tmp_path_factory, tmp_path_factory.mktemp("v81") / "seed.sqlite")
     migrate_database(url, up_to=80)
     with DatabaseMapping(url) as db:
         alts = sorted(a["name"] for a in db.get_items("alternative"))
@@ -413,171 +408,6 @@ def test_collision_keeps_the_new_value(tmp_path_factory, capsys) -> None:
     assert sorted(members) == sorted(shipped_lists["lifetime_methods"])
 
 
-def test_current_version_database_gets_a_missing_head_definition(tmp_path_factory) -> None:
-    """A database at the current version made before a definition was added to the current version's step (here:
-    ``unit.payback_time`` removed, the ``payback_time`` description of node edited) is not current for the
-    read-only check; ``migrate_database`` adds the definition with its shipped fields and keeps the edited
-    description and every value."""
-    assert m.RERUNNABLE_HEAD_STEP[FLEXTOOL_DB_VERSION] is m._migrate_v82_schema_batch
-    url = _tests_json_at(tmp_path_factory, "v81_head", FLEXTOOL_DB_VERSION)
-    path = Path(url.removeprefix("sqlite:///"))
-    assert m._current_version_ro(path, None) == FLEXTOOL_DB_VERSION
-    with DatabaseMapping(url) as db:
-        db.remove_item("parameter_definition",
-                       db.get_item("parameter_definition", entity_class_name="unit", name="payback_time")["id"])
-        node = db.get_item("parameter_definition", entity_class_name="node", name="payback_time")
-        db.update_parameter_definition(id=node["id"], description="my own text")
-        db.commit_session("an older v81 database")
-        values_before = {k: v for k, v in _values(db).items() if not (k[0] == "unit" and k[2] == "payback_time")}
-    assert m._head_schema_missing_ro(path)
-    assert m._current_version_ro(path, None) is None
-    migrate_database(url)
-    shipped, _ = _shipped()
-    with DatabaseMapping(url) as db:
-        defs = _defs(db)
-        assert defs[("unit", "payback_time")] == (shipped[("unit", "payback_time")], ("float", "1d_map"),
-                                                  "investment", None, None, None)
-        assert defs[("node", "payback_time")][0] == "my own text"
-        assert _values(db) == values_before
-    assert not m._head_schema_missing_ro(path)
-    assert m._current_version_ro(path, None) == FLEXTOOL_DB_VERSION
-
-
-def test_current_version_database_gets_the_end_of_life_list_and_definitions(tmp_path_factory) -> None:
-    """A database at the current version made before ``end_of_life_methods``, ``end_of_life_method``,
-    ``age_at_model_start`` and ``model.start_year`` were added gets them, with their shipped fields, the list before
-    the definition that names it; a second migration commits nothing."""
-    url = _tests_json_at(tmp_path_factory, "v81_head_eol", FLEXTOOL_DB_VERSION)
-    path = Path(url.removeprefix("sqlite:///"))
-    with DatabaseMapping(url) as db:
-        for cls, name in (("unit", "end_of_life_method"), ("node", "end_of_life_method"),
-                          ("connection", "end_of_life_method"), ("unit", "age_at_model_start"),
-                          ("model", "start_year")):
-            db.remove_item("parameter_definition",
-                           db.get_item("parameter_definition", entity_class_name=cls, name=name)["id"])
-        db.remove_item("parameter_value_list", db.get_item("parameter_value_list", name="end_of_life_methods")["id"])
-        db.commit_session("an older v81 database")
-        values_before = _values(db)
-    assert m._head_schema_missing_ro(path)
-    migrate_database(url)
-    shipped, shipped_lists = _shipped()
-    with DatabaseMapping(url) as db:
-        defs = _defs(db)
-        assert _lists(db)["end_of_life_methods"] == shipped_lists["end_of_life_methods"]
-        for cls in CLASSES:
-            assert defs[(cls, "end_of_life_method")] == (shipped[(cls, "end_of_life_method")], ("str",), "retirement",
-                                                         "end_of_life_methods", *to_database("closest_seam"))
-        assert defs[("unit", "age_at_model_start")][1:] == (("float",), "retirement", None, None, None)
-        assert defs[("model", "start_year")][1:] == (("float",), "model", None, None, None)
-        assert _values(db) == values_before
-        with pytest.raises(NothingToCommit):
-            m._refresh_head_schema(db)
-            db.commit_session("rerun")
-    assert not m._head_schema_missing_ro(path)
-
-
-def test_materialized_file_without_a_head_definition_is_stale(tmp_path_factory) -> None:
-    """``materialize`` rebuilds a canonical file at the current version that lacks a head definition."""
-    from flextool.update_flextool.canonical_databases import _stale_version
-
-    url = _tests_json_at(tmp_path_factory, "v81_stale", FLEXTOOL_DB_VERSION)
-    path = Path(url.removeprefix("sqlite:///"))
-    assert _stale_version(path) is None
-    with DatabaseMapping(url) as db:
-        db.remove_item("parameter_definition",
-                       db.get_item("parameter_definition", entity_class_name="connection",
-                                   name="net_salvage_value")["id"])
-        db.commit_session("an older v81 file")
-    assert _stale_version(path) == FLEXTOOL_DB_VERSION
-
-
-def _set_end_of_life_definition(db, cls: str, default: str, description: str) -> None:
-    pdef = db.get_item("parameter_definition", entity_class_name=cls, name="end_of_life_method")
-    val, typ = to_database(default)
-    db.update_parameter_definition(id=pdef["id"], default_value=val, default_type=typ, description=description)
-
-
-@pytest.mark.parametrize("case", ["shipped", "edited_text", "previous_seam_default"])
-def test_current_version_database_with_the_superseded_end_of_life_default(tmp_path_factory, case) -> None:
-    """A database at the current version made while ``end_of_life_method`` defaulted to ``next_seam`` (its shipped
-    description, verbatim) gets the current default ``closest_seam`` and description on every class; a definition
-    whose description or default the user changed keeps both.  Values are never touched.  Afterwards the database
-    is current for the migration (``_current_version_ro``) and for the canonical rebuild (``_stale_version``), so it
-    is not migrated or rebuilt again, and a second refresh commits nothing."""
-    from flextool.update_flextool.canonical_databases import _stale_version
-
-    url = _tests_json_at(tmp_path_factory, f"v81_eol_default_{case}", FLEXTOOL_DB_VERSION)
-    path = Path(url.removeprefix("sqlite:///"))
-    assert m._current_version_ro(path, None) == FLEXTOOL_DB_VERSION and _stale_version(path) is None
-    old = {cls: m._v81_superseded_end_of_life_text(cls) for cls in CLASSES}
-    with DatabaseMapping(url) as db:
-        for cls in CLASSES:
-            _set_end_of_life_definition(db, cls, "next_seam", old[cls])
-        if case == "edited_text":
-            _set_end_of_life_definition(db, "unit", "next_seam", "my own text")
-        elif case == "previous_seam_default":
-            _set_end_of_life_definition(db, "unit", "previous_seam", old["unit"])
-        db.commit_session("an older v81 database")
-        values_before = _values(db)
-        user_unit = _defs(db)[("unit", "end_of_life_method")]
-    assert m._head_defaults_stale_ro(path)
-    assert m._current_version_ro(path, None) is None and _stale_version(path) == FLEXTOOL_DB_VERSION
-    migrate_database(url)
-    shipped, _ = _shipped()
-    with DatabaseMapping(url) as db:
-        defs = _defs(db)
-        for cls in CLASSES:
-            if cls == "unit" and case != "shipped":
-                assert defs[(cls, "end_of_life_method")] == user_unit
-                continue
-            assert defs[(cls, "end_of_life_method")] == (shipped[(cls, "end_of_life_method")], ("str",),
-                                                         "retirement", "end_of_life_methods",
-                                                         *to_database("closest_seam"))
-            assert shipped[(cls, "end_of_life_method")] == _head_texts()[(cls, "end_of_life_method")]
-        assert _values(db) == values_before
-        with pytest.raises(NothingToCommit):
-            m._refresh_head_schema(db)
-            db.commit_session("rerun")
-    assert not m._head_defaults_stale_ro(path)
-    assert m._current_version_ro(path, None) == FLEXTOOL_DB_VERSION and _stale_version(path) is None
-
-
-def _superseded_descriptions() -> list[tuple[str, str]]:
-    """The superseded shipped pairs whose default is still the shipped one (none, or a definition v81 does not add,
-    such as ``discount_rate``): only their description changed."""
-    return sorted(key for key, (default, _text) in m._v81_superseded().items()
-                  if default is None or key not in m._v81_definitions())
-
-
-@pytest.mark.parametrize("edited", [False, True], ids=["shipped", "edited_text"])
-def test_current_version_database_with_a_superseded_description(tmp_path_factory, edited) -> None:
-    """A database at the current version whose definitions with an unchanged default still have the description
-    FlexTool shipped before (verbatim) gets the current description of each; a description the user changed is kept.
-    Values are never touched, and afterwards the database is current, so it is not migrated again."""
-    keys = _superseded_descriptions()
-    assert {(cls, "discount_rate") for cls in CLASSES} <= set(keys)
-    url = _tests_json_at(tmp_path_factory, f"v81_superseded_text_{edited}", FLEXTOOL_DB_VERSION)
-    path = Path(url.removeprefix("sqlite:///"))
-    with DatabaseMapping(url) as db:
-        for cls, name in keys:
-            pdef = db.get_item("parameter_definition", entity_class_name=cls, name=name)
-            text = "my own text" if edited else m._v81_superseded()[(cls, name)][1]
-            db.update_parameter_definition(id=pdef["id"], description=text)
-        db.commit_session("an older v81 database")
-        values_before = _values(db)
-    assert m._head_defaults_stale_ro(path) is not edited
-    migrate_database(url)
-    shipped, _ = _shipped()
-    with DatabaseMapping(url) as db:
-        defs = _defs(db)
-        for cls, name in keys:
-            assert defs[(cls, name)][0] == ("my own text" if edited else shipped[(cls, name)])
-            assert shipped[(cls, name)] == _head_texts()[(cls, name)]
-        assert _values(db) == values_before
-    assert not m._head_defaults_stale_ro(path)
-    assert m._current_version_ro(path, None) == FLEXTOOL_DB_VERSION
-
-
 #: Entities per class in the large database: each one's old value sits between values of other parameters, so the
 #: ids of the old values are not consecutive and their removal is one id range per value (SQLite refuses a DELETE
 #: over more than about 1000 ranges).
@@ -590,7 +420,7 @@ def large(tmp_path_factory: pytest.TempPathFactory) -> dict:
     nodes, each with a ``salvage_value`` and an ``invest_cost`` value; every other node (even numbers) already has
     a ``net_salvage_value`` (a definition added at 80, as an earlier development build left it), so its old value
     is not copied, the odd ones get theirs."""
-    url = json_to_db(SEED, tmp_path_factory.mktemp("v81_large") / "seed.sqlite")
+    url = v75b_url(tmp_path_factory, tmp_path_factory.mktemp("v81_large") / "seed.sqlite")
     migrate_database(url, up_to=80)
     with DatabaseMapping(url) as db:
         alt = sorted(a["name"] for a in db.get_items("alternative"))[0]

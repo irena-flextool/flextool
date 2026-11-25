@@ -1,6 +1,6 @@
-"""A shared investment in a stochastic fan without recourse reaches the fan's branch periods.
+"""A shared investment in a stochastic fan whose investments do not branch reaches the fan's branch periods.
 
-Under ``stochastic_invest_method = none`` the investment is one decision on the period label and the fan's
+Under ``invest_solve_branching_method = operations_only`` (the default) the investment is one decision on the period label and the fan's
 branch periods operate the capacity.  The branch periods take their label's year in every period walk, so a
 decision that starts to operate in a later period (a construction lead time, or a decision made only in the
 second period) is available in that period's branches.

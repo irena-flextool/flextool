@@ -272,7 +272,7 @@ def save_plot_plan(
     if plan.batch_ylabels is not None:
         meta['batch_ylabels'] = plan.batch_ylabels
 
-    with open(output_dir / f"{prefix}_plan.json", 'w') as f:
+    with open(output_dir / f"{prefix}_plan.json", 'w', encoding='utf-8') as f:
         json.dump(meta, f, indent=2, default=_json_safe)
 
 

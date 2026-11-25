@@ -44,7 +44,7 @@ One 3-step period ``p2035`` on an hourly timeline.
 Two solves (``model.solves`` ORDER matters — dispatch listed AFTER)
 ------------------------------------------------------------------
   1. ``stoch_rd`` — GENUINELY stochastic, ``solve_mode=single_solve``
-     (fan-at-first).  ``stochastic_invest_method`` left at the DEFAULT
+     (fan-at-first).  ``invest_solve_branching_method`` left at the DEFAULT
      ``none`` (shared first-stage invest — one unambiguous ``v_invest``).
      The fan is FORECASTS-ONLY: the realized (``rlz``) branch is a
      WEIGHT-0 designation (dispatch owned by the separate realized solve);
@@ -259,6 +259,8 @@ def build() -> dict:
          "stoch"],
         ["solve", "stoch_rd", "stochastic_branches",
          _pack(stochastic_branches, "map"), "stoch"],
+        ["solve", "stoch_rd", "dispatch_realization_method",
+         _pack("within_solve", "str"), "stoch"],
     ]
     return spec
 

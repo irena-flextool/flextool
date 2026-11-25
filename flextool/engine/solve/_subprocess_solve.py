@@ -124,7 +124,7 @@ def _touch_marker(path: Path, logger: logging.Logger | None) -> None:
     the next solve, never breaking the solve itself.
     """
     try:
-        path.write_text("")
+        path.write_text("", encoding="utf-8")
     except OSError as exc:
         if logger is not None:
             logger.warning(
@@ -191,7 +191,7 @@ def _run_cold_probe(
                     )
                 return None, False
             return None, True
-        pstats = json.loads(probe_stats.read_text())
+        pstats = json.loads(probe_stats.read_text(encoding="utf-8"))
         rt = pstats.get("run_time")
         if rt is None:
             return None, True
@@ -287,7 +287,7 @@ def _read_objective_from_sol(sol_path: Path) -> float:
     when the line is absent (caller should treat as non-optimal).
     """
     try:
-        with open(sol_path) as f:
+        with open(sol_path, encoding="utf-8") as f:
             for line in f:
                 if line.startswith("Objective "):
                     return float(line.split(None, 1)[1])
@@ -546,7 +546,7 @@ def _parse_highs_sol(
                 )
             counts[(section, bucket)] = pos
 
-    with open(sol_path) as fh:
+    with open(sol_path, encoding="utf-8") as fh:
         for raw in fh:
             line = raw.strip()
             if not line:
@@ -634,7 +634,7 @@ def _highs_sol_status(sol_path: Path) -> tuple[str, bool]:
     (:data:`_HIGHS_SOL_STATUSES`, else ``OTHER``) and whether the file's primal is ``Feasible``.  Reads the
     file's first lines only."""
     try:
-        with open(sol_path) as fh:
+        with open(sol_path, encoding="utf-8") as fh:
             head = [fh.readline().strip() for _ in range(6)]
     except OSError:
         return "OTHER", False
@@ -650,7 +650,7 @@ def _read_highs_mip_gap(gap_path: Path) -> float | None:
     unreadable.  A non-finite value (an LP, or no incumbent) is returned as is; the acceptance check treats it
     as "no gap"."""
     try:
-        return float(gap_path.read_text().strip())
+        return float(gap_path.read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
         return None
 
@@ -660,7 +660,7 @@ def _read_highs_primal_feasible(path: Path) -> bool | None:
     else ``None`` when the child wrote none (no user scaling, not a limit stop, or the best-effort write
     failed)."""
     try:
-        text = path.read_text().strip()
+        text = path.read_text(encoding="utf-8").strip()
     except OSError:
         return None
     return {"1": True, "0": False}.get(text)
@@ -1300,7 +1300,7 @@ def _parse_sol_text(
         return "OTHER", None, None
     objective: float | None = None
     primal: dict[str, float] = {}
-    with path.open("r") as fh:
+    with path.open("r", encoding="utf-8") as fh:
         for raw in fh:
             line = raw.strip()
             if not line:

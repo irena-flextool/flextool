@@ -110,7 +110,7 @@ def _anchors(page: Path) -> set[str]:
 def test_registry_kinds_and_their_docs_exist():
     from flextool.run_warnings.registry import WARNINGS
 
-    # Design §3.1: W-0490 and the unreadable file are attention messages without Dismiss; the event kinds and
+    # Design §3.1: W-0490 and the unreadable file are attention messages without Dismiss message; the event kinds and
     # the update state are dismissable and capped.
     assert (W0490.dismissable, W0490.attention) == (False, True)
     assert (UNREADABLE.dismissable, UNREADABLE.attention) == (False, True)
@@ -529,7 +529,7 @@ def test_non_dismissable_note_is_capped_but_stays(tmp_path):
     assert center.recompute("project_open") is None                      # the third open does not show it
     assert [msg.key for msg in center.messages] == [states[0].key]       # still active and counted
     assert center.indicator() == (1, True)
-    with pytest.raises(ValueError):                                      # and has no Dismiss
+    with pytest.raises(ValueError):                                      # and has no Dismiss message
         center.dismiss(center.messages[0])
     states[:] = [_msg(NOTE_STUB, key, "hash2")]                          # a changed set of empty defaults
     assert _open_project(path, _static(states)) == states[0].key
@@ -541,10 +541,11 @@ def test_non_dismissable_note_is_capped_but_stays(tmp_path):
 _SENTENCE_END = re.compile(r"[.!?](\s|$)")
 
 
-def _check_style(msg: GuiMessage) -> None:
-    """Design §4.5 / §5: a title of at most 60 characters, at most 4 sentences in the whole message."""
+def _check_style(msg: GuiMessage, max_sentences: int = 4) -> None:
+    """Design §4.5 / §5: a title of at most 60 characters, at most 4 sentences in the whole message (*max_sentences*:
+    the one exception, a "database upgraded" message with undecided units, whose fixed paragraph adds 2)."""
     assert len(msg.title) <= 60, msg.title
-    assert sum(len(_SENTENCE_END.findall(p)) for p in msg.paragraphs) <= 4, msg.paragraphs
+    assert sum(len(_SENTENCE_END.findall(p)) for p in msg.paragraphs) <= max_sentences, msg.paragraphs
 
 
 def _result(path: Path, before, after, *, upgraded=True, failed=False, copy_of=None, messages=()) -> UpgradeResult:
@@ -1026,7 +1027,7 @@ def test_w0491_message_for_the_original_only_and_capped(schema_db_url, tmp_path)
         LIST_DEFAULTS, database_key(sources / "model.sqlite"), "model.sqlite",
         hashlib.sha1(empty.encode()).hexdigest()[:12])
     assert (LIST_DEFAULTS.dismissable, LIST_DEFAULTS.attention, LIST_DEFAULTS.docs) == (False, False, "W-0491")
-    assert msg.title == "Shipped defaults lost in an old upgrade"
+    assert msg.title == "Method parameter defaults lost in an old upgrade"
     assert "storage start and end handling (storage_start_end_method)" in msg.paragraphs[0]
     _check_style(msg)
     with pytest.raises(ValueError):

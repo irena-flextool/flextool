@@ -37,7 +37,7 @@ test fails if any value in the selected CSVs drifts.
 ### Running
 
 ```bash
-# All 60 scenarios
+# All 87 scenarios
 pytest tests/test_scenarios.py
 
 # One specific scenario (exact match — -k does substring matching)

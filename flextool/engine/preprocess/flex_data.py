@@ -75,7 +75,7 @@ def _loadflex_prof(label: str) -> None:
     if os.environ.get("FLEXTOOL_LOADFLEX_PROFILE") != "1":
         return
     try:
-        with open("/proc/self/status") as _f:
+        with open("/proc/self/status", encoding="utf-8") as _f:
             for _ln in _f:
                 if _ln.startswith("VmRSS:"):
                     _rss = int(_ln.split()[1]) / (1024 * 1024)
@@ -670,8 +670,9 @@ def coarse_tie_straddles(flex_data: "FlexData", steps: pl.DataFrame) -> set[str]
     the tied steps the forecasts could no longer differ after it, although nothing is committed there.  A tie row
     pairs the column of a forecast's coarse step with the reference forecast's column at the same step, which is
     one value per step only where both forecasts cut the tied steps into the same coarse steps.  Such a process
-    keeps the solve's step."""
-    from flextool.engine.model._non_anticipativity import reference_forecasts
+    keeps the solve's step.  Under the ``uc_only`` role (solve (1) of separate_dispatch,
+    ``_non_anticipativity.na_role``) only the units online of the ``_fix_in_uc`` processes are tied."""
+    from flextool.engine.model._non_anticipativity import na_role, reference_forecasts
 
     d = flex_data
     pss, tie = d.process_source_sink, d.dt_non_anticipativity
@@ -680,10 +681,13 @@ def coarse_tie_straddles(flex_data: "FlexData", steps: pl.DataFrame) -> set[str]
     forecasts = [(a, f) for a, f in reference_forecasts(d) if len(f) >= 2]
     if not forecasts:
         return set()
-    procs = _frame_values(d.process_online, "p") | _frame_values(
-        getattr(d, "process_reserve_upDown_node_active", None), "p")
+    if na_role(d) == "uc_only":
+        procs = _frame_values(d.process_online, "p") & _frame_values(d.process_online_fix_in_uc, "p")
+    else:
+        procs = _frame_values(d.process_online, "p") | _frame_values(
+            getattr(d, "process_reserve_upDown_node_active", None), "p")
     gn, gs = d.group_node, d.groupStochastic
-    if all(f is not None and f.height > 0 for f in (gn, gs, d.nodeBalance)):
+    if na_role(d) != "uc_only" and all(f is not None and f.height > 0 for f in (gn, gs, d.nodeBalance)):
         nodes = (_frame_values(gn.join(gs.select("g").unique(), on="g", how="semi"), "n")
                  & _frame_values(d.nodeBalance, "n"))
         arcs = pss.select(*(pl.col(c).cast(pl.Utf8) for c in ("p", "source", "sink")))
@@ -989,14 +993,21 @@ def _roll_end_tied_nodes(roll_end: "pl.DataFrame | None") -> "pl.DataFrame | Non
     return out if out.height > 0 else None
 
 
-def _within_period_lag(dtttdt: pl.DataFrame) -> "pl.DataFrame | None":
-    """``(d, t, t_previous_within_period)``: the bind_within_period predecessor of every step of ``dtttdt``.
+def _within_period_lag(dtttdt: pl.DataFrame,
+                       period_branch: "pl.DataFrame | None" = None) -> "pl.DataFrame | None":
+    """``(d, t, d_previous, t_previous_within_period)``: the bind_within_period predecessor of every step of ``dtttdt``.
 
     Inside a period it is the step's ``t_previous`` (across block boundaries too: blocks chain inside the
     period).  The first step of a period wraps to the period's OWN last step — the state cycles within each
     period.  ``dtttdt``'s first step of a period continues from another period (``d_previous`` ≠ ``d``) or, for
     a period that wraps onto itself, already points at its own last step.  A period's last step is the step
-    no same-period step follows.
+    no same-period step follows.  ``d_previous`` is ``d`` on these rows.
+
+    A split realization roll (``period_branch`` (d, b) with a label that has steps, ``_step_relations``) splits a
+    period into paths: the label's jump steps and one branch period's tail each.  The period's part in the roll is
+    one path, so the lag crosses the seam: each branch period's first step continues from the label's last jump
+    step, and the label's first step wraps to the last step of its last branch period in name order, d* (the
+    model ties every other branch period's end to d*'s, ``core._eq_storage_split_path_end``).
     """
     t_dtype = dtttdt.schema["t"]
     frame = (dtttdt.select("d", "t", "t_previous", "d_previous")
@@ -1014,9 +1025,20 @@ def _within_period_lag(dtttdt: pl.DataFrame) -> "pl.DataFrame | None":
             "bind_within_period: the steps of period(s) "
             f"{sorted(str(x) for x in multi['d'].to_list())} do not form one chain in step_previous "
             "(more than one last step)")
+    first = first.select("d", "t").join(last, on="d", how="inner").with_columns(d_previous=pl.col("d"))
+    from flextool.engine.preprocess._step_relations import _split_labels
+    lab = {} if period_branch is None or period_branch.height == 0 else _split_labels(period_branch, frame)
+    if lab:
+        ends = dict(last.select(pl.col("d").cast(pl.Utf8), pl.col("t_previous_within_period").cast(pl.Utf8)).rows())
+        seam = {**{f: p for p, fs in lab.items() for f in fs}, **{p: max(fs) for p, fs in lab.items() if fs}}
+        src = pl.col("d").cast(pl.Utf8).replace_strict(seam, default=None)
+        first = first.with_columns(
+            d_previous=pl.coalesce(src, pl.col("d").cast(pl.Utf8)).cast(frame.schema["d"]),
+            t_previous_within_period=pl.coalesce(src.replace_strict(ends, default=None),
+                                                 pl.col("t_previous_within_period").cast(pl.Utf8)).cast(t_dtype))
     out = pl.concat([
-        inner.select("d", "t", pl.col("t_previous").alias("t_previous_within_period")),
-        first.select("d", "t").join(last, on="d", how="inner"),
+        inner.select("d", "t", pl.col("d").alias("d_previous"), pl.col("t_previous").alias("t_previous_within_period")),
+        first.select("d", "t", "d_previous", "t_previous_within_period"),
     ], how="vertical")
     return out.sort("d", "t") if out.height > 0 else None
 
@@ -1042,7 +1064,22 @@ def _read_step_previous(path: Path,
     }
     out = df.pipe(rename_to_axis, {k: v for k, v in rename.items() if k in df.columns})
     keep = [v for v in rename.values() if v in out.columns]
-    return out.select(keep)
+    from flextool.engine.preprocess._step_relations import null_split_dtttdt
+    return null_split_dtttdt(out.select(keep), _split_period_branch(path.parent, provider))
+
+
+def _active_solve_name(sd: Path, provider: "object | None") -> str | None:
+    """The active solve (``solve_data/solve_current``), for messages; None without a provider or the frame."""
+    if provider is None:
+        return None
+    from flextool.engine.preprocess.params._derived import _read_active_solve
+    return _read_active_solve(sd.parent, provider=provider)
+
+
+def _split_period_branch(sd: Path, provider: "object | None") -> pl.DataFrame | None:
+    """``solve_data/period__branch`` as ``(d, b)``, for the split-roll placeholders; None without it."""
+    from flextool.engine.preprocess.params._branch import period_branch_full_df
+    return period_branch_full_df(sd.parent, provider=provider)
 
 
 # ---------------------------------------------------------------------------
@@ -1404,6 +1441,16 @@ class FlexData:
     process_online: pl.DataFrame | None = None              # set: (p,)
     process_online_linear: pl.DataFrame | None = None        # set: (p,)
     process_online_integer: pl.DataFrame | None = None       # set: (p,)
+    # The processes whose startup_method is linear_fix_in_uc or integer_fix_in_uc (params._projection
+    # .process_online_fix_in_uc), online or not in this solve: a separate realization solve keeps their units online
+    # at the stochastic solve's value (the fix_online handoff, build_handoff_from_solution).  Read there, by
+    # solve._realization, by the units-online ties of a solve whose na_online_fix_in_uc is set and by
+    # coarse_tie_straddles (which processes such a solve ties).  A reader-less CSV reload seeds it from the dump
+    # (_csv_reload._field_seeds).
+    process_online_fix_in_uc: pl.DataFrame | None = None     # set: (p,)
+    # True in solve (1) of separate_dispatch (``solve_data/na_online_fix_in_uc``): across the forecasts only the
+    # units online of process_online_fix_in_uc are tied (model._non_anticipativity.na_role "uc_only").
+    na_online_fix_in_uc: bool = False
     # True when the solve's reduce_unit_detail_method relaxes integers (preprocess._reduce_detail): v_online_integer
     # and v_exact_forward are then declared continuous.  False (default): integer as authored.
     relax_integrality: bool = False
@@ -2619,7 +2666,7 @@ def _load_co2_rolling_carry(sd: Path, *, provider: "object | None" = None):
     ``horizon_fraction_reached`` — ``Σ_d years_represented[d]·f_d_k[d] / Σ_d years_represented[d]``,
     over every period of the whole chain, each counted once: a stochastic fan's members are left out and its
     period label stands for the period (the f_d_k of its first member with steps: the realized share plus this
-    solve's share) (``solve_data/p_years_represented.csv``, the solve's static period→year map, not dt-pruned — the same un-pruned source the ladder's cumulative tier cap reads
+    solve's share; in a split realization roll the label holds the jump, which that f_d_k counts) (``solve_data/p_years_represented.csv``, the solve's static period→year map, not dt-pruned — the same un-pruned source the ladder's cumulative tier cap reads
     for its own carried weight, ``p_ladder_cum_weight``). The fraction of the chain's total represented
     years reached by the end of this roll — scales ``co2_max_total``'s fixed whole-horizon budget down
     to "allocated so far". ``1.0`` (the old, full-cap-every-roll behaviour) outside rolling / chained
@@ -2660,7 +2707,8 @@ def _load_co2_rolling_carry(sd: Path, *, provider: "object | None" = None):
         if pyr is not None and pyr.height > 0 and {"period", "p_years_represented"}.issubset(pyr.columns):
             # Each calendar period counts once.  The members of a stochastic fan are alternatives of their
             # period, not more calendar, so they are in neither sum; the period label (the original name of
-            # the period, no dispatch of its own) stands for the period: its share reached is the f_d_k of a
+            # the period, no dispatch of its own; in a split realization roll it holds the jump, which its first
+            # member's f_d_k counts) stands for the period: its share reached is the f_d_k of a
             # member with steps, which holds the label's realized hours from earlier solves plus this
             # solve's hours (every forecast has the same steps).  A label without such a member keeps its
             # own f_d_k (its realized share).
@@ -3259,7 +3307,8 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
         p_ramp_speed_down_sink=None,
         p_ramp_speed_up_source=None,
         p_ramp_speed_down_source=None,
-        **ramp_link_fields(dt, _read_ramp_link(sd, provider=provider)),
+        **ramp_link_fields(dt, _read_ramp_link(sd, provider=provider), _split_period_branch(sd, provider),
+                           _read_rp_block_first_utf8(sd, provider=provider), solve=_active_solve_name(sd, provider)),
         dt_ramp_carry=None,
         p_roll_continue_flow=None,
         p_roll_continue_flow_duration=None,
@@ -3571,6 +3620,82 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
     )
 
 
+def carried_obligations_yield_to_outages(flex_data: "FlexData", solve: str, unit_level: str = "none") -> None:
+    """Obligations carried in from an earlier solve yield to an outage that solve did not see (W-0592), on the
+    solve's data after its ``reduce_unit_detail_method`` *unit_level* (a roll and a realization take their base /
+    parent solve's level).  B = ``params._mintime.online_blocked_cells``: the steps where a unit cannot be online
+    (its availability, the realized data, keeps it below its min_load).
+
+    * (a1) the carried minimum up-time (``uptime_carry``) of a unit ends at the first step of B it reaches and does
+      not resume (``_mintime.cut_at_blocked``); the carried minimum down-time never conflicts (offline is always
+      possible).
+    * (a2) a unit with a realization pin (``p_fix_online``) > 0 on B keeps its pins before the first such step and
+      loses them there and at every later step it reaches along the timeline (``dt_ramp_link``; a later period that
+      does not continue this one keeps its pins): it is decided again under its own rows from the outage on (no
+      later pin, so no minimum down-time conflicts with one).  A start-up of the kept pins whose minimum up-time runs into
+      that step has it cut there: the ``uptime_lookback`` terms of the rows at and after the step on start-ups at
+      kept pin cells go (``pdt_uptime_set`` follows).  The other units keep their pins.
+
+    Nothing yields under a level that leaves out min limits (``min_limits``: no floor, so no step blocks the unit).
+    Only an LP that the carried obligation makes infeasible changes.  Called after the coarse process frames, which
+    B reads (a coarse process is judged on its coarse-step means)."""
+    from flextool.engine.preprocess._reduce_detail import unit_parts
+    from flextool.engine.preprocess.params._mintime import (
+        cut_at_blocked, note_carried_obligation_cut, online_blocked_cells)
+    pin = flex_data.p_fix_online
+    carry = flex_data.uptime_carry
+    has_pin = pin is not None and pin.frame.height > 0
+    if ("min_limits" in unit_parts(unit_level) or not (has_pin or (carry is not None and carry.height > 0))):
+        return
+    blocked = online_blocked_cells(flex_data)
+    if blocked is None:
+        return
+    timeline = (flex_data.dt, flex_data.p_step_duration, flex_data.dt_ramp_link)
+    notes: dict[str, str] = {}
+    if carry is not None and carry.height > 0:
+        mt = flex_data.online_min_time
+        cut: list = []
+        flex_data.uptime_carry = cut_at_blocked(
+            carry, blocked, *timeline, float(mt["value"].max()) if mt is not None and mt.height > 0 else float("inf"),
+            cut)
+        notes.update({p: f"solve {solve}: the carried minimum up-time ends at step ({d}, {t})"
+                      for p, d, t in reversed(cut)})
+    if has_pin:
+        keys = ["p", "d", "t"]
+        on = (pin.frame.filter(pl.col("value") > 0.0).select(*(pl.col(k).cast(pl.Utf8) for k in keys))
+              .join(blocked, on=keys, how="semi"))
+        cut, reached = [], []
+        kept = cut_at_blocked(pin.frame, on, *timeline, float("inf"), cut, reached)
+        if cut:
+            flex_data.p_fix_online = Param(pin.dims, kept) if kept is not None else None
+            _cut_pinned_uptime(flex_data, reached[0], kept)
+            notes.update({p: f"solve {solve}: the units online pinned to the stochastic solve are decided again "
+                             f"from step ({d}, {t}) on, where they cannot run" for p, d, t in cut})
+    note_carried_obligation_cut(notes)
+
+
+def _cut_pinned_uptime(flex_data: "FlexData", reached: pl.DataFrame, kept: "pl.DataFrame | None") -> None:
+    """Drop the ``uptime_lookback`` terms of the rows at the *reached* cells ``(p, d, t)`` (from a unit's first
+    blocked pinned step on) on start-ups at its *kept* pin cells, and project ``pdt_uptime_set`` again."""
+    from flextool.engine.preprocess.params._derived import pdt_uptime_set_from_lookback
+    lb = flex_data.uptime_lookback
+    if lb is None or lb.height == 0 or kept is None:
+        return
+    utf8 = lb.with_columns(*(pl.col(k).cast(pl.Utf8).alias(f"__{k}") for k in ("p", "d", "t", "d_back", "t_back")))
+    pinned = kept.select(pl.col("p").cast(pl.Utf8).alias("__p"), pl.col("d").cast(pl.Utf8).alias("__d_back"),
+                         pl.col("t").cast(pl.Utf8).alias("__t_back"))
+    voided = (utf8.join(reached.select(pl.col("p").alias("__p"), pl.col("d").alias("__d"), pl.col("t").alias("__t")),
+                        on=["__p", "__d", "__t"], how="semi")
+              .join(pinned, on=["__p", "__d_back", "__t_back"], how="semi"))
+    if voided.height == 0:
+        return
+    rest = utf8.join(voided.select(c for c in voided.columns if c.startswith("__")),
+                     on=[c for c in utf8.columns if c.startswith("__")], how="anti", maintain_order="left")
+    rest = rest.select(lb.columns)
+    flex_data.uptime_lookback = rest if rest.height > 0 else None
+    flex_data.pdt_uptime_set = pdt_uptime_set_from_lookback(flex_data.uptime_lookback)
+
+
 def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                    nb: pl.DataFrame,
                    nbp: pl.DataFrame | None,
@@ -3660,7 +3785,6 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         period_block_succ = None,
         period_block_time = None,
         dtttdt_block_interior = None,
-        solve_is_rolling = False,
         period_block_chain = None,
         nodeState_rp = None,
         rp_base_period_set = None,
@@ -3883,7 +4007,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
 
     dtttdt_within_period_df = None
     if binding_within_period is not None and dtttdt is not None and dtttdt.height > 0:
-        dtttdt_within_period_df = _within_period_lag(dtttdt)
+        dtttdt_within_period_df = _within_period_lag(dtttdt, _split_period_branch(sd, provider))
 
     # node__storage_start_end_method is read by .mod from input/
     # (flextool.mod:662) — that's the canonical user-input source.
@@ -3934,18 +4058,15 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                                 (pl.col("period").cast(pl.Utf8) if "period" in sre.columns
                                  else pl.lit(None, dtype=pl.Utf8)).alias("period")))
 
-    # Rolling sub-solve: solve_data/roll_period_whole (period, whole) has a row per period of the roll
-    # (_run_model).  The bind_intraperiod_blocks blocks of a period the roll holds only in part chain forward.
+    # Rolling sub-solve: the bind_intraperiod_blocks blocks of a period the roll holds only in part chain forward.
     solve_is_rolling = False
     period_block_chain = None
-    rpw_path = sd / "roll_period_whole.csv"
-    if _provider_has(provider, "solve_data/roll_period_whole", rpw_path):
-        rpw = _provider_read(provider, "solve_data/roll_period_whole", rpw_path)
-        if rpw.height > 0:
-            solve_is_rolling = True
-            chained = rpw.filter(~pl.col("whole").cast(pl.Boolean)).pipe(rename_to_axis, {"period": "d"})
-            if chained.height > 0:
-                period_block_chain = chained.select("d").unique(maintain_order=True)
+    rpw = _load_roll_period_whole(sd, provider=provider)
+    if rpw is not None:
+        solve_is_rolling = True
+        chained = rpw.filter(~pl.col("whole").cast(pl.Boolean)).pipe(rename_to_axis, {"period": "d"})
+        if chained.height > 0:
+            period_block_chain = chained.select("d").unique(maintain_order=True)
 
     # node__storage_solve_horizon_method (.mod:663): nodes with method
     # ``use_reference_value`` get a v_state pin at the last timestep of
@@ -4389,7 +4510,6 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         period_block_succ = period_block_succ,
         period_block_time = period_block_time,
         dtttdt_block_interior = dtttdt_block_interior,
-        solve_is_rolling = solve_is_rolling,
         period_block_chain = period_block_chain,
         nodeState_rp = nodeState_rp,
         rp_base_period_set = rp_base_period_set,
@@ -4868,6 +4988,16 @@ def _load_stochastics(inp: Path, sd: Path, dt: pl.DataFrame,
         period_in_use_set=period_in_use_set,
         label_steps=label_steps,
     )
+
+
+def _load_roll_period_whole(sd: Path, *, provider: "object | None" = None) -> pl.DataFrame | None:
+    """``solve_data/roll_period_whole`` (period, whole): a row per period of a rolling sub-solve (``_run_model``);
+    None when the solve is not a roll."""
+    path = sd / "roll_period_whole.csv"
+    if not _provider_has(provider, "solve_data/roll_period_whole", path):
+        return None
+    rpw = _provider_read(provider, "solve_data/roll_period_whole", path)
+    return rpw if rpw.height > 0 else None
 
 
 def _load_period_invest(sd: Path, *, provider: "object | None" = None) -> pl.DataFrame | None:
@@ -5448,6 +5578,9 @@ def load_flextool(source: "Path | str | FlexInputSource",
             **ladder_data,
             **stoch_data,
             period_invest=_load_period_invest(sd, provider=provider),
+            # Every roll, with or without storage nodes (the capacity margin, the recourse guard and the realized
+            # steps of a roll read it).
+            solve_is_rolling=_load_roll_period_whole(sd, provider=provider) is not None,
             # The per-solve BlockLayout loaded above (node -> group, group steps); the coarse-step frames are
             # derived from it at the end of the load (``_apply_coarse_frames``).
             block_layout = block_layout,
@@ -5485,6 +5618,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
                     [str(v) for v in rip["period"].to_list() if v is not None] if "period" in rip.columns else [])
             except pl.exceptions.NoDataError:
                 flex_data.realized_invest_periods = []
+        flex_data.na_online_fix_in_uc = _na_online_fix_in_uc(sd, provider=provider)
         # ``node__storage_nested_fix_method`` lives in solve_data/ for
         # cascade solves; fall back to input/ if not yet copied.  Explicit
         # ``is None`` chain (DataFrame is non-truthy in polars).
@@ -5982,8 +6116,9 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
                 and _drv._recourse_invest_active(workdir_path, ctx=ctx, provider=provider)):
             from flextool.engine.input._solve_state import FlexToolConfigError
             raise FlexToolConfigError(
-                f"stochastic_invest_method = recourse in nested sub-solve '{active_solve}' is not "
-                f"supported: nested solves cannot hold recourse investments; make it a top-level solve.")
+                f"Nested sub-solve '{active_solve}' has an invest_solve_branching_method whose investments branch "
+                "(investments_after_reveal_period or investments_at_reveal_period), which a nested solve does not "
+                "support: make it a top-level solve, or use operations_only.")
         # Δ.28 — synthetic solve: apply_derived_a is skipped, but in the
         # slow path ``flex_data.dt`` is already populated from CSV (see
         # ``_load_time``).  Run pass 1b so broadcast-needing Direct
@@ -6227,14 +6362,16 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
                 realized=_drv._rolling_realized_steps(flex_data, workdir_path, provider))
             if family is None:
                 return
+            from flextool.engine.preprocess._step_relations import null_split_block_wraps
+            pbf = getattr(flex_data, "period_branch_full", None)
             flex_data.period_block = family["period_block"]
-            flex_data.period_block_succ = family["period_block_succ"]
+            flex_data.period_block_succ = null_split_block_wraps(family["period_block_succ"], pbf, flex_data.dt)
             flex_data.period_block_time = family["period_block_time"]
             flex_data.dtttdt_block_interior = _drv.dtttdt_block_interior_from_dtttdt(
                 getattr(flex_data, "dtttdt", None), family["period_block_time"])
             flex_data.dtttdt_block_lag = _drv.dtttdt_block_lag_from_dtttdt(
                 getattr(flex_data, "dtttdt", None), family["period_block_time"],
-                getattr(flex_data, "period_block_chain", None))
+                getattr(flex_data, "period_block_chain", None), pbf)
         _loadflex_prof("apply_db_overrides:pass_synthetic_blocks")
         _timed("c.synth blocks", _wire_blocks_for_synthetic_solve)
 
@@ -6767,12 +6904,27 @@ def _last_realized_step(sd: Path, flex_data: "FlexData | None", *,
     return pairs["d"][-1], pairs["t"][-1]
 
 
+def _na_online_fix_in_uc(sd: Path, *, provider: "object | None" = None) -> bool:
+    """True when ``solve_data/na_online_fix_in_uc`` holds a ``yes`` row (``emit_na_online_fix_in_uc``: solve (1) of
+    separate_dispatch); False when it is absent or header-only."""
+    path = sd / "na_online_fix_in_uc.csv"
+    if not _provider_has(provider, "solve_data/na_online_fix_in_uc", path):
+        return False
+    try:
+        frame = _provider_read(provider, "solve_data/na_online_fix_in_uc", path)
+    except pl.exceptions.NoDataError:
+        return False
+    return (frame is not None and "value" in frame.columns
+            and "yes" in frame["value"].cast(pl.Utf8).to_list())
+
+
 def _committed_fan_online_cells(sd: Path, flex_data: "FlexData | None", *,
                                 provider: "object | None" = None) -> "pl.DataFrame | None":
     """``(label, d_ref, t)`` Utf8, chronological: the cells a solve commits inside a forecasts-only fan on which
     units online are tied, each at the forecast whose value the tie holds (the first sorted forecast ``d_ref``).
 
-    Inside a fan the solve realizes no dispatch (``realized_dispatch`` holds no fan cell), but the families tied
+    Inside a fan the solve realizes no dispatch (``realized_dispatch`` holds no fan cell; a split realization
+    roll's label dispatches its jump under its own name and commits nothing in the fan), but the families tied
     across its forecasts are de facto realized on the tied cells, so the next solve continues its unit
     commitment from them (the committed-window check, ``solve._realization.check_committed_window_realized``,
     stops a run whose untied families would need the same).  ``None`` when the solve commits no cell in a fan
@@ -6795,6 +6947,33 @@ def _committed_fan_online_cells(sd: Path, flex_data: "FlexData | None", *,
     cells = (order.join(ties.rename({"anchor": "label"}), on=["label", "t"], how="inner")
              .sort("__order").select("label", "d_ref", "t"))
     return cells if cells.height > 0 else None
+
+
+def snap_carried_online(frame: pl.DataFrame, integer: bool, zero: float,
+                        columns: "tuple[str, ...]" = ("value",)) -> pl.DataFrame:
+    """*frame* with its *columns* (units online, start-ups or shut-downs read from a solution) rounded for the next
+    solve: an *integer* column to the nearest integer, a continuous one to 0 where ``|value| <= zero``
+    (``output._coarse_flows.var_zero_tolerance``: the solve's primal feasibility tolerance in its own scale, so the
+    move to 0 is one the solver itself accepts as feasible; a nonzero value above it is kept as it is).  The
+    solver's last-digit noise depends on the platform and the thread count; rounded, near-zero and whole-unit values
+    are the same on every platform in the next LP (the realization pins, the carried units online and minimum up /
+    down time) and in its outage cuts (W-0592).  ``+ 0.0`` turns a rounded ``-0.0`` into ``0.0``."""
+    if integer:
+        return frame.with_columns(pl.col(c).cast(pl.Float64).round(0) + 0.0 for c in columns)
+    return frame.with_columns(
+        pl.when(pl.col(c).abs() <= zero).then(0.0).otherwise(pl.col(c).cast(pl.Float64)).alias(c)
+        for c in columns)
+
+
+def round_whole_unit_events(frame: pl.DataFrame) -> pl.DataFrame:
+    """*frame* with its ``startup`` / ``shutdown`` (of a process whose units online are integer) rounded to whole
+    units so that ``startup − shutdown`` stays the change of the rounded units online (``online_change``: the
+    LP's su − sd is that integer change, up to noise).  ``shutdown ← ⌊sd + ½⌋``, ``startup ← shutdown +
+    round(su − sd)``: with ``su = sd + Δ`` (Δ integer) ``startup = ⌊su + ½⌋`` and both are ≥ 0; rounding each
+    alone half-to-even would break the change (1.5 / 0.5 → 2 / 0)."""
+    delta = (pl.col("startup") - pl.col("shutdown")).round(0)
+    sd = (pl.col("shutdown") + 0.5).floor()
+    return frame.with_columns((sd + delta + 0.0).alias("startup"), (sd + 0.0).alias("shutdown"))
 
 
 def _step_duration_at(flex_data: "FlexData | None", step: "tuple[str, str]") -> float:
@@ -6849,6 +7028,48 @@ def _roll_end_flow(sol, flex_data: "FlexData | None", last: "tuple[str, str] | N
                 .drop("__coarse_dur"))
     return rows.select(pl.col("p").alias("process"), "source", "sink",
                        pl.lit(last[0]).alias("period"), pl.lit(last[1]).alias("step"), "duration", "value")
+
+
+def _tied_copy_labels(flex_data: "FlexData | None") -> tuple[dict[str, str], dict[str, str]]:
+    """``({reference copy: period label}, {branch copy: period label})``.  The first holds the branch copies whose
+    investment, retirement and extension decisions are one decision of every forecast (``pd_non_anticipativity``:
+    ``d`` the reference copy of each forecast star, ``_branch.forecast_star_pairs``); the second every branch copy
+    (``period_branch_full`` ``(label, copy)``, label ≠ copy).  Both empty when nothing is tied."""
+    na = getattr(flex_data, "pd_non_anticipativity", None)
+    pbf = getattr(flex_data, "period_branch_full", None)
+    if na is None or na.height == 0 or pbf is None:
+        return {}, {}
+    refs = set(na["d"].cast(pl.Utf8).to_list())
+    label_of = {copy: label for label, copy in
+                pbf.select(pl.col("d").cast(pl.Utf8), pl.col("b").cast(pl.Utf8)).iter_rows()
+                if copy is not None and label != copy}
+    return {copy: label for copy, label in label_of.items() if copy in refs}, label_of
+
+
+def _label_tied_cohorts(cohort: "pl.DataFrame | None", tied: dict[str, str],
+                        label_of: dict[str, str]) -> "pl.DataFrame | None":
+    """*cohort* (the solve's cohort table, Utf8 or axis labels) with, for each tied reference copy of *tied*, a copy
+    of the rows whose cohort name holds it (its investment, the generations of it, its life extensions) under the
+    label: the reference copy replaced by its label in ``cohort`` / ``root`` / ``parent``, and every branch copy of
+    *label_of* by its label in the period columns (``d_build``, ``d_on``, ``d_eol``).  The tied decision is then
+    realized under the real period name the later solves know."""
+    if cohort is None or not tied:
+        return cohort
+    names = [c for c in ("cohort", "root", "parent") if c in cohort.columns]
+    periods = [c for c in ("d_build", "d_on", "d_eol") if c in cohort.columns]
+    utf8 = cohort.with_columns(pl.col(c).cast(pl.Utf8) for c in names + periods)
+
+    def _rename(name: "str | None") -> "str | None":
+        return None if name is None else ":".join(tied.get(tok, tok) for tok in name.split(":"))
+
+    rows = []
+    for row in utf8.iter_rows(named=True):
+        if any(tok in tied for tok in str(row["cohort"]).split(":")):
+            rows.append({**row, **{c: _rename(row[c]) for c in names},
+                         **{c: label_of.get(row[c], row[c]) for c in periods}})
+    if not rows:
+        return cohort
+    return pl.concat([utf8, pl.DataFrame(rows, schema=utf8.schema, orient="row")], how="vertical")
 
 
 def build_handoff_from_solution(
@@ -6976,6 +7197,19 @@ def build_handoff_from_solution(
                     key = (str(e), str(c), str(dd))
                     extend_by_ecd[key] = extend_by_ecd.get(key, 0.0) + float(v)
 
+    # ---- the decisions tied across the forecasts (``invest_solve_branching_method``
+    # ``investments_after_reveal_period``): one decision of every branch copy of the reveal period, the label has
+    # none.  It is realized under the label (its real period name), taken from the reference copy. ----
+    _tied, _label_of = _tied_copy_labels(flex_data)
+    for _ref, _label in _tied.items():
+        for _by in (invest_by_ed, divest_by_ed):
+            for (_e, _d), _v in [kv for kv in _by.items() if kv[0][1] == _ref]:
+                _by[(_e, _label)] = _v
+        for _by3 in (divest_built_by_ecd, extend_by_ecd):
+            for (_e, _c, _d), _v in [kv for kv in _by3.items() if kv[0][2] == _ref]:
+                # A cohort the reference copy built is the label's (``_label_tied_cohorts``).
+                _by3[(_e, ":".join(_label if tok == _ref else tok for tok in _c.split(":")), _label)] = _v
+
     # ---- Slice D (H, §10.1): EXPLICIT non-realized invest drop ----
     # ``invest_by_ed`` collects every solved v_invest row, including
     # branch-named (non-realized-scenario) ones fanned in under recourse.
@@ -7089,7 +7323,8 @@ def build_handoff_from_solution(
     # ---- realized_cohort / realized_retire: the realized investments as cohorts (their rows of the cohort table,
     # placed once by this solve) and the retirements per cohort, chain-cumulative ----
     from flextool.engine.preprocess.params._cohort_handoff import realized_cohorts
-    _cohort_table = getattr(flex_data, "cohort", None) if flex_data is not None else cohort
+    _cohort_table = _label_tied_cohorts(getattr(flex_data, "cohort", None) if flex_data is not None else cohort,
+                                        _tied, _label_of)
     realized_cohort_df, realized_retire_df = realized_cohorts(
         getattr(prior_handoff, "realized_cohort", None) if prior_handoff is not None else None,
         getattr(prior_handoff, "realized_retire", None) if prior_handoff is not None else None,
@@ -7217,7 +7452,9 @@ def build_handoff_from_solution(
     # carries.  Read at the same last realized step as ``roll_end_state``
     # (``last_step``, computed whether or not the solve has storage).  Keyed on ``p`` alone
     # (a process has one startup_method at a time, so linear/integer never
-    # mix for the same ``p``); linear and integer rows are unioned.
+    # mix for the same ``p``); linear and integer rows are unioned.  Rounded
+    # (``snap_carried_online``): an integer column to whole units, a continuous one
+    # near 0 to 0; a process moved to 0 carries its ``roll_end_flow`` as 0 too.
     roll_end_online_df = None
     _has_online_var = ("v_online_linear" in sol._vars
                        or "v_online_integer" in sol._vars)
@@ -7225,8 +7462,12 @@ def build_handoff_from_solution(
     if fan_online is not None:
         # The last committed step lies in the fan (after every pre-reveal realized step): read the tied value.
         online_step = (fan_online["d_ref"][-1], fan_online["t"][-1])
+    # The processes whose carried units online the rounding moved to 0 (from a value that was not 0): their
+    # ``roll_end_flow`` is carried as 0 with them (below), so the next roll does not ramp from a flow of units it
+    # sees offline.
+    snapped_off: set[str] = set()
     if online_step is not None and _has_online_var:
-        from flextool.engine.output._coarse_flows import var_values_at
+        from flextool.engine.output._coarse_flows import var_is_integer, var_values_at, var_zero_tolerance
 
         last_d_on, last_t_on = online_step
         rco_rows: list[tuple[str, float]] = []
@@ -7236,8 +7477,11 @@ def build_handoff_from_solution(
             _lst = var_values_at(sol, flex_data, _vname, str(last_d_on), str(last_t_on))
             if _lst is None:
                 continue
-            for r in _lst.iter_rows(named=True):
+            _snapped = snap_carried_online(_lst, var_is_integer(sol, _vname), var_zero_tolerance(sol, _vname))
+            for raw, r in zip(_lst["value"], _snapped.iter_rows(named=True)):
                 rco_rows.append((str(r["p"]), float(r["value"])))
+                if float(r["value"]) == 0.0 and float(raw) != 0.0:
+                    snapped_off.add(str(r["p"]))
         if rco_rows:
             roll_end_online_df = pl.DataFrame(
                 rco_rows, schema=["process", "value"], orient="row")
@@ -7247,6 +7491,9 @@ def build_handoff_from_solution(
     # where the complete solve's predecessor of its first step is this step and adjacent).  Units of
     # unitsize, like v_flow.  ``duration`` = this step's length (the ramp room uses both step lengths).
     roll_end_flow_df = _roll_end_flow(sol, flex_data, last_step)
+    if roll_end_flow_df is not None and snapped_off:
+        roll_end_flow_df = roll_end_flow_df.with_columns(
+            pl.when(pl.col("process").is_in(sorted(snapped_off))).then(0.0).otherwise(pl.col("value")).alias("value"))
     # ---- roll_end_step: the last realized step itself (with its duration) ----
     # The next roll links its first step to it (ramp rows with roll_end_flow, and the ramp output also in
     # models without ramp limits).
@@ -7271,44 +7518,54 @@ def build_handoff_from_solution(
         and solve_name in realized_dispatch_parents
     )
 
-    # ---- fix_online: NA-tied integer v_online for the realization solve ----
+    # ---- fix_online: NA-tied v_online of the _fix_in_uc processes for the realization solve ----
     # For the parent of a realization solve (its name is a registered
-    # realization parent) carry the committed integer ``v_online`` so the
-    # realization solve PINS it instead of re-deciding commitment (owner
-    # decision: the realization solve inherits the NA-tied units online of
-    # the binary units, never reserve).  Linear units online are a relaxation, not a
-    # schedule: they are never pinned, the realization re-decides them with the realized data.  The integer
-    # class is the user's startup_method = binary, also when the solve relaxes integers
-    # (reduce_unit_detail_method integers*): the relaxed values are pinned.  The value is the reference forecast's
-    # (the first sorted forecast branch of
+    # realization parent) carry the committed ``v_online`` of the processes
+    # whose startup_method is linear_fix_in_uc or integer_fix_in_uc
+    # (``process_online_fix_in_uc``) so the realization solve PINS it
+    # instead of re-deciding commitment (the realization solve inherits the
+    # NA-tied units online of those processes, never reserve).  The units
+    # online of linear and integer processes are not pinned: the realization
+    # decides them again with the realized data.  An integer_fix_in_uc
+    # process keeps its pin when the solve relaxes integers
+    # (reduce_unit_detail_method integers*): the relaxed values are pinned.
+    # The value is the reference forecast's (the first sorted forecast branch of
     # each anchor, the ``d_ref`` of non_anticipativity_online), on the
     # online tie cells only (``online_tie_cells``: the tied steps; nothing
     # when nothing is tied), re-keyed from the forecast branch
     # to its anchor period, the period name the realization solve
-    # dispatches.  Unit-count space (NOT ×unitsize).  ``None`` on every
-    # other solve → byte-identical baseline.
+    # dispatches.  Unit-count space (NOT ×unitsize), rounded
+    # (``snap_carried_online``: an integer column to whole units, a continuous
+    # one near 0 to 0, so the (a2) outage cut ``> 0`` and the pin rows are the
+    # same on every platform).  ``None`` on every other solve → byte-identical
+    # baseline.
     fix_online_df = None
+    _fix_in_uc = getattr(flex_data, "process_online_fix_in_uc", None) if flex_data is not None else None
     if (realized_dispatch_parents is not None
             and solve_name in realized_dispatch_parents
             and flex_data is not None
             and getattr(flex_data, "period_branch_full", None) is not None
             and flex_data.period_branch_full.height > 0
-            and "v_online_integer" in sol._vars):
+            and _fix_in_uc is not None and _fix_in_uc.height > 0
+            and _has_online_var):
         from flextool.engine.model._non_anticipativity import online_tie_cells
         _cells = online_tie_cells(flex_data)
         _parts: list[pl.DataFrame] = []
         if _cells is not None:
-            from flextool.engine.output._coarse_flows import var_values
+            from flextool.engine.output._coarse_flows import var_is_integer, var_values, var_zero_tolerance
 
-            for _vn in ("v_online_integer",):
+            _pinned = _fix_in_uc["p"].cast(pl.Utf8).to_list()
+            for _vn in ("v_online_linear", "v_online_integer"):
                 # Every fine step (a coarse process's units online hold through its coarse step).
                 _all = var_values(sol, flex_data, _vn)
                 if _all is None:
                     continue
-                _fr = _all.with_columns(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+                _fr = (snap_carried_online(_all, var_is_integer(sol, _vn), var_zero_tolerance(sol, _vn))
+                       .with_columns(pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+                       .filter(pl.col("p").is_in(_pinned)))
                 _re = (_fr.join(_cells, left_on=["d", "t"],
                                 right_on=["d_ref", "t"], how="inner")
-                       .select(pl.col("p").cast(pl.Utf8).alias("process"),
+                       .select(pl.col("p").alias("process"),
                                pl.col("anchor").alias("period"),
                                pl.col("t").alias("step"),
                                "value"))
@@ -7327,7 +7584,10 @@ def build_handoff_from_solution(
     # start, a period that does not continue the previous one, a gap, a representative-block start).  The history
     # this solve started from is kept, its ``hours_to_end`` moved by the root's, when the walk reaches this solve's
     # ``dt_ramp_carry`` (the first step that continued from it).  Trimmed per process to ``hours_to_end <`` the
-    # authored max min-up/down time (``flex_data.online_min_time``); a process without one is never stored.
+    # authored max min-up/down time (``flex_data.online_min_time``); a process without one is never stored.  The
+    # start-ups / shut-downs are rounded: of a process with integer units online to whole units
+    # (``round_whole_unit_events``), the others near 0 to 0 (``snap_carried_online``), so solver noise opens no
+    # carried obligation.
     online_history_df = None
     last_pairs_on = None
     rd_path_on = sd / "realized_dispatch.csv"
@@ -7382,7 +7642,13 @@ def build_handoff_from_solution(
                                    float(lmap["_L"].max()))
         hist_now = None
         if h2e is not None:
-            from flextool.engine.output._coarse_flows import var_values
+            from flextool.engine.output._coarse_flows import var_is_integer, var_values, var_zero_tolerance
+
+            # Start-ups / shut-downs are continuous columns.  Of a process whose units online are integer they are
+            # rounded to whole units together below (round_whole_unit_events); the others go to 0 near 0.
+            whole = var_is_integer(sol, "v_online_integer")
+            whole_procs = (set(flex_data.process_online_integer["p"].cast(pl.Utf8).to_list())
+                           if whole and getattr(flex_data, "process_online_integer", None) is not None else set())
 
             def _pull_online_metric(vnames):
                 # Every fine step: a coarse process's start-up / shut-down stays at its coarse step's first fine
@@ -7397,8 +7663,11 @@ def build_handoff_from_solution(
                            .join(h2e, left_on=["__d", "__t"], right_on=["d", "t"], how="inner"))
                     if _fr.height == 0:
                         continue
-                    frames.append(_fr.select(pl.col("p").cast(pl.Utf8), pl.col("__d").alias("d"),
-                                             pl.col("__t").alias("t"), pl.col("value")))
+                    _fr = _fr.select(pl.col("p").cast(pl.Utf8), pl.col("__d").alias("d"),
+                                     pl.col("__t").alias("t"), pl.col("value"))
+                    if not (whole and vn.endswith("_integer")):
+                        _fr = snap_carried_online(_fr, False, var_zero_tolerance(sol, vn))
+                    frames.append(_fr)
                 if not frames:
                     return None
                 return pl.concat(frames).group_by(["p", "d", "t"]).agg(pl.col("value").sum())
@@ -7419,6 +7688,12 @@ def build_handoff_from_solution(
                                           pl.col("duration").cast(pl.Float64).fill_null(1.0),
                                           pl.col("hours_to_end").cast(pl.Float64))
                             .select("p", "d", "t", "startup", "shutdown", "duration", "hours_to_end"))
+                if whole_procs:
+                    rounded = round_whole_unit_events(hist_now)
+                    is_whole = pl.col("p").is_in(sorted(whole_procs))
+                    hist_now = hist_now.with_columns(
+                        pl.when(is_whole).then(rounded["startup"]).otherwise(pl.col("startup")).alias("startup"),
+                        pl.when(is_whole).then(rounded["shutdown"]).otherwise(pl.col("shutdown")).alias("shutdown"))
         if hist_now is not None:
             # The history this solve started from (the routed ``handoff/online_history`` its LP read,
             # solve._carry_routing), continued through the first step of this solve that continued from it.

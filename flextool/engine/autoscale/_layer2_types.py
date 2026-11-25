@@ -276,6 +276,8 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "storage_state_start_binding_cyclic_period": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_storage_within_solve_path_end (bind_within_solve, stochastic paths)
     "storage_within_solve_path_end": CstrFamily(QuantityType.ENERGY),
+    # flextool/engine/model/core.py _eq_storage_split_path_end (bind_within_period / blocks, split realization roll)
+    "storage_split_path_end": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_storage_state_fan_start (bind_forward_only, first-period fan)
     "storage_state_fan_start": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_storage_end_binding
@@ -753,7 +755,15 @@ def lookup_var(name: str) -> VarFamily:
 
 
 def lookup_cstr(name: str) -> CstrFamily:
-    """Return the :class:`CstrFamily` registered for ``name``.
+    """Return the :class:`CstrFamily` registered for ``name`` (the entry of :func:`resolve_cstr_key`).
+
+    Raises :class:`KeyError` if no registration matches.
+    """
+    return CONSTRAINT_FAMILIES[resolve_cstr_key(name)]
+
+
+def resolve_cstr_key(name: str) -> str:
+    """Return the ``CONSTRAINT_FAMILIES`` key that the constraint name ``name`` resolves to.
 
     Exact match wins.  Otherwise we strip a trailing ``_linear``,
     ``_integer``, ``_p``, ``_n`` suffix and retry (covers
@@ -765,13 +775,13 @@ def lookup_cstr(name: str) -> CstrFamily:
     Raises :class:`KeyError` if no registration matches.
     """
     if name in CONSTRAINT_FAMILIES:
-        return CONSTRAINT_FAMILIES[name]
+        return name
     # Strip UC suffixes first.
     for sfx in ("_linear", "_integer"):
         if name.endswith(sfx):
             base = name[: -len(sfx)]
             if base in CONSTRAINT_FAMILIES:
-                return CONSTRAINT_FAMILIES[base]
+                return base
     # Then member-class suffix (_p / _n).  This is the prefix that
     # member_class_resolver entries cover.  We only strip when the
     # *unsuffixed* name matches an entry whose resolver is set, so a
@@ -783,7 +793,7 @@ def lookup_cstr(name: str) -> CstrFamily:
             base = name[: -len(sfx)]
             if (base in CONSTRAINT_FAMILIES
                     and CONSTRAINT_FAMILIES[base].member_class_resolver):
-                return CONSTRAINT_FAMILIES[base]
+                return base
     # Prefix dispatch (the contract documented in this module's header and
     # in test_registry_coverage): a registry key ``K`` matches a dynamic
     # constraint name when ``name.startswith(K + "_")``.  This is what the
@@ -801,7 +811,7 @@ def lookup_cstr(name: str) -> CstrFamily:
                 prefix_match is None or len(key) > len(prefix_match)):
             prefix_match = key
     if prefix_match is not None:
-        return CONSTRAINT_FAMILIES[prefix_match]
+        return prefix_match
     raise KeyError(name)
 
 
@@ -835,5 +845,6 @@ __all__ = [
     "CONSTRAINT_FAMILIES",
     "lookup_var",
     "lookup_cstr",
+    "resolve_cstr_key",
     "resolve_cstr_rhs_type",
 ]

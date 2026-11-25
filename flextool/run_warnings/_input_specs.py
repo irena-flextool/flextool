@@ -140,7 +140,8 @@ INPUT_SPECS: tuple[WarningSpec, ...] = (
     _w("W-0205", "existing of a {cls} is not a whole number of units (integer online)",
        "Fractional unit count with integer online variables", _UNITS,
        "With `virtual_unitsize` set, `existing` is the number of units (capacity = existing × "
-       "virtual_unitsize). The entity has integer online variables (`startup_method: binary`), which count whole "
+       "virtual_unitsize). The entity has integer online variables (`startup_method` *integer* or "
+       "*integer_fix_in_uc*), which count whole "
        "units, so a count such as 2.5 cannot all be online. Results are otherwise unchanged. The debug log gives "
        "the counts and the unit size.\n\n"
        "**How to fix:** give `existing` as a whole number of units, or change `virtual_unitsize`."),
@@ -272,15 +273,27 @@ INPUT_SPECS: tuple[WarningSpec, ...] = (
        "startup_method set to linear for a minimum time", _UNITS,
        "The process has a `minimum_time_method` (`min_uptime`, `min_downtime` or `both`), which needs online "
        "variables, and `startup_method: no_startup`; it is run with `startup_method: linear`.\n\n"
-       "**How to fix:** nothing; set `startup_method` yourself to choose `linear` or `binary`.",
+       "**How to fix:** nothing; set `startup_method` yourself to choose another member (`integer` for whole "
+       "units, a `_fix_in_uc` member to keep the stochastic solve's units online in a separate realization).",
        severity=NOTE),
     _w("W-0230", "startup_method set to linear: piecewise curve burns fuel at zero output",
        "startup_method set to linear for a rising piecewise curve", _UNITS,
        "The unit's `piecewise_linear_efficiency` curve burns fuel at zero output (its efficiency rises from the "
        "first point to the second), which needs online variables, so the unit is run with "
        "`startup_method: linear`. The debug log gives the points.\n\n"
-       "**How to fix:** nothing; set `startup_method` yourself to choose `linear` or `binary`.",
+       "**How to fix:** nothing; set `startup_method` yourself to choose another member (`integer` for whole "
+       "units, a `_fix_in_uc` member to keep the stochastic solve's units online in a separate realization).",
        severity=NOTE),
+    _w("W-0231", "min_uptime / min_downtime not in minimum_time_method; ignored",
+       "Minimum time without its minimum_time_method", _UNITS,
+       "The unit has a `min_uptime` or `min_downtime` above 0, but its `minimum_time_method` (`none` when not "
+       "set) does not include that time, so the time is not applied: there is no minimum up or down time "
+       "constraint for it. A unit without online variables has no such constraint in any case. An explicit "
+       "`minimum_time_method: none` switches the times off on purpose and gives no warning. The debug log and "
+       "the run log give the time and the method of each unit. When the database upgrade could not decide the "
+       "method of a unit, they also give the reason. When the value list `minimum_time_methods` has no "
+       "`min_uptime`, an old database upgrade overwrote it, and values that were `min_uptime` now read `none`.\n\n"
+       "**How to fix:** set `minimum_time_method` to `both`, `min_uptime` or `min_downtime`, or remove the time."),
 
     # -- nodes, profiles, time and period keys (W-03xx) -------------------------------------------------------
     _w("W-0300", "node has no units or connections; only slack can meet its inflow",
@@ -415,7 +428,7 @@ INPUT_SPECS: tuple[WarningSpec, ...] = (
        "the database, also after you have checked, until a repair is recorded in the database: only FlexTool's "
        "repair tool records one.\n\n"
        "For `invest_methods` (migration from data version 21 to 22): the list should contain `not_allowed`. If "
-       "it is missing, the class default of `invest_method` (unit, connection, node) and any value that was "
+       "it is missing, the method parameter default of `invest_method` (unit, connection, node) and any value that was "
        "`not_allowed` before that date now read `cumulative_limits`, which since FlexTool 4.4 lets those "
        "entities invest and retire without limit.\n\n"
        "**How to fix:** run the repair tool on the database, in a terminal:\n\n"
@@ -435,7 +448,7 @@ INPUT_SPECS: tuple[WarningSpec, ...] = (
        "and `cumulative_limits`).\n"
        "3. If a member is missing, add it to the list (at the end).\n"
        "4. For `invest_methods`, set the default value of `invest_method` of `unit`, `connection` and `node` "
-       "to `not_allowed` (the shipped default).\n"
+       "to `not_allowed` (FlexTool's default).\n"
        "5. Filter the parameter values by `invest_method` = `cumulative_limits`. For each one, decide whether it "
        "was meant: compare with a copy from before the migration date, your Excel input or your notes. An "
        "entity that has no `cumulative_max_capacity` and should not invest should be `not_allowed`.\n"
@@ -446,17 +459,18 @@ INPUT_SPECS: tuple[WarningSpec, ...] = (
        "value.\n\n"
        "If you copied data from this database into another one, check that one too."),
     # TODO(v5.0.0): remove W-0491 with the repair tool (flextool/update_flextool/list_default_restore.py).
-    _w("W-0491", "defaults emptied by an old upgrade", "Shipped defaults lost in an old upgrade", _DATABASE,
-       "An upgrade of this database before FlexTool 4.6.3 left some default values empty: an old Spine library "
-       "had stored them in a form the upgrade could not read. The line names them (up to three; the run log "
-       "lists all of them with their shipped values). An empty default works like the shipped one, because "
-       "FlexTool uses the shipped value when none is stored. Only `storage_start_end_method` can change results; "
+    _w("W-0491", "defaults emptied by an old upgrade", "Method parameter defaults lost in an old upgrade", _DATABASE,
+       "An upgrade of this database before FlexTool 4.6.3 left some method parameter defaults empty: an old Spine "
+       "library had stored them in a form the upgrade could not read. The line names them (up to three; the run "
+       "log lists all of them with FlexTool's defaults). An empty default works like FlexTool's default, because "
+       "FlexTool uses its default when none is stored. Only `storage_start_end_method` can change results; "
        "when the line names it, an unaffected database keeps the start of storage nodes with their own start "
-       "value fixed (`fix_start`), and this one leaves it free. The GUI lists a \"Shipped defaults lost in an "
-       "old upgrade\" message for it when it opens the project, with a button that copies the repair command.\n\n"
+       "value fixed (`fix_start`), and this one leaves it free. The GUI lists a \"Method parameter defaults lost "
+       "in an old upgrade\" message for it when it opens the project, with a button that copies the repair "
+       "command.\n\n"
        "**How to fix:** run the repair tool on the database: `flextool-repair-value-list \"<database>\"` (or "
        "`python -P -m flextool.cli.cmd_repair_value_list \"<database>\"`). It writes a repaired copy next to the "
-       "original, puts the shipped defaults back and asks about each such storage node. Then use the copy in "
+       "original, puts FlexTool's defaults back and lists each such storage node to check. Then use the copy in "
        "place of the original. The note stops once the database holds the tool's repair record. The steps are "
        "in [Repairing a value list](../terminal_workflow.md#repairing-a-value-list-w-0490).",
        severity=NOTE, examples=3),

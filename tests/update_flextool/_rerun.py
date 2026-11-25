@@ -1,5 +1,5 @@
 """Shared helpers for the migration rerun tests: restamp a database, stop a migration after a commit, compare two
-databases item by item."""
+databases item by item, build the v75b seed."""
 from __future__ import annotations
 
 import contextlib
@@ -10,10 +10,19 @@ import shutil
 from collections.abc import Iterator
 from pathlib import Path
 
-from spinedb_api import DatabaseMapping, from_database, to_database
+from spinedb_api import DatabaseMapping, from_database, import_data, to_database
 
+from flextool._resources import package_data_path
 from flextool.update_flextool.db_migration import ALREADY_APPLIED_PREFIX, migrate_database
 from flextool.update_flextool.db_handle import open_database_mapping
+from flextool.update_flextool.fixture_schema import unpack_value
+from flextool.update_flextool.initialize_database import initialize_database
+
+#: The bundled pre-v26 templates (the v2 and v25 seeds).
+TEMPLATES = package_data_path("schemas/pre_v26")
+#: The data of the v75 seed: alternatives, scenarios, entities and values of a two-period stochastic model (its
+#: definitions are not those of a migrated v75 database: only the data sections are read).
+V75_SEED_DATA = Path(__file__).parent / "data" / "v75_seed_stoch_two_period.json"
 
 
 class Kill(BaseException):
@@ -59,22 +68,22 @@ def version_of(path: Path) -> float:
 
 
 @contextlib.contextmanager
-def kill_after_commit(n: int | None) -> Iterator[list[int]]:
-    """Count the commits of every ``DatabaseMapping`` while inside; raise :class:`Kill` right after the *n*-th
-    (``None``: never).  Yields a one-item list holding the count."""
+def kill_after_commit(n: int | None) -> Iterator[list[str]]:
+    """Record the commits of every ``DatabaseMapping`` while inside; raise :class:`Kill` right after the *n*-th
+    (``None``: never).  Yields the list of their messages."""
     real = DatabaseMapping.commit_session
-    count = [0]
+    messages: list[str] = []
 
     def counting(self, *args, **kwargs):
         result = real(self, *args, **kwargs)
-        count[0] += 1
-        if n is not None and count[0] == n:
+        messages.append(args[0] if args else kwargs.get("comment", ""))
+        if n is not None and len(messages) == n:
             raise Kill()
         return result
 
     DatabaseMapping.commit_session = counting
     try:
-        yield count
+        yield messages
     finally:
         DatabaseMapping.commit_session = real
 
@@ -100,6 +109,74 @@ def already_applied_records() -> Iterator[list[str]]:
     finally:
         root.removeHandler(handler)
         root.setLevel(level)
+
+
+def commit_messages(path: Path, up_to: int) -> list[str]:
+    """The messages of the commits migrating a copy of *path* to *up_to* makes (the last one is the version
+    commit)."""
+    probe = copy_db(path, path.with_name("probe.sqlite"))
+    with kill_after_commit(None) as messages:
+        migrate(probe, up_to=up_to)
+    probe.unlink()
+    return messages
+
+
+def kill_and_rerun(clean: dict, k: int, j: int, work: Path) -> list:
+    """Run step k on clean k-1, kill it right after its j-th commit, migrate to k again: the differences from clean
+    k (an error as one entry)."""
+    path = copy_db(clean[k - 1], work / f"k{k}_j{j}.sqlite")
+    try:
+        try:
+            with kill_after_commit(j):
+                migrate(path, up_to=k)
+            return [("not killed", j)]
+        except Kill:
+            pass
+        if version_of(path) != k - 1:
+            return [("stamp after the kill", version_of(path))]
+        migrate(path, up_to=k)
+        return diff(snapshot(clean[k]), snapshot(path))
+    except Exception as exc:  # noqa: BLE001 - reported as the case's result
+        return [("error", f"{type(exc).__name__}: {exc}")]
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def import_v75_seed_data(path: Path) -> None:
+    """Add the data sections of :data:`V75_SEED_DATA` to the database file *path* (its schema at 75)."""
+    with open(V75_SEED_DATA, encoding="utf-8") as f:
+        data = json.load(f)
+    with open_database_mapping(url_of(path)) as db:
+        _, errors = import_data(db, unparse_value=unpack_value, **{key: data[key] for key in (
+            "alternatives", "scenarios", "scenario_alternatives", "entities", "entity_alternatives",
+            "parameter_values")})
+        if errors:
+            raise ValueError(f"v75 seed data: {errors[:3]}")
+        db.commit_session("v75 seed data")
+
+
+def build_v75b(path: Path) -> Path:
+    """The v75b seed at *path*: the v2 template migrated to 75 (a real v75 schema), an empty ``Base`` (as a new
+    SpineDB database has) and the data of the v75 seed."""
+    quiet(initialize_database, str(TEMPLATES / "flextool_template_v2.json"), str(path))
+    migrate(path, up_to=75)
+    with open_database_mapping(url_of(path)) as db:
+        db.add_alternative(name="Base")
+        db.commit_session("Base")
+    import_v75_seed_data(path)
+    return path
+
+
+_V75B: dict[Path, Path] = {}
+
+
+def v75b_url(tmp_path_factory, target: Path) -> str:
+    """The URL of a copy at *target* of the v75b seed, built once per session (about 14 s) in a folder of
+    *tmp_path_factory*."""
+    base = tmp_path_factory.getbasetemp()
+    if base not in _V75B:
+        _V75B[base] = build_v75b(tmp_path_factory.mktemp("v75b") / "v75b.sqlite")
+    return url_of(copy_db(_V75B[base], target))
 
 
 def _value(val, typ) -> str:

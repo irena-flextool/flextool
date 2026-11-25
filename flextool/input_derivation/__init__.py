@@ -196,7 +196,7 @@ def run(
         value_alternatives,
     )
     from flextool.input_derivation._dc_power_flow import derive_dc_power_flow
-    from flextool.input_derivation._process_method import derive_process_method
+    from flextool.input_derivation._process_method import derive_process_method, write_startup_classes
     from flextool.input_derivation._commodity_ladder import (
         derive_commodity_ladder_cumulative,
         derive_commodity_ladder_annual,
@@ -287,6 +287,8 @@ def run(
                     backend, kwargs, frame, key_cols=key_cols, param_col=param_col, drop_keys=drop_keys,
                     timesteps=timesteps)
             provider.put(_provider_key(spec["filename"]), frame)
+        # The startup classes (no_startup / linear / binary) in place of the startup_method members.
+        write_startup_classes(provider)
         warn_profiles_as_percent(backend, provider)
         _mem("spine_db_read_end", "Spine DB loaded")
 

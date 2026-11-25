@@ -1110,14 +1110,25 @@ def _autoscale_unscale_post_solve(
     *,
     solve_name: str,
     logger: logging.Logger,
+    problem: object = None,
 ) -> None:
     """Layer 2 unscale guard — invoke immediately after ``pb.solve(...)``.
 
     Idempotent when ``plan is None`` or ``sol is None``: the eager
     unscale keeps the rest of the pipeline (output writers, range
     re-readouts) blind to the Layer-2 substitution.
+
+    Also records on ``sol`` the primal feasibility tolerance *problem* was
+    solved with (``sol.flextool_primal_tolerance``; with the column
+    factors the unscale leaves on ``sol``, what the carried units online
+    are rounded by: ``output._coarse_flows.var_zero_tolerance``).
     """
-    if plan is None or sol is None:
+    if sol is None:
+        return
+    if problem is not None:
+        from flextool.engine.autoscale._guard import highs_tolerances
+        sol.flextool_primal_tolerance = highs_tolerances(problem)[0]
+    if plan is None:
         return
     try:
         _autoscale_unscale_solution(sol, plan)
@@ -1239,7 +1250,7 @@ class _MemoryRecorder:
         if self.enabled and self._path is not None:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             import csv as _csv
-            with open(self._path, "w", newline="") as f:
+            with open(self._path, "w", encoding="utf-8", newline="") as f:
                 _csv.writer(f).writerow(self._HEADER)
 
     @staticmethod
@@ -1265,7 +1276,7 @@ class _MemoryRecorder:
         anon_kb = 0.0
         swap_kb = 0.0
         try:
-            with open("/proc/self/status", "r") as f:
+            with open("/proc/self/status", "r", encoding="utf-8") as f:
                 for line in f:
                     if line.startswith("RssAnon:"):
                         parts = line.split()
@@ -1289,7 +1300,7 @@ class _MemoryRecorder:
         total_kb = 0.0
         free_kb = 0.0
         try:
-            with open("/proc/meminfo", "r") as f:
+            with open("/proc/meminfo", "r", encoding="utf-8") as f:
                 for line in f:
                     if line.startswith("SwapTotal:"):
                         parts = line.split()
@@ -1332,7 +1343,7 @@ class _MemoryRecorder:
         total_kb = 0.0
         avail_kb = 0.0
         try:
-            with open("/proc/meminfo", "r") as f:
+            with open("/proc/meminfo", "r", encoding="utf-8") as f:
                 for line in f:
                     if line.startswith("MemTotal:"):
                         parts = line.split()
@@ -1527,7 +1538,7 @@ class _MemoryRecorder:
             )
             import csv as _csv
             try:
-                with open(self._path, "a", newline="") as f:
+                with open(self._path, "a", encoding="utf-8", newline="") as f:
                     _csv.writer(f).writerow(row)
             except OSError:
                 pass
@@ -1700,7 +1711,7 @@ def _phase_prof(label: str) -> None:
     if os.environ.get("FLEXTOOL_PHASE_PROFILE") != "1":
         return
     try:
-        with open("/proc/self/status") as _f:
+        with open("/proc/self/status", encoding="utf-8") as _f:
             for _ln in _f:
                 if _ln.startswith("VmRSS:"):
                     sys.stderr.write(f"[phase profile] epoch={time.time():.3f}\tstep={label}\trss_gb={int(_ln.split()[1])/(1024*1024):.3f}\n")
@@ -2019,47 +2030,90 @@ def _emit_provider_obj_scale(state, effective_obj_scale: float) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _stochastic_invest_raw_guard(solve_cfg, base_name: str) -> None:
-    """Slice D Guard 1 — validate the RAW authored stochastic_invest_method.
+def _invest_branching_raw_guard(solve_cfg, base_name: str) -> None:
+    """Refuse an unrecognised authored ``solve.invest_solve_branching_method``.
 
-    ``'recourse'`` is now ACCEPTED (per-scenario stochastic investment
-    landed in Slice D).  The guard reads the RAW authored value rather than
-    the resolver's output: :meth:`SolveConfig.stochastic_invest_method_for`
-    silently collapses any UNrecognised value to ``'none'`` (a typo like
-    ``'recuorse'`` would then run deterministic), so an authoring-time check
-    must inspect the raw dict and reject anything that is neither blank /
-    ``'none'`` nor ``'recourse'``.  Blank / absent tolerate-as-none (matches
-    the resolver).  No-op when the solve authors nothing.
+    Reads the RAW authored value: :meth:`SolveConfig.invest_branching_method_for` reads an unknown value (a typo)
+    as ``operations_only``, so the check inspects the raw dict.  Blank / absent pass.  Where the value may be set
+    (investment solves with ``stochastic_branches``) is checked by :meth:`SolveConfig.check_invest_branching`.
     """
-    raw = solve_cfg.stochastic_invest_method.get(base_name)
+    from flextool.engine.input._solve_config import INVEST_SOLVE_BRANCHING_METHODS
+
+    raw = (getattr(solve_cfg, "invest_solve_branching_method", None) or {}).get(base_name)
     if raw is None:
         return
     val = str(raw).strip().lower()
-    if val not in ("", "none", "recourse"):
+    if val and val not in INVEST_SOLVE_BRANCHING_METHODS:
         raise FlexToolConfigError(
-            f"Solve '{base_name}' sets stochastic_invest_method='{raw}' — "
-            f"unrecognised value. Supported: 'none' (default), 'recourse' "
-            f"(per-scenario stochastic investment)."
-        )
+            f"Solve '{base_name}' sets invest_solve_branching_method='{raw}', an unrecognised value. Supported: "
+            + ", ".join(f"'{m}'" for m in INVEST_SOLVE_BRANCHING_METHODS) + " (the first is the default).")
+
+
+def _rolling_realization_fix(separate_dispatch: bool, stochastic: bool) -> str:
+    """The way out of the nested / containing errors once the solves stay where they are: a ``separate_dispatch``
+    solve needs its ``realized: yes`` branch (removing it stops the run for that), so it changes the method; a
+    solve with a designation (no ``separate_dispatch``) can drop the designation."""
+    if not separate_dispatch:
+        return "remove its realized: yes branch"
+    if stochastic:
+        return ("set its dispatch_realization_method to deterministic (the solve then reads only its realized: yes "
+                "branch)")
+    return "set its dispatch_realization_method to deterministic"
+
+
+def _rolling_containing_error(solve: str, *, separate_dispatch: bool = False,
+                              stochastic: bool = True) -> FlexToolConfigError:
+    """A rolling stochastic solve that contains other solves cannot have its jumps realized (4.7.0).
+    *separate_dispatch*: the solve authors that method (the raw guard); *stochastic*: it has
+    ``stochastic_branches``."""
+    kind = "rolling stochastic solve" if stochastic else "rolling solve"
+    method = " with dispatch_realization_method separate_dispatch" if separate_dispatch else ""
+    why = (f"FlexTool 4.7.0 cannot yet realize the jumps of a {kind} that contains other solves." if stochastic else
+           "FlexTool 4.7.0 cannot yet add the realization solve that separate_dispatch needs to a rolling solve "
+           "that contains other solves.")
+    return FlexToolConfigError(
+        f"Solve '{solve}' is a {kind}{method} that contains other solves (contains_solves). {why} Move the solves it "
+        f"contains out of its contains_solves, or {_rolling_realization_fix(separate_dispatch, stochastic)}."
+    )
+
+
+def _rolling_nested_error(solve: str, *, separate_dispatch: bool = False,
+                          stochastic: bool = True) -> FlexToolConfigError:
+    """A rolling stochastic solve nested in another solve cannot have its jumps realized (4.7.0).  Keywords as
+    :func:`_rolling_containing_error`."""
+    kind = "rolling stochastic solve" if stochastic else "rolling solve"
+    method = " with dispatch_realization_method separate_dispatch" if separate_dispatch else ""
+    why = (f"FlexTool 4.7.0 cannot yet realize the jumps of a nested {kind}." if stochastic else
+           "FlexTool 4.7.0 cannot yet add the realization solve that separate_dispatch needs to a nested rolling "
+           "solve.")
+    return FlexToolConfigError(
+        f"Solve '{solve}' is a {kind}{method} nested inside another solve's contains_solves. {why} Make it a "
+        f"top-level solve, or {_rolling_realization_fix(separate_dispatch, stochastic)}."
+    )
 
 
 def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
     """W4 Guard — validate a non-default ``dispatch_realization_method``.
 
     ``solve.dispatch_realization_method`` selects how realized operations
-    are produced.  ``'within_solve'`` (the schema default, today's
-    behaviour) is always allowed.  ``'separate_dispatch'`` (W4b) — the
-    engine automatically registers a deterministic realized-dispatch
-    SIBLING ``<solve>__realized_dispatch`` that takes the full
-    invest→dispatch handoff + last-wins path — is now ACCEPTED, but ONLY
-    for a single TOP-LEVEL ``single_solve``.  Every other shape (rolling,
-    a solve that itself ``contains_solves`` children, or a solve nested
-    inside another's ``contains_solves``) is still rejected: the sibling
-    machinery is single-solve only.
+    are produced.  ``'deterministic'`` (the shipped default: a solve with
+    ``stochastic_branches`` reads only its ``realized: yes`` branch,
+    ``SolveConfig.apply_deterministic_realization``) and ``'within_solve'``
+    are always allowed.  ``'separate_dispatch'`` (W4b) — the
+    engine automatically registers a realization solve
+    ``<solve>__realized_dispatch`` that takes the full
+    invest→dispatch handoff + last-wins path — is accepted for a
+    TOP-LEVEL ``single_solve`` or ``rolling_window`` solve that contains no
+    solves and has a ``realized: yes`` branch.  A solve that itself
+    ``contains_solves`` children, or one nested inside another's
+    ``contains_solves``, is rejected; a rolling one with the 4.7.0 texts of
+    a rolling stochastic solve whose jumps cannot be realized.  On an
+    investment solve it is not read (``is_investment_solve``; warning
+    W-0640), so it is not checked there.
 
     The guard reads the RAW authored value rather than the resolver's
     output: :meth:`SolveConfig.dispatch_realization_method_for` silently
-    collapses any UNRECOGNISED value (a typo) to ``'within_solve'``, so an
+    collapses any UNRECOGNISED value (a typo) to ``'deterministic'``, so an
     authoring-time check must inspect the raw dict.  Blank / absent
     tolerate-as-default.  No-op when the solve authors nothing.
 
@@ -2071,15 +2125,20 @@ def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
     if raw is None:
         return
     val = str(raw).strip().lower()
-    if val in ("", "within_solve"):
+    if val in ("", "deterministic", "within_solve"):
         return
     if val != "separate_dispatch":
         # Typo / unknown value — unchanged hard-reject.
         raise FlexToolConfigError(
             f"Solve '{base_name}' sets dispatch_realization_method='{raw}' — "
-            f"unrecognised value.  Supported: 'within_solve' (default) and "
-            f"'separate_dispatch'."
+            f"unrecognised value.  Supported: 'deterministic' (default), "
+            f"'within_solve' and 'separate_dispatch'."
         )
+    # separate_dispatch on an investment solve: not read (W-0640, SolveConfig.apply_deterministic_realization).
+    from flextool.engine.input._solve_config import is_investment_solve
+
+    if is_investment_solve(solve_cfg, base_name):
+        return
     # separate_dispatch — eligible ONLY for a single top-level single_solve.
     solve_modes = getattr(solve_cfg, "solve_modes", {}) or {}
     model_solve = getattr(solve_cfg, "model_solve", {}) or {}
@@ -2094,9 +2153,12 @@ def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
         elif _children is not None:
             nested.add(_children)
     mode = solve_modes.get(base_name, "single_solve")
+    stochastic = bool((getattr(solve_cfg, "stochastic_branches", None) or {}).get(base_name))
+    if mode == "rolling_window" and contains_solves.get(base_name):
+        raise _rolling_containing_error(base_name, separate_dispatch=True, stochastic=stochastic)
+    if mode == "rolling_window" and base_name in nested:
+        raise _rolling_nested_error(base_name, separate_dispatch=True, stochastic=stochastic)
     reasons: list[str] = []
-    # OC1 rolling separate_dispatch: allow rolling_window; keep the
-    # contains/nesting bans.  (Was: single_solve only.)
     if mode not in ("single_solve", "rolling_window"):
         reasons.append(
             f"it runs under solve_mode='{mode}' (separate_dispatch needs a "
@@ -2112,7 +2174,7 @@ def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
         raise FlexToolConfigError(
             f"Solve '{base_name}' sets "
             f"dispatch_realization_method='separate_dispatch', which is only "
-            f"supported for a single top-level single_solve, but "
+            f"supported for a top-level solve that contains no solves, but "
             + "; ".join(reasons)
             + "."
         )
@@ -2123,8 +2185,7 @@ def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
         raise FlexToolConfigError(
             f"Solve '{base_name}' sets dispatch_realization_method='separate_dispatch', which runs a separate "
             f"dispatch solve of the realized branch, but its stochastic_branches have no branch with realized: "
-            f"yes. Mark the branch to realize with realized: yes, or set dispatch_realization_method to "
-            f"within_solve."
+            f"yes. Mark the branch to realize with realized: yes."
         )
 
 
@@ -2139,11 +2200,13 @@ def _spawn_realized_dispatch_siblings(
     * otherwise a solve followed in ``model.solves`` by an author-declared
       realization solve (``configured_realization_solve``) has that solve
       registered (``SolveConfig.register_realization_solve``);
-    * otherwise a single_solve / rolling_window solve with
-      ``stochastic_invest_method = none`` whose ``realized: yes``
+    * otherwise a single_solve / rolling_window solve whose ``realized: yes``
       designation reaches its committed window
-      (``designation_reaches_committed_window``) gets the sibling too.  A
-      designated recourse solve gets a warning and no sibling; a designated
+      (``designation_reaches_committed_window``) gets the sibling too, unless
+      every forecast invests on its own there (``invest_solve_branching_method``
+      ``investments_at_reveal_period``): under ``operations_only`` and
+      ``investments_after_reveal_period`` the realized investments are one
+      decision of every forecast, which the sibling keeps.  A designated
       solve that contains solves, or is nested in another solve, raises.
 
     ════════════════════════════════════════════════════════════════════
@@ -2154,10 +2217,11 @@ def _spawn_realized_dispatch_siblings(
     the entry point that ties them together:
 
     * schema (W4a): ``solve.dispatch_realization_method`` {within_solve,
-      separate_dispatch} — migration ``_migrate_v75_...``, accessor
+      separate_dispatch, deterministic (v83, no realization solve: the
+      solve reads its realized branch, ``apply_deterministic_realization``)} — migration ``_migrate_v75_...``, accessor
       ``SolveConfig.dispatch_realization_method_for``.
     * validation: ``_dispatch_realization_raw_guard`` (both wired sites) —
-      accepts separate_dispatch only for a single top-level single_solve.
+      accepts separate_dispatch for a top-level single or rolling solve that contains no solves.
     * registration (W4b): THIS function → for each eligible parent, a DUAL
       in-memory registration of the sibling ``<parent>__realized_dispatch``:
         - ``SpineDbReader.register_derived_solve`` — clones every RAW Spine
@@ -2248,13 +2312,33 @@ def _spawn_realized_dispatch_siblings(
         except Exception:  # noqa: BLE001
             reader_solves = set()
 
-    from flextool.engine.solve import _realization
+    from flextool.engine.solve import _realization, _realization_tail
+
+    def _is_rolling(solve: str) -> bool:
+        return (getattr(solve_cfg, "solve_modes", None) or {}).get(solve) == "rolling_window"
+
+    def _add(solve: str, why: str) -> None:
+        # W-0594 (the delayed units keep the added realization solve from looking ahead) is noted with the
+        # realization notices, once the plans and the expansion have passed their checks
+        # (_realization_tail.announce_realization_notices).
+        eligible.append((solve, why))
 
     # Spawn list: every separate_dispatch solve (authored), then every
     # designated solve (a ``realized: yes`` branch) without a configured realization solve.  Each
     # entry carries the reason the error messages below name.
     eligible: list[tuple[str, str]] = []
+    deterministic = getattr(solve_cfg, "deterministic_branches", None) or {}
     for p in sorted(top_level):
+        if p in deterministic:
+            # dispatch_realization_method deterministic: the solve reads its realized branch itself, no
+            # realization solve (SolveConfig.apply_deterministic_realization).
+            continue
+        roll_method = _realization_tail.realization_roll_method(solve_cfg, p)
+        if roll_method == "within_solve":
+            # Each roll of a rolling within_solve solve is its own realization roll (``_realization_tail``): it
+            # realizes its jump and looks ahead after it, so no realization solve is added.  (W-0635 / W-0636:
+            # native_run_model, once the plans have passed their checks.)
+            continue
         if solve_cfg.dispatch_realization_method_for(p) == "separate_dispatch":
             if not (getattr(solve_cfg, "realized_periods", None) or {}).get(p):
                 # Nothing to realize (an invest-only solve): no realization solve.
@@ -2264,7 +2348,7 @@ def _spawn_realized_dispatch_siblings(
                         "realized_periods: no realization solve is added (it would dispatch nothing)", p,
                     )
                 continue
-            eligible.append((p, "dispatch_realization_method='separate_dispatch'"))
+            _add(p, "dispatch_realization_method='separate_dispatch'")
             continue
         configured = _realization.configured_realization_solve(solve_cfg, p)
         if configured is not None:
@@ -2300,9 +2384,12 @@ def _spawn_realized_dispatch_siblings(
             continue
         if not _realization.designation_reaches_committed_window(solve_cfg, p):
             continue
-        if solve_cfg.stochastic_invest_method_for(p) == "recourse":
-            _realization.warn_recourse_designation(p)
+        if solve_cfg.invest_branching_method_for(p) == "investments_at_reveal_period":
+            # Every forecast invests on its own from the reveal period on: no realized investment to fix (refusal 3
+            # keeps the reveal period and later out of its realized periods, so a run never gets here).
             continue
+        if contains_solves.get(p) and _is_rolling(p):
+            raise _rolling_containing_error(p)
         if contains_solves.get(p):
             raise FlexToolConfigError(
                 f"Solve '{p}' has a realized: yes designation in "
@@ -2312,10 +2399,13 @@ def _spawn_realized_dispatch_siblings(
                 f"contains out of its contains_solves, or remove the "
                 f"designation."
             )
-        eligible.append((p, "a realized: yes designation in stochastic_branches"))
+        _add(p, "a realized: yes designation in stochastic_branches")
     for c in sorted(contained):
+        # A nested solve whose investments branch is refused later, with its own message.
         if (_realization.designation_reaches_committed_window(solve_cfg, c)
-                and solve_cfg.stochastic_invest_method_for(c) != "recourse"):
+                and not solve_cfg.recourse_invest(c)):
+            if _is_rolling(c):
+                raise _rolling_nested_error(c)
             raise FlexToolConfigError(
                 f"Solve '{c}' has a realized: yes designation in "
                 f"stochastic_branches whose fan reaches its committed window, "
@@ -2423,19 +2513,16 @@ def _validate_model_solve(state: RunnerState) -> list[str]:
     solves = next(iter(state.solve.model_solve.values()))
     if not solves:
         raise FlexToolConfigError("No solves in model.")
-    # Slice D Guard 1 (fail-fast pass): validate the RAW authored
-    # stochastic_invest_method for the model's top-level solves before any
-    # solve runs — 'recourse' is accepted; only unrecognised authored
-    # values raise.  This only sees the top-level ``solves`` array (not
-    # solves reached via ``contains_solves`` recursion), so it is a
-    # convenience — the authoritative per-solve guard lives at the top of
-    # ``run()``.
+    # Fail-fast pass: refuse an unrecognised invest_solve_branching_method for the model's top-level solves
+    # before any solve runs.  This only sees the top-level ``solves`` array (not solves reached via
+    # ``contains_solves`` recursion), so it is a convenience — the authoritative per-solve guard lives at the top
+    # of ``run()``.
     for _s in solves:
-        _stochastic_invest_raw_guard(state.solve, _s)
-        # W4 Slice 1 Guard (fail-fast pass): reject a non-default
-        # dispatch_realization_method ('separate_dispatch' not yet
-        # implemented) for the model's top-level solves before any solve
-        # runs.  Like the stochastic_invest pass, this only sees the
+        _invest_branching_raw_guard(state.solve, _s)
+        # W4 Slice 1 Guard (fail-fast pass): reject an unrecognised
+        # dispatch_realization_method, or 'separate_dispatch' on a solve
+        # shape it does not support, for the model's top-level solves before
+        # any solve runs.  Like the branching pass, this only sees the
         # top-level ``solves`` array (not solves reached via
         # ``contains_solves`` recursion / rolling), so it is a convenience —
         # the authoritative per-solve guard lives at the top of ``run()``.
@@ -3098,7 +3185,7 @@ def _drive_cascade(
             # periods would double-count exclusive branch futures — recourse
             # plan §4).  Flag-independent: it closes the today-untested
             # Benders x stochastics combination regardless of
-            # stochastic_invest_method.  The detector reads two FlexData
+            # invest_solve_branching_method.  The detector reads two FlexData
             # frames already in scope on ``data``.
             if _is_genuinely_stochastic(data):
                 raise FlexToolConfigError(
@@ -3509,22 +3596,18 @@ def _drive_cascade(
 
         def _run_one(self, complete_solve_name: str) -> int:
             _phase_prof("run_enter")
-            # Slice D Guard 1 (authoritative): validate the RAW authored
-            # stochastic_invest_method for any solve that RUNS — including
-            # each roll of a rolling solve and each contained/chained solve
-            # — before building its FlexData/LP.  'recourse' is accepted
-            # (per-scenario stochastic investment); only unrecognised
-            # authored values raise.  The roll-suffix strip mirrors the
-            # base-name derivation below (``:2486``).
+            # Authoritative: refuse an unrecognised invest_solve_branching_method for any solve that RUNS —
+            # including each roll of a rolling solve and each contained/chained solve — before building its
+            # FlexData/LP.  The roll-suffix strip mirrors the base-name derivation below.
             _guard_base = re.sub(r"_roll_\d+$", "", complete_solve_name)
-            _stochastic_invest_raw_guard(state.solve, _guard_base)
-            # W4 Slice 1 Guard (authoritative): reject a non-default
-            # dispatch_realization_method for any solve that RUNS —
-            # including each roll of a rolling solve and each contained/
-            # chained solve — before building its FlexData/LP.  Omitting
-            # this site would let a contained/chained solve authoring
-            # 'separate_dispatch' silently normalize to 'within_solve' via
-            # the resolver.  'separate_dispatch' is not yet implemented.
+            _invest_branching_raw_guard(state.solve, _guard_base)
+            # W4 Slice 1 Guard (authoritative): reject an unrecognised
+            # dispatch_realization_method, or an unsupported
+            # 'separate_dispatch', for any solve that RUNS — including each
+            # roll of a rolling solve and each contained/chained solve —
+            # before building its FlexData/LP.  Omitting this site would let
+            # a contained/chained solve authoring 'separate_dispatch' run
+            # without its realization solve.
             _dispatch_realization_raw_guard(state.solve, _guard_base)
             # Cross-level eviction — release any EXHAUSTED prior solve-level's
             # live HiGHS instance + flex_data_provider BEFORE this solve builds
@@ -3671,6 +3754,12 @@ def _drive_cascade(
                 _unit_level,
                 self.state.solve.reduce_system_detail_for(complete_solve_name),
             )
+            # Obligations carried in from an earlier solve (minimum up-time, realization pins) yield to an
+            # outage that solve did not see (W-0592), judged on the reduced data and after the coarse frames.
+            from flextool.engine.preprocess.flex_data import carried_obligations_yield_to_outages
+            carried_obligations_yield_to_outages(
+                data, _roll_label(complete_solve_name, getattr(self.state, "current_roll_index", None)),
+                _unit_level)
             _reduce_base = re.sub(r"_roll_\d+$", "", complete_solve_name)
             if _reduce_report.warnings:
                 _warned = self.__dict__.setdefault("_reduce_detail_warned", set())
@@ -3751,22 +3840,23 @@ def _drive_cascade(
             check_online_ramp_carry(data)
 
             # A realization solve fixes the stochastic solve's investments
-            # and pins its binary units online to the NA-tied values: name
+            # and pins the units online of its _fix_in_uc processes to the NA-tied values: name
             # the hard-balance node the realized data cannot balance before
             # the LP is built.
             if complete_solve_name in (
                 getattr(self.state.solve, "realized_dispatch_parent", {}) or {}
             ):
+                from flextool.engine.input._solve_config import is_investment_solve
                 from flextool.engine.solve._realization import (
                     check_pinned_realization_feasible,
                     note_realization_inherits_nothing,
-                    solve_decides_investments,
                 )
                 check_pinned_realization_feasible(data, complete_solve_name)
                 _parent = self.state.solve.realized_dispatch_parent[complete_solve_name]
+                _base = re.sub(r"_roll_\d+$", "", _parent)
+                # The rolls of a rolling solve build no investment, whatever it authors (_recursive_solve warns).
                 note_realization_inherits_nothing(
-                    data, complete_solve_name, _parent,
-                    solve_decides_investments(self.state.solve, re.sub(r"_roll_\d+$", "", _parent)))
+                    data, complete_solve_name, _parent, is_investment_solve(self.state.solve, _base))
             _window_check = getattr(self.state, "current_committed_window_check", None)
             if _window_check is not None:
                 from flextool.engine.solve._realization import check_committed_window_realized
@@ -4397,12 +4487,12 @@ def _drive_cascade(
                 # cached plan is None (Layer 2 was off or didn't
                 # trigger at first-build).
                 _phase_prof("unscale_start")
-                if self._autoscale_warm_layer2_plan is not None:
-                    _autoscale_unscale_post_solve(
-                        sol, self._autoscale_warm_layer2_plan,
-                        solve_name=complete_solve_name,
-                        logger=self.state.logger,
-                    )
+                _autoscale_unscale_post_solve(
+                    sol, self._autoscale_warm_layer2_plan,
+                    solve_name=complete_solve_name,
+                    logger=self.state.logger,
+                    problem=self._warm_problem.problem,
+                )
                 _phase_prof("unscale_done")
                 # Phase 4 Step 4b — in-process warm-start basis CAPTURE
                 # (fresh build only).  ``sol.highs`` is the live retained
@@ -4907,6 +4997,7 @@ def _drive_cascade(
                     sol, _autoscale_layer2_plan,
                     solve_name=complete_solve_name,
                     logger=self.state.logger,
+                    problem=pb,
                 )
                 _phase_prof("unscale_done")
             # autoscale Layer 1 (detect) — log the four LP coefficient

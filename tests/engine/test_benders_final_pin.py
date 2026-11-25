@@ -118,7 +118,7 @@ def test_pin_with_own_decisions_keeps_the_objective(mono):
 
 
 def _mps_sections(path: Path) -> tuple[list[str], list[str]]:
-    lines = path.read_text().splitlines()
+    lines = path.read_text(encoding="utf-8").splitlines()
     cut = lines.index("BOUNDS")
     return lines[:cut], [ln for ln in lines[cut + 1:] if ln != "ENDATA"]
 

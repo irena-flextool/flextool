@@ -127,7 +127,7 @@ def _o2(e_params: dict, *, inflow=-30.0, extra_solve: list | None = None, power_
 
 
 CASES = {
-    "O1": lambda: _o1("binary", {"t01": -60.0, "t02": -130.0, "t03": -200.0}),
+    "O1": lambda: _o1("integer_fix_in_uc", {"t01": -60.0, "t02": -130.0, "t03": -200.0}),
     "O1-L": lambda: _o1("linear", {"t01": -200.0, "t02": -60.0, "t03": -200.0}, startup_cost=10.0),
     "O1-R": lambda: _o1("linear", {"t01": -200.0, "t02": -60.0, "t03": -200.0}, startup_cost=10.0,
                         extra_solve=[["solve", "s1", "reduce_unit_detail_method", text("online")]]),
@@ -137,7 +137,7 @@ CASES = {
                         "invest_cost": scalar(33.652506)},
                        extra_solve=[["solve", "s1", "invest_periods", str_list(["p2030"])],
                                     ["solve", "s1", "realized_invest_periods", str_list(["p2030"])]]),
-    "O2c": lambda: _o2({"virtual_unitsize": scalar(50.0), "existing": scalar(2.0), "startup_method": text("binary"),
+    "O2c": lambda: _o2({"virtual_unitsize": scalar(50.0), "existing": scalar(2.0), "startup_method": text("integer_fix_in_uc"),
                         "startup_cost": scalar(0.0)}, inflow={"t01": -30.0, "t02": -5.0, "t03": -50.0}),
     "O2d": lambda: _o2({"startup_method": text("linear")},
                        extra_solve=[["solve", "s1", "reduce_unit_detail_method", text("integers")]]),
@@ -168,7 +168,7 @@ def _o5() -> tuple:
                        balance_node("heat", {"t01": -30.0, "t02": -25.0}),
                        unit("CHP", ["gas_node"], ["elec", "heat"], _pw(
                            curve([(0.3, 0.25), (0.6, 0.35), (1.0, 0.40)]), virtual_unitsize=scalar(100.0),
-                           existing=scalar(1.0), startup_method=text("binary"), startup_cost=scalar(0.0),
+                           existing=scalar(1.0), startup_method=text("integer_fix_in_uc"), startup_cost=scalar(0.0),
                            min_load=scalar(0.3))))
     vals += [["unit__inputNode", ["CHP", "gas_node"], "conversion_flow_coeff", scalar(1.0)],
              ["unit__outputNode", ["CHP", "elec"], "conversion_flow_coeff", scalar(1.0)],

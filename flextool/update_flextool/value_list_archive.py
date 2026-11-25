@@ -25,7 +25,7 @@ only, matched by (class, entity name, alternative): "was X before the overwrite"
 - same row, a member FlexTool no longer has: ``archive: legacy member`` (``conflict`` if certain by position);
 - matched by name only, or the same row changed since: information; a ``certain`` value whose archive member
   differs becomes ``conflict``;
-- a class default: the shipped default stays the recommendation (R13); the archive default is information
+- a method parameter default: FlexTool's default stays the recommendation (R13); the archive default is information
   ("your old copy had X");
 - a carried v77 group value: information only.
 

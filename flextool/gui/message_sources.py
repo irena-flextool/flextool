@@ -7,8 +7,8 @@ its messages, texts included, from current facts at every recompute.  No Tk here
   ``possible_value_list_overwrite_ro`` flags (:meth:`~flextool.gui.input_sources.InputSourceManager.value_list_findings`),
   with a "Copy repair command" button.  Not dismissable: a valid repair record (the repair tool) ends the finding,
   and with it the message.  TODO(v5.0.0): remove with W-0490.
-- ``list_defaults_lost`` (W-0491, package P7b): one message per input-source database whose shipped list defaults
-  an upgrade before 4.6.3 left empty
+- ``list_defaults_lost`` (W-0491, package P7b): one message per input-source database whose method parameter
+  defaults an upgrade before 4.6.3 left empty
   (:meth:`~flextool.gui.input_sources.InputSourceManager.list_defaults_findings`), with the same button.  Not
   dismissable and not attention (a note: it opens the list by itself at two project opens per set of empty
   defaults); only the repair tool's part B record ends it.  TODO(v5.0.0): remove with W-0491.
@@ -66,7 +66,10 @@ class UpgradeResult:
     """What the migration of one file did (``main_window.upgrade_one``).
 
     *before* / *after*: the data version read before and after (``None`` when it could not be read); *copy_of*:
-    the frozen file's name when *path* is its upgraded copy; *messages*: those of ``check_and_upgrade_database``.
+    the frozen file's name when *path* is its upgraded copy; *messages*: those of ``check_and_upgrade_database``;
+    *notices*: the behaviour-change ids whose markers the upgrade added; *undecided*: the units the upgrade could
+    not decide a ``minimum_time_method`` for; *undecided_nodes*: the storage nodes it could not decide a
+    ``storage_start_end_method`` for.
     """
     name: str
     path: Path
@@ -76,20 +79,39 @@ class UpgradeResult:
     upgraded: bool
     failed: bool
     messages: list[str] = field(default_factory=list)
+    notices: tuple[str, ...] = ()
+    undecided: tuple[str, ...] = ()
+    undecided_nodes: tuple[str, ...] = ()
 
 
 def post_upgrades(center: MessageCenter | None, results: Iterable[UpgradeResult], run: str) -> None:
     """Post a ``database_upgraded`` event for every file that was upgraded and did not fail (*run*: the start of
-    the migration run, which makes each event a new message).  Nothing without a center."""
+    the migration run, which makes each event a new message).  Nothing without a center.
+
+    The facts hold the added notices' ids (the texts are rebuilt at each recompute) and the undecided units and
+    nodes; an event still pending for the file (not dismissed) gives its notices and names to the new one, so an
+    earlier upgrade's list is not lost (the earlier names are not checked again)."""
     if center is None:
         return
+    pending = center.store.pending("database_upgraded")
     for r in results:
         if not r.upgraded or r.failed:
             continue
+        key = database_key(r.path)
         facts: dict[str, Any] = {"from": r.before, "to": r.after, "copy_of": r.copy_of}
         if r.before is not None and r.before == r.after:
             facts["schema"] = True
-        center.post_event("database_upgraded", database_key(r.path), Path(r.path).name, run=run, facts=facts)
+        old = (pending.get(key) or {}).get("facts") or {}
+        for fact, new in (("notices", r.notices), ("undecided", r.undecided), ("undecided_nodes", r.undecided_nodes)):
+            merged = list(dict.fromkeys([*_str_list(old.get(fact)), *new]))
+            if merged:
+                facts[fact] = merged
+        center.post_event("database_upgraded", key, Path(r.path).name, run=run, facts=facts)
+
+
+def _str_list(value: Any) -> list[str]:
+    """*value* as a list of strings (a fact read back from the store file); ``[]`` for anything else."""
+    return [v for v in value if isinstance(v, str)] if isinstance(value, list) else []
 
 
 def failure_lines(results: Iterable[UpgradeResult], *, cancelled: bool) -> list[str]:
@@ -121,15 +143,66 @@ def upgraded_text(facts: dict) -> tuple[str, tuple[str, ...]]:
         versions = f"from data version {before} to {after}"
     else:
         versions = f"to data version {after}" if after is not None else "to the current data version"
+    notes = _notice_paragraphs(_str_list(facts.get("notices")),
+                               [(text, code, _str_list(facts.get(key))) for key, code, text in _UNDECIDED_LISTS])
     if copy_of:
         return "An upgraded copy was added", (
             f"This is an upgraded copy of the frozen database {copy_of} ({versions}), added as a new input "
-            "source. The frozen file is unchanged.",)
+            "source. The frozen file is unchanged.", *notes)
     if facts.get("schema"):
         return "This database was upgraded", (
-            f"FlexTool updated the database format of this file so that this FlexTool can run it. {_OLDER_FLEXTOOL}",)
+            f"FlexTool updated the database format of this file so that this FlexTool can run it. {_OLDER_FLEXTOOL}",
+            *notes)
     return "This database was upgraded", (
-        f"FlexTool upgraded it {versions} so that this FlexTool can run it. {_OLDER_FLEXTOOL}",)
+        f"FlexTool upgraded it {versions} so that this FlexTool can run it. {_OLDER_FLEXTOOL}", *notes)
+
+
+#: How many undecided units (or nodes) the upgrade message names (the code after the list names them all).
+UNDECIDED_SHOWN = 10
+_UNDECIDED = ("Since the upgrade did not decide the minimum up/down methods for the following units, they are "
+              "currently operated without those limits even though they have minimum up/down time parameter "
+              "values. Please choose a method to activate the limits.")
+_UNDECIDED_NODES = ("The upgrade could not keep the results of the following nodes unchanged: their "
+                    "storage_start_end_method fixes the storage state at the start or end, but in some scenarios "
+                    "they have no storage_state_start or storage_state_end value. A run of such a scenario stops "
+                    "with an error. Please add the missing value, or set storage_start_end_method so that it leaves "
+                    "that state free (for example fix_nothing).")
+#: The undecided lists of a ``database_upgraded`` event: (facts key, the code that names them all, paragraph).
+#: W-0231 names the units at each run; the nodes are named by the run's error, after the notice W-0601.
+_UNDECIDED_LISTS = (("undecided", "W-0231", _UNDECIDED), ("undecided_nodes", "W-0601", _UNDECIDED_NODES))
+
+
+def _notice_paragraphs(ids: list[str], undecided: list[tuple[str, str, list[str]]]) -> tuple[str, ...]:
+    """The paragraphs naming the behaviour notices an upgrade added (*ids*; unknown ids skipped), results-changing
+    ones first, each group a heading and one line per notice (``<code>: <console text>``, in code order); each
+    *undecided* list ``(paragraph, code, names)`` with names under the results heading, as its paragraph and the
+    names (capped at :data:`UNDECIDED_SHOWN`) followed by the code.  ``()`` when there are none.  Headings end in
+    ":" and lines have no sentence end, so the group adds one sentence (plus the sentences of each undecided
+    list's paragraph: two for the units, three for the nodes)."""
+    from flextool.run_warnings._behaviour_specs import BEHAVIOUR_TEXTS, RESULTS_UNCHANGED
+
+    known = sorted((i for i in dict.fromkeys(ids) if i in BEHAVIOUR_TEXTS), key=lambda i: BEHAVIOUR_TEXTS[i][0])
+
+    def lines(group: list[str]) -> str:
+        return "\n".join(f"{BEHAVIOUR_TEXTS[i][0]}: {BEHAVIOUR_TEXTS[i][1]}" for i in group)
+
+    changing = [i for i in known if i not in RESULTS_UNCHANGED]
+    unchanged = [i for i in known if i in RESULTS_UNCHANGED]
+    out: list[str] = []
+    undecided = [(text, code, names) for text, code, names in undecided if names]
+    if changing or undecided:
+        out.append("These FlexTool changes affect the results of this model:")
+        if changing:
+            out.append(lines(changing))
+        for text, code, names in undecided:
+            more = len(names) - UNDECIDED_SHOWN
+            out += [text, ", ".join(names[:UNDECIDED_SHOWN]) + (f" and {more} more" if more > 0 else "") + f" ({code})"]
+    if unchanged:
+        out += ["The upgrade added these behaviour notes:", lines(unchanged)]
+    if out:
+        out.append("Each run names the affected entities in its Notes; delete a note's marker in the database's "
+                   "Metadata tab once checked.")
+    return tuple(out)
 
 
 def unreadable_text(note: PlanningNote) -> tuple[str, tuple[str, ...]]:
@@ -161,7 +234,7 @@ def repair_tooltip(os_name: str = os.name) -> str:
     return "Paste into PowerShell" if os_name == "nt" else "Paste into a terminal"
 
 
-LIST_DEFAULTS_TITLE = "Shipped defaults lost in an old upgrade"
+LIST_DEFAULTS_TITLE = "Method parameter defaults lost in an old upgrade"
 _STORAGE_DEFAULT = "node.storage_start_end_method"
 
 
@@ -169,15 +242,15 @@ def list_defaults_text(names: Iterable[str]) -> tuple[str, tuple[str, ...]]:
     """Title and paragraph of a ``list_defaults_lost`` message (W-0491) for the empty bug-reachable *names*: the
     storage sentence only when ``node.storage_start_end_method`` is among them (the one default that can change
     results)."""
-    first = "An earlier upgrade left some default values of this database empty."
+    first = "An earlier upgrade left some method parameter defaults of this database empty."
     stays = "This message stays until the repair is recorded."
     if _STORAGE_DEFAULT in set(names):
         return LIST_DEFAULTS_TITLE, (
             f"{first} Results can differ only in storage start and end handling (storage_start_end_method). The "
-            "repair tool makes a repaired copy and asks about those storage nodes: use \"Copy repair command\" "
+            "repair tool makes a repaired copy and lists those storage nodes to check: use \"Copy repair command\" "
             f"and paste it into a terminal. {stays}",)
     return LIST_DEFAULTS_TITLE, (
-        f"{first} Results do not change. The repair tool makes a repaired copy with the shipped defaults: use "
+        f"{first} Results do not change. The repair tool makes a repaired copy with FlexTool's defaults: use "
         f"\"Copy repair command\" and paste it into a terminal. {stays}",)
 
 

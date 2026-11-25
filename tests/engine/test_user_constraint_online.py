@@ -158,13 +158,13 @@ def _online(step) -> list[float]:
 
 
 def _control(tmp_path_factory):
-    return _solve(tmp_path_factory, "uco_control", _values(dict.fromkeys(UNITS, "binary")), _entities(constraints=()))
+    return _solve(tmp_path_factory, "uco_control", _values(dict.fromkeys(UNITS, "integer_fix_in_uc")), _entities(constraints=()))
 
 
 @pytest.mark.parametrize("case, startup, constant, n_online, fuel, ratio", [
-    ("A", "binary", 2.0, 2.0, 250.0, 1.25),
+    ("A", "integer_fix_in_uc", 2.0, 2.0, 250.0, 1.25),
     ("B", "linear", 1.5, 1.5, 225.0, 1.125),
-    ("C", "binary", 1.5, 2.0, 250.0, 1.25),
+    ("C", "integer_fix_in_uc", 1.5, 2.0, 250.0, 1.25),
 ])
 def test_units_online_floor(tmp_path_factory, case, startup, constant, n_online, fuel, ratio) -> None:
     """Σ online ≥ constant: fuel 150 + 50·N MW per step, N the units online (integer with binary startup, so
@@ -181,7 +181,7 @@ def test_units_online_floor(tmp_path_factory, case, startup, constant, n_online,
     assert float(step.obj) / float(control.obj) == pytest.approx(ratio, rel=1e-7)
     rows = row_terms(build(step.flex_data), GE, "c_online,")
     assert sorted(rows) == [f"{GE}[c_online,p2020,t0001]", f"{GE}[c_online,p2020,t0002]"]
-    kind = "integer" if startup == "binary" else "linear"
+    kind = "integer" if startup == "integer_fix_in_uc" else "linear"
     assert rows[f"{GE}[c_online,p2020,t0001]"] == pytest.approx(
         {f"v_online_{kind}[{u},p2020,t0001]": 1.0 for u in UNITS})
 
@@ -190,7 +190,7 @@ def test_count_of_virtual_units(tmp_path_factory) -> None:
     """A′: one entity of 3 units of 100 MW (existing 3, virtual_unitsize 100) gives the numbers of A."""
     control = _control(tmp_path_factory)
     step = _solve(tmp_path_factory, "uco_A_virtual",
-                  _values({"g": "binary"}, existing=3.0, virtual_unitsize=100.0, constant=2.0),
+                  _values({"g": "integer_fix_in_uc"}, existing=3.0, virtual_unitsize=100.0, constant=2.0),
                   _entities(("g",)))
     assert _online(step) == pytest.approx([2.0, 2.0], abs=1e-7)
     assert _output(step) == pytest.approx([100.0, 100.0], rel=1e-7)
@@ -202,7 +202,7 @@ def test_linear_and_binary_in_one_row(tmp_path_factory) -> None:
     the cheapest count is g1 0.5 plus one whole unit (1.5), fuel 225 MW."""
     control = _control(tmp_path_factory)
     step = _solve(tmp_path_factory, "uco_mixed",
-                  _values({"g1": "linear", "g2": "binary", "g3": "binary"}, constant=1.5), _entities())
+                  _values({"g1": "linear", "g2": "integer_fix_in_uc", "g3": "integer_fix_in_uc"}, constant=1.5), _entities())
     assert _online(step) == pytest.approx([1.5, 1.5], abs=1e-7)
     assert _output(step) == pytest.approx([100.0, 100.0], rel=1e-7)
     assert float(step.obj) / float(control.obj) == pytest.approx(1.125, rel=1e-7)
@@ -215,8 +215,8 @@ def test_linear_and_binary_in_one_row(tmp_path_factory) -> None:
 def test_coarse_units_one_row_per_coarse_step(tmp_path_factory) -> None:
     """D: A with a 2-h new_stepduration group on elec.  The units are coarse (fuel is a commodity node), so the
     constraint is one averaged row for the 2-h step; the objective is A's."""
-    a = _solve(tmp_path_factory, "uco_A", _values(dict.fromkeys(UNITS, "binary"), constant=2.0), _entities())
-    step = _solve(tmp_path_factory, "uco_D", _values(dict.fromkeys(UNITS, "binary"), constant=2.0, coarse=True),
+    a = _solve(tmp_path_factory, "uco_A", _values(dict.fromkeys(UNITS, "integer_fix_in_uc"), constant=2.0), _entities())
+    step = _solve(tmp_path_factory, "uco_D", _values(dict.fromkeys(UNITS, "integer_fix_in_uc"), constant=2.0, coarse=True),
                   _entities(coarse=True))
     pb = build(step.flex_data)
     assert list(row_terms(pb, GE + "_coarse", "c_online,")) == [f"{GE}_coarse[c_online,p2020,t0001]"]
@@ -251,7 +251,7 @@ def test_online_term_makes_a_capacity_constraint_per_step(tmp_path_factory) -> N
               ["unit", "g3", "discount_rate", _f(0.05)],
               ["unit", "g3", "constraint_invested_capacity_coeff", _map({"c_cap": 1.0})],
               ["constraint", "c_cap", "sense", _s("greater_than")], ["constraint", "c_cap", "constant", _f(0.0)]]
-    base = _values(dict.fromkeys(UNITS, "binary")) + invest
+    base = _values(dict.fromkeys(UNITS, "integer_fix_in_uc")) + invest
     entities = _entities(constraints=("c_cap",))
     capacity_only = _solve(tmp_path_factory, "uco_F_cap", base, entities)
     pb = build(capacity_only.flex_data)
@@ -291,7 +291,7 @@ def _with_connection(startup: str | None, coeff: dict[str, float]) -> tuple[list
     entities = _entities(constraints=("c_online", "c_free")) + [
         ["node", "elec2", None], ["group__node", ["electricity", "elec2"], None],
         ["connection", "c1", None], ["connection__node__node", ["c1", "elec", "elec2"], None]]
-    values = _values(dict.fromkeys(UNITS, "binary"), constant=2.0) + [
+    values = _values(dict.fromkeys(UNITS, "integer_fix_in_uc"), constant=2.0) + [
         ["node", "elec2", "node_type", _s("balance")], ["constraint", "c_free", "is_enabled", _s("no")],
         ["connection", "c1", "existing", _f(100.0)],
         ["connection", "c1", "constraint_online_coeff", _map(coeff)]]

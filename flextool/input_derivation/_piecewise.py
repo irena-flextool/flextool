@@ -136,12 +136,48 @@ def _pairs(value) -> list[tuple[object, object]]:
     return list(zip(value.indexes, value.values))
 
 
+def curves_of_value(value, unit: str = "", periods: set[str] | None = None,
+                    ) -> tuple[list[tuple[str | None, list[Point]]], list[str]]:
+    """The curves of one parsed ``piecewise_linear_efficiency`` value of ``unit``: the valid ones as ``(period,
+    sorted points)`` (``period`` None for one curve for every period) and the messages of the others (the value
+    shape, then each curve's :func:`curve_problems`).  ``periods``: the period names a curve per period may use
+    (level 1 keys outside it are an E10 error); ``None`` skips that check.  Pure: no database."""
+    from flextool.engine.input._param_shapes import entity_label_path_error
+
+    errors: list[str] = []
+    path = _label_path(value)
+    shape_error = entity_label_path_error(CLASS, PARAMETER, {(unit,): path})
+    if shape_error is not None:
+        return [], [shape_error.rstrip(".")]
+    curves: list[tuple[str | None, list[tuple[object, object]]]] = []
+    if len(path) == 1:
+        curves.append((None, _pairs(value)))
+    else:
+        for period, sub in _pairs(value):
+            period = str(period)
+            if not isinstance(sub, api.Map) or any(isinstance(v, api.Map) for v in sub.values):
+                errors.append(f"unit '{unit}', parameter '{PARAMETER}': the value for period {period} is not a curve "
+                              "(a map over load shares)")
+                continue
+            if periods is not None and period not in periods:
+                errors.append(f"unit '{unit}', parameter '{PARAMETER}': level 1 of the value is a period, but "
+                              f"'{period}' is not a period of the database")
+                continue
+            curves.append((period, _pairs(sub)))
+    valid: list[tuple[str | None, list[Point]]] = []
+    for period, pairs in curves:
+        problems, points = curve_problems(pairs)
+        where = f"unit '{unit}'" + (f" (period {period})" if period is not None else "")
+        errors.extend(f"{where}: {p}" for p in problems)
+        if points is not None:
+            valid.append((period, points))
+    return valid, errors
+
+
 def parse_piecewise_curves(db, periods: set[str] | None = None) -> ParsedCurves:
     """The scenario's ``unit.piecewise_linear_efficiency`` curves of ``db`` (a scenario-filtered DatabaseMapping
     or a ``SpineDBBackend``).  ``periods``: the period names a curve per period may use (level 1 keys outside it are
     an E10 error); ``None`` skips that check."""
-    from flextool.engine.input._param_shapes import entity_label_path_error
-
     rows: list[tuple[str, str | None, float, float]] = []
     errors: dict[str, list[str]] = {}
     values: dict[str, object] = {}
@@ -149,36 +185,11 @@ def parse_piecewise_curves(db, periods: set[str] | None = None) -> ParsedCurves:
         if pv["type"] is not None:
             values[pv["entity_byname"][0]] = pv["parsed_value"]
     for unit in sorted(values):
-        value = values[unit]
-        path = _label_path(value)
-        shape_error = entity_label_path_error(CLASS, PARAMETER, {(unit,): path})
-        if shape_error is not None:
-            errors.setdefault(unit, []).append(shape_error.rstrip("."))
-            continue
-        curves: list[tuple[str | None, list[tuple[object, object]]]] = []
-        if len(path) == 1:
-            curves.append((None, _pairs(value)))
-        else:
-            for period, sub in _pairs(value):
-                period = str(period)
-                if not isinstance(sub, api.Map) or any(isinstance(v, api.Map) for v in sub.values):
-                    errors.setdefault(unit, []).append(
-                        f"unit '{unit}', parameter '{PARAMETER}': the value for period {period} is not a curve (a "
-                        "map over load shares)")
-                    continue
-                if periods is not None and period not in periods:
-                    errors.setdefault(unit, []).append(
-                        f"unit '{unit}', parameter '{PARAMETER}': level 1 of the value is a period, but "
-                        f"'{period}' is not a period of the database")
-                    continue
-                curves.append((period, _pairs(sub)))
-        for period, pairs in curves:
-            problems, points = curve_problems(pairs)
-            where = f"unit '{unit}'" + (f" (period {period})" if period is not None else "")
-            if problems:
-                errors.setdefault(unit, []).extend(f"{where}: {p}" for p in problems)
-            if points is not None:
-                rows.extend((unit, period, load, eff) for load, eff in points)
+        curves, problems = curves_of_value(values[unit], unit, periods)
+        if problems:
+            errors[unit] = problems
+        for period, points in curves:
+            rows.extend((unit, period, load, eff) for load, eff in points)
     frame = (pl.DataFrame(rows, schema=CURVE_SCHEMA, orient="row") if rows
              else pl.DataFrame(schema=CURVE_SCHEMA))
     return ParsedCurves(frame=frame, errors=errors, units=set(values))

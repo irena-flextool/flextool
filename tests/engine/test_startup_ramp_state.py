@@ -265,7 +265,7 @@ def test_single_integer_unit_has_no_start_stop_pair(tmp_path_factory) -> None:
                  ["unit", "e_boiler", "conversion_method", b64("constant_efficiency", "str")],
                  ["constraint", "coal_chp_fix", "is_enabled", b64("no", "str")],
                  ["node", "west", "inflow", b64(-250.0, "float")],
-                 ["unit", "e_boiler", "startup_method", b64("binary", "str")],
+                 ["unit", "e_boiler", "startup_method", b64("integer_fix_in_uc", "str")],
                  ["unit", "e_boiler", "min_load", b64(0.2, "float")],
                  ["unit", "e_boiler", "startup_cost", b64(0.0, "float")]])
     entities = _E_BOILER_ENTS + ed
@@ -366,13 +366,13 @@ def test_integer_fake_starts_buy_no_ramp_room(tmp_path_factory) -> None:
     this commit every ramp row carried a flat coefficient-1 ``v_startup`` term regardless of family."""
     url0, scen0 = make_db(tmp_path_factory, alt="c9_cost0",
                           values=_C1_VALUES + _step_demand(100.0, 400.0) + [
-                              ["unit", PLANT, "startup_method", b64("binary", "str")],
+                              ["unit", PLANT, "startup_method", b64("integer_fix_in_uc", "str")],
                               ["unit", PLANT, "startup_cost", b64(0.0, "float")]],
                           base_chain=["init", "west", "coal"])
     step0 = list(run(tmp_path_factory, url0, scen0).values())[-1]
     url1, scen1 = make_db(tmp_path_factory, alt="c9_cost1000",
                           values=_C1_VALUES + _step_demand(100.0, 400.0) + [
-                              ["unit", PLANT, "startup_method", b64("binary", "str")],
+                              ["unit", PLANT, "startup_method", b64("integer_fix_in_uc", "str")],
                               ["unit", PLANT, "startup_cost", b64(1000.0, "float")]],
                           base_chain=["init", "west", "coal"])
     step1 = list(run(tmp_path_factory, url1, scen1).values())[-1]
@@ -406,7 +406,7 @@ def test_room_on_online_capacity(tmp_path_factory) -> None:
     values = no_ratio_constraint() + [
         ["unit", PLANT, "existing", b64(2.0, "float")],
         ["unit", PLANT, "virtual_unitsize", b64(250.0, "float")],
-        ["unit", PLANT, "startup_method", b64("binary", "str")],
+        ["unit", PLANT, "startup_method", b64("integer_fix_in_uc", "str")],
         ["unit__outputNode", [PLANT, "west"], "ramp_method", b64("ramp_limit", "str")],
         ["unit__outputNode", [PLANT, "west"], "ramp_speed_up", b64(0.005, "float")],
         ["unit__outputNode", [PLANT, "west"], "ramp_speed_down", b64(0.005, "float")],

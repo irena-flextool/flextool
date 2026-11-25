@@ -66,7 +66,7 @@ def s(v: str) -> list:
 
 
 def _chain(fixture_json: Path, scenario: str) -> list[str]:
-    rows = [r for r in json.loads(fixture_json.read_text())["scenario_alternatives"] if r[0] == scenario]
+    rows = [r for r in json.loads(fixture_json.read_text(encoding="utf-8"))["scenario_alternatives"] if r[0] == scenario]
     nxt = {a: b for _, a, b in rows}
     alt = next(a for a in nxt if a not in set(nxt.values()))
     chain = []
@@ -80,7 +80,7 @@ def _stripped_json(tmp_path_factory, src: Path, *, deterministic: bool, drop_lim
     """``src`` without the group methods / flags (and, with ``drop_limits``, without the group limits).
 
     ``deterministic``: the ``stochastics.json`` rolling vehicle without branches (c8 / c10 pattern)."""
-    data = json.loads(src.read_text())
+    data = json.loads(src.read_text(encoding="utf-8"))
     gone = {f for f, _ in FLAGS} | (set(LIMITS) if drop_limits else set())
     data["parameter_values"] = [pv for pv in data["parameter_values"]
                                 if not (pv[0] == "group" and pv[2] in gone)]

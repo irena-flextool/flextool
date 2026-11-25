@@ -78,11 +78,11 @@ def _window(k: int) -> set[tuple[str, str]]:
 # * ``stoch_2p`` / ``stoch_2p_inv``: the fan opens in the first period, so no step is realized (forecasts only, no
 #   realization solve); the realized periods are the period labels ``p2035`` / ``p2040`` (no dispatch).
 # * ``1week_rolling``: rolling_solve_horizon 96, rolling_solve_jump 24, one period ``period1`` of 168 steps and a
-#   ``realized`` forecast designated at every jump start, so each roll ``k`` is a fan solve that realizes nothing
-#   plus a realization solve ``1week_rolling__realized_dispatch_roll_k`` that realizes steps 24k+1 .. 24k+24.
+#   ``realized`` forecast designated at every jump start; since 4.7.0 each roll ``k`` realizes its jump, steps
+#   24k+1 .. 24k+24, under ``period1`` and looks ahead with the forecasts made at the jump end (no realization solve).
 _FAN = {"periods": {"p2035", "p2040"}, "windows": {}}
 _ROLL = {"periods": {"period1"},
-         "windows": {f"1week_rolling__realized_dispatch_roll_{k}": _window(k) for k in range(7)}}
+         "windows": {f"1week_rolling_roll_{k}": _window(k) for k in range(7)}}
 REALIZED = {"stoch": _FAN, "stoch_horizon": _FAN, "recourse": _FAN, "recourse_horizon": _FAN,
             "rolling": _ROLL, "rolling_horizon": _ROLL}
 
@@ -156,7 +156,7 @@ def _canonical(df: pl.DataFrame) -> pl.DataFrame:
 def _manifest_files(path: Path) -> list[dict]:
     """The file entries of ``output_raw/manifest.json`` without the run's location (``bundle_root`` and
     ``generated_at`` are run-specific); the raw dump's entries are left out."""
-    files = json.loads(path.read_text())["files"]
+    files = json.loads(path.read_text(encoding="utf-8"))["files"]
     return [f for f in files if "horizon" not in Path(f.get("path", "")).parts]
 
 
@@ -191,7 +191,7 @@ def test_normal_outputs_independent_of_flag(runs, off, on) -> None:
 
 def _scenario_chain(fixture: Path, scenario: str) -> list[str]:
     """The alternatives of ``scenario`` in rank order."""
-    rows = [r for r in json.loads(fixture.read_text())["scenario_alternatives"] if r[0] == scenario]
+    rows = [r for r in json.loads(fixture.read_text(encoding="utf-8"))["scenario_alternatives"] if r[0] == scenario]
     nxt = {a: b for _, a, b in rows}
     alt = next(a for a in nxt if a not in set(nxt.values()))
     out = []

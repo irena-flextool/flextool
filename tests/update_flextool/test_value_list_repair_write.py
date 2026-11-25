@@ -8,7 +8,7 @@ Every database is a made-up copy of the schema database (``_value_list_cases``).
   (``import_data`` appends; R keeps its id and its text).  The unit, connection and node ``invest_method``
   defaults point to R (three default suspects); the group default is ``not_active`` in ``group_invest_methods``
   (shipped, no suspect).  "before" values (U1) are certain, "after" values (U2, U3) have no suggestion.  An entity
-  with no own value (U4) reads the class default.
+  with no own value (U4) reads the method parameter default.
 - ``make_lost_defaults`` (part B): the named defaults are ``NULL``; storage nodes A (start before the upgrade) and
   B (start after it), no method, scenario s1 = [base] → two storage suspects (the v77 rule, see
   ``test_list_default_restore``).  ``node.storage_start_end_method`` ships ``fix_nothing``,

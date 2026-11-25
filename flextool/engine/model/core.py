@@ -64,7 +64,8 @@ Equation families, in emit order (module in brackets when not model/core.py):
   Emissions & user    co2_max_period, co2_max_total; process_constraint_{equal,less_than,greater_than}[_period]
   Storage state       maxState; profile_state_{upper_limit,lower_limit,fixed};
                       storage_state_start_binding_cyclic_period; storage_within_solve_path_end,
-                      storage_state_fan_start (stochastic fans); storage_state_end_binding;
+                      storage_state_fan_start (stochastic fans); storage_split_path_end (split realization
+                      rolls); storage_state_end_binding;
                       storage_state_roll_{anchor,close}[_share] (rolling cyclic storage, per instance or
                       period); storage_state_roll_match (rolling forward chains);
                       storage_state_end_match[_share] (forward chains whose start the solve decides);
@@ -103,12 +104,14 @@ from flextool.engine.model import _group_slack
 from flextool.engine.model import _lead_time
 from flextool.engine.model import _non_anticipativity
 from flextool.engine.model import _online
+from flextool.engine.model import _period_rows
 from flextool.engine.model import _reserve
 from flextool.engine.model import _extend
 from flextool.engine.model import _retire_built
 from flextool.engine.model import _self_discharge
 from flextool.engine.model import _unit_floors
 from flextool.engine.input._axis_enums import alias_to_axis, align_join_dtypes, join_aligned, rename_to_axis
+from flextool.engine.preprocess._step_relations import check_step_relations, labels_with_steps, scope_end_pairs
 from flextool.engine.model._common import (
     _availability_factor,
     _connection_procs,
@@ -123,8 +126,13 @@ from flextool.engine.model._common import (
     chain_prior,
     branch_periods_inherit,
     check_max_cap,
+    PATH_D,
+    d_period_path,
     leaf_rows,
     minus_prior,
+    on_paths,
+    path_rows,
+    path_values,
 )
 from flextool.engine.input._param_shapes import drop_no_limit_rows, promote_param_to_dt, without_no_limit_rows
 from flextool.engine.model._pdt_join import (
@@ -155,7 +163,7 @@ def _build_prof(label: str) -> None:
     if os.environ.get("FLEXTOOL_BUILD_PROFILE") != "1":
         return
     try:
-        with open("/proc/self/status") as _f:
+        with open("/proc/self/status", encoding="utf-8") as _f:
             for _ln in _f:
                 if _ln.startswith("VmRSS:"):
                     sys.stderr.write(f"[build profile] step={label}\trss_gb={int(_ln.split()[1])/(1024*1024):.3f}\n")
@@ -467,6 +475,9 @@ class _Build:
     op_factor: Any = None                   # weight of operational cost terms, (d, t)
     ev_factor: Any = None                   # weight of event cost terms (start-ups, ramp changes), (d, t)
     self_discharge: Any = None              # _self_discharge.LossCoefficients, None without a loss
+    # The path / path_at_step families (_period_rows.PERIOD_ROW_KINDS) whose rows are built per path (base period
+    # + branch period); G1 accepts their rows on branch periods.
+    path_converted: set = field(default_factory=set)
 
 
 def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
@@ -531,6 +542,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _eq_state_profiles,
         _eq_storage_start_binding_cyclic,
         _eq_storage_within_solve_path_end,
+        _eq_storage_split_path_end,
         _eq_storage_state_fan_start,
         _eq_storage_end_binding,
         _eq_storage_roll_end,
@@ -567,6 +579,11 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         if term is not None:
             obj = term if obj is None else obj + term
 
+    # The realization-roll checks G1-G4 (no-ops without a period label with steps; G2 holds on every LP).
+    _period_rows.check_period_rows(b)
+    _period_rows.check_branch_weights(b)
+    check_step_relations(d, solve_name)
+    _period_rows.check_registry_pins(b)   # their registries, on this LP (FLEXTOOL_AUTOSCALE_STRICT=1 only)
     if scale_the_objective != 1.0:
         obj = obj * scale_the_objective
     m.set_objective(obj, sense="min")
@@ -838,11 +855,10 @@ def _validate_online_constraint_coeff(d) -> None:
     if missing:
         shown = ", ".join(f"{'unit' if p in units else 'connection'} '{p}' in constraint '{cn}'"
                           for p, cn in missing)
-        how = ("linear or binary (or, on a unit, a minimum_time_method)" if any(p in units for p, _ in missing)
-               else "linear or binary")
+        how = (" (or, on a unit, a minimum_time_method)" if any(p in units for p, _ in missing) else "")
         raise FlexToolConfigError(
-            f"constraint_online_coeff needs online variables, but these have none: {shown}. Set startup_method "
-            f"{how}, or remove the coefficient.")
+            f"constraint_online_coeff needs online variables, but these have none: {shown}. Set a startup_method "
+            f"other than no_startup{how}, or remove the coefficient.")
 
 
 def _validate_storage_binding_disjoint(d) -> None:
@@ -2118,7 +2134,7 @@ def _eq_node_balance(b: _Build) -> None:
     #   − Σ_{(p,n) ∈ startup_to_balance} v_startup[p,d,t]·startup_energy[p,n,d]·unitsize[p]   (no Δt: an event)
     #   + back-flow terms of two-way one-variable arcs
     #   + (vq_state_up[n,d,t] − vq_state_down[n,d,t])·Δt
-    #   + (v_state[n,d,t⁻] − v_state[n,d,t])·state_unitsize[n]
+    #   + (v_state[n,d′,t⁻] − v_state[n,d,t])·state_unitsize[n]
     #   − (α[n,d,t]·v_state[n,d,t] + β[n,d,t]·S⁻[n,d,t])·state_unitsize[n]
     #   h = Δt·ln(1 + self_discharge_loss[n,d,t]),  α = h/(1 − e^{−h}) − 1,  β = 1 − h/(e^{h} − 1)
     #   S⁻ = the state the step starts from: v_state[n,d′,t⁻] by the binding method, v_state_rp_start at a
@@ -2279,9 +2295,11 @@ def _state_change_terms(b: _Build) -> dict:
     _validate_storage_binding_disjoint): bind_within_timeblock wraps within the timeblock, bind_forward_only crosses
     period boundaries and has no state change at the solve's first step, bind_within_solve wraps the solve's first
     step to its last (with a stochastic fan in the first period, each root forecast's first step to the last step of
-    its own path: dtttdt_within_solve), bind_within_period wraps each period's first step to the period's own last step,
-    bind_intraperiod_blocks (nodeStateBlock) follows dtttdt_block_lag (these terms reach nodeBalanceBlock_eq only,
-    which sums them over each block), and the blended-weights nodes chain inside each representative block whose
+    its own path: dtttdt_within_solve), bind_within_period wraps each period's first step to the period's own last
+    step (in a split realization roll the lag crosses the seam: each branch period's first step continues from the
+    label's last jump step, the label's first step from the last step of one branch period), bind_intraperiod_blocks
+    (nodeStateBlock) follows dtttdt_block_lag (these terms reach nodeBalanceBlock_eq only, which sums them over
+    each block), and the blended-weights nodes chain inside each representative block whose
     first step starts from the free state v_state_rp_start.
     """
     d, v_state = b.d, b.v_state
@@ -2470,6 +2488,8 @@ def _eq_node_balance_period(b: _Build) -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_t w[d,t] · (flow, start-up and slack terms of nodeBalance_eq)[n,d,t]  =  −Σ_t w[d,t] · inflow[n,d,t]
     #   ∀ n ∈ nodeBalancePeriod, n ∉ nodeState, d ∈ periods of dt;   w = timestep_weight
+    #   split realization roll (d_period_path): the row on a branch period p_f sums the cells d ∈ {p, p_f} (p its
+    #   base period: the jump, then the tail), each at its own weight; no row on p, inflow likewise
     # Energy balance over a whole period instead of every step, in MWh.  The
     # terms are b.node_balance_flow_terms (Δt already applied); period nodes
     # are never storage, so there are no state terms.
@@ -2478,6 +2498,8 @@ def _eq_node_balance_period(b: _Build) -> None:
     # low-weight timeslices offset high-weight ones.  The other op_factor
     # parts (inflation_op, period_share) are per period and cancel in a row.
     # Inflow is energy per step (no Δt), as in nodeBalance_eq.
+    # Path rows (split realization roll, d_period_path): the row of a branch period p_f balances the path, the
+    # cells of its base period p (the jump) and of p_f (the tail); p has no row.
     over = (d.nodeBalancePeriod.select("n").lazy()
             .join(dispatch_periods(d).lazy(), how="cross"))
     if _has_rows(d.nodeState):
@@ -2495,6 +2517,9 @@ def _eq_node_balance_period(b: _Build) -> None:
                                        .agg(pl.col("value").sum())
                                        .select("n", "d", "value")
                                        .collect()))
+    if (path := d_period_path(b, "nodeBalancePeriod_eq")) is not None:
+        over, lhs = path_rows(over, path), {key: on_paths(term, path) for key, term in lhs.items()}
+        inflow_period = Param(("n", "d"), path_values(inflow_period.frame, ("n",), path))
     b.m.add_cstr(
         "nodeBalancePeriod_eq",
         over      = over,
@@ -2759,7 +2784,9 @@ def _eq_block_coupling(b: _Build) -> None:
     nsb = d.nodeStateBlock
     v_state = b.v_state
     # nodeBalance_eq skips these nodes: without blocks they would have no energy balance at all.
-    if not (_has_rows(d.period_block) and _has_rows(d.period_block_time) and _has_rows(d.dtttdt_block_lag)):
+    # An empty dtttdt_block_lag is legitimate: a roll whose only block step is a chain start (a period held in
+    # part with one step at the solve's first step) has no lag row; that step starts from the open-start terms.
+    if not (_has_rows(d.period_block) and _has_rows(d.period_block_time)):
         names = ", ".join(sorted(str(n) for n in nsb["n"].to_list()))
         raise FlexToolConfigError(f"bind_intraperiod_blocks node(s) {names} have no timeset blocks in this solve")
 
@@ -3055,6 +3082,9 @@ def _eq_ramp(b: _Build) -> None:
     #   [d′,t′] → its carried duration; for units with online variables F[d′,t′] → 0 (no shutdown term on the
     #   up row) and SD′ → max(1, f̂[p,s,k,d,t] / (c[p,s,k,d,t] · ĉ[p])) (1 where the carried online count
     #   ĉ = p_roll_continue_online is 0 — no stoppers then; exact and always feasible, unlike a fixed κ/c).
+    #   On the carried down row of a unit without online variables f̂ → min(f̂, U[p,s,k,d,t] + ρ̄ · c ·
+    #   existing_count[p,d]) (fine steps), U the arc's maxFlow RHS (its flow ceiling at the existing capacity): a
+    #   carried ramp-down yields to an outage the previous solve did not see — the row then asks at most U (W-0592).
     # A coarse process (processCoarse, _coarse_flows.ramp_rows) ramps between its coarse steps: t = b (named by its
     #   first fine step), (d′,t′) = b⁻, the coarse step that holds the fine predecessor of b's first step, and
     #   step_duration → Δ_b = Σ_{t∈b} Δt, so ρ̄ = speed · 60 · (Δ_b⁻ + Δ_b)/2 (no row inside a coarse step; with
@@ -3249,8 +3279,10 @@ def _ramp_family(b: _Build, name: str, rows: pl.DataFrame, idx_set: pl.DataFrame
                                                 v_online_k, v_startup_k, v_shutdown_k, keys).items():
             rhs[f"{term_name}_{kind}"] = term
     if carried.height > 0:
-        rhs["roll_continue_flow"] = Param(("p", "source", "sink", "d", "t"),
-                                          carried.select(*keys, "d", "t", value=pl.col("__f_hat")))
+        f_hat = carried.select(*keys, "d", "t", value=pl.col("__f_hat"))
+        if not up and built_rows.height > 0:
+            f_hat = _carried_ramp_down_yields(b, idx_set, side, built_rows, f_hat, keys)
+        rhs["roll_continue_flow"] = Param(("p", "source", "sink", "d", "t"), f_hat)
     m.add_cstr(
         name,
         over      = over,
@@ -3258,6 +3290,51 @@ def _ramp_family(b: _Build, name: str, rows: pl.DataFrame, idx_set: pl.DataFrame
         lhs_terms = lhs,
         rhs_terms = rhs,
     )
+
+
+def _carried_ramp_down_yields(b: _Build, idx_set: pl.DataFrame, side: str, built_rows: pl.DataFrame,
+                              f_hat: pl.DataFrame, keys: list) -> pl.DataFrame:
+    """*f_hat* ``(p, source, sink, d, t, value)`` of the carried down-ramp rows with f̂ ≤ U + ρ̄ · c · ex on the fine
+    carried rows of units without online variables (*built_rows*), U = the arc's maxFlow RHS (``b.flow_upper_rhs``,
+    also the v_flow bound of a bound arc), ex = existing_count[p,d]: the row then asks flow ≥ U at most, the arc's
+    own flow ceiling.  A higher f̂ (an outage the previous solve did not see) makes the row infeasible without
+    investment; the carried ramp-down ends there instead (W-0592).  Every other row keeps its f̂."""
+    d = b.d
+    rows = built_rows.filter(pl.col("__kind") == "carry")
+    if b.has_coarse_proc and rows.height > 0:
+        rows = _coarse_flows.split_arcs(b, rows)[0]
+    ex = b.cap.existing_count_p
+    if rows.height == 0 or ex is None or b.flow_upper_rhs is None or not _has_rows(d.process_unit):
+        return f_hat
+    rows = _utf8_keys(rows.lazy(), ["p"]).join(
+        _utf8_keys(d.process_unit.lazy().select("p"), ["p"]).select("_p").unique(), on="_p", how="semi"
+    ).select(rows.columns).collect()
+    if rows.height == 0:
+        return f_hat
+    rows = _c_values(rows, _c_param_plain(d, idx_set, side), keys)
+    all_keys = [*keys, "d", "t"]
+    upper = b.flow_upper_rhs.frame
+    cap = (_utf8_keys(rows.lazy(), all_keys)
+           .join(_utf8_keys(upper.lazy(), all_keys).select(*(f"_{k}" for k in all_keys),
+                                                           pl.col("value").alias("__upper")),
+                 on=[f"_{k}" for k in all_keys], how="inner")
+           .join(_utf8_keys(ex.frame.lazy(), ["p", "d"]).select("_p", "_d", pl.col("value").alias("__ex")),
+                 on=["_p", "_d"], how="inner")
+           .select(*(f"_{k}" for k in all_keys),
+                   (pl.col("__upper") + pl.col("__c") * pl.col("__ex") * pl.col("__room")).alias("__cap"),
+                   pl.col("__f_hat"))
+           .filter(pl.col("__f_hat") > pl.col("__cap"))
+           .collect())
+    if cap.height == 0:
+        return f_hat
+    from flextool.engine.preprocess.params._mintime import note_carried_obligation_cut
+    note_carried_obligation_cut({r["_p"]: f"solve {b.solve_name}: the carried ramp-down ends at step "
+                                          f"({r['_d']}, {r['_t']})" for r in cap.iter_rows(named=True)})
+    return (_utf8_keys(f_hat.lazy(), all_keys)
+            .join(cap.lazy().select(*(f"_{k}" for k in all_keys), "__cap"), on=[f"_{k}" for k in all_keys],
+                  how="left", maintain_order="left")
+            .select(*all_keys, pl.min_horizontal("value", pl.col("__cap").fill_null(pl.col("value"))).alias("value"))
+            .collect())
 
 
 def _ramp_flow_change(b: _Build, rows: pl.DataFrame, keys: list) -> dict:
@@ -4329,7 +4406,7 @@ def _validate_startup_inputs(d) -> None:
     if missing:
         raise FlexToolConfigError(
             f"startup_input_method needs online variables, but these units have a start-up input and none: "
-            f"{', '.join(missing)}. Set startup_method linear or binary (or a minimum_time_method), or set "
+            f"{', '.join(missing)}. Set a startup_method other than no_startup (or a minimum_time_method), or set "
             "startup_input_method just_input.")
 
 
@@ -4402,7 +4479,10 @@ def _eq_co2_max_period(b: _Build) -> None:
     #   ∀ (g,d) ∈ group_d_co2_capped;   w = step_duration · timestep_weight / period_share
     #   group_d_co2_capped = the capped groups × the periods of dt, without the (g,d) where co2_max_period = inf
     #   (no cap in that period: no row and no carry)
+    #   split realization roll (d_period_path): the row on a branch period p_f sums the cells d ∈ {p, p_f} (p its
+    #   base period: the jump, then the tail), each at its own weight; no row on p
     #   f_d_k[d] = (realized hours of α(d) from earlier solves + this solve's hours of d) / complete hours of α(d)
+    #     (+ the jump hours of p for a branch period d = p_f of a split realization roll: the path's hours)
     #   α(d) = the period label of a forecast branch period d, d itself otherwise; period_share, f_d_k and the
     #   realized carry of a forecast come from α(d) unless it has its own row: every forecast continues from
     #   its period's realized history (the realization solve's carry)
@@ -4419,6 +4499,9 @@ def _eq_co2_max_period(b: _Build) -> None:
     # noEff processes take neither slope nor section (applying them would over-count).  The removal term
     # (#19, Q14) subtracts flows into the same group's node(s) — e.g. DAC/BECCS — unsplit, no slope, same
     # measure as flow_to_co2_priced; it only loosens the cap, never tightens it.
+    # Path rows (split realization roll, d_period_path): the row of a branch period p_f sums the cells of its base
+    # period p (the jump) and of p_f (the tail), each at its own w; p has no row.  f_d_k[p_f] counts the jump
+    # hours, so the RHS is the path's budget.
     lhs: dict = {}
     if b.has_co2_cap_eff:
         for key, term in _eff_fuel_input(b, d.flow_from_co2_capped):
@@ -4448,9 +4531,13 @@ def _eq_co2_max_period(b: _Build) -> None:
                 term * d.p_co2_content * d.p_timestep_weight / d.p_period_share,
                 over=("p", "n", "c", "t"),
             )
+    over = d.group_d_co2_capped
+    if (path := d_period_path(b, "co2_max_period")) is not None:
+        lhs = {key: on_paths(term, path) for key, term in lhs.items()}
+        over = path_rows(over, path)
     m.add_cstr(
         "co2_max_period",
-        over      = d.group_d_co2_capped,
+        over      = over,
         sense     = "<=",
         lhs_terms = lhs,
         rhs_terms = {"cap": _co2_period_cap_with_carry(d)},
@@ -4688,8 +4775,9 @@ def _eq_user_constraints(b: _Build) -> None:
     # one-variable two-way arc (no_losses_no_variable_cost, DC power flow; signed flow = v_flow − v_flow_back) gives
     # its reverse flow v_flow_back the same coefficient: the same row for every transfer method
     # (_user_constraint_flow_terms).
-    # The online term counts the units online (of unitsize) in each step; integer with binary startup, continuous
-    # with linear.  v_online is the variable of the process's UC class (v_online_linear / v_online_integer).
+    # The online term counts the units online (of unitsize) in each step; whole units with startup_method integer
+    # or integer_fix_in_uc, continuous with linear or linear_fix_in_uc.  v_online is the variable of the process's
+    # UC class (v_online_linear / v_online_integer).
     # Terms without data are absent.  The existing-capacity terms are constants and enter as Param terms.
     # A constraint without flow, state and online terms is the same in every step of a period, so it gets one row
     # per period (the _period family) instead of one per step.  The constraint axis is cn (c is the commodity
@@ -5018,6 +5106,9 @@ def _eq_user_constraints_period_total(b: _Build, pt_cns: list[str], capacity_ter
     #            + Σ_e cap[e,d]·capacity_coef[e,cn] )
     #   = / ≤ / ≥  constant[cn] (or constant[cn,d] for a period map)
     #   ∀ (cn,d) ∈ cdt_{eq,le,ge}, cn ∈ constraint_period_total, window_fraction[d] = 1
+    #   split realization roll (d_period_path): the row on a branch period p_f sums the cells d ∈ {p, p_f} (p its
+    #   base period: the jump, then the tail), each at its own weight; no row on p; H[p_f]
+    #   and window_fraction[p_f] are the path's (Σ over p, p_f), the capacity terms stay on p_f
     # w[d,t] = step_duration[d,t]·timestep_weight[d,t] / period_share[d];   H[d] = Σ_t w[d,t]
     # inv, con, pre, cap, us, the v_flow_back term and the existing / carried constants as in process_constraint_*
     # (_eq_user_constraints).
@@ -5053,10 +5144,17 @@ def _eq_user_constraints_period_total(b: _Build, pt_cns: list[str], capacity_ter
     w = d.p_step_duration * d.p_timestep_weight / d.p_period_share
     w_frame = _collected(w.frame).sort("d", "t")
     hours = Param(("d",), w_frame.group_by("d", maintain_order=True).agg(pl.col("value").sum()))
-    # The periods the solve holds whole (window_fraction 1); the others have no row.
+    # Path rows are unreachable while _recursive_solve._check_period_total_rolls holds: a split roll never realizes
+    # a period whole, so the run builds no period_total row in it.  Converted so that G1 never meets an unconverted one.
+    path = d_period_path(b, *(name for _rows, _sense, name in rows_by_sense))
+    if path is not None:
+        hours = Param(("d",), path_values(hours.frame, (), path))
+    # The periods the solve holds whole (window_fraction 1, of the path under a split roll); the others have no row.
     whole = None
     if d.p_window_fraction is not None:
         frac = _collected(d.p_window_fraction.frame)
+        if path is not None:
+            frac = path_values(frac.select("d", pl.col("value").cast(pl.Float64)), (), path)
         over = frac.filter(pl.col("value").cast(pl.Float64) > 1.0 + 1e-9)
         if over.height > 0:
             raise ValueError(f"{feature}: window_fraction above 1 for period(s) "
@@ -5071,6 +5169,7 @@ def _eq_user_constraints_period_total(b: _Build, pt_cns: list[str], capacity_ter
         if idx.height > 0:
             terms.extend(Sum(term, over=("p", "source", "sink", "t"))
                          for term in _user_constraint_flow_terms(b, idx, w))
+    capacity_at = len(terms) if capacity_terms else None
     if capacity_terms:
         terms.append(_sum_terms(capacity_terms) * hours)
     for v_online, coef_k in online_by_class:
@@ -5081,8 +5180,19 @@ def _eq_user_constraints_period_total(b: _Build, pt_cns: list[str], capacity_ter
                          over=("p", "t")))
     consts = [const * hours for const in const_terms]
     live = _user_constraint_live_keys(terms)
+    if path is not None:
+        # The time sums of each path's cells on its row period (capacity terms are per row period already); a row
+        # is live when a cell of its path is.
+        terms = [term if i == capacity_at else on_paths(term, path) for i, term in enumerate(terms)]
+        rows_of: dict = {}
+        for cell, row in path.select(pl.col("d", PATH_D).cast(pl.Utf8)).rows():
+            rows_of.setdefault(cell, []).append(row)
+        if "*" not in live:
+            live = {f"{cn}\x1f{row}" for cn, cell in (k.split("\x1f") for k in live) for row in rows_of.get(cell, ())}
     empty_rows: list[tuple[pl.DataFrame, str]] = []
     for rows, sense, name in rows_by_sense:
+        if path is not None:
+            rows = path_rows(rows, path)
         if whole is not None:
             rows = rows.filter(pl.col("d").cast(pl.Utf8).is_in(whole))
         has_var = (pl.repeat(True, rows.height, eager=True) if "*" in live
@@ -5488,7 +5598,6 @@ def _eq_storage_within_solve_path_end(b: _Build) -> None:
     last_periods = sorted(set(str(x) for x in d.period_last["d"].to_list()))
     if len(last_periods) < 2:
         return
-    m = b.m
 
     # ─── EQ. ─── storage_within_solve_path_end ───────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
@@ -5525,6 +5634,23 @@ def _eq_storage_within_solve_path_end(b: _Build) -> None:
     over = (ends.filter(pl.col("d") != d_star)
             .join(star_ends, on="n", how="inner")
             .select("n", "d", "t", "d_end", "t_end"))
+    over = _path_end_rows(b, over)
+    if over is None:
+        return
+    b.m.add_cstr(
+        "storage_within_solve_path_end",
+        over      = over,
+        sense     = "==",
+        lhs_terms = _path_end_terms(b),
+        rhs_terms = {},
+    )
+    _notice_stochastic_storage_paths(over["n"].to_list())
+
+
+def _path_end_rows(b: _Build, over: pl.DataFrame) -> "pl.DataFrame | None":
+    """The rows (n, d, t, d_end, t_end; Utf8) of a path-end tie, less those whose both ends are already set (a step
+    storage_state_start_binding_cyclic_period pins or node_balance_fix_quantity_eq_lower fixes), on v_state's
+    dtypes; None when none are left."""
     set_parts = [_utf8_cells(f) for f in (_cyclic_start_pin_steps(b), _fix_quantity_target(b)) if f is not None]
     if set_parts and over.height > 0:
         already = pl.concat(set_parts, how="vertical").unique()
@@ -5532,17 +5658,63 @@ def _eq_storage_within_solve_path_end(b: _Build) -> None:
                 .join(already.rename({"d": "d_end", "t": "t_end"}), on=["n", "d_end", "t_end"], how="semi"))
         over = over.join(both, on=list(over.columns), how="anti")
     if over.height == 0:
+        return None
+    return _state_cells_typed(b, over.sort("n", "d"), {"d_end": "d", "t_end": "t"})
+
+
+def _path_end_terms(b: _Build) -> dict:
+    """v_state[n,d,t] − v_state[n,d_end,t_end]: the LHS of a path-end tie."""
+    return {"state": b.v_state, "state_end": -_var_view(b.v_state, "__path_end", {"d": "d_end", "t": "t_end"})}
+
+
+def _eq_storage_split_path_end(b: _Build) -> None:
+    """bind_within_period and looping bind_intraperiod_blocks in a split realization roll: the period's part in the
+    roll closes once per path."""
+    d = b.d
+    if not (b.has_storage and _has_rows(d.nodeState_last_dt)):
         return
-    over = _state_cells_typed(b, over.sort("n", "d"), {"d_end": "d", "t_end": "t"})
-    m.add_cstr(
-        "storage_within_solve_path_end",
+    lab = labels_with_steps(d)
+    if not lab:
+        return
+
+    # ─── EQ. ─── storage_split_path_end ──────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state[n,p_f,t_last(p_f)] − v_state[n,d*,t_last(d*)] = 0
+    #   ∀ n ∈ bind_within_period ∪ looping nodeStateBlock, p ∈ L* (a period label with steps: a split realization
+    #     roll), p_f ∈ B(p), p_f ≠ d*, whose first step of p wraps to (d*, t_last(d*)) (the seam lag,
+    #     _self_discharge.state_links), (n,p_f,t_last(p_f)) ∈ nodeState_last_dt; unless both ends are already set
+    #     (pinned by storage_state_start_binding_cyclic_period or fixed by node_balance_fix_quantity_eq_lower)
+    #   d* = the last branch period of p in name order
+    # A split realization roll holds the period p as one path per forecast: p's jump steps, then the steps of one
+    # branch period p_f.  The state cycles within the period's part in the roll, so each path closes on itself: the
+    # first step of p continues from the end of every path.  The lag is single-valued (each p_f's first step
+    # continues from p's last jump step, and p's first step from the end of d*), so this row ends every other path
+    # at the level d* ends at: every path's end is the level p starts from.  A roll that continues the period
+    # from the carry has no wrap at p's first step (scope_carry) and closes or anchors each path's end instead
+    # (storage_state_roll_close / storage_state_roll_anchor at each p_f's last step).
+    links = [link for link in _self_discharge.state_links(d, has_rp=b.has_rp, has_nsb=b.has_nsb)
+             if link.key in ("state_change_wp_seam", "state_change_block")]
+    if not links:
+        return
+    branch = pl.DataFrame([(p, f) for p, fs in lab.items() for f in fs], schema={"d": pl.Utf8, "d_prev": pl.Utf8},
+                          orient="row")
+    wraps = _self_discharge.previous_steps(links).join(branch, on=["d", "d_prev"], how="semi")
+    ends = _utf8_cells(d.nodeState_last_dt)
+    over = (wraps.select("n", "d", pl.col("d_prev").alias("d_end"), pl.col("t_prev").alias("t_end"))
+            .join(branch.rename({"d_prev": "f"}), on="d", how="inner")
+            .filter(pl.col("f") != pl.col("d_end"))
+            .join(ends.rename({"d": "f"}), on=["n", "f"], how="inner")
+            .select("n", pl.col("f").alias("d"), "t", "d_end", "t_end").unique())
+    over = _path_end_rows(b, over)
+    if over is None:
+        return
+    b.m.add_cstr(
+        "storage_split_path_end",
         over      = over,
         sense     = "==",
-        lhs_terms = {"state": b.v_state,
-                     "state_end": -_var_view(b.v_state, "__path_end", {"d": "d_end", "t": "t_end"})},
+        lhs_terms = _path_end_terms(b),
         rhs_terms = {},
     )
-    _notice_stochastic_storage_paths(over["n"].to_list())
 
 
 def _eq_storage_state_fan_start(b: _Build) -> None:
@@ -5564,6 +5736,7 @@ def _eq_storage_state_fan_start(b: _Build) -> None:
     #   ∀ n ∈ bind_forward_only, (n,d,t_first(d)) and (n,d″,t_first(d″)) ∈ nodeState_first_dt with no start term
     #     (n ∉ storage_fix_start ∪ carried), d = the first root (sorted), d″ ∈ the other roots, one row
     #     per group of roots that non_anticipativity_storage_state_first does not already tie to d's group
+    #     (role uc_only: that row is absent, one row per other root)
     #   roots = the periods of nodeState_first_dt (built from period_first_of_solve): the forecast branch periods
     #     of a fan in the solve's first period; one root without a fan: no rows
     # The first step of a bind_forward_only node has no state change (dtttdt_forward_only): without fix_start or a
@@ -5572,7 +5745,8 @@ def _eq_storage_state_fan_start(b: _Build) -> None:
     # the same.  A fix_start or carried node starts every root from the same value already (_fix_start_terms,
     # the roll carry).  For a node of an include_stochastics group, non_anticipativity_storage_state_first may tie
     # the first step of a root to its reference forecast already (a tie window shorter than the root period):
-    # those pairs are left out, read from that row's domain.
+    # those pairs are left out, read from that row's domain.  Solve (1) of separate_dispatch (the uc_only role,
+    # _non_anticipativity.na_role) has no such rows: every root pair of a free start is tied here.
     first = (_utf8_cells(d.nodeState_first_dt)
              .join(_utf8_cells(d.storage_bind_forward_only, ("n",)), on="n", how="semi"))
     for started in (_self_discharge.fix_start_first(d), _self_discharge.carried_nodes(d)):
@@ -5835,18 +6009,14 @@ def _roll_horizon_ends(b: _Build, nodes: pl.DataFrame) -> "pl.DataFrame | None":
 def _first_scope_ends(b: _Build, nodes: pl.DataFrame) -> "pl.DataFrame | None":
     """``(n, d, t)`` of ``nodes`` (n): where the first scope of a rolling roll ends within the roll — the step the
     roll's first step would wrap to: the last step of the first period in the roll (bind_within_period, also
-    bind_within_timeblock, which a rolling solve uses as bind_within_period, and bind_intraperiod_blocks).  None
-    when there are none."""
-    d = b.d
-    if not (_has_rows(d.nodeState_first_dt) and _has_rows(d.nodeState_last_dt)):
+    bind_within_timeblock, which a rolling solve uses as bind_within_period, and bind_intraperiod_blocks); in a
+    split realization roll the last step of each path (each branch period of the label).  None when there are
+    none."""
+    pairs = scope_end_pairs(b.d)   # the pairs G3 checks (preprocess._step_relations)
+    if pairs is None:
         return None
     names = nodes.select(pl.col("n").cast(pl.Utf8)).unique()
-    first = (d.nodeState_first_dt.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
-             .join(names, on="n", how="semi"))
-    if first.height == 0:
-        return None
-    last = d.nodeState_last_dt.select(pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t"))
-    utf = first.select("n", "d").join(last, on=["n", "d"], how="inner").unique()
+    utf = pairs.join(names, on="n", how="semi").select("n", d="d_end", t="t_end").unique()
     if utf.height == 0:
         return None
     over = (b.nodeState_dt
@@ -5959,7 +6129,8 @@ def _eq_storage_roll_end(b: _Build) -> None:
     # v_state[n,d,t]·state_unitsize[n] ≥ min(carry[n], hold[n,d,t])
     #   ∀ n ∈ storage_roll_end(anchor), (n,d,t) ∈ nodeState_last_dt, d ∈ period_last;
     #     n ∈ storage_roll_end(scope_anchor), (n,d,t) = the end of the roll's first scope (_first_scope_ends: the
-    #     last step of the first period in the roll);
+    #     last step of the first period in the roll; in a split realization roll the last step of each path, i.e. of
+    #     each branch period of the label);
     #     (n,d,t) ∉ the steps an upper-level solve fixes (fix_quantity, fix_usage, fix_price),
     #     (n,d,t) ∉ the steps storage_state_end_binding pins
     #   carry = the level the roll starts from (MWh, roll_continue_state); hold = the level reached from it by doing

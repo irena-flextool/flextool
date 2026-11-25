@@ -221,7 +221,7 @@ def test_binary_online_commits_whole_units_of_virtual_unitsize(tmp_path_factory,
         demand("west", west_mw), ["node", "west", "penalty_up", b64(10000.0, "float")],
         ["unit", PLANT, "existing", b64(3.0, "float")],
         ["unit", PLANT, "virtual_unitsize", b64(200.0, "float")],
-        ["unit", PLANT, "startup_method", b64("binary", "str")],
+        ["unit", PLANT, "startup_method", b64("integer_fix_in_uc", "str")],
         ["unit", PLANT, "min_load", b64(0.4, "float")]])
     fd = step.flex_data
     pb = build(fd)

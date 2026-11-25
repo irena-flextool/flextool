@@ -551,7 +551,7 @@ def build_model(
         The generated model data dictionary (with raw Python values).
     """
     yaml_path = Path(yaml_path)
-    with open(yaml_path) as f:
+    with open(yaml_path, encoding="utf-8") as f:
         spec = yaml.safe_load(f)
 
     builder = ModelBuilder(spec, seed=seed)
@@ -567,7 +567,7 @@ def build_model(
             output_path = yaml_path.with_suffix(".json")
         output_path = Path(output_path)
         json_data = model_data_to_json_serializable(result)
-        with open(output_path, "w") as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             json.dump(json_data, f, indent=2)
         print(f"  JSON written to: {output_path}")
 

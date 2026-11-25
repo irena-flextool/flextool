@@ -182,9 +182,15 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
 def _capacity_margin_periods(d) -> pl.DataFrame | None:
     """``(d,)`` periods of dt that are in ``period_invest`` (the capacity-margin domain); None when there are none.
 
-    ``period_invest`` = the solve's investment periods and their stochastic branch periods."""
+        D_inv = period_invest ∩ periods of dt   (a solve that is not a roll);   D_inv = ∅   (a roll)
+
+    ``period_invest`` = the solve's investment periods and their stochastic branch periods.  A roll of a rolling
+    solve (``solve_is_rolling``, from ``solve_data/roll_period_whole``) builds no investment, whatever the data
+    (its investment sets are never derived), so it has no capacity margin: its rows could only price a shortfall
+    of capacity the roll cannot change.  A single solve with investment periods keeps its margin even when nothing
+    in it can be invested (the adequacy check of the existing fleet)."""
     pinv = getattr(d, "period_invest", None)
-    if pinv is None or pinv.height == 0 or d.dt is None:
+    if pinv is None or pinv.height == 0 or d.dt is None or getattr(d, "solve_is_rolling", False):
         return None
     keep = pinv.get_column("d").cast(pl.Utf8).implode()
     out = d.dt.select("d").unique(maintain_order=True).filter(pl.col("d").cast(pl.Utf8).is_in(keep))
@@ -228,8 +234,8 @@ def has_capacity_margin(d) -> bool:
     the solve has an investment period in dt.
 
     A group without a margin value has margin 0 (its capacity must cover its demand); a margin of -inf is no
-    requirement in that period (:func:`capacity_margin_rows`).  A solve without investment periods (dispatch,
-    rolling dispatch) has no capacity margin."""
+    requirement in that period (:func:`capacity_margin_rows`).  A solve without investment periods (dispatch) and
+    a roll of a rolling solve (which builds no investment) have no capacity margin."""
     return (_has_rows(getattr(d, "groupCapacityMargin", None)) and d.p_inv_group_cap is not None
             and capacity_margin_rows(d) is not None)
 
@@ -278,7 +284,8 @@ def add_variables(b: _Build) -> None:
     # vq_capacity_margin[g,d] ≥ 0   ∀ (g,d) ∈ capacity_margin_rows = groupCapacityMargin × D_inv, without the
     #   (g,d) whose margin is −inf (no requirement in that period)
     #   D_inv = period_invest ∩ periods of dt: the solve's investment periods and, in a stochastic fan, the
-    #   forecast branch periods of those anchors (a period label has no dt); one slack per forecast
+    #   forecast branch periods of those anchors (a period label has no dt); one slack per forecast.  D_inv = ∅ in
+    #   a roll of a rolling solve: a roll builds no investment, so it has no capacity margin
     # Capacity margin shortfall of group g in period d, as a fraction of
     # group_capacity_for_scaling: MW = vq_capacity_margin · group_capacity_for_scaling[g,d].
     if b.has_capacity_margin:
@@ -663,10 +670,11 @@ def resolve_capacity_margin(d) -> None:
     The row, the group scaling, the Benders split and the outputs then read one MW value whatever the method.  A
     relative_of_peak_demand group whose share is positive but whose peak is 0 (no demand) gets a warning: its margin is 0.
     Rows of 0 are dropped (margin 0).  A share of -inf gives the margin -inf (no requirement in that period,
-    :func:`capacity_margin_rows`), whatever the peak.  Idempotent: a group's rows are replaced, not added to.
+    :func:`capacity_margin_rows`), whatever the peak.  Idempotent: a group's rows are replaced, not added to.  A roll
+    has no capacity margin (:func:`_capacity_margin_periods`): nothing is resolved and nothing is warned.
     """
     share = _param_frame(getattr(d, "pdGroup_capacity_margin_relative", None))
-    if share is None or share.height == 0:
+    if share is None or share.height == 0 or getattr(d, "solve_is_rolling", False):
         return
     peak = _param_frame(getattr(d, "pdGroup_peak_demand", None))
     share_u = share.select(pl.col("g").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
@@ -735,8 +743,8 @@ def _eq_capacity_margin(b: _Build) -> None:
     #   capacity_margin_rows = groupCapacityMargin × D_inv without the (g,d) whose margin is −inf (no requirement)
     #   groupCapacityMargin = groups with capacity_margin_method absolute or relative_of_peak_demand
     #   D_inv = period_invest ∩ periods of dt (investment periods of the solve; a period label has no dt, so a
-    #   fan contributes its forecast branch periods, one row per forecast); a solve without investment periods
-    #   has no capacity margin
+    #   fan contributes its forecast branch periods, one row per forecast); a solve without investment periods and
+    #   a roll of a rolling solve (it builds no investment) have no capacity margin
     #   N(g) = nodes of g in nodeBalance without a storage state;  icap = inv_group_cap = 1 / group_capacity_for_scaling
     #   F(g), V(g) = the unit output arcs into N(g) that count at capacity (capacity_margin_counted_arcs): not of a
     #   storage-backed unit (an input from a storage-state node, Σ input_share_max of its other inputs < 1), not of

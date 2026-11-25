@@ -107,11 +107,36 @@ def online_free_start_cells(dt: "pl.DataFrame | None", wrap: "pl.DataFrame | Non
     return cells
 
 
-def ramp_link_fields(dt: "pl.DataFrame | None", link: "pl.DataFrame | None") -> dict:
+def ramp_link_fields(dt: "pl.DataFrame | None", link: "pl.DataFrame | None",
+                     period_branch: "pl.DataFrame | None" = None,
+                     rp_block_first: "pl.DataFrame | None" = None, solve: "str | None" = None) -> dict:
     """The FlexData fields derived from the ramp predecessor links: ``dt_ramp_link`` (*link*) and
     ``dt_online_wrap`` (:func:`online_stretch_wrap` of ``dt`` and *link*).  Every setter of ``dt_ramp_link`` sets
-    both through this function, so the two never disagree."""
-    return {"dt_ramp_link": link, "dt_online_wrap": online_stretch_wrap(dt, link)}
+    both through this function, so the two never disagree.
+
+    Under a split realization roll (*period_branch* ``(d, b)`` with a label that has steps) the wrap row at the
+    first step of the label is a free-start marker only (``online_free_start_cells``): its predecessor is null
+    (``_step_relations.null_split_placeholders``).  A first step there that is no free start (its period has
+    several stretches in the roll: a gap in the timeset, or representative blocks) has no defined online start:
+    :class:`FlexToolConfigError` naming *solve* and the step."""
+    from flextool.engine.preprocess._step_relations import null_split_placeholders, split_first_steps
+
+    wrap = online_stretch_wrap(dt, link)
+    firsts = split_first_steps(period_branch, dt)
+    if wrap is not None and firsts.height > 0:
+        cells = wrap.select("d", "t").join(firsts, on=["d", "t"], how="semi")
+        bad = cells.join(online_free_start_cells(dt, wrap, rp_block_first), on=["d", "t"], how="anti")
+        if bad.height > 0:
+            from flextool.engine.input._solve_state import FlexToolConfigError
+
+            raise FlexToolConfigError(
+                f"Solve '{solve}': a roll of this solve dispatches the jump on the realized data and the rest of "
+                f"its horizon on the forecasts, but period '{bad['d'][0]}' of the roll does not run continuously "
+                f"from its first step '{bad['t'][0]}': its timeset has a gap or representative blocks inside the "
+                "roll, so the units online have no start there. Make the timeset continuous over each roll, or "
+                "change rolling_solve_jump / rolling_solve_horizon so that no roll contains the gap.")
+        wrap = null_split_placeholders(wrap, firsts, ("d_previous", "t_previous"))
+    return {"dt_ramp_link": link, "dt_online_wrap": wrap}
 
 
 def _with_fan_members(hit: pl.DataFrame, anchors: pl.DataFrame, firsts: pl.DataFrame,

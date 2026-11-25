@@ -224,7 +224,7 @@ def _case7() -> tuple[list, list]:
     vals = [["node", "n", "node_type", _str("balance")], ["node", "n", "inflow", _series([-33, -70, -70, -40])],
             ["node", "h", "node_type", _str("balance")], ["node", "h", "inflow", _series([-20, -40, -30, -20])],
             ["unit", "G", "virtual_unitsize", _float(50.0)], ["unit", "G", "existing", _float(150.0)],
-            ["unit", "G", "conversion_method", _str("none")], ["unit", "G", "startup_method", _str("binary")],
+            ["unit", "G", "conversion_method", _str("none")], ["unit", "G", "startup_method", _str("integer_fix_in_uc")],
             ["unit", "G", "min_load", _float(0.8)], ["unit", "G", "startup_cost", _float(1.0)],
             ["unit__outputNode", ["G", "n"], "other_operational_cost", _float(20.0)],
             ["unit__outputNode", ["G", "n"], "ramp_method", _str("ramp_limit")],
@@ -418,7 +418,9 @@ def _case10_stochastic() -> tuple[list, list]:
          b64({"index_type": "str", "index_name": "period", "data": [["p2020", "trunk"], ["p2025", "fan"]]}, "map")],
         ["solve", SOLVE, "realized_periods",
          b64({"value_type": "str", "index_name": "period", "data": ["p2020", "p2025"]}, "array")],
-        ["solve", SOLVE, "stochastic_branches", b64(branches, "map")]]
+        ["solve", SOLVE, "stochastic_branches", b64(branches, "map")],
+        # The forecasts are solved: deterministic, the default since 4.7.0, would ignore them.
+        ["solve", SOLVE, "dispatch_realization_method", _str("within_solve")]]
     return ents, vals
 
 
@@ -499,7 +501,9 @@ def _case4b() -> tuple[list, list]:
              b64({"index_type": "str", "index_name": "period", "data": [["p2020", "trunk"], ["p2025", "fan"]]}, "map")],
             ["solve", SOLVE, "realized_periods",
              b64({"value_type": "str", "index_name": "period", "data": ["p2020", "p2025"]}, "array")],
-            ["solve", SOLVE, "stochastic_branches", b64(branches, "map")]]
+            ["solve", SOLVE, "stochastic_branches", b64(branches, "map")],
+            # The forecasts are solved: deterministic, the default since 4.7.0, would ignore them.
+            ["solve", SOLVE, "dispatch_realization_method", _str("within_solve")]]
     return ents, vals
 
 

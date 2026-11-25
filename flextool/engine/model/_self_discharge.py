@@ -201,22 +201,24 @@ def state_links(d, *, has_rp: bool, has_nsb: bool) -> list[StateLink]:
     if _has_rows(d.storage_bind_within_period) and _has_rows(d.dtttdt_within_period):
         # bind_within_period: t⁻ is the previous step of the period; the first step of each period wraps to the
         # period's own last step.  A node whose first period continues from the carry (scope_carry_nodes) has no
-        # wrap at the solve's first step.
+        # wrap at the solve's first step.  In a split realization roll the lag crosses the seam (_seam_split).
         looping = without_nodes(d.storage_bind_within_period, carry)
         if looping is not None:
-            links.append(StateLink("state_change_wp", looping, d.dtttdt_within_period,
-                                   "t_previous_within_period", False, True))
+            links += _seam_split(StateLink("state_change_wp", looping, d.dtttdt_within_period,
+                                           "t_previous_within_period", False, True))
         carried = _scope_carried(d.storage_bind_within_period, carry)
         lag = _without_first_steps(d, d.dtttdt_within_period) if carried is not None else None
         if lag is not None:
-            links.append(StateLink("state_change_wp_carry", carried, lag, "t_previous_within_period", False, False))
-    if has_nsb and _has_rows(d.dtttdt_block_lag):
+            links += _seam_split(StateLink("state_change_wp_carry", carried, lag, "t_previous_within_period", False,
+                                           False))
+    if has_nsb:
         # bind_intraperiod_blocks: t⁻ from dtttdt_block_lag (the blocks of a period form a loop; in a rolling solve
         # the blocks of a period the roll holds only in part chain forward, with no row at the solve's first step).
-        # The fix_start_end block nodes chain forward in every period (block_forward_lag).
+        # The fix_start_end block nodes chain forward in every period (block_forward_lag).  Each link is gated on
+        # its own lag: a roll whose only block step is the solve's first step has neither.
         forward = block_forward_nodes(d)
         looping = without_nodes(d.nodeStateBlock, forward)
-        if looping is not None:
+        if looping is not None and _has_rows(d.dtttdt_block_lag):
             links.append(StateLink("state_change_block", looping, d.dtttdt_block_lag,
                                    "t_previous_within_solve", True, False))
         forward_lag = block_forward_lag(d) if forward is not None else None
@@ -230,6 +232,24 @@ def state_links(d, *, has_rp: bool, has_nsb: bool) -> list[StateLink]:
         links.append(StateLink("state_change_rp_interior", d.nodeState_rp, interior,
                                "t_previous_within_timeset", False, False))
     return links
+
+
+def _seam_split(link: StateLink) -> list[StateLink]:
+    """``link`` (a within-period lag) as it is, or, when some of its rows continue from another period (the seam rows
+    of a split realization roll, ``flex_data._within_period_lag``: a branch period's first step from the label's
+    last jump step, the label's first step from the last step of d*), its same-period rows plus a cross-period
+    link ``<key>_seam`` of those rows."""
+    lag = link.lag
+    cross = pl.col("d_previous").cast(pl.Utf8) != pl.col("d").cast(pl.Utf8)
+    if "d_previous" not in lag.columns or lag.filter(cross).height == 0:
+        return [link]
+    seam = lag.filter(cross).select("d", "t", "d_previous",
+                                    pl.col(link.col).alias("t_previous_within_solve"))
+    out = [StateLink(f"{link.key}_seam", link.nodes, seam, "t_previous_within_solve", True, False)]
+    same = lag.filter(~cross)
+    if same.height > 0:
+        out.insert(0, StateLink(link.key, link.nodes, same, link.col, False, False))
+    return out
 
 
 def scope_carry_nodes(d) -> "pl.DataFrame | None":
@@ -652,7 +672,7 @@ def scope_start_levels(d, state: pl.DataFrame, start: "pl.DataFrame | None") -> 
     su = utf8(d.p_state_unitsize.frame).select("n", pl.col("value").alias("su"))
     has_nsb = _has_rows(getattr(d, "nodeStateBlock", None))
     links = [link for link in state_links(d, has_rp=False, has_nsb=has_nsb)
-             if link.key == "state_change_wp"]
+             if link.key in ("state_change_wp", "state_change_wp_seam")]
     parts = []
     if links:
         wrap = previous_steps(links).filter(pl.col("t_prev") >= pl.col("t"))

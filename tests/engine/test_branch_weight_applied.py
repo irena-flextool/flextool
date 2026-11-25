@@ -104,7 +104,7 @@ def _rewrite_branch_weights(
 
     from flextool.update_flextool.db_migration import migrate_database
 
-    data = json.loads(json_path.read_text())
+    data = json.loads(json_path.read_text(encoding="utf-8"))
     rewritten = False
     for row in data["parameter_values"]:
         if (

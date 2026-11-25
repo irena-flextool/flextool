@@ -236,7 +236,7 @@ def write_json_fixture(source_url: str, out_path: Path) -> int:
     """Write the JSON fixture and return the byte size on disk."""
     data = build_payload(source_url)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(out_path, "w") as fh:
+    with open(out_path, "w", encoding="utf-8") as fh:
         # Stable indent + sort_keys=False (preserve list order so
         # entities and pvs ordering matches export_data's insertion
         # order; the resulting JSON is still byte-stable across runs).

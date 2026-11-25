@@ -34,7 +34,7 @@ COAL = ["init", "west", "coal"]
 
 
 def _chain(fixture: Path, scenario: str) -> list[str]:
-    data = json.loads(fixture.read_text())
+    data = json.loads(fixture.read_text(encoding="utf-8"))
     rows = [r for r in data["scenario_alternatives"] if r[0] == scenario]
     nxt = {a: b for _, a, b in rows}
     alt = next(a for a in nxt if a not in set(nxt.values()))

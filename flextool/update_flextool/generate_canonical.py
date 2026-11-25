@@ -80,7 +80,7 @@ def _load_recipes() -> dict[str, dict[str, Any]]:
     """
     if not RECIPES_FILE.is_file():
         raise RuntimeError(f"Recipes file missing: {RECIPES_FILE}")
-    with open(RECIPES_FILE) as f:
+    with open(RECIPES_FILE, encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 
@@ -187,9 +187,9 @@ def _summarise_diff(committed: Path, regenerated: Path) -> str:
     side).  Value-level drift inside a same-length list is reported as
     ``length match, value-level drift``.
     """
-    with open(committed) as f:
+    with open(committed, encoding="utf-8") as f:
         a = json.load(f)
-    with open(regenerated) as f:
+    with open(regenerated, encoding="utf-8") as f:
         b = json.load(f)
     keys = sorted(set(a) | set(b))
     lines: list[str] = []
@@ -225,9 +225,9 @@ def verify_all() -> int:
         with tempfile.TemporaryDirectory() as tmp:
             regenerated = Path(tmp) / f"{name}.json"
             generate_one(name, output_path=regenerated)
-            with open(committed) as f:
+            with open(committed, encoding="utf-8") as f:
                 a = f.read()
-            with open(regenerated) as f:
+            with open(regenerated, encoding="utf-8") as f:
                 b = f.read()
             if a == b:
                 print(f"ok: {name}.json")

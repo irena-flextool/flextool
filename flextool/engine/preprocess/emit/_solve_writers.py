@@ -50,6 +50,7 @@ import polars as pl
 from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.preprocess import _provider_keys as K
 from flextool.engine.preprocess._provider_io import _emit
+from flextool.engine.preprocess.emit._pdt_lookup import READ_FIRST_FAN
 
 
 def _emit_path(provider, path: "Path | str", df: pl.DataFrame) -> None:
@@ -375,15 +376,30 @@ def emit_stochastic_invest_method(
     filename: str,
     *, provider,
 ) -> None:
-    """Emit the resolved ``solve.stochastic_invest_method`` (Slice D).
+    """Emit the recourse switch of the solve (``SolveConfig.recourse_invest``: its investments branch after the
+    reveal, ``invest_solve_branching_method`` ``investments_after_reveal_period`` or
+    ``investments_at_reveal_period``).
 
-    A single-row, single-column (``method``) frame carrying the resolved
-    per-solve mode (``"none"`` / ``"recourse"``).  Read run-time via
+    A single-row, single-column (``method``) frame carrying ``"recourse"`` or ``"none"``.  Read run-time via
     ``_derived._recourse_invest_active`` so the derived/model
     layers can gate the recourse feature without a ``SolveConfig``.
     """
     _emit_path(provider, filename,
                _to_utf8_frame(("method",), [(method,)]))
+
+
+def emit_na_online_fix_in_uc(uc_only: bool, *, provider) -> None:
+    """Emit ``solve_data/na_online_fix_in_uc``: one ``value`` row ``yes`` when the solve is solve (1) of
+    ``dispatch_realization_method`` ``separate_dispatch`` (single or rolling, the stochastic solve a realization solve
+    follows), header-only otherwise.
+
+    The non-anticipativity role of the solve (``model._non_anticipativity.na_role``): ``yes`` ties across the
+    forecasts only the units online of the ``_fix_in_uc`` units, the decisions the realization solve takes over.
+    Emitted for every solve, so a Provider shared by the sub-solves of a level never keeps a previous solve's
+    marker.
+    """
+    _emit(provider, "solve_data/na_online_fix_in_uc.csv",
+          _to_utf8_frame(("value",), [("yes",)] if uc_only else []))
 
 
 def _compute_first_and_last_periods(
@@ -415,12 +431,14 @@ def _compute_first_and_last_periods(
     ]
 
     # The first active key may be a forecast branch period (a fan opening in the solve's first period, whose
-    # period label has no steps): list the members of its anchor that have steps, as for period_last.
+    # period label has no steps): list the members of its anchor that have steps, as for period_last.  A first
+    # period with steps (a split realization roll's label too: its forecasts start after its jump) is the only one.
     first_anchor = next((pb[0] for pb in period__branch_list if pb[1] == period_first_of_solve),
                         period_first_of_solve)
     period_first_of_solve_list = [
         pb[1] for pb in period__branch_list
         if pb[0] == first_anchor and pb[1] in active_time_list
+        and (first_anchor not in active_time_list or pb[1] == first_anchor)
     ]
     period_first = period__timesets_in_this_solve[0][0]
     period_first_list = [
@@ -686,13 +704,18 @@ def derive_solve_branch_weight(
     branch_start_time: tuple[str, str] | None,
     period__branch_lists: list[tuple[str, str]],
     stochastic_branches: dict[str, list[Any]],
+    branch_rows: list[Any] | None = None,
 ) -> pl.DataFrame:
     """Build the ``solve_branch_weight`` frame
     (branch, p_branch_weight_input).
+
+    The weights are read from *branch_rows* when given (the rows of a realization roll,
+    ``SolveConfig.roll_branch_rows``), else from ``stochastic_branches[complete_solve]``.
     """
     time_branch_weight: dict[str, Any] = defaultdict()
     if branch_start_time is not None:
-        for row in stochastic_branches[complete_solve]:
+        rows_in = branch_rows if branch_rows is not None else stochastic_branches.get(complete_solve, [])
+        for row in rows_in:
             if (
                 branch_start_time[0] == row[0]
                 and branch_start_time[1] == row[2]
@@ -735,19 +758,22 @@ def emit_branch_weights_and_map(
     period__branch_lists: list[tuple[str, str]],
     stochastic_branches: dict[str, list[Any]],
     *, provider,
-) -> None:
-    """Emit ``branch_weights_and_map`` to the Provider."""
-    _emit(
-        provider, "solve_data/solve_branch_weight.csv",
-        derive_solve_branch_weight(
-            complete_solve, active_time_list, solve_branch__time_branch_list,
-            branch_start_time, period__branch_lists, stochastic_branches,
-        ),
+    branch_rows: list[Any] | None = None,
+) -> pl.DataFrame:
+    """Emit ``branch_weights_and_map`` to the Provider; returns the ``solve_branch_weight`` frame.
+
+    *branch_rows*: see :func:`derive_solve_branch_weight`.
+    """
+    weights = derive_solve_branch_weight(
+        complete_solve, active_time_list, solve_branch__time_branch_list,
+        branch_start_time, period__branch_lists, stochastic_branches, branch_rows,
     )
+    _emit(provider, "solve_data/solve_branch_weight.csv", weights)
     _emit(
         provider, "solve_data/solve_branch__time_branch.csv",
         derive_solve_branch__time_branch(solve_branch__time_branch_list),
     )
+    return weights
 
 
 def branch_time_start_rows(
@@ -799,19 +825,23 @@ def project_branch_time_start_rows(
     return [(d, step) for d, step in parent_rows if (d, d) in period_branch]
 
 
-def derive_branch_time_start(rows: list[tuple[str, str]]) -> pl.DataFrame:
-    """Build the ``branch_time_start`` frame (period, step, read_first); header-only without a fan.
+def derive_branch_time_start(rows: list[tuple], read_first: str = READ_FIRST_FAN) -> pl.DataFrame:
+    """Build the ``branch_time_start`` frame (period, step, read_first); header-only without a fan.  A row
+    ``(period, step, read_first)`` names its own ``read_first`` (a realization roll has both kinds), a row
+    ``(period, step)`` takes *read_first*.
 
-    ``read_first`` is ``fan`` on every row: a period from the fan onwards reads the forecast made at the fan's
-    analysis time first, in a single solve and in a roll of a rolling solve alike (item 255); see ``_pdt_lookup``
-    "Which forecast a branch period reads".
+    ``read_first`` is ``fan`` on every row of a fan: a period from the fan onwards reads the forecast made at the
+    fan's analysis time first, in a single solve and in a roll of a rolling solve alike (item 255); ``flat`` on the
+    rows of a deterministic solve's flattened realized branch (one row per period and analysis time, nearest to the
+    start first); see ``_pdt_lookup`` "Which forecast a branch period reads".
     """
-    return _to_utf8_frame(("period", "step", "read_first"), [(d, step, "fan") for d, step in rows])
+    return _to_utf8_frame(("period", "step", "read_first"), [(*row[:2], row[2] if len(row) > 2 else read_first)
+                                                             for row in rows])
 
 
-def emit_branch_time_start(rows: list[tuple[str, str]], *, provider) -> None:
+def emit_branch_time_start(rows: list[tuple], *, read_first: str = READ_FIRST_FAN, provider) -> None:
     """Emit ``solve_data/branch_time_start`` to the Provider."""
-    _emit(provider, "solve_data/branch_time_start.csv", derive_branch_time_start(rows))
+    _emit(provider, "solve_data/branch_time_start.csv", derive_branch_time_start(rows, read_first))
 
 
 # ---------------------------------------------------------------------------
@@ -1312,18 +1342,24 @@ def _compute_timeset_cost_weight_rows(
 ) -> tuple[list[tuple[Any, ...]], bool]:
     """Shared compute for :func:`emit_timeset_cost_weight`.
     Returns ``(rows, any_written)``.  The stochastic branch periods of ``period__branch``
-    (``(anchor, branch)`` rows) take their anchor period's timeset weights.
+    (``(anchor, branch)`` rows) take their anchor period's timeset weights.  Each name's weights are scaled to mean
+    1 over its steps, except under a split realization roll (an anchor with steps): one scale over the path, the
+    anchor's jump steps and a branch period's tail (the same roll without forecasts; every tail has the same steps).
     """
     rows: list[tuple[Any, ...]] = []
     any_written = False
+    tail_of = {a: b for a, b in reversed(period__branch or ()) if a != b and active_time_list.get(a)}
+    jump_of = {b: a for a, b in (period__branch or ()) if a in tail_of and a != b}
     for period, timeset in _with_branch_period_timesets(timesets_used_by_solve, period__branch):
         weights = timeset_weights.get(timeset)
         active_steps = active_time_list.get(period, [])
         if weights is None or not active_steps:
             continue
         raw = [float(weights.get(step.timestep, 0.0)) for step in active_steps]
-        total = sum(raw)
-        n = len(raw)
+        path = [*active_time_list.get(jump_of.get(period), []), *active_steps,
+                *active_time_list.get(tail_of.get(period), [])]
+        total = sum(float(weights.get(step.timestep, 0.0)) for step in path)
+        n = len(path)
         if total <= 0 or n == 0:
             continue
         scale = n / total

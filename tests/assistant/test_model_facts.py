@@ -228,9 +228,28 @@ def test_zero_weight_forecasts_are_left_out() -> None:
     1 / 4 = 0.25 and c 3 / 4 = 0.75; no branch is flagged realized."""
     fans = model_facts._fans({"p1": {"a": {"t1": {"no": 1.0}}, "b": {"t1": {"no": 0.0}}, "c": {"t1": {"no": 3.0}}}})
     assert fans == (BranchFan("p1", "t1", (("a", 0.25), ("c", 0.75)), None),)
-    line = render(ScenarioFacts((_solve("s", branches=fans),), _run())).splitlines()[1]
+    line = render(ScenarioFacts((_solve("s", branches=fans, realization="within_solve"),), _run())).splitlines()[1]
     assert line == ("Solve s: single solve; stochastic: 2 forecast branches (a 0.25, c 0.75) from p1 t1; no realized "
                     "branch, so the fan's operational results are empty; period p2020 (1 year represented).")
+
+
+def test_a_deterministic_solve_is_not_described_as_stochastic() -> None:
+    """``dispatch_realization_method`` deterministic (also when absent): the engine solves only the realized
+    branch, so the facts name it and say the forecasts are not solved; without one the run stops."""
+    assert model_facts._realization(None) == model_facts._realization("") == "deterministic"
+    assert model_facts._realization("separate_dispatch") == "separate_dispatch"
+    assert model_facts._realization(" Within_Solve ") == "within_solve"
+    # An investment solve does not read the method: it solves its forecasts whatever the value.
+    assert [model_facts._realization(v, investment=True) for v in (None, "", "deterministic", "separate_dispatch")] \
+        == ["within_solve"] * 4
+    fans = model_facts._fans({"p1": {"a": {"t1": {"no": 1.0}}, "r": {"t1": {"yes": 0.0}}}})
+    line = render(ScenarioFacts((_solve("s", branches=fans),), _run())).splitlines()[1]
+    assert line == ("Solve s: single solve; deterministic (dispatch_realization_method): reads only the realized "
+                    "branch r of its stochastic_branches, the forecasts are not solved; period p2020 (1 year "
+                    "represented).")
+    line = render(ScenarioFacts((_solve("s", branches=model_facts._fans({"p1": {"a": {"t1": {"no": 1.0}}}})),),
+                                _run())).splitlines()[1]
+    assert "no realized branch: the run stops with an error" in line and "stochastic:" not in line
 
 
 def test_one_step_and_one_base_period_are_singular() -> None:

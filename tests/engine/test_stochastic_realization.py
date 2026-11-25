@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import base64
 import json
-import logging
 import os
 import sys
 from pathlib import Path
@@ -57,7 +56,11 @@ def _variant(src: Path, tmp: Path, name: str, mutate) -> Path:
 
 
 def _drop_separate_dispatch(data: dict) -> None:
-    data["parameter_values"] = [r for r in data["parameter_values"] if r[2] != "dispatch_realization_method"]
+    """``within_solve`` in place of ``separate_dispatch`` (deterministic, the default since 4.7.0, would ignore the
+    forecasts)."""
+    for r in data["parameter_values"]:
+        if r[2] == "dispatch_realization_method":
+            r[3] = [base64.b64encode(json.dumps("within_solve").encode()).decode(), "str"]
 
 
 def _set_profile(data: dict, values: dict) -> None:
@@ -134,7 +137,8 @@ def _at(frame: pl.DataFrame, **keys) -> float:
 
 @pytest.fixture(scope="module")
 def designated(tmp_path_factory):
-    """The designated single solve WITHOUT dispatch_realization_method (the engine adds the realization solve)."""
+    """The designated single solve under dispatch_realization_method within_solve (the engine adds the realization
+    solve)."""
     tmp = tmp_path_factory.mktemp("realization_designated")
     return _run(_variant(T0_FIXTURE, tmp, "designated", _drop_separate_dispatch), tmp, capture_mps=True)
 
@@ -142,7 +146,7 @@ def designated(tmp_path_factory):
 def _binary_peaker(data: dict) -> None:
     for r in data["parameter_values"]:
         if r[1] == "peaker" and r[2] == "startup_method":
-            r[3] = [base64.b64encode(json.dumps("binary").encode()).decode(), "str"]
+            r[3] = [base64.b64encode(json.dumps("integer_fix_in_uc").encode()).decode(), "str"]
 
 
 @pytest.fixture(scope="module")
@@ -172,20 +176,38 @@ def separate(tmp_path_factory):
 @pytest.mark.solver
 def test_designation_adds_the_realization_solve(designated) -> None:
     """A realized: yes designation reaching the committed window adds ``<solve>__realized_dispatch`` right after
-    the stochastic solve, though no dispatch_realization_method is authored."""
+    the stochastic solve, though dispatch_realization_method is within_solve."""
     steps, _ = designated
     assert list(steps) == [PARENT, SIBLING]
 
 
 @pytest.mark.solver
-def test_auto_spawned_realization_solve_equals_separate_dispatch(designated, separate) -> None:
-    """The auto-spawned realization solve builds the same LP as the one separate_dispatch adds, and the stochastic
-    solve's LP does not depend on which of the two added it."""
+def test_auto_spawned_realization_solve_equals_separate_dispatch(designated, separate, tmp_path) -> None:
+    """The auto-spawned realization solve builds the same LP as the one separate_dispatch adds.  The stochastic
+    solve differs only by its role: under separate_dispatch (solve (1)) it ties across the forecasts only the units
+    online of _fix_in_uc units, so the linear peaker loses its non_anticipativity_online_linear rows, one per tied
+    step: the forecast pair (high, low) x the 3 committed steps = 3 rows.  Every other row, column and bound is
+    the same."""
+    from tests.engine import _solve_copy_models as scm
+
     _, mps_auto = designated
     _, mps_sep = separate
     assert set(mps_auto) == set(mps_sep) == {PARENT, SIBLING}
     assert mps_auto[SIBLING] == mps_sep[SIBLING]
-    assert mps_auto[PARENT] == mps_sep[PARENT]
+    lps = scm.lp_snapshot()
+    parsed = {}
+    for name, raw in (("auto", mps_auto[PARENT]), ("sep", mps_sep[PARENT])):
+        (tmp_path / f"{name}.mps").write_bytes(raw)
+        parsed[name] = lps.parse_mps(tmp_path / f"{name}.mps")
+    auto, sep = parsed["auto"], parsed["sep"]
+    only_auto = sorted(auto.rows.keys() - sep.rows.keys())
+    assert len(only_auto) == 3 and {lps.family_of(r) for r in only_auto} == {"non_anticipativity_online_linear"}
+    assert not sep.rows.keys() - auto.rows.keys()
+    for r in only_auto:
+        del auto.rows[r]
+        auto.rhs.pop(r, None)
+    auto.coefs = {k: v for k, v in auto.coefs.items() if k[0] not in only_auto}
+    assert lps.canonical_diff(auto, sep, 0.0, 0.0, 0.0) == []
 
 
 @pytest.mark.solver
@@ -210,7 +232,7 @@ def test_linear_realization_online_is_decided_again(designated) -> None:
     """A linear peaker is not pinned: the realization solve has no online_fix_eq_linear row and decides its units
     online with the realized data (wind CF 0.5: 50 MW of peaker, between 1 and 2 units by its capacity and min load;
     the value in between is a tie, so only the bounds are asserted) at the realized cost 50 MW × 10 €/MWh per step.
-    The stochastic solve has investments, so W-0509 (nothing kept) does not apply."""
+    The stochastic solve has investments, so W-0588 (nothing kept) does not apply."""
     steps, mps = designated
     assert b"online_fix_eq_linear" not in mps[SIBLING]
     assert steps[SIBLING].flex_data.p_fix_online is None
@@ -259,9 +281,14 @@ def _unit(data: dict, name: str, cost: float, extra: dict, reserve: bool) -> Non
 def _reserve_variant(demand: float, cf: dict, units) -> "callable":
     """``w4b_reserve_dispatch.json`` with its peaker (an investment) replaced by *units*
     ``(name, cost, extra, reserve)``,
-    demand *demand* MW, reservation 30 MW and a stochastic wind CF per branch (*cf*)."""
+    demand *demand* MW, reservation 30 MW and a stochastic wind CF per branch (*cf*).  With nothing to invest in,
+    the solve is made a dispatch solve (no invest periods) solved ``within_solve``: its forecasts are tied over the
+    committed window, and its realization pins what a dispatch solve's realization pins (an investment solve's
+    operations branch at the reveal, so its realization has no tied commitment to keep)."""
     def mutate(data: dict) -> None:
-        _drop_separate_dispatch(data)
+        data["parameter_values"] = [r for r in data["parameter_values"] if not (
+            r[0] == "solve" and r[2] in ("invest_periods", "realized_invest_periods", "dispatch_realization_method"))]
+        data["parameter_values"].append(["solve", PARENT, "dispatch_realization_method", _enc("within_solve"), "init"])
         t0 = json.loads(T0_FIXTURE.read_text(encoding="utf-8"))
         wprof = next(r for r in t0["parameter_values"] if r[1] == "wprof" and r[2] == "profile")
         data["entities"] = [e for e in data["entities"] if "peaker" not in json.dumps(e[1])]
@@ -335,7 +362,7 @@ def test_realization_reserve_needs_commitment(tmp_path_factory) -> None:
     from energy to reserve would save 5,000 € of reserve shortfall and cost 10,000 € of balance slack, so the unique
     optimum is a flow 90, a reserve 10, b nothing, reserve shortfall 20 MW, slack 0.  Pinning a's stochastic
     reserve (30..50 MW) would cap a at 70 MW and leave >= 20 MWh of slack per step."""
-    binary = {"startup_method": "binary"}
+    binary = {"startup_method": "integer_fix_in_uc"}
     steps, mps = _run_reserve(tmp_path_factory, "realization_reserve_commit", _reserve_variant(
         100.0, {"rlz": 0.1, "high": 0.5, "low": 0.5},
         [("a", 10.0, binary, True), ("b", 50.0, {**binary, "min_load": 0.5}, True)]))
@@ -437,13 +464,14 @@ def _config(**over):
         stochastic_branches={"p": [["d1", "rlz", "t0001", "yes", 0.0], ["d1", "a", "t0001", "no", 1.0]]},
         realized_periods=defaultdict(list, {"p": [("d1", "d1")]}),
         timesets_used_by_solves={"p": [("d1", "ts")]}, solve_period_years_represented={},
-        stochastic_invest_method={},
+        invest_solve_branching_method={}, deterministic_branches={},
         dispatch_realization_method={}, fix_storage_periods={}, realized_dispatch_parent={},
         reduce_unit_detail_method={}, reduce_system_detail_method={},
     )
     for k, v in over.items():
         setattr(cfg, k, v)
-    for name in ("dispatch_realization_method_for", "stochastic_invest_method_for", "register_realization_solve",
+    for name in ("dispatch_realization_method_for", "invest_branching_method_for", "recourse_invest",
+                 "register_realization_solve",
                  "spawn_realized_dispatch_sibling", "realization_reader_values", "realization_window",
                  "reduce_detail_overridden", "_reduce_detail_for",
                  "reduce_unit_detail_for", "reduce_system_detail_for"):
@@ -491,14 +519,19 @@ def test_configured_solve_missing_the_fan_period_is_not_registered() -> None:
     assert cfg.model_solve["m"] == ["p", "p__realized_dispatch", "q"]
 
 
-def test_recourse_designation_warns_and_adds_nothing(caplog) -> None:
-    """Under recourse there is no realized post-reveal investment to fix: a warning, no realization solve."""
+@pytest.mark.parametrize("method, spawned", [("investments_at_reveal_period", False),
+                                             ("investments_after_reveal_period", True)])
+def test_branched_investment_designation(method, spawned) -> None:
+    """Under ``investments_at_reveal_period`` every forecast invests on its own from the reveal (d1): there is no
+    realized investment to fix, so no realization solve (the run gives W-0639 for a reveal at the first period,
+    ``test_branched_invest_realization``).  Under ``investments_after_reveal_period`` the reveal period's investment
+    is one decision of every forecast, and the designation adds the realization solve."""
     from flextool.engine.solve._orchestration import _spawn_realized_dispatch_siblings
-    cfg = _config(stochastic_invest_method={"p": "recourse"})
-    with caplog.at_level(logging.WARNING, logger="flextool.engine.solve._realization"):
-        _spawn_realized_dispatch_siblings(cfg, _Reader(), logger=None)
-    assert cfg.realized_dispatch_parent == {}
-    assert any("recourse" in r.getMessage() for r in caplog.records)
+    cfg = _config(invest_solve_branching_method={"p": method})
+    reader = _Reader()
+    _spawn_realized_dispatch_siblings(cfg, reader, logger=None)
+    assert cfg.realized_dispatch_parent == ({"p__realized_dispatch": "p"} if spawned else {})
+    assert reader.registered == ([("p", "p__realized_dispatch")] if spawned else [])
 
 
 @pytest.mark.parametrize("nesting", ["parent", "child"])
@@ -511,6 +544,25 @@ def test_nested_designation_raises(nesting: str) -> None:
     else:
         cfg = _config(model_solve={"m": ["top"]}, contains_solves={"top": ["p"]})
     with pytest.raises(FlexToolConfigError, match="realized: yes designation"):
+        _spawn_realized_dispatch_siblings(cfg, _Reader(), logger=None)
+
+
+@pytest.mark.parametrize("nesting", ["parent", "child"])
+def test_nested_rolling_designation_raises_reworded(nesting: str) -> None:
+    """A rolling stochastic solve that contains solves, or is nested in another solve, gets the 4.7.0 text: its jumps
+    cannot be realized (design §2.6, rev 6 §6.4)."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+    from flextool.engine.solve._orchestration import _spawn_realized_dispatch_siblings
+    if nesting == "parent":
+        cfg = _config(contains_solves={"p": ["c"]}, solve_modes={"p": "rolling_window"})
+        match = (r"Solve 'p' is a rolling stochastic solve that contains other solves \(contains_solves\)\. "
+                 r"FlexTool 4\.7\.0 cannot yet realize the jumps")
+    else:
+        cfg = _config(model_solve={"m": ["top"]}, contains_solves={"top": ["p"]},
+                      solve_modes={"p": "rolling_window", "top": "single_solve"})
+        match = (r"Solve 'p' is a rolling stochastic solve nested inside another solve's contains_solves\. "
+                 r"FlexTool 4\.7\.0 cannot yet realize the jumps of a nested rolling stochastic solve")
+    with pytest.raises(FlexToolConfigError, match=match):
         _spawn_realized_dispatch_siblings(cfg, _Reader(), logger=None)
 
 
@@ -642,7 +694,8 @@ def test_designation_leaves_the_stochastic_lp_unchanged(tmp_path_factory, design
 
 @pytest.mark.solver
 def test_recourse_label_has_no_investment(tmp_path_factory) -> None:
-    """Under recourse a period label invests nothing here-and-now: ``stoch_two_period_invest`` has no ``v_invest``
+    """Under ``investments_at_reveal_period`` with the reveal at the first period (the fixture's ``recourse``
+    alternative) a period label invests nothing here-and-now: ``stoch_two_period_invest`` has no ``v_invest``
     column at p2035 / p2040, only at the forecast branch periods, and the objective is the hand calculation of
     ``build_stoch_two_period_invest.py``: with the annuity 1000 CUR/MW per year (invest_cost 1 CUR/kW, discount_rate
     0.05, lifetime 1: 1000·0.05 / (1 − 1.05^−1) / 1.05, paid at the start of the year) the branching periods'
@@ -658,9 +711,9 @@ def test_recourse_label_has_no_investment(tmp_path_factory) -> None:
 
 @pytest.mark.solver
 def test_recourse_shared_investment_ties_forecasts_to_each_other(tmp_path_factory) -> None:
-    """``hedge_na_window`` (recourse, fan at p2035, shared_invest_periods p2035): the shared-investment window ties
-    the forecasts in the forecast star of each window period, members − 1 rows per entity and window period, never a
-    forecast to the period label (which has no investment column under recourse)."""
+    """``hedge_na_window`` (``investments_after_reveal_period``, fan at p2035): the reveal period's investment ties
+    the forecasts in the forecast star of p2035, members − 1 rows per entity, never a forecast to the period label
+    (which has no investment column when the investments branch)."""
     tmp = tmp_path_factory.mktemp("label_recourse_na")
     steps, mps = _run(HEDGE, tmp, scenario="hedge_na_window", capture_mps=True)
     (solve,) = [s for s in steps if not is_realization(s)]
@@ -689,6 +742,9 @@ def _rolling_hedge(data: dict) -> None:
         if sa[0] == "hedge_storage" and sa[1] == "storage" and sa[2] is None:
             sa[2] = "roll"
     data["scenario_alternatives"].append(["hedge_storage", "roll", None])
+    # A rolling solve is a dispatch solve: invest_solve_branching_method is refused on it.
+    data["parameter_values"] = [r for r in data["parameter_values"]
+                                if not (r[0] == "solve" and r[2] == "invest_solve_branching_method")]
 
     def enc(value, kind):
         return [base64.b64encode(json.dumps(value).encode()).decode(), kind]
@@ -700,31 +756,12 @@ def _rolling_hedge(data: dict) -> None:
     profile = {"index_type": "str", "data": [[f"t{i:04d}", 0.8 if i <= 3 else 0.0] for i in range(1, 7)]}
     data["parameter_values"] += [
         ["solve", "stoch_2p_hedge", "stochastic_branches", enc(forecasts, "map"), "roll"],
+        # The forecasts are solved: deterministic, the default since 4.7.0, would ignore them.
+        ["solve", "stoch_2p_hedge", "dispatch_realization_method", enc("within_solve", "str"), "roll"],
         ["profile", "wprof", "profile", enc(profile, "map"), "roll"],
         ["solve", "stoch_2p_hedge", "solve_mode", enc("rolling_window", "str"), "roll"],
         ["solve", "stoch_2p_hedge", "rolling_solve_horizon", enc(4.0, "float"), "roll"],
-        ["solve", "stoch_2p_hedge", "rolling_solve_jump", enc(3.0, "float"), "roll"],
-        ["solve", "stoch_2p_hedge", "stochastic_invest_method", enc("none", "str"), "roll"]]
-
-
-@pytest.mark.solver
-def test_rolling_fan_in_the_look_ahead_carries_the_committed_state(tmp_path_factory) -> None:
-    """A rolling fan only in the look-ahead needs no designation: roll 1 starts from roll 0's committed end state,
-    v_state of the pre-reveal period p2035 at t0003 (its last committed step) × the state unitsize, and every forecast of
-    roll 1's fan (opened at its first step) starts from that carry."""
-    tmp = tmp_path_factory.mktemp("label_rolling_lookahead")
-    steps, _ = _run(_variant(HEDGE, tmp, "rolling_hedge", _rolling_hedge), tmp, scenario="hedge_storage")
-    rolls = list(steps.values())
-    assert len(rolls) == 2 and not any(is_realization(k) for k in steps), list(steps)
-    first, second = rolls
-    v0 = utf8(first.solution.value("v_state")).filter(
-        (pl.col("n") == "resv") & (pl.col("d") == "p2035") & (pl.col("t") == "t0003"))
-    assert v0.height == 1
-    su = utf8(first.flex_data.p_state_unitsize.frame).filter(pl.col("n") == "resv")["value"][0]
-    carry = utf8(second.flex_data.p_roll_continue_state.frame).filter(pl.col("n") == "resv")["value"].to_list()
-    assert carry == [pytest.approx(float(v0["value"][0]) * su, abs=1e-6)]
-    starts = utf8(second.flex_data.nodeState_first_dt).filter(pl.col("n") == "resv")
-    assert set(starts["d"].to_list()) == {"p2040_high", "p2040_low"}
+        ["solve", "stoch_2p_hedge", "rolling_solve_jump", enc(3.0, "float"), "roll"]]
 
 
 def _rolling_hedge_online(data: dict) -> None:
@@ -734,40 +771,8 @@ def _rolling_hedge_online(data: dict) -> None:
                                  ["unit", "base", "min_load", [base64.b64encode(b"0.3").decode(), "float"], "roll"]]
 
 
-@pytest.mark.solver
-def test_rolling_fan_in_the_look_ahead_leaves_units_online_untied(tmp_path_factory) -> None:
-    """Units online are tied only where committed.  Roll 0 commits t0001-t0003 of the pre-reveal period p2035 and
-    has the fan (p2040 = t0004) only in its look-ahead: no step of the fan is committed, so its forecasts commit
-    units freely there (no non_anticipativity_online row).  Roll 1 commits t0004-t0006 inside the fan: units online
-    are tied on those 3 steps, reference forecast ``p2040_high`` to the one other forecast ``p2040_low``, for the
-    one online unit ``base``: 3 rows."""
-    from tests.engine._unit_db import build, cstr_over
-    tmp = tmp_path_factory.mktemp("label_rolling_lookahead_online")
-    steps, _ = _run(_variant(HEDGE, tmp, "rolling_hedge_online", _rolling_hedge_online), tmp,
-                    scenario="hedge_storage")
-    rolls = list(steps.values())
-    assert len(rolls) == 2 and not any(is_realization(k) for k in steps), list(steps)
-    first, second = (cstr_over(build(r.flex_data), "non_anticipativity_online_linear") for r in rolls)
-    assert first is None
-    assert second is not None
-    assert sorted(second.select("p", "d", "b", "t").iter_rows()) == [
-        ("base", "p2040_high", "p2040_low", t) for t in ("t0004", "t0005", "t0006")]
-
-
 def _stochastics_variant(tmp: Path, name: str, mutate) -> Path:
     return _variant(STOCHASTICS, tmp, name, mutate)
-
-
-@pytest.mark.solver
-def test_committed_window_in_forecasts_only_fan_with_storage_raises(tmp_path_factory) -> None:
-    """``1_week_rolling_wind`` with every branch a forecast: each roll commits its jump inside the fan, the next
-    roll continues from it and the storage state is decided per forecast there, so the run stops before the first
-    roll's LP and names the storage state."""
-    from flextool.engine.input._solve_state import FlexToolConfigError
-    tmp = tmp_path_factory.mktemp("label_committed_storage")
-    fixture = _stochastics_variant(tmp, "forecasts_only_rolling", lambda d: _all_forecasts(d, "1week_rolling"))
-    with pytest.raises(FlexToolConfigError, match=r"1week_rolling_roll_0.*storage state"):
-        _run(fixture, tmp, scenario="1_week_rolling_wind")
 
 
 def _append_alternative(data: dict, scenario: str, alt: str, entities: list, values: list) -> None:
@@ -818,23 +823,6 @@ def _forecasts_only_without_storage(extra: tuple):
     return mutate
 
 
-@pytest.mark.solver
-@pytest.mark.parametrize(("family", "extra"), [("CO2 period cap", _CO2_PERIOD_CAP),
-                                               ("annual commodity ladder", _ANNUAL_LADDER)])
-def test_committed_window_in_forecasts_only_fan_with_period_carry_raises(tmp_path_factory, family: str,
-                                                                         extra: tuple) -> None:
-    """A CO2 period cap and a finite annual ladder tier continue from the period's realized emissions /
-    purchases.  With every branch a forecast and no storage, each roll still commits its jump inside the fan and
-    the next roll continues from it, but those emissions / purchases are decided per forecast there and no solve
-    realizes them: the run stops before the first roll's LP and names the family."""
-    from flextool.engine.input._solve_state import FlexToolConfigError
-    tmp = tmp_path_factory.mktemp("label_committed_period_carry")
-    fixture = _stochastics_variant(tmp, "forecasts_only_no_storage", _forecasts_only_without_storage(extra))
-    with pytest.raises(FlexToolConfigError, match=rf"1week_rolling_roll_0.*{family}") as raised:
-        _run(fixture, tmp, scenario="1_week_rolling_wind")
-    assert "storage state" not in str(raised.value)
-
-
 def _period_carry_flex_data(cap_period: str) -> SimpleNamespace:
     """A FlexData stand-in with one fan (label ``p1``, forecasts ``p1_a`` / ``p1_b``), a finite annual ladder
     tier and a CO2 period cap, both on *cap_period*; every other family absent."""
@@ -882,43 +870,14 @@ def _rolling_hedge_with_period_carry(data: dict) -> None:
          ["group", "co2g", "co2_max_period", _period_map({"p2035": 1.0e6, "p2040": 1.0e6})]])
 
 
-@pytest.mark.solver
-def test_rolling_fan_in_the_look_ahead_with_period_carry_solves(tmp_path_factory) -> None:
-    """A fan only in the look-ahead commits nothing inside it: roll 0 commits t0001-t0003 of the pre-reveal
-    period p2035, so an annual ladder tier and a CO2 period cap need no realization solve.  The run solves, and
-    the carries roll 1 continues from (simulated hours, CO2 tonnes, ladder purchases) are keyed by the committed
-    period p2035 only, the simulated hours being its 3 committed one-hour steps."""
-    tmp = tmp_path_factory.mktemp("label_rolling_lookahead_period_carry")
-    steps, _ = _run(_variant(HEDGE, tmp, "rolling_hedge_period_carry", _rolling_hedge_with_period_carry), tmp,
-                    scenario="hedge_storage")
-    rolls = list(steps.values())
-    assert len(rolls) == 2 and not any(is_realization(k) for k in steps), list(steps)
-    first, second = rolls
-    assert second.flex_data.group_d_co2_capped is not None and second.flex_data.cndi_ladder_ann is not None
-    handoff = first.handoff
-    hours = handoff.cum_sim_hours
-    assert dict(zip(hours["period"].cast(pl.Utf8), hours["p_ladder_cum_sim_hours"])) == {
-        "p2035": pytest.approx(3.0)}
-    for name in ("cumulative_co2", "cumulative_commodity"):
-        carrier = getattr(handoff, name)
-        assert carrier is not None and carrier.height > 0, name
-        period_col = "period" if "period" in carrier.columns else "d"
-        assert set(utf8(carrier)[period_col].to_list()) == {"p2035"}, carrier
-    co2 = second.flex_data.p_co2_cum_realized_tonnes.frame
-    assert set(utf8(co2).select("g", "d").iter_rows()) == {("co2g", "p2035")}, co2
-    # the carried tonnes are the carried fuel purchases × co2_content 0.5, and both are non-zero
-    mwh = float(handoff.cumulative_commodity["p_ladder_cum_realized_mwh"].sum())
-    assert mwh > 0.0
-    assert float(co2["value"][0]) == pytest.approx(0.5 * mwh, rel=1e-9)
-
-
 def _rolling_online_only(data: dict) -> None:
     """``stoch_t0_commit`` as a rolling solve over a forecasts-only fan with unit commitment only: no designation,
     no ``separate_dispatch``, no investment; horizon 2 h, jump 1 h, so every roll commits its first step inside the
     fan.  Each roll start t0001-t0003 has an analysis time: ``high`` (wind CF 0.8) and ``low`` (0.0), 0.5 each."""
-    drop = {"dispatch_realization_method", "invest_periods", "realized_invest_periods", "invest_method",
+    drop = {"invest_periods", "realized_invest_periods", "invest_method",
             "invest_cost", "discount_rate", "lifetime_technical", "invest_max_total"}
     data["parameter_values"] = [r for r in data["parameter_values"] if r[2] not in drop]
+    _drop_separate_dispatch(data)
     steps = ("t0001", "t0002", "t0003")
 
     def enc(value, kind):
@@ -941,29 +900,6 @@ def _rolling_online_only(data: dict) -> None:
                                  ["solve", "stoch_rd", "rolling_solve_jump", enc(1.0, "float"), "init"]]
 
 
-@pytest.mark.solver
-def test_committed_window_in_forecasts_only_fan_online_only_solves(tmp_path_factory) -> None:
-    """A committed window inside a forecasts-only fan with only non-anticipativity-tied families (online): the
-    run needs no realization solve, every roll solves, and the next roll's online carry is the first sorted
-    forecast's commitment at the committed step, applied to every forecast at the next roll's first step.  Hand value: demand 100 MW, wind 80 (high) or 0 (low) MW, the
-    peaker 2 × 50 MW with min_load 0.5; ``low`` needs both units, the tie gives ``high`` the same commitment, and
-    a slack costs 10 000 per MWh against the 10 per MWh peaker, so v_online = 2 at each roll's first step."""
-    tmp = tmp_path_factory.mktemp("label_committed_online")
-    steps, _ = _run(_variant(T0_FIXTURE, tmp, "rolling_online_only", _rolling_online_only), tmp)
-    rolls = list(steps.values())
-    assert len(rolls) == 3 and not any(is_realization(k) for k in steps), list(steps)
-    for prev, nxt in zip(rolls, rolls[1:]):
-        online = utf8(prev.solution.value("v_online_linear")).filter(pl.col("p") == "peaker")
-        first = online.filter(pl.col("d") == FIRST_FORECAST).sort("t")
-        assert float(first["value"][0]) == pytest.approx(2.0, abs=1e-6)
-        assert set(online.filter(pl.col("t") == first["t"][0])["value"].round(6).to_list()) == {2.0}
-        carry = utf8(nxt.flex_data.p_roll_continue_online.frame).filter(pl.col("p") == "peaker")
-        assert carry["value"].to_list() == [pytest.approx(float(first["value"][0]), abs=1e-6)]
-        # ... and it reaches every forecast of the next roll's fan at its first step.
-        takes = utf8(nxt.flex_data.dt_online_carry)
-        assert set(takes["d"].to_list()) == {"p2035_high", "p2035_low"} and takes["t"].n_unique() == 1, takes
-
-
 def _rolling_online_only_min_uptime(data: dict) -> None:
     """:func:`_rolling_online_only` with the peaker's minimum up and down time 2 h (1 h steps) and the demand
     50 MW at t0001, 100 MW after (so a unit starts at t0002, after the solve's free first step)."""
@@ -974,42 +910,6 @@ def _rolling_online_only_min_uptime(data: dict) -> None:
         if r[1] == "elec" and r[2] == "inflow":
             demand = {"index_type": "str", "data": [["t0001", -50.0], ["t0002", -100.0], ["t0003", -100.0]]}
             r[3] = [base64.b64encode(json.dumps(demand).encode()).decode(), "map"]
-
-
-@pytest.mark.solver
-def test_committed_window_in_forecasts_only_fan_carries_the_min_uptime(tmp_path_factory) -> None:
-    """The forecasts-only rolling fan with a 2 h minimum up time: each roll commits its first step inside the fan
-    (the tied forecast ``p2035_high`` holds its values), so the next roll's forecasts both start at the step after
-    it and owe the start-ups of that committed step — on 1 h steps the committed step is 1 h before the next roll's
-    first step (1 < 2), the step before it 2 h (not < 2).  So carry = v_startup of ``p2035_high`` at the committed
-    step, at the first step of every forecast of the next roll, nothing later.  The history used to be stored under
-    the period label, where no forecast's look-back reached it.
-    Hand derivation (2 units of 50 MW, min_load 0.5, start-up 50 per unit, 10 €/MWh, branches 0.5 each; wind 100 MW
-    at CF 0.8 / 0.0): roll 0 commits t0001 (50 MW): ``low`` needs 1 unit (2 would floor ``high``'s peaker at 50 MW
-    instead of 25, +125, to save ``low``'s later start-up, 25), and t0001 is a free start: no start-up there, so
-    nothing is carried into roll 1.  Roll 1 commits t0002 (100 MW): ``low`` needs both units, tied: a start-up of 1
-    from the carried 1, carried into the first step t0003 of both forecasts of roll 2."""
-    tmp = tmp_path_factory.mktemp("label_committed_min_uptime")
-    steps, _ = _run(_variant(T0_FIXTURE, tmp, "rolling_online_only_min_uptime", _rolling_online_only_min_uptime),
-                    tmp)
-    rolls = list(steps.values())
-    assert len(rolls) == 3 and all(r.solution.optimal for r in rolls)
-    carried = 0
-    for prev, nxt in zip(rolls, rolls[1:]):
-        committed = prev.handoff.roll_end_step["step"][0]
-        su = utf8(prev.solution.value("v_startup_linear")).filter(
-            (pl.col("p") == "peaker") & (pl.col("d") == FIRST_FORECAST) & (pl.col("t") == committed))
-        expect = float(su["value"][0])
-        first = utf8(nxt.flex_data.dt)["t"].sort()[0]
-        uc = nxt.flex_data.uptime_carry
-        got = {} if uc is None else {(d, t): v for _p, d, t, v in utf8(uc).rows()}
-        want = {(d, first): expect for d in ("p2035_high", "p2035_low")} if abs(expect) > 1e-9 else {}
-        assert got.keys() == want.keys(), (got, want)
-        for key, v in want.items():
-            assert got[key] == pytest.approx(v, abs=1e-9)
-        carried += len(want)
-        assert expect == pytest.approx(0.0 if committed == "t0001" else 1.0, abs=1e-9), (committed, expect)
-    assert carried == 2, "the witness starts one unit at t0002, carried into both forecasts of roll 2"
 
 
 def _flowgroup_path(invest_method: str):
@@ -1030,23 +930,42 @@ def _flowgroup_path(invest_method: str):
 
 
 
-def _rolling_online_only_free(data: dict) -> None:
-    """:func:`_rolling_online_only` with ``shared_operation_periods = []``: nothing is tied, units online included."""
-    _rolling_online_only(data)
-    data["parameter_values"].append(["solve", "stoch_rd", "shared_operation_periods",
-                                     [base64.b64encode(json.dumps({"value_type": "str", "data": []}).encode()).decode(),
-                                      "array"], "init"])
+def _w3(solve: str) -> str:
+    return (f"Solve '{solve}' is a rolling stochastic solve with dispatch_realization_method within_solve, but its "
+            "stochastic_branches have no branch with realized: yes. Since FlexTool 4.7.0 such a solve dispatches "
+            "each jump with the data of the realized branch. Mark the branch that holds the realized data with "
+            "realized: yes.")
 
 
 @pytest.mark.solver
-def test_committed_window_in_forecasts_only_fan_with_untied_online_raises(tmp_path_factory) -> None:
-    """The twin of the online-only case with ``shared_operation_periods = []``: units online are no longer tied on
-    the committed step, so they are decided per forecast there, no solve realizes them and the next roll would
-    continue from them: the run stops before the first roll's LP and names the units online."""
+@pytest.mark.parametrize(("fixture", "name", "mutate", "scenario", "solve"), [
+    ("hedge", "rolling_hedge", _rolling_hedge, "hedge_storage", "stoch_2p_hedge"),
+    ("hedge", "rolling_hedge_online", _rolling_hedge_online, "hedge_storage", "stoch_2p_hedge"),
+    ("hedge", "rolling_hedge_period_carry", _rolling_hedge_with_period_carry, "hedge_storage", "stoch_2p_hedge"),
+    ("stochastics", "forecasts_only_rolling", lambda d: _all_forecasts(d, "1week_rolling"), "1_week_rolling_wind",
+     "1week_rolling"),
+    ("stochastics", "forecasts_only_co2", _forecasts_only_without_storage(_CO2_PERIOD_CAP), "1_week_rolling_wind",
+     "1week_rolling"),
+    ("stochastics", "forecasts_only_ladder", _forecasts_only_without_storage(_ANNUAL_LADDER),
+     "1_week_rolling_wind", "1week_rolling"),
+    ("t0", "rolling_online_only", _rolling_online_only, "stoch_t0_commit", "stoch_rd"),
+    ("t0", "rolling_online_only_min_uptime", _rolling_online_only_min_uptime, "stoch_t0_commit", "stoch_rd"),
+], ids=["lookahead_fan_storage", "lookahead_fan_online", "lookahead_fan_period_carry", "committed_storage",
+        "committed_co2_period_cap", "committed_annual_ladder", "committed_online", "committed_min_uptime"])
+def test_rolling_forecasts_only_within_solve_stops(tmp_path_factory, fixture, name, mutate, scenario,
+                                                   solve) -> None:
+    """W3 (design rev 7.1 §2.6, §8.2 T-w4): since 4.7.0 a rolling stochastic ``within_solve`` solve realizes each
+    jump on its ``realized: yes`` branch, so a forecasts-only fan stops the run before any roll, whether the fan is
+    only in a roll's look-ahead (``hedge_storage`` rolling, fan at t0004) or each roll commits its jump inside it
+    (``1_week_rolling_wind`` with every branch a forecast; ``stoch_t0_commit`` rolling, horizon 2 / jump 1) and
+    whatever the committed families (storage, CO2 period cap, annual ladder, units online).  Before,
+    these ran a roll-start fan (and the committed-window checks stopped the ones that left a carry undecided)."""
     from flextool.engine.input._solve_state import FlexToolConfigError
-    tmp = tmp_path_factory.mktemp("label_committed_online_free")
-    with pytest.raises(FlexToolConfigError, match=r"stoch_rd_roll_0.*units online"):
-        _run(_variant(T0_FIXTURE, tmp, "rolling_online_only_free", _rolling_online_only_free), tmp)
+    tmp = tmp_path_factory.mktemp(f"w3_{name}")
+    base = {"hedge": HEDGE, "stochastics": STOCHASTICS, "t0": T0_FIXTURE}[fixture]
+    with pytest.raises(FlexToolConfigError) as err:
+        _run(_variant(base, tmp, name, mutate), tmp, scenario=scenario)
+    assert str(err.value) == _w3(solve)
 
 
 @pytest.mark.solver

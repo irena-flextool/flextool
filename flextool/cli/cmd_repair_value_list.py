@@ -1,10 +1,12 @@
-"""``flextool-repair-value-list``: repair a database that W-0490 names, and restore lost shipped defaults (W-0491).
+"""``flextool-repair-value-list``: repair a database that W-0490 names, and restore lost method parameter defaults
+(W-0491).
 
 The tool never changes the database it is given: it writes a repaired copy (default ``<stem>_repaired.sqlite`` next
 to it) with two side files, the applied answers (``.value_list_repair.csv``, replayable with ``--answers``) and a
 report (``.value_list_repair.txt``).  The work is done by ``flextool.update_flextool.value_list_*`` and
-``list_default_restore``; this module is the command line: one question per similarity group (``e`` answers each
-item of the group), a summary and a confirm, the answers-file route when there is no terminal, and the exit codes:
+``list_default_restore``; this module is the command line: one question for the method parameter defaults and the
+storage nodes (Enter / ``e`` / ``x`` / ``q``), then one per similarity group (``e`` answers each item of the
+group), a summary and a confirm, the answers-file route when there is no terminal, and the exit codes:
 
 ====  ==========================================================================================================
 0     copy written (with or without a record); nothing to do; W-0490 does not apply; rerun on a repaired copy;
@@ -29,6 +31,7 @@ import os
 import shlex
 import sys
 import tempfile
+import textwrap
 from pathlib import Path
 
 from flextool._child_python import python_module_argv
@@ -37,9 +40,7 @@ MODULE = "flextool.cli.cmd_repair_value_list"
 PROG = "flextool-repair-value-list"
 EXIT_OK, EXIT_ERROR, EXIT_NEEDS_ANSWERS, EXIT_UNCLEAR = 0, 1, 3, 4
 QUIT_SUFFIX = ".value_list_answers.csv"
-NOTHING = "no value-list overwrite and no empty shipped default found; nothing to do"
-NO_NUMBER = ("A number works only where the members are listed: type set:<member>, or e to answer each item "
-             "with its own list.")
+NOTHING = "no value-list overwrite and no empty method parameter default found; nothing to do"
 #: The characters PowerShell reads as a single quote (doubled inside a single-quoted string).
 _PS_QUOTES = "'\u2018\u2019\u201a\u201b"
 BY_HAND = ("--checked-by-hand: you confirm that you have gone through every item of the W-0490 checklist by "
@@ -75,8 +76,8 @@ def repair_command(db_path: str | Path, *, python: str | None = None, shell: str
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog=PROG, description="Repair a FlexTool database whose invest_methods value list an old Spine library "
-        "overwrote (W-0490), and restore shipped defaults an old upgrade left empty (W-0491). The database itself "
-        "is never changed: a repaired copy is written next to it.")
+        "overwrote (W-0490), and restore method parameter defaults an old upgrade left empty (W-0491). The database "
+        "itself is never changed: a repaired copy is written next to it.")
     p.add_argument("database", help="the .sqlite file")
     p.add_argument("--output", help="the repaired copy (default: <name>_repaired.sqlite next to the database)")
     p.add_argument("--archive", help="an older copy of the database (data version below 22) to use as evidence")
@@ -85,7 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
                    "file to fill in (answer column: keep, set:<member> or skip)")
     p.add_argument("--answers", metavar="FILE.csv", help="take the answers from this file (no questions)")
     p.add_argument("--accept-certain", action="store_true", help="answer the items the evidence makes certain with "
-                   "their suggestion (class defaults and storage questions are always asked)")
+                   "their suggestion (method parameter defaults and storage questions are always asked)")
     p.add_argument("--checked-by-hand", action="store_true", help="for a database this tool cannot read (exit "
                    "code 4): you have gone through the W-0490 checklist by hand; record the repair in the copy "
                    "(no value is changed for W-0490)")
@@ -102,7 +103,9 @@ def _interactive() -> bool:
 
 
 def _where(s) -> str:
-    return f" {s.entity} [{s.alternative}]" if s.entity else " (class default)"
+    from flextool.update_flextool.value_list_suspects import DEFAULT_WHERE
+
+    return f" {s.entity} [{s.alternative}]" if s.entity else DEFAULT_WHERE
 
 
 def _line(s, answer=None) -> str:
@@ -147,11 +150,11 @@ def _parse(text: str, s, allowed: tuple[str, ...]):
 
 
 def _ask_group(items, choices: dict, ask, group: bool) -> dict:
-    """Ask one question for *items* (one similarity group, or one item); returns ``{item: Answer}``."""
+    """Ask one question for *items* (one similarity group of values, or one item); returns ``{item: Answer}``.  A
+    group's items share kind and class, so one member list (a number maps to it)."""
     from flextool.update_flextool import value_list_answers as va
 
     s = items[0]
-    same = all(choices[t.item] == choices[s.item] for t in items)
     if len(items) == 1:
         print(f"\n{s.kind} {s.cls}.{s.parameter}{_where(s)}: {s.label}\n  {s.evidence}\n  {s.context.text()}"
               + (f"\n  {s.archive_note}" if s.archive_note else ""))
@@ -165,7 +168,7 @@ def _ask_group(items, choices: dict, ask, group: bool) -> dict:
             print(f"  ... and {len(items) - 8} more")
     if s.reason:
         print(f"  {s.reason}")
-    members = choices[s.item] if same else ()
+    members = choices[s.item]
     if members:
         print("  members: " + ", ".join(f"{i} = {m}" for i, m in enumerate(members, 1)))
     enter = "Enter = each item's suggestion" if len({t.suggestion for t in items}) > 1 and all(
@@ -176,9 +179,6 @@ def _ask_group(items, choices: dict, ask, group: bool) -> dict:
                         "e = answer each" if group and len(items) > 1 else "", "q = quit") if o]
     while True:
         text = ask(f"  [{'; '.join(opts)}] > ")
-        if text.strip().isdigit() and not members:  # each item would map the number to its own list
-            print(f"  {NO_NUMBER}")
-            continue
         try:
             got = [_parse(text, t, choices[t.item]) for t in items]
         except va.AnswersError as exc:
@@ -192,6 +192,43 @@ def _ask_group(items, choices: dict, ask, group: bool) -> dict:
         if all(isinstance(g, va.Answer) for g in got):
             return {t.item: g for t, g in zip(items, got)}
         print("  No answer is suggested here: please choose." if s.kind != "storage" else f"  {s.reason}")
+
+
+def _print_block(lines) -> None:
+    """The block's lines, wrapped at 110 characters (an item line's continuation indented by four)."""
+    print()
+    for line in lines:
+        item = line.startswith("  ")
+        print(textwrap.fill(line, 110, subsequent_indent="    " if item else "", break_long_words=False,
+                            break_on_hyphens=False))
+
+
+def _ask_defaults(block, choices: dict, ask) -> dict:
+    """The one question for the method parameter defaults and storage nodes *block* (design §1c); returns
+    ``{item: Answer}``.  Enter: each suggestion, a storage node ``keep``; ``e``: one question per item; ``x``: skip
+    all; ``q``: quit."""
+    from flextool.update_flextool import list_default_restore as ldr
+    from flextool.update_flextool import value_list_answers as va
+    from flextool.update_flextool import value_list_suspects as vs
+
+    change = vs.results_change(block)
+    _print_block(ldr.block_lines(block, change))
+    each = ldr.offers_each(block, change)
+    while True:
+        low = ask(ldr.block_prompt(block, change)).strip().lower()
+        if low in ("q", "quit"):
+            raise _Quit
+        if not low:
+            return {s.item: va.Answer(va.KEEP) if s.kind == ldr.STORAGE_KIND else
+                    va.check_answer(s, s.suggestion, choices[s.item]) for s in block}
+        if low in ("x", "skip"):
+            return {s.item: va.Answer(va.SKIP) for s in block}
+        if each and low in ("e", "each"):
+            out = {}
+            for s in block:
+                out |= _ask_group([s], choices, ask, False)
+            return out
+        print("  Type Enter, e, x or q." if each else "  Type Enter, x or q.")
 
 
 def _summary(plan, output: Path) -> None:
@@ -238,9 +275,11 @@ def main(argv: list[str] | None = None, *, ask=None) -> int:
         build_parser().error("--archive is evidence for the tool's own questions; --checked-by-hand asks none")
     from spinedb_api.exception import SpineDBAPIError
 
+    from flextool.cli._console import tolerant_console_encoding
     from flextool.update_flextool import value_list_answers as va
     from flextool.update_flextool import value_list_repair as vr
 
+    tolerant_console_encoding()  # an entity name outside a cp1252 pipe's code page must not stop the tool
     try:
         return _run(args, ask if ask is not None else (input if _interactive() else None))
     except (vr.RepairError, va.AnswersError, OSError) as exc:
@@ -351,7 +390,12 @@ def _work(args, ask, source: Path, output: Path, a) -> int:
         answers = va.accept_certain(suspects) | answers
     stale_items = {item for item, _ in stale}
     needed = [s for s in suspects if s.item not in answers and s.item not in stale_items]
+    block = vs.defaults_block(needed)
     if args.dry_run:
+        if block:
+            from flextool.update_flextool import list_default_restore as ldr
+
+            _print_block(ldr.block_lines(block, vs.results_change(block)))
         print(f"Dry run: {len(suspects)} item(s); nothing was written.")
         for s in suspects:
             print(_line(s, answers.get(s.item)))
@@ -370,7 +414,9 @@ def _work(args, ask, source: Path, output: Path, a) -> int:
             return EXIT_NEEDS_ANSWERS
         choices = va.choices(a, suspects)
         try:
-            for g in vs.groups(needed):
+            if block:
+                answers |= _ask_defaults(block, choices, ask)
+            for g in vs.groups([s for s in needed if s not in block]):
                 answers |= _ask_group(list(g.suspects), choices, ask, True)
         except (_Quit, EOFError, KeyboardInterrupt):
             return _quit(output, suspects, key, answers)

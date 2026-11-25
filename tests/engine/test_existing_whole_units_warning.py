@@ -28,11 +28,11 @@ def _warnings(tmp_path_factory, alt: str, method: str, existing: float) -> list[
 
 
 def test_fractional_unit_count_with_integer_online_warns_once(tmp_path_factory):
-    assert _warnings(tmp_path_factory, "binary_2_5", "binary", 2.5) == [
+    assert _warnings(tmp_path_factory, "binary_2_5", "integer_fix_in_uc", 2.5) == [
         ("unit", PLANT, "existing 2.5 units of virtual_unitsize 200 MW")]
 
 
-@pytest.mark.parametrize("alt, method, existing", [("binary_2", "binary", 2.0), ("linear_2_5", "linear", 2.5)])
+@pytest.mark.parametrize("alt, method, existing", [("binary_2", "integer_fix_in_uc", 2.0), ("linear_2_5", "linear", 2.5)])
 def test_whole_unit_count_or_linear_online_does_not_warn(tmp_path_factory, alt, method, existing):
     assert _warnings(tmp_path_factory, alt, method, existing) == []
 

@@ -6,9 +6,10 @@ that list (a carried group value is in ``group_invest_methods``, not R's list).
 
 - **Values**: ``list_value_ref`` references to R on definitions bound to R's list.  In ``renamed-back`` only those
   written in (C, H), while R read the appended member.
-- **Class defaults**: every ``invest_method`` definition of unit, connection, node and group whose default is not
-  a valid reference to the shipped default of its own list (``not_allowed``; ``not_active`` in the group list of
-  v77): a reference to R or to another member, a text the item-279 pre-pass could not match, or no default.
+- **Method parameter defaults**: every ``invest_method`` definition bound to R's list whose default references R
+  (in ``hit`` and ``hit-unanchored``; R reads ``cumulative_limits`` there), also a text default the item-279 pre-pass
+  turned into a reference to R.  A default set to another member is the user's and never asked; an empty one is
+  part B's (``list_default_restore``).
 - **Carried group values** (data version 77 and later): group values that read ``cumulative_limits`` and were
   written by the v77 step's commit, which rewrote every group value by name.
 
@@ -21,11 +22,15 @@ Evidence and suggestion (``label`` / ``suggestion``):
   or more shipped members missing; ``legacy member`` when no shipped member is missing or hand-restored.  No
   suggestion;
 - a value written after the overwrite: no suggestion (the user decides);
-- a class default, in every state: the shipped default, recommended with :data:`DEFAULT_REASON`;
+- a method parameter default: FlexTool's default (``set:not_allowed``), recommended with :data:`DEFAULT_REASON`;
+  ``keep`` (:data:`HAND_DEFAULT`) when it was changed by hand after the last upgrade
+  (``list_default_restore.changed_by_hand``);
 - a carried group value or a ``renamed-back`` value in (C, H): no suggestion.
 
 :func:`groups` puts suspects with the same kind, class, label, suggestion, archive member and context signature
-(``invest_cost``, cumulative cap, inert alternative) in one similarity group.
+(``invest_cost``, cumulative cap, inert alternative) in one similarity group.  The defaults and the storage
+nodes are asked first, in one block (:func:`defaults_block`, :func:`results_change`,
+``list_default_restore.block_lines``).
 
 TODO(v5.0.0): remove with W-0490 (see ``value_list_history``).
 """
@@ -34,6 +39,7 @@ from __future__ import annotations
 import contextlib
 from dataclasses import dataclass
 
+from flextool.update_flextool import list_default_restore as ldr
 from flextool.update_flextool import value_list_history as vlh
 from flextool.update_flextool import value_list_repair as vr
 
@@ -42,18 +48,22 @@ CERTAIN = "certain"
 LEGACY = "legacy member"
 UNKNOWN = "lost member not known"  # + " (hand-restored X)" or " (one of X, Y)": :func:`lost_unknown`
 AFTER = "written after the overwrite"
-SHIPPED = "recommended: shipped default"
+SHIPPED = "reads cumulative_limits since the upgrade"
+HAND_DEFAULT = "changed by hand on {date}"
 CARRIED_LABEL = "carried by v77, inert either way"
 RENAMED = "written while R read cumulative_limits"
 CERTAIN_ARCHIVE = "certain (archive)"  # the same row in a same-lineage archive (``value_list_archive``)
 #: The labels ``--accept-certain`` and a group-apply may pre-answer.
 CERTAIN_LABELS: tuple[str, ...] = (CERTAIN, CERTAIN_ARCHIVE)
 
-DEFAULT_REASON = ("Recommended: FlexTool's shipped default. A class default that is not the shipped default, or a "
-                  "missing one, can lead to unwanted behaviour (here: entities that rely on it invest and retire up "
-                  "to 1e6 MW).")
-#: The shipped default member of each list an ``invest_method`` definition can be bound to.
-SHIPPED_DEFAULT = {"invest_methods": "not_allowed", "group_invest_methods": "not_active"}
+DEFAULT_REASON = ("Recommended: FlexTool's default. A method parameter default that reads cumulative_limits can "
+                  "lead to unwanted behaviour (here: entities that rely on it invest and retire up to 1e6 MW).")
+HAND_REASON = ("Suggested: keep, because it was changed by hand after the last upgrade; set:not_allowed restores "
+               "FlexTool's default.")
+#: FlexTool's default of ``invest_method`` in R's list (``invest_methods``).
+FLEXTOOL_DEFAULT = "not_allowed"
+#: How a prompt line names a method parameter default (no entity).
+DEFAULT_WHERE = " (method parameter default)"
 _INVEST_CLASSES = ("unit", "connection", "node", "group")
 _CAPS = ("cumulative_max_capacity", "cumulative_min_capacity")
 _LIMITS = ("invest_max_period", "invest_max_total", "retire_max_period", "retire_max_total")
@@ -64,8 +74,8 @@ _COMMENT_CHARS = 60
 @dataclass(frozen=True)
 class Context:
     """What the user needs to judge a suspect.  For a value: the entity's parameters (any alternative), the
-    scenarios that use its alternative; for a default: the entities with no own value (``relying``) and how many of
-    them have ``invest_cost`` / a cumulative cap."""
+    scenarios that use its alternative; for a default: the entities that rely on it (:func:`relying_entities`), how
+    many of them have ``invest_cost`` / a cumulative cap, and their names with the cap (``relying_names``)."""
 
     invest_cost: bool = False
     cap: bool = False
@@ -78,6 +88,7 @@ class Context:
     relying_cap: int = 0
     uncapped: bool = False  # the reference reads cumulative_limits
     invest: bool = True  # False for a part B suspect: no invest_cost / cap fields in the text
+    relying_names: tuple[tuple[str, bool], ...] = ()  # (entity name, has a cumulative cap), by name
 
     @property
     def inert(self) -> bool:
@@ -86,9 +97,9 @@ class Context:
 
     def text(self) -> str:
         if self.relying is not None and not self.invest:
-            out = f"{self.relying} entities rely on it"
+            out = f"{rely(self.relying)} on it"
         elif self.relying is not None:
-            out = (f"{self.relying} entities rely on it: {self.relying_cost} with invest_cost, {self.relying_cap} "
+            out = (f"{rely(self.relying)} on it: {self.relying_cost} with invest_cost, {self.relying_cap} "
                    "with a cumulative cap")
             if self.uncapped and self.relying > self.relying_cap:
                 out += f" (without one: {_UNCAPPED})"
@@ -111,7 +122,8 @@ class Suspect:
     """One item the user answers.  *item* is ``pv:<parameter_value id>``, ``def:<definition id>`` or (part B)
     ``sn:<node entity id>:<alternative id>``; *current* the
     member its reference reads now in its own list *list_id* (``""``: no member); *suggestion* the pre-selected
-    answer (``set:<member>``; ``keep`` for a part B default kept in an earlier repair) or ``None``; *reason* why (a class default); *keep_text* what ``keep`` means."""
+    answer (``set:<member>``; ``keep`` for a part B default kept in an earlier repair or a part A default changed
+    by hand) or ``None``; *reason* why (a method parameter default); *keep_text* what ``keep`` means."""
 
     item: str
     kind: str
@@ -130,7 +142,7 @@ class Suspect:
     keep_text: str = ""
     archive: str | None = None  # the archive's member, translated (archive mode)
     archive_note: str = ""  # what the archive shows, for the prompt and the CSV ``archive`` column
-    part_b: bool = False  # an empty shipped default or a storage node (``list_default_restore``)
+    part_b: bool = False  # an empty method parameter default or a storage node (``list_default_restore``)
 
     @property
     def certain(self) -> bool:
@@ -143,10 +155,50 @@ class Group:
     suspects: tuple[Suspect, ...]
 
 
+def rely(n: int) -> str:
+    """``"1 entity relies"`` / ``"N entities rely"``."""
+    return f"{n} entity relies" if n == 1 else f"{n} entities rely"
+
+
+def defaults_block(suspects) -> tuple[Suspect, ...]:
+    """The suspects of the one block question: every method parameter default and every storage node."""
+    return tuple(s for s in suspects if s.kind in (DEFAULT, ldr.STORAGE_KIND))
+
+
+def results_change(block) -> bool:
+    """Whether Enter on the block changes results: a storage node is in it, or a part A default that Enter sets has
+    an entity relying on it.  Part B restores never change results (the engine falls back to FlexTool's default)."""
+    return any(s.kind == ldr.STORAGE_KIND for s in block) or any(
+        s.kind == DEFAULT and not s.part_b and s.suggestion != "keep" and (s.context.relying or 0) > 0 for s in block)
+
+
+def relying_entities(con, class_id: int, def_id: int) -> list[tuple[int, str, bool]]:
+    """``(id, name, capped)`` of the entities of class *class_id* that rely on the default of definition *def_id*,
+    by name: with scenarios, an entity relies when at least one scenario has no value for it in any of its
+    alternatives; without scenarios, when it has no value in any alternative.  A scenario with no alternatives is
+    ignored (it runs nothing).  Entity activity is ignored (it can only over-count).  *capped*: the entity has a
+    cumulative cap value in some alternative."""
+    scenarios: dict[int, set[int]] = {}
+    for scenario, alt in con.execute("SELECT scenario_id, alternative_id FROM scenario_alternative"):
+        scenarios.setdefault(scenario, set()).add(alt)
+    own: dict[int, set[int]] = {}
+    for entity, alt in con.execute("SELECT entity_id, alternative_id FROM parameter_value WHERE "
+                                   "parameter_definition_id = ?", (def_id,)):
+        own.setdefault(entity, set()).add(alt)
+    capped = {e for (e,) in con.execute(
+        "SELECT pv.entity_id FROM parameter_value pv JOIN parameter_definition pd ON pd.id = "
+        f"pv.parameter_definition_id WHERE pd.entity_class_id = ? AND pd.name IN ({','.join('?' * len(_CAPS))})",
+        (class_id, *_CAPS))}
+    out = []
+    for entity, name in con.execute("SELECT id, name FROM entity WHERE class_id = ? ORDER BY name", (class_id,)):
+        alts = own.get(entity, set())
+        if any(not alts & s for s in scenarios.values()) if scenarios else not alts:
+            out.append((entity, name, entity in capped))
+    return out
+
+
 def similarity_key(s: Suspect) -> tuple:
     c = s.context
-    if s.part_b and s.kind == DEFAULT:  # one question "restore N shipped defaults" per label
-        return (s.kind, "part B", s.label)
     return (s.kind, s.cls, s.label, s.suggestion, s.archive, c.invest_cost, c.cap, c.inert)
 
 
@@ -198,7 +250,7 @@ def suspects(a: vr.Analysis) -> tuple[Suspect, ...]:
 class _Reader:
     def __init__(self, con, a: vr.Analysis) -> None:
         self.con, self.a = con, a
-        self.commits = {i: (str(d)[:10], c) for i, d, c in con.execute('SELECT id, date, comment FROM "commit"')}
+        self.commits = ldr._commits(con)
         self.members = {i: (lid, vr._text(v)) for i, lid, v in con.execute(
             "SELECT id, parameter_value_list_id, value FROM list_value")}
         self.lists = dict(con.execute("SELECT id, name FROM parameter_value_list"))
@@ -252,23 +304,26 @@ class _Reader:
         return tuple(out)
 
     def _default(self, def_id, cls, class_id, list_id, payload, commit) -> Suspect | None:
-        shipped = SHIPPED_DEFAULT.get(self.lists.get(list_id))
-        if shipped is None:
+        """A suspect only for a default that references R while R reads ``cumulative_limits`` (design §1a): what
+        the bug may have changed.  Another member is the user's choice; an empty default is part B's."""
+        a = self.a
+        if a.state not in (vr.HIT, vr.HIT_UNANCHORED) or list_id != a.list_id or payload is None or \
+                _ref(payload) != a.r.id:
             return None
-        current = self._member(payload, list_id) if payload is not None else ""
-        if current == shipped:
-            return None
-        relying = [e for (e,) in self.con.execute(
-            "SELECT id FROM entity e WHERE class_id = ? AND NOT EXISTS (SELECT 1 FROM parameter_value pv WHERE "
-            "pv.entity_id = e.id AND pv.parameter_definition_id = ?)", (class_id, def_id))]
+        current = self._member(payload, list_id)
+        relying = relying_entities(self.con, class_id, def_id)
         date, comment = self._when(commit)
         ctx = Context(relying=len(relying), date=date, comment=comment, uncapped=current == vlh.APPENDED[22],
-                      relying_cost=sum("invest_cost" in self.params.get(e, ()) for e in relying),
-                      relying_cap=sum(bool(self.params.get(e, set()) & set(_CAPS)) for e in relying))
-        now = f"reads {current}" if current else "is empty"
-        return Suspect(f"def:{def_id}", DEFAULT, cls, "invest_method", "", "", list_id, current, SHIPPED,
-                       f"the class default {now}; the shipped default is {shipped}", f"set:{shipped}", ctx, commit,
-                       reason=DEFAULT_REASON, keep_text=self._keep(current))
+                      relying_cost=sum("invest_cost" in self.params.get(e, ()) for e, _, _ in relying),
+                      relying_cap=sum(c for _, _, c in relying), relying_names=tuple((n, c) for _, n, c in relying))
+        evidence = f"the method parameter default reads {current}; FlexTool's default is {FLEXTOOL_DEFAULT}"
+        if ldr.changed_by_hand(commit, self.commits):
+            label = HAND_DEFAULT.format(date=date)
+            return Suspect(f"def:{def_id}", DEFAULT, cls, "invest_method", "", "", list_id, current, label,
+                           f"{evidence}; {label}" + (f" ({comment})" if comment else ""), "keep", ctx, commit,
+                           reason=HAND_REASON, keep_text=self._keep(current))
+        return Suspect(f"def:{def_id}", DEFAULT, cls, "invest_method", "", "", list_id, current, SHIPPED, evidence,
+                       f"set:{FLEXTOOL_DEFAULT}", ctx, commit, reason=DEFAULT_REASON, keep_text=self._keep(current))
 
     def _values(self, definition_ids):
         if not definition_ids:

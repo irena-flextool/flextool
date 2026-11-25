@@ -1214,6 +1214,27 @@ def _run_field(flex_data: "FlexData", name: str):
     return run if run is not None else getattr(flex_data, name, None)
 
 
+def _node_state_start(flex_data: "FlexData", solution: "Solution", *, solve_name: str) -> pd.DataFrame:
+    """``node_state_start[(solve, period, time), node]`` (MWh): the level each storage node's first step in the
+    solve starts from (``model._self_discharge.start_levels``, as the solve's handoff ``cycle_start_state``: the
+    fix_start state, the roll carry, ...), at the node's first steps (``nodeState_first_dt``).  Empty (over the
+    solve's (d, t)) without storage or without a solved v_state."""
+    from flextool.engine.preprocess.flex_data import _storage_start_and_level
+
+    first = getattr(flex_data, "nodeState_first_dt", None)
+    start = None
+    if first is not None and first.height > 0:
+        start = _storage_start_and_level(solution, flex_data, None, {})[0]
+    if start is not None:
+        start = (first.select(pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+                 .unique(maintain_order=True)
+                 .join(start.select(pl.col("node").cast(pl.Utf8).alias("n"), "value"), on="n", how="inner"))
+    if start is None or start.height == 0:
+        return _empty_pdtX_per_entity(flex_data=flex_data, solve_name=solve_name, col_name="node")
+    return wide_per_entity(with_solve_column(start, solve_name), row_dims=("solve", "d", "t"), col_dim="n",
+                           row_names=("solve", "period", "time"), col_name="node")
+
+
 def read_parameters(
     flex_data: "FlexData",
     solution: "Solution",
@@ -1400,6 +1421,8 @@ def read_parameters(
         flex_data.p_state_self_discharge, solve_name=solve_name,
         entity_dim="n", col_name="node", flex_data=flex_data,
     )
+
+    p.node_state_start = _node_state_start(flex_data, solution, solve_name=solve_name)
 
     p.node_penalty_up = _pdtX_per_entity(
         flex_data.p_penalty_up, solve_name=solve_name,

@@ -98,7 +98,7 @@ def _values(unit_level: str | None = None) -> list:
             [out, ["gp", "elec"], "ramp_speed_down", _f(0.5)]]
     for u in UNITS:
         vals += [["unit", u, "existing", _f(100.0)], ["unit", u, "efficiency", _f(0.5)],
-                 ["unit", u, "startup_method", _s("binary")]]
+                 ["unit", u, "startup_method", _s("integer_fix_in_uc")]]
     if unit_level is not None:
         vals.append(["solve", SOLVE, "reduce_unit_detail_method", _s(unit_level)])
     return vals
@@ -224,7 +224,7 @@ def _two_solves(tmp_path_factory, level_b: str):
             ["unit", "g2", "startup_cost", _f(10.0)], ["unit", "g2", "efficiency", _f(0.4)]]
     for u in ("g1", "g2"):
         ents += [["unit", u, None], ["unit__inputNode", [u, "fuel"], None], ["unit__outputNode", [u, "elec"], None]]
-        vals += [["unit", u, "existing", _f(100.0)], ["unit", u, "startup_method", _s("binary")]]
+        vals += [["unit", u, "existing", _f(100.0)], ["unit", u, "startup_method", _s("integer_fix_in_uc")]]
     for solve, ts, period in (("sA", "tsA", "p2020"), ("sB", "tsB", "p2025")):
         vals += [["solve", solve, "period_timeset",
                   b64({"index_type": "str", "index_name": "period", "data": [[period, ts]]}, "map")],
@@ -305,7 +305,7 @@ CONSUMERS: dict[str, set[str]] = {
     "_balance_terms:balance_flow_values": {"min_load_efficiency"},
     "_group_slack:_eq_inertia": {"inertia"},
     "_group_slack:_eq_non_sync": {"min_load_efficiency"},
-    "_non_anticipativity:add_dispatch_constraints": {"non_anticipativity"},
+    "_non_anticipativity:_add_online_ties": {"non_anticipativity"},
     "_online:add_variables": {"online_model"},
     "_online:uc_classes": {"online_model"},
     "_online:_online_set": {"online_model"},
@@ -408,7 +408,7 @@ def _margin_step(tmp_path_factory):
     for u, src, sink, cap in (("gf", "fuel", "elec", 400.0), ("gb", "elec", "h2", 100.0)):
         ents += [["unit", u, None], ["unit__inputNode", [u, src], None], ["unit__outputNode", [u, sink], None]]
         vals += [["unit", u, "existing", _f(cap)], ["unit", u, "efficiency", _f(0.5)],
-                 ["unit", u, "startup_method", _s("binary")]]
+                 ["unit", u, "startup_method", _s("integer_fix_in_uc")]]
     steps, _wf, _scen = _RUNS.get(tmp_path_factory, alt="ou_margin", values=vals, base_chain=["init"],
                                   entities=ents)
     assert len(steps) == 1, list(steps)
@@ -477,7 +477,7 @@ def _chain(tmp_path_factory, alt: str, level_a: str, level_b: str):
             ["unit__outputNode", ["g2", "elec"], "ramp_speed_down", _f(0.5)]]
     for u in ("g1", "g2"):
         ents += [["unit", u, None], ["unit__inputNode", [u, "fuel"], None], ["unit__outputNode", [u, "elec"], None]]
-        vals += [["unit", u, "existing", _f(100.0)], ["unit", u, "startup_method", _s("binary")]]
+        vals += [["unit", u, "existing", _f(100.0)], ["unit", u, "startup_method", _s("integer_fix_in_uc")]]
     for solve, ts, level in (("sA", "tsA", level_a), ("sB", "tsB", level_b)):
         vals += [["solve", solve, "period_timeset",
                   b64({"index_type": "str", "index_name": "period", "data": [["p2020", ts]]}, "map")],
@@ -586,7 +586,7 @@ def _opt_model(level: str, no_startup: tuple[str, ...], variant: str = "base"):
             ["reserve__upDown__unit__node", key, "max_share", _f(1.0)],
             ["reserve__upDown__unit__node", key, "reliability", _f(1.0)],
             ["connection", "c", "existing", _f(50.0)], ["connection", "c", "efficiency", _f(0.95)],
-            ["connection", "c", "startup_method", _s("no_startup" if "c" in no_startup else "binary")]]
+            ["connection", "c", "startup_method", _s("no_startup" if "c" in no_startup else "integer_fix_in_uc")]]
     units = dict(OPT_UNITS)
     if variant == "invest":
         units["ge"] = (OPT_GE_EXISTING, 0.3, [["invest_max_total", 100.0], ["invest_cost", 1.0],
@@ -602,7 +602,7 @@ def _opt_model(level: str, no_startup: tuple[str, ...], variant: str = "base"):
     for u, (cap, eff, extra) in units.items():
         ents += [["unit", u, None], ["unit__inputNode", [u, "fuel"], None], ["unit__outputNode", [u, "elec"], None]]
         vals += [["unit", u, "existing", _f(cap)], ["unit", u, "efficiency", _f(eff)],
-                 ["unit", u, "startup_method", _s("no_startup" if u in no_startup else "binary")]]
+                 ["unit", u, "startup_method", _s("no_startup" if u in no_startup else "integer_fix_in_uc")]]
         vals += [["unit", u, name, _f(v)] for name, v in extra]
     return vals, ents
 

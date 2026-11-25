@@ -90,7 +90,7 @@ def test_startup_step_limited_to_su(start_case) -> None:
 
 def test_startup_step_integer(tmp_path_factory) -> None:
     """The same with binary online variables: the _integer rows carry the reduction."""
-    step = _last(_solve(tmp_path_factory, "su_int", _uc(method="binary") + _ramp()
+    step = _last(_solve(tmp_path_factory, "su_int", _uc(method="integer_fix_in_uc") + _ramp()
                         + _demand({i: 0.0 for i in range(1, 11)}, 400.0)))
     rows = row_terms(build(step.flex_data), "maxFlow_online_integer", ARC)
     assert rows

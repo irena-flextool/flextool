@@ -1,14 +1,15 @@
 """Database migration to version 77 (schema batch).
 
-Seed: ``data/v75_seed_stoch_two_period.json`` (a frozen version-75 copy of
-``tests/fixtures/stoch_two_period.json``; the fixtures themselves are kept at
-the current version) migrated to 76, then extended with
-the pre-77 content v77 must handle: group ``invest_method`` values
-(``not_allowed`` and another method), a collided ``unit__inputNode``
-``capacity_max_coeff`` / ``input_share_max`` pair, stale definitions with
-values, a ``solve_mode`` ``single_shot`` value, and one widened definition
-deleted (it must stay absent).  Then the v77 step runs and the result is
-compared with the v76 snapshot.
+Seed: v75b (``_rerun.build_v75b``: the v2 template migrated to 75, a real v75
+schema, plus the data of ``data/v75_seed_stoch_two_period.json``) migrated to
+76, then extended with the pre-77 content v77 must handle: group
+``invest_method`` values (``not_allowed`` and another method), a collided
+``unit__inputNode`` ``capacity_max_coeff`` / ``input_share_max`` pair (v70
+renamed the first to the second; the old definitions are added back, as a
+collided rename leaves them), the stale ``solve.discount_years`` with a value,
+a ``solve_mode`` ``single_shot`` value, and one widened definition deleted (it
+must stay absent).  Then the v77 step runs and the result is compared with the
+v76 snapshot.
 """
 from __future__ import annotations
 
@@ -24,9 +25,9 @@ from flextool.update_flextool import db_migration as m
 from flextool.update_flextool.db_migration import migrate_database
 
 from tests.db_utils import json_to_db
+from tests.update_flextool._rerun import v75b_url
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
-SEED = Path(__file__).resolve().parent / "data" / "v75_seed_stoch_two_period.json"
 MARKER = "flextool_behaviour_change:user_constraint_prebuilt_nets_retirements"
 ABSENT = ("node", "energy_margin_adder")  # deleted from the seed: the migration must not re-create it
 
@@ -58,10 +59,18 @@ def _snapshot(db) -> dict:
     }
 
 
+def _add_stale_definitions(db) -> None:
+    """The old ``unit__inputNode`` coefficients and ``solve.discount_years``: definitions v70 renamed or the schema
+    dropped, which an older database may still carry (a real v76 has none of them)."""
+    for cls, name in (("unit__inputNode", "capacity_max_coeff"), ("unit__inputNode", "capacity_min_coeff"),
+                      ("solve", "discount_years")):
+        db.add_parameter_definition(entity_class_name=cls, name=name, parameter_type_list=("float",))
+
+
 @pytest.fixture(scope="module")
 def migrated(tmp_path_factory: pytest.TempPathFactory) -> dict:
     tmp = tmp_path_factory.mktemp("v77")
-    url = json_to_db(SEED, tmp / "seed.sqlite")
+    url = v75b_url(tmp_path_factory, tmp / "seed.sqlite")
     migrate_database(url, up_to=76)
     with DatabaseMapping(url) as db:
         alt = db.get_items("alternative")[0]["name"]
@@ -73,9 +82,8 @@ def migrated(tmp_path_factory: pytest.TempPathFactory) -> dict:
             db.add_entity(entity_class_name="group", name=g)
         _put(db, "group", ("g_old",), "invest_method", alt, "not_allowed")
         _put(db, "group", ("g_total",), "invest_method", alt, "invest_total")
-        # A collided v70 rename: both names present, values on both.
-        db.add_parameter_definition(entity_class_name="unit__inputNode", name="input_share_max",
-                                    parameter_type_list=("float",))
+        # A collided v70 rename: both names present, values on both.  A real v76 has only input_share_max.
+        _add_stale_definitions(db)
         free, taken = (unit, nodes[0]), (unit, nodes[1])
         for byname in (free, taken):
             db.add_entity(entity_class_name="unit__inputNode", entity_byname=byname)
@@ -202,11 +210,12 @@ def test_rerun_is_idempotent(migrated) -> None:
     assert migrated["rerun_idempotent"]
 
 
-def test_stale_values_are_listed(tmp_path: Path, capsys) -> None:
-    url = json_to_db(SEED, tmp_path / "seed.sqlite")
+def test_stale_values_are_listed(tmp_path: Path, tmp_path_factory, capsys) -> None:
+    url = v75b_url(tmp_path_factory, tmp_path / "seed.sqlite")
     migrate_database(url, up_to=76)
     with DatabaseMapping(url) as db:
         solve = db.get_items("entity", entity_class_name="solve")[0]["name"]
+        _add_stale_definitions(db)
         _put(db, "solve", (solve,), "discount_years", db.get_items("alternative")[0]["name"], 3.0)
         db.commit_session("stale value")
     capsys.readouterr()

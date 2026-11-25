@@ -138,7 +138,7 @@ def test_integer_online(tmp_path_factory) -> None:
     """Integer UC (one 1000 MW unit): online 1000 for 800 MW of output,
     coal = slope · 800 + section · 1000."""
     url, scen = make_db(tmp_path_factory, alt="imle_int",
-                        values=_mle("binary")
+                        values=_mle("integer_fix_in_uc")
                         + [demand("west", 500.0), demand("heat", 300.0)],
                         base_chain=CHP_CHAIN)
     step = list(run(tmp_path_factory, url, scen).values())[-1]

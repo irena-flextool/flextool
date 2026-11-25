@@ -34,7 +34,7 @@ Note that the picture has two `model`: *solves* parameters defined one for each 
 
 **Check the investment solve's capacity margin.** A group's capacity margin (`capacity_margin_method`) applies only
 in a solve with investment periods, so here only the investment solve has it; the dispatch solve does not check it
-again. When the investment solve leaves a shortfall (the plan does not hold the margin, because the penalty is
+again, and nor does a rolling solve (its rolls build no investment, even with `invest_periods`). When the investment solve leaves a shortfall (the plan does not hold the margin, because the penalty is
 cheaper than the capacity or the capacity cannot be built), the run log says so right after that solve:
 
 ```
@@ -48,9 +48,9 @@ The results then show:
 
 - `slack__capacity_margin__d`: the shortfall [MW] of the period, also when a later dispatch solve realizes the
   period, and its penalty in the costs (`capacity margin penalty` in `costs_discounted__d`).
-- `capacity_margin__d`: the capacity margin of each solve with investment periods, under that solve's name, for
-  each group and investment period (look-ahead and forecast branch periods included) at its binding step (the time
-  step with the largest deficit): the margin, the demand, the requirement, what firm and VRE units, storage, other
+- `capacity_margin__d`: the capacity margin of each solve with investment periods (not of a rolling solve), under
+  that solve's name, for each group and investment period (look-ahead and forecast branch periods included) at its
+  binding step (the time step with the largest deficit): the margin, the demand, the requirement, what firm and VRE units, storage, other
   units, connections and consumption count, the shortfall, its penalty and the shadow price of the margin.
 - `capacity_margin_entity__d`: what each unit, connection and node counts at that step, to see which capacity is
   missing or does not count.
@@ -59,7 +59,7 @@ See [Slack and penalty values](../results.md#slack-and-penalty-values).
 
 ## How to make an LP investment and a detailed dispatch check
 
-Unit commitment (`startup_method` *binary*), min loads, ramps and reserves make an investment solve slow, and an
+Unit commitment (`startup_method` *integer*), min loads, ramps and reserves make an investment solve slow, and an
 investment solve over many periods or a long sample may not finish at all. A common way out is to make the
 investment solve an LP with less detail and then check the plan with a dispatch solve that has all the detail.
 
@@ -81,8 +81,8 @@ online, ramps and holds the reserves.
 
 **An example to start from.** In *examples.sqlite*, the scenario `5weeks_invest_fullYear_dispatch_coal_wind` has
 the investment solve `invest_1year_5weeks` (alternative *5weeks_only_invest*) and the dispatch solve
-`y2020_fullYear_dispatch`. Give `coal_plant` `startup_method` *binary* (as the alternative *coal_min_load_MIP*
-does), and set the two parameters on `invest_1year_5weeks`.
+`y2020_fullYear_dispatch`. Give `coal_plant` `startup_method` *integer* (the alternative *coal_min_load_MIP* stores
+*integer_fix_in_uc*, the same model here), and set the two parameters on `invest_1year_5weeks`.
 
 **What to check.** Read the investment solve's info line in the run log: it lists what was left out, for which
 units and groups, and what that means for the detail that was kept (for example "the reserves of ... now come from

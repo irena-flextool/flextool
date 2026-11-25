@@ -59,7 +59,7 @@ def test_verify_reports_a_drifted_fixture(tmp_path: Path) -> None:
     for row in drifted["parameter_definitions"]:
         if row[:2] == ["unit", "lifetime_method"]:
             row[2] = [None, None]
-    with open(fixtures / "b.json", "w") as f:
+    with open(fixtures / "b.json", "w", encoding="utf-8") as f:
         json.dump(drifted, f, indent=2)
     assert verify_all(fixtures) == 1
 
@@ -69,7 +69,7 @@ def test_version_less_fixture_is_only_synced(tmp_path: Path) -> None:
     data = _load(FIXTURES / "null_override_clears_map.json")
     data["parameter_definitions"] = [r for r in data["parameter_definitions"] if r[:2] != ["model", "version"]]
     src = tmp_path / "null_override.json"
-    with open(src, "w") as f:
+    with open(src, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
     migrate_fixture(src)
     out = _load(src)

@@ -13,8 +13,9 @@ METHOD_LP: frozenset[str] = frozenset((
     "method_1way_nvar_LP",
 ))
 
-# MIP variants (binary online).  ``method_2way_2var_MIP_exclude`` (``exact``) is not here: its integer is the
-# direction switch (``v_exact_forward``), and a connection is online by its startup_method.
+# MIP variants (whole-unit online: the startup class ``binary``).  ``method_2way_2var_MIP_exclude`` (``exact``)
+# is not here: its integer is the direction switch (``v_exact_forward``), and a connection is online by its
+# startup_method.
 METHOD_MIP: frozenset[str] = frozenset((
     "method_1way_1var_MIP",
     "method_1way_nvar_MIP",
@@ -75,3 +76,31 @@ RAMP_METHOD: frozenset[str] = frozenset(("ramp_limit", "ramp_cost", "both"))
 RAMP_LIMIT_METHOD: frozenset[str] = frozenset(("ramp_limit", "both"))
 
 RAMP_COST_METHOD: frozenset[str] = frozenset(("ramp_cost", "both"))
+
+#: ``startup_method`` member → ``(startup class, fix_in_uc)``.  The engine keeps the classes ``no_startup``,
+#: ``linear`` and ``binary`` (whole units, a MIP); ``fix_in_uc`` marks the members whose units online a separate
+#: realization solve keeps at the stochastic solve's value.  ``binary`` (the member before data version 83) reads
+#: as ``integer_fix_in_uc``: only a database that was never upgraded, or a row written with raw SQL, still has it.
+STARTUP_CLASSES: dict[str, tuple[str, bool]] = {
+    "no_startup": ("no_startup", False),
+    "linear": ("linear", False),
+    "linear_fix_in_uc": ("linear", True),
+    "integer": ("binary", False),
+    "integer_fix_in_uc": ("binary", True),
+    "binary": ("binary", True),
+}
+
+
+def startup_class(raw: str) -> tuple[str, bool]:
+    """``(startup class, fix_in_uc)`` of the ``startup_method`` value *raw* (:data:`STARTUP_CLASSES`); an unknown
+    value is its own class, without ``fix_in_uc``."""
+    return STARTUP_CLASSES.get(raw, (raw, False))
+
+
+#: The minimum times each ``minimum_time_method`` enables (``docs/reference/units.md``); ``none`` (and an unset
+#: method) enables neither.  Read by the engine gate (``params/_derived._process_min_time``) and the input
+#: derivation (``_process_method``).
+MIN_TIME_ENABLES: dict[str, frozenset[str]] = {
+    "min_uptime": frozenset({"min_uptime", "both"}),
+    "min_downtime": frozenset({"min_downtime", "both"}),
+}

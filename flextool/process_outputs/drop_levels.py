@@ -62,6 +62,8 @@ _PAR_DROP = [
     # realizing solve's values per step.
     'process_piecewise_input_dt', 'process_piecewise_excess_dt',
     'node_self_discharge_loss', 'node_penalty_up', 'node_penalty_down',
+    # The level a storage node's first step in a solve starts from (calc_storage_vre): one row per first step.
+    'node_state_start',
     'node_inflow', 'commodity_price', 'group_co2_price', 'group_inertia_limit',
     # ladder_price_ann (commodity price ladder, #57): authored per period, invariant across rolls that
     # touch the same period — same keep='last' bucket as commodity_price for symmetry.

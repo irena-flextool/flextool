@@ -1,39 +1,25 @@
-"""Slice G — configurable operational non-anticipativity window.
+"""Slice G — the operations of a stochastic investment solve branch at the reveal.
 
-Design: ``specs/sliceG_configurable_nonanticipativity_design.md`` (§4
-byte-parity, §7 hand-checkable test).
-
-The new ``solve.shared_operation_periods`` parameter (v71) decouples the
-operational-NA window (the (d,t) set over which the four
-``non_anticipativity_*`` families pin storage / online / reserve dispatch
-across stochastic branches) from ``realized_periods``.  Tri-state:
-
-* unset       -> legacy ``realized_dispatch ∪ fix_storage`` window
-  (byte-identical to prior behaviour — the ``pinned_ops`` guard);
-* ``[]``      -> empty window -> operations branch freely from t0 (the
-  classic two-stage capacity expansion — the ``free_ops`` scenario);
-* ``[p, ...]``-> tie only over those periods' timesteps.
+Design: ``specs/sliceG_configurable_nonanticipativity_design.md`` (§7
+hand-checkable test); data version 84 (``invest_solve_branching_method``):
+an investment solve ties no operations of its forecasts (the operational
+non-anticipativity window is empty), whatever its settings.  Before v84 the
+unset ``shared_operation_periods`` tied them over the committed window; that
+setting is gone (a dispatch solve still ties its forecasts over its committed
+window: ``test_nonanticipativity_nreal0.py``).
 
 Fixture ``stoch_two_period_free_ops.json`` (built via
 ``build_stoch_two_period_free_ops.py``): two 3-step periods p2035 / p2040,
 three branches mid / up / low declared at t0001 (t0-branching), a single
-shared investable ``base`` unit (``stochastic_invest_method=none`` -> ONE
-``v_invest``), and a stochastic-group storage node ``resv`` fed by
-branch-asymmetric wind timing so each branch has a UNIQUE cost-optimal
-storage trajectory (design F6).  Two scenarios differ ONLY in the
-``shared_operation_periods`` value.
+shared investable ``base`` unit (``operations_only`` -> ONE ``v_invest``),
+and a stochastic-group storage node ``resv`` fed by branch-asymmetric wind
+timing so each branch has a UNIQUE cost-optimal storage trajectory (design
+F6).
 
-Hand-verified reference numbers (deterministic LP; see the builder):
-
-* ``pinned_ops`` (unset): storage NA fires, the set CSV holds the whole
-  6-step horizon, and ``v_state[resv]`` is IDENTICAL across the two
-  forecast copies up / low — the branches cannot follow their opposite
-  surplus/deficit timing.  Objective 1_005_600 (hand derivation at
-  ``PINNED_OBJ``).
-* ``free_ops`` (``[]``): zero NA rows, header-only set CSV, and
-  ``v_state[resv]`` DIVERGES (up rises above 0.5, low falls below).
-  Shared v_invest 2 and objective 256_076 < pinned (hand derivation at
-  ``FREE_INVEST``).
+Hand-verified reference numbers (deterministic LP; derivation at
+``FREE_INVEST``): zero NA rows, header-only set CSV, ``v_state[resv]``
+DIVERGES (up rises above 0.5, low falls below), shared v_invest 2 and
+objective 256_076.
 
 R3 forecasts-only note: the fixture declares a realized designation
 ``mid`` (realized:yes) alongside the two forecasts ``up`` / ``low``.
@@ -65,12 +51,6 @@ SOLVE = "stoch_2p_free"
 INVEST_COEFF = 2 * 20_000.0
 # Operating cost scale: 3-h periods of 1 year each -> 8760 / 3 per CUR of per-step cost; forecasts 0.5 / 0.5.
 OPS_SCALE = 8760.0 / 3.0
-# pinned_ops hand derivation.  Storage net output s_t is tied across the forecasts and nets to 0 over the 6 steps
-# (start 0.5 = reference end).  ``up`` late (wind 0) needs base + s_t = 12 and ``low`` early (wind 0) the same, so
-# s_t >= 12 − C at every step; Σ s_t = 0 then forces C >= 12 (the 10 000 CUR/MWh penalty is far dearer).  With
-# C = 12 and s = 0, base supplies 12 − wind: 36 MWh per forecast at 5 CUR -> 180 · OPS_SCALE = 525 600.
-#   12 MW × 40 000 + 525 600 = 1 005 600.
-PINNED_OBJ = 12.0 * INVEST_COEFF + 180.0 * OPS_SCALE
 # free_ops hand derivation.  Per forecast the wind gives 60 MWh against 72 MWh demand, so ``base`` must
 # supply 12 MWh over the 6 steps; the storage ends where it starts (reference 0.5) and is not limiting
 # (100 MW, 1000 MWh), so ``base`` runs flat at 12 / 6 = 2 MW and the shared capacity is 2 MW:
@@ -105,20 +85,9 @@ def free_ops_run(scenario_run):
 
 
 @pytest.fixture(scope="module")
-def pinned_ops_run(scenario_run):
-    return _strict_run(scenario_run, "pinned_ops")
-
-
-@pytest.fixture(scope="module")
 def free_ops_wf(free_ops_run):
     """The cascade's work folder (emitted CSVs + ``output_raw``)."""
     return free_ops_run.work_folder
-
-
-@pytest.fixture(scope="module")
-def pinned_ops_wf(pinned_ops_run):
-    """The cascade's work folder (emitted CSVs + ``output_raw``)."""
-    return pinned_ops_run.work_folder
 
 
 def _resolve(run):
@@ -142,11 +111,6 @@ def free_ops_resolved(free_ops_run):
     return _resolve(free_ops_run)
 
 
-@pytest.fixture(scope="module")
-def pinned_ops_resolved(pinned_ops_run):
-    return _resolve(pinned_ops_run)
-
-
 def _v_state_by_branch(sol, period_prefix: str) -> dict[str, list[float]]:
     """Map branch-period name -> ordered ``v_state[resv]`` trajectory for
     every (d, t) whose period ``d`` starts with *period_prefix*."""
@@ -163,7 +127,7 @@ def _v_state_by_branch(sol, period_prefix: str) -> dict[str, list[float]]:
 
 
 # ---------------------------------------------------------------------------
-# free_ops (shared_operation_periods = []) — operations free from t0
+# free_ops — operations free from the reveal (t0)
 # ---------------------------------------------------------------------------
 
 
@@ -187,13 +151,13 @@ def test_free_ops_no_na_constraint_rows(free_ops_resolved) -> None:
 
 @pytest.mark.solver
 def test_free_ops_shared_single_v_invest(free_ops_resolved) -> None:
-    """§7: with stochastic_invest_method=none investment stays realized-only
+    """§7: with operations_only investment stays realized-only
     (R-O6) -> exactly ONE shared v_invest for the ``base`` unit (no
     per-branch fan)."""
     _data, sol, _pb = free_ops_resolved
     vi = sol.value("v_invest_p")
     keys = {str(r["d"]) for r in vi.iter_rows(named=True)}
-    # Only the period label p2035 (under ``none`` it keeps the shared
+    # Only the period label p2035 (under ``operations_only`` it keeps the shared
     # ``v_invest``) — never a branch copy (p2035_up / p2035_low), which
     # would signal a fanned invest axis.
     assert keys == {"p2035"}
@@ -241,7 +205,7 @@ def test_free_ops_objective(free_ops_wf) -> None:
 
 @pytest.mark.solver
 def test_here_and_now_invest_annuity_counts_each_calendar_period_once(free_ops_resolved) -> None:
-    """Under ``stochastic_invest_method = none`` the one here-and-now ``v_invest`` (on the period label p2035)
+    """Under ``operations_only`` the one here-and-now ``v_invest`` (on the period label p2035)
     pays its annuity once per calendar period it serves (p2035, p2040), not once per period label and forecast
     copy in ``period_in_use``: the coefficient is 40 000 (hand derivation at ``INVEST_COEFF``), not 6 × 20 000."""
     data, _sol, _pb = free_ops_resolved
@@ -252,101 +216,7 @@ def test_here_and_now_invest_annuity_counts_each_calendar_period_once(free_ops_r
 
 
 # ---------------------------------------------------------------------------
-# pinned_ops (unset) — legacy window, byte-parity guard
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.solver
-def test_pinned_ops_set_csv_is_legacy_horizon(pinned_ops_wf) -> None:
-    """§4.4.1: unset window -> the set CSV holds the legacy
-    realized_dispatch ∪ fix_storage union = the whole 6-step horizon."""
-    p = pinned_ops_wf / "solve_data" / "dt_non_anticipativity_set.csv"
-    assert p.exists()
-    df = pl.read_csv(p)
-    assert df.height == 6
-    # Exactly the two periods' three steps each.
-    pairs = {(str(r["period"]), str(r["time"])) for r in df.iter_rows(named=True)}
-    assert pairs == {
-        ("p2035", "t0001"), ("p2035", "t0002"), ("p2035", "t0003"),
-        ("p2040", "t0004"), ("p2040", "t0005"), ("p2040", "t0006"),
-    }
-
-
-@pytest.mark.solver
-def test_pinned_ops_storage_na_fires(pinned_ops_resolved) -> None:
-    """§7: unset window -> the storage NA family is present and ranges over
-    the whole horizon.
-
-    Under the forecast-to-forecast re-ground the cohort is a per-group star
-    keyed on the reference forecast (the lexicographically smallest of the
-    two forecasts ``up`` / ``low`` -> ``p2035_low`` / ``p2040_low``), so each
-    group contributes ONE sibling pair (``low`` -> ``up``) over its 3 tied
-    steps: 6 rows total (3 (d,t) × 2 period groups × 1 sibling), down from
-    the pre-re-ground 12 (which anchored both forecasts to the trunk)."""
-    import polars as pl
-
-    _data, _sol, pb = pinned_ops_resolved
-    names = pb.cstr_names()
-    assert "non_anticipativity_storage_use" in names
-    over = pb.cstrs_named("non_anticipativity_storage_use")[0].over
-    assert over.height == 6
-    # The hubs are the reference forecasts; the trunk base periods are tied
-    # to nothing.
-    ov = over.with_columns(pl.col("d").cast(pl.Utf8), pl.col("b").cast(pl.Utf8))
-    assert set(ov["d"].unique().to_list()) == {"p2035_low", "p2040_low"}
-    assert set(ov["b"].unique().to_list()) == {"p2035_up", "p2040_up"}
-    assert not ({"p2035", "p2040"} & set(ov["d"].unique().to_list()))
-    assert not ({"p2035", "p2040"} & set(ov["b"].unique().to_list()))
-
-
-@pytest.mark.solver
-def test_pinned_ops_v_state_equal_across_branches(pinned_ops_resolved) -> None:
-    """§7 (re-grounded): with the legacy window the storage NA family ties
-    the FORECASTS' net-charge equal, so v_state[resv] is IDENTICAL across the
-    forecast copies ``up`` / ``low`` on every constrained (d,t).
-
-    Forecast-to-forecast: the period label (the bare-period key) has no
-    dispatch; only the two forecast copies carry a trajectory."""
-    _data, sol, _pb = pinned_ops_resolved
-    for prefix in ("p2035", "p2040"):
-        traj = _v_state_by_branch(sol, prefix)
-        assert set(traj) == {f"{prefix}_up", f"{prefix}_low"}, traj
-        assert traj[f"{prefix}_up"] == traj[f"{prefix}_low"], (prefix, traj)
-
-
-@pytest.mark.solver
-def test_pinned_ops_objective(pinned_ops_wf) -> None:
-    obj = float(
-        pl.read_parquet(pinned_ops_wf / "output_raw"
-                        / f"v_obj__{SOLVE}.parquet")["objective"][0]
-    )
-    assert obj == pytest.approx(PINNED_OBJ, rel=1e-6)
-
-
-# ---------------------------------------------------------------------------
-# Monotonicity — freeing operations only relaxes the feasible set
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.solver
-def test_free_ops_objective_le_pinned(free_ops_wf, pinned_ops_wf) -> None:
-    """§7: free_ops objective <= pinned_ops objective (non-strict —
-    here strict, since the pinned window forces a costly common
-    trajectory)."""
-    free = float(
-        pl.read_parquet(free_ops_wf / "output_raw"
-                        / f"v_obj__{SOLVE}.parquet")["objective"][0]
-    )
-    pinned = float(
-        pl.read_parquet(pinned_ops_wf / "output_raw"
-                        / f"v_obj__{SOLVE}.parquet")["objective"][0]
-    )
-    assert free <= pinned
-    assert free < pinned  # the fixture provably forces strict improvement
-
-
-# ---------------------------------------------------------------------------
-# Units online are tied only where committed
+# Units online are not tied in an investment solve
 # ---------------------------------------------------------------------------
 
 
@@ -367,14 +237,7 @@ def _online_tie_rows(tmp_path_factory, alt: str, base_chain: list[str]) -> int:
 
 @pytest.mark.solver
 def test_free_ops_leaves_units_online_untied(tmp_path_factory) -> None:
-    """``shared_operation_periods = []`` frees operations from the first timestep, units online included: with
-    nothing tied there is no non_anticipativity_online row, however many online steps the forecasts have."""
-    assert _online_tie_rows(tmp_path_factory, "online_free", ["init", "base", "stoch", "freeops"]) == 0
-
-
-@pytest.mark.solver
-def test_pinned_ops_ties_units_online_over_the_committed_steps(tmp_path_factory) -> None:
-    """The twin of the free case with the window unset: the committed steps are the whole horizon (3 steps in each
-    of the anchors p2035 / p2040), each anchor ties its reference forecast ``low`` to the one other forecast ``up``,
-    and ``base`` is the one online unit: 1 unit × 2 anchors × 3 steps × 1 forecast pair = 6 rows."""
-    assert _online_tie_rows(tmp_path_factory, "online_pinned", ["init", "base", "stoch"]) == 6
+    """An investment solve frees the operations of its forecasts from the reveal (here the first timestep), units
+    online included: with nothing tied there is no non_anticipativity_online row, however many online steps the
+    forecasts have."""
+    assert _online_tie_rows(tmp_path_factory, "online_free", ["init", "base", "stoch"]) == 0

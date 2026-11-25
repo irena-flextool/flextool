@@ -1,6 +1,7 @@
 """Database migration to version 80 (all schema changes of one release in one step).
 
-A v79 database (built from a v75 seed JSON and migrated up to 79, never a checked-in ``.sqlite``) is migrated to 80.
+A v79 database (v75b, ``_rerun.build_v75b``: the v2 template migrated to 75 plus the v75 seed data,
+migrated up to 79; never a checked-in ``.sqlite``) is migrated to 80.
 The step
 
 * appends to the description of each period-map limit that ``inf`` (``-inf`` for a lower limit) is no limit in that
@@ -34,8 +35,8 @@ from flextool._resources import package_data_path
 from flextool.update_flextool import db_migration as m
 from flextool.update_flextool.db_migration import migrate_database
 from tests.db_utils import json_to_db
+from tests.update_flextool._rerun import v75b_url
 
-SEED = Path(__file__).resolve().parent / "data" / "v75_seed_stoch_two_period.json"
 RENAMED = {("group", old): ("group", new) for old, new in m.V80_CAPACITY_MARGIN_RENAMES.items()}
 #: Stored before the step: (alternative index, parameter, value) on group stoch_g.
 STORED = [
@@ -68,17 +69,19 @@ def _values(db) -> dict:
 
 
 def _shipped() -> tuple[dict, dict[str, list[str]]]:
+    """``({(class, name): description}, lists)`` of the shipped schema; a description v83 replaced is its old text."""
     with open(package_data_path("schemas/spinedb_schema.json"), encoding="utf-8") as f:
         schema = json.load(f)
     lists: dict[str, list[str]] = {}
     for name, value in schema["parameter_value_lists"]:
         lists.setdefault(name, []).append(value)
-    return {(r[0], r[1]): r[4] for r in schema["parameter_definitions"]}, lists
+    v83_back = {key: old for key, (old, _new) in m._v83_superseded_texts().items()}
+    return {(r[0], r[1]): v83_back.get((r[0], r[1]), r[4]) for r in schema["parameter_definitions"]}, lists
 
 
 @pytest.fixture(scope="module")
 def migrated(tmp_path_factory: pytest.TempPathFactory) -> dict:
-    url = json_to_db(SEED, tmp_path_factory.mktemp("v80") / "seed.sqlite")
+    url = v75b_url(tmp_path_factory, tmp_path_factory.mktemp("v80") / "seed.sqlite")
     migrate_database(url, up_to=79)
     with DatabaseMapping(url) as db:
         alts = sorted(a["name"] for a in db.get_items("alternative"))
@@ -176,7 +179,7 @@ def test_renamed_values_are_printed(migrated) -> None:
 def test_an_old_method_default_is_renamed(tmp_path_factory, old, new) -> None:
     """A v79 ``capacity_margin_method`` default ``manual`` / ``share_of_peak`` reads the renamed member at 80 (it
     stopped the migration at 79: the later description update found the old name), and a rerun commits nothing."""
-    url = json_to_db(SEED, tmp_path_factory.mktemp(f"v80_default_{old}") / "seed.sqlite")
+    url = v75b_url(tmp_path_factory, tmp_path_factory.mktemp(f"v80_default_{old}") / "seed.sqlite")
     migrate_database(url, up_to=79)
     with DatabaseMapping(url) as db:
         pdef = db.get_item("parameter_definition", entity_class_name="group", name="capacity_margin_method")

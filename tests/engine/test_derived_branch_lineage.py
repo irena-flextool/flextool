@@ -55,11 +55,10 @@ def _mk_provider(pb=None, piu=None, sbtb=None) -> FlexDataProvider:
     return prov
 
 
-def _build(tmp_path, pb=None, piu=None, sbtb=None, branch_start=None):
+def _build(tmp_path, pb=None, piu=None, sbtb=None):
     prov = _mk_provider(pb=pb, piu=piu, sbtb=sbtb)
     dd = dd_same_scenario_df(tmp_path, provider=prov)
-    pd_na = pd_non_anticipativity_df(tmp_path, provider=prov,
-                                     branch_start=branch_start)
+    pd_na = pd_non_anticipativity_df(tmp_path, provider=prov)
     return dd, pd_na
 
 
@@ -229,10 +228,8 @@ def test_t6b_failure_semantics_orphan_synthetic(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# T7 — future mid-horizon shapes (§4.6; not constructible end-to-end
-# at HEAD — the branch fan always starts at the solve's first step).
-# Pins the parameterized ``branch_start`` rule TODAY so Slice E
-# inherits a tested rule instead of dead code.
+# T7 — mid-horizon shapes (§4.6).  Without an invest tie window
+# (no pd_non_anticipativity_invest_periods.csv) nothing is tied.
 # ---------------------------------------------------------------------------
 
 # Shape A — reveal at p2, NO pre-reveal copies.
@@ -268,23 +265,16 @@ DD_B = sorted([(x, y) for x in _R_B for y in _R_B]
               + [(x, y) for x in _L_B for y in _L_B])
 
 
-def _branch_start_low_p2() -> pl.DataFrame:
-    return pl.DataFrame({"time_branch": ["low"], "d_start": ["p2"]})
-
-
 def test_t7_shape_a_pre_reveal_anchor(tmp_path):
     """T7/A (§4.6): the pre-reveal anchor p1 joins L(low); 17-row
     table; (p1, p2_low) present, (p2, p2_low) ABSENT; pd-NA empty
-    under both the fallback and branch_start=[(low, p2)]."""
+    without a tie window."""
     dd, pd_na = _build(tmp_path, pb=PB_A, piu=PIU_A, sbtb=SBTB_A)
     rows = _rows(dd)
     assert rows == DD_A
     assert ("p1", "p2_low") in rows and ("p2_low", "p1") in rows
     assert ("p2", "p2_low") not in rows
     assert pd_na.height == 0
-    _, pd_na_bs = _build(tmp_path, pb=PB_A, piu=PIU_A, sbtb=SBTB_A,
-                         branch_start=_branch_start_low_p2())
-    assert pd_na_bs.height == 0
 
 
 def test_t7_shape_b_authority_rule(tmp_path):
@@ -292,24 +282,14 @@ def test_t7_shape_b_authority_rule(tmp_path):
     p1_low displaces anchor p1 on L(low) — 18-row table with
     (p1, p2_low) and (p1, p1_low) ABSENT from dd (the trunk↔branch
     coupling at period 1 is expressed by pd_non_anticipativity, not
-    leaf membership); dd is branch_start-independent; pd-NA empty
-    under the min-anchor fallback (the documented under-detection) and
-    exactly [(p1, p1_low)] under branch_start=[(low, p2)]."""
+    leaf membership); pd-NA empty without a tie window."""
     dd, pd_na = _build(tmp_path, pb=PB_B, piu=PIU_B, sbtb=SBTB_B)
     rows = _rows(dd)
     assert rows == DD_B
     assert len(rows) == 18
     assert ("p1", "p2_low") not in rows
     assert ("p1", "p1_low") not in rows
-    # pd-NA: fallback under-detects by design (§2.3) — empty.
     assert pd_na.height == 0
-    dd_bs, pd_na_bs = _build(tmp_path, pb=PB_B, piu=PIU_B, sbtb=SBTB_B,
-                             branch_start=_branch_start_low_p2())
-    # dd content is branch_start-independent (the builder derives the
-    # leaf rule's k from the min-anchor; the table above was
-    # hand-derived under the TRUE reveal k — identical by §4.6).
-    assert _rows(dd_bs) == rows
-    assert _rows(pd_na_bs) == [("p1", "p1_low")]
 
 
 def test_t7_symmetry_property(tmp_path):

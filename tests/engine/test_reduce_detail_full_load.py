@@ -115,7 +115,7 @@ def _case(conversion: dict, w: float, level: str | None, n_steps: int, rolling: 
         *([balance_node("heat", {t: 0.0 for t in names})] if heat else []),
         unit("CHP", ["gas_node"], ["elec", "heat"] if heat else ["elec"], {
             **conversion, "virtual_unitsize": scalar(100.0), "existing": scalar(1.0),
-            "startup_method": text("binary"), "startup_cost": scalar(0.0), "min_load": scalar(min_load)}))
+            "startup_method": text("integer_fix_in_uc"), "startup_cost": scalar(0.0), "min_load": scalar(min_load)}))
     vals += [["unit__outputNode", ["CHP", "elec"], "conversion_flow_coeff", scalar(w)]]
     if heat:
         vals += [["unit__outputNode", ["CHP", "heat"], "conversion_flow_coeff", scalar(0.2)]]

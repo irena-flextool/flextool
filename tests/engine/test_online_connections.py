@@ -127,7 +127,7 @@ def test_connection_startup_cost_two_hour_steps(tmp_path_factory) -> None:
 def test_connection_binary_startup(tmp_path_factory) -> None:
     """A2 binary: a one-way connection with startup_method binary gets integer v_online_integer columns and its
     startup cost on v_startup_integer."""
-    step = _steps(tmp_path_factory, "oc_uni_bin", _startup(WE, "binary"), UNI + ["coal_min_load"])[-1]
+    step = _steps(tmp_path_factory, "oc_uni_bin", _startup(WE, "integer_fix_in_uc"), UNI + ["coal_min_load"])[-1]
     assert _p(step.flex_data.process_online_integer) == {WE}
     pb = build(step.flex_data)
     assert all(_col_int(pb, f"v_online_integer[{WE},"))
@@ -142,12 +142,12 @@ def test_connection_binary_startup(tmp_path_factory) -> None:
 @pytest.fixture(scope="module")
 def regular_cases(tmp_path_factory) -> dict:
     out = {"none": _steps(tmp_path_factory, "oc_reg_none", [], NET)[-1]}
-    for method in ("linear", "binary"):
+    for method in ("linear", "integer_fix_in_uc"):
         out[method] = _steps(tmp_path_factory, f"oc_reg_{method}", _startup(WE, method, 0.0), NET)[-1]
     return out
 
 
-@pytest.mark.parametrize("method", ["linear", "binary"])
+@pytest.mark.parametrize("method", ["linear", "integer_fix_in_uc"])
 def test_regular_connection_online_keeps_both_directions(regular_cases, method) -> None:
     """A3: a regular connection with a startup method keeps both arcs, both with efficiency, both capped by the
     online capacity; with startup_cost 0 online is free and the objective equals the no-startup run's.  Before: one
@@ -269,13 +269,13 @@ def test_min_time_unit_keeps_online_next_to_linear_unit(tmp_path_factory) -> Non
 
 _MIX_ENTS = [["connection", "en_exact", None], ["connection__node__node", ["en_exact", "east", "north"], None]]
 _MIX_VALS = (
-    [["unit", "coal_chp", "startup_method", b64("binary", "str")],
+    [["unit", "coal_chp", "startup_method", b64("integer_fix_in_uc", "str")],
      ["unit", "coal_chp", "startup_cost", b64(5.0, "float")],
      ["connection", "en_exact", "transfer_method", b64("exact", "str")],
      ["connection", "en_exact", "existing", b64(50.0, "float")],
      ["connection", "west_north", "transfer_method", b64("unidirectional", "str")],
      ["connection", "east_north", "transfer_method", b64("no_losses_no_variable_cost", "str")]]
-    + _startup(WE, "linear") + _startup("west_north", "binary", 2.0) + _startup("east_north", "linear", 0.0))
+    + _startup(WE, "linear") + _startup("west_north", "integer_fix_in_uc", 2.0) + _startup("east_north", "linear", 0.0))
 
 
 @pytest.fixture(scope="module")
@@ -370,7 +370,7 @@ def stoch(tmp_path_factory):
             ["connection", "dn_north2", "transfer_method", b64("regular", "str")],
             ["connection", "dn_north2", "existing", b64(100.0, "float")],
             ["connection", "dn_north2", "efficiency", b64(0.9, "float")]]
-    vals += _startup("dn_north", "linear") + _startup("dn_north2", "binary", 5.0)
+    vals += _startup("dn_north", "linear") + _startup("dn_north2", "integer_fix_in_uc", 5.0)
     url, scen = make_db(tmp_path_factory, alt="oc_stoch", values=vals, base_chain=["base", "init", "system", "2day"],
                         entities=ents, fixture_json=STOCH_JSON)
     return last_stochastic(run(tmp_path_factory, url, scen))
@@ -422,7 +422,7 @@ def test_startup_cost_constant_vs_period_map(tmp_path_factory, uni_online, rolli
             ["connection", "dn_north2", "transfer_method", b64("regular", "str")],
             ["connection", "dn_north2", "existing", b64(100.0, "float")],
             ["connection", "dn_north2", "efficiency", b64(0.9, "float")]]
-    vals += _startup("dn_north", "linear", _pmap({"period1": 3.0})) + _startup("dn_north2", "binary",
+    vals += _startup("dn_north", "linear", _pmap({"period1": 3.0})) + _startup("dn_north2", "integer_fix_in_uc",
                                                                              _pmap({"period1": 5.0}))
     url, scen = make_db(tmp_path_factory, alt="oc_stoch_map", values=vals,
                         base_chain=["base", "init", "system", "2day"], entities=ents, fixture_json=STOCH_JSON)

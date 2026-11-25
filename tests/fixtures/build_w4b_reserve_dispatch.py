@@ -1,7 +1,7 @@
 """Build ``tests/fixtures/w4b_reserve_dispatch.json`` — the W4b
 RESERVE full-path proof fixture.
 
-This is the W4b ``w4b_auto_dispatch`` single-solve ``separate_dispatch``
+This is the W4b ``w4b_auto_dispatch`` single investment-solve
 fixture PLUS an up-reserve requirement on the ``elec`` node, provided by
 the peaker.  Its sole purpose is to lock in the critique's core concern:
 the engine-automatic realized-dispatch sibling must take the FULL DB

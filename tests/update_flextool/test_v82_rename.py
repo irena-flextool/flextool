@@ -1,6 +1,7 @@
 """Database migration to version 82: the model's discount parameters are renamed.
 
-A v80 database (built from the v75 seed JSON and migrated up to 80, never a checked-in ``.sqlite``) carries
+A v80 database (v75b, ``_rerun.build_v75b``: the v2 template migrated to 75 plus the v75 seed data,
+migrated up to 80; never a checked-in ``.sqlite``) carries
 ``model.inflation_rate`` values in two alternatives (a constant and a period map), an ``inflation_offset_investment``
 of 1 and a default of its own, 0.25, on ``inflation_offset_operations``.  Through 81 to 82:
 
@@ -31,9 +32,9 @@ from flextool._resources import package_data_path
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool import db_migration as m
 from flextool.update_flextool.db_migration import migrate_database
-from tests.db_utils import json_to_db
 
-SEED = Path(__file__).resolve().parent / "data" / "v75_seed_stoch_two_period.json"
+from tests.update_flextool._rerun import v75b_url
+
 OLD = tuple(m.V82_PARAMETER_RENAMES)
 NEW = tuple(m.V82_PARAMETER_RENAMES.values())
 #: Stored at 80: (alternative index, old name, value).
@@ -87,7 +88,7 @@ def _plant(db, *, user_default: bool = True) -> None:
 
 
 def _seed(tmp_path_factory, tag: str, up_to: int) -> str:
-    url = json_to_db(SEED, tmp_path_factory.mktemp(tag) / "seed.sqlite")
+    url = v75b_url(tmp_path_factory, tmp_path_factory.mktemp(tag) / "seed.sqlite")
     migrate_database(url, up_to=up_to)
     return url
 
@@ -285,13 +286,13 @@ def test_empty_old_definition_back_at_82_is_removed(tmp_path_factory, renamed) -
 
 
 def test_head_refresh_writes_the_v82_text_for_a_superseded_pair(tmp_path_factory) -> None:
-    """A database at 82 whose ``payback_time`` still has the superseded v81 description (which names the old rate)
-    gets the v82 description, not the v81 one."""
+    """A database at the current version whose ``payback_time`` still has the description a development build of
+    v82 shipped gets the v82 description (at 83 by text alone, :func:`db_migration._head_superseded_texts`)."""
     url = _seed(tmp_path_factory, "v82_head_superseded", FLEXTOOL_DB_VERSION)
     with DatabaseMapping(url) as db:
         for cls in ("unit", "connection", "node"):
             pdef = db.get_item("parameter_definition", entity_class_name=cls, name="payback_time")
-            db.update_parameter_definition(id=pdef["id"], description=m._v81_superseded()[(cls, "payback_time")][1])
+            db.update_parameter_definition(id=pdef["id"], description=m._v82_superseded()[(cls, "payback_time")][1])
         db.commit_session("a superseded payback_time text")
     path = Path(url.removeprefix("sqlite:///"))
     assert m._head_defaults_stale_ro(path)

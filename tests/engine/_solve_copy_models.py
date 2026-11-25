@@ -276,6 +276,8 @@ def model_b(mode: str, *, fan_periods: tuple[str, ...] = ("p1", "p2"), look_ahea
                 pack(pmap([(p, 1.0) for p in PERIODS], index_name="period"), "map"), "init"]]
         if fan["data"]:
             out.append(["solve", solve, "stochastic_branches", pack(fan, "map"), "init"])
+            # The forecasts are solved: deterministic, the default since 4.7.0, would ignore them.
+            out.append(["solve", solve, "dispatch_realization_method", pack("within_solve", "str"), "init"])
         out += [["solve", solve, par, value, "init"] for par, value in values.items()]
         return out + [["solve", solve, par, value, "init"] for par, value in (solve_rows or [])]
 

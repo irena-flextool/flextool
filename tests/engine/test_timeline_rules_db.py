@@ -211,7 +211,7 @@ def _build(tmp_path_factory, patch, name: str, json_path: Path = TESTS_JSON) -> 
     from tests.db_utils import json_to_db
 
     work = tmp_path_factory.mktemp(name)
-    (work / "f.json").write_text(json.dumps(patch(json.loads(json_path.read_text()))))
+    (work / "f.json").write_text(json.dumps(patch(json.loads(json_path.read_text(encoding="utf-8")))))
     url = json_to_db(work / "f.json", work / "f.sqlite")
     migrate_database(url)
     return url

@@ -20,8 +20,8 @@ FlexTool is a linear (or mixed-integer) optimisation model of an energy system. 
 - **Linear commitment is an approximation.** With `startup_method` *linear*, a part of a unit can be online: with `min_load` 0.5, a 500 MW unit can run at 25 MW with 50 MW (10 %) of it online.
 
     Minimum load and start-up costs apply only to the part that is online, so a large unit looks more flexible and
-    cheaper to cycle than it is. *binary* commits whole units (a mixed-integer problem): it is exact, but slower.
-    `virtual_unitsize` splits a fleet into smaller units to keep a *binary* model fast.
+    cheaper to cycle than it is. *integer* commits whole units (a mixed-integer problem): it is exact, but slower.
+    `virtual_unitsize` splits a fleet into smaller units to keep an *integer* model fast.
 
 - **No start-up fuel.** A start-up costs only `startup_cost` [CUR/MW]: it uses no fuel or heat, and there is no shut-down cost and no hot, warm or cold start.
 - **Fuel use is piecewise linear and convex.** With `conversion_method` *min_load_efficiency* the fuel use is a straight line from minimum load to full load; with *piecewise_linear* it is linear between the points of a part-load curve. A curve whose incremental heat rate falls from one segment to the next (a non-convex curve) is not accepted, and the curve cannot vary in time.
@@ -35,7 +35,7 @@ FlexTool is a linear (or mixed-integer) optimisation model of an energy system. 
 
 - **Inertia of units without online variables comes from their flow.** A unit without online variables (no `startup_method` and no `minimum_time_method`) gives flow × `inertia_constant`, so a unit at half load gives half of its inertia.
 
-    Give the synchronous units online variables (`startup_method` *linear* or *binary*) to count their inertia from
+    Give the synchronous units online variables (a `startup_method` other than *no_startup*) to count their inertia from
     the capacity online; see [How to set a minimum inertia](how_to/emissions.md#how-to-set-a-minimum-inertia).
 
 - **The inertia limit is entered, not computed.** FlexTool reports the largest single flow into the group, but the `inertia_limit` does not follow it.

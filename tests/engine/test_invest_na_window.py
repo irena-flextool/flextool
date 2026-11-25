@@ -1,26 +1,27 @@
-"""Invest-NA window (v72) — the standard two-stage stochastic-investment
+"""Shared reveal-period investment — the standard two-stage stochastic-investment
 mode: investment non-anticipative (a single shared here-and-now decision)
 over the first period(s), per-branch (recourse) investment later,
 operations free per scenario from t0.
 
 Design: ``specs/invest_na_window_design.md`` (Revision 2).
 
-The new solve param ``shared_invest_periods`` ties
-``v_invest`` / ``v_divest`` across stochastic branches over the resolved
-window.  Composed with ``stochastic_invest_method=recourse`` (per-branch
-invest columns to tie) and ``shared_operation_periods=[]`` (ops free) it
-delivers the main mode.
+``invest_solve_branching_method = investments_after_reveal_period`` ties
+``v_invest`` / ``v_divest`` across stochastic branches at the reveal period
+(the branches' copies of it); the later periods invest per branch, and an
+investment solve's operations are free per branch from the reveal.  That is
+the main mode.
 
 Fixture ``stoch_two_period_hedge.json`` (built via
 ``build_stoch_two_period_hedge.py``) re-uses the Slice E hedge topology
 with the branches FANNING AT t0 (the ``ws`` alternative), plus:
 
-  * ``hedge_na_window`` — fan-at-t0 + ``shared_invest_periods
-    =[p2035]`` + ``shared_operation_periods=[]``.  The tie reproduces
+  * ``hedge_na_window`` — fan-at-t0 + ``investments_after_reveal_period``
+    (the reveal p2035).  The tie reproduces
     the Option-B hedge **RP = 165 000** BY CONSTRAINT (§9.3): p2035 invest
     shared across branches, p2040 invest per-branch (recourse).
-  * ``hedge_ws`` — the same fan-at-t0 topology with the window UNSET —
-    today's wait-and-see control, **WS = 150 000**.  ``RP − WS = 15 000``.
+  * ``hedge_ws`` — the same fan-at-t0 topology under
+    ``investments_at_reveal_period`` (every branch invests on its own from
+    p2035) — the wait-and-see control, **WS = 150 000**.  ``RP − WS = 15 000``.
 
 The objectives are investment costs only, at the peaker annuity 1 · 1000 · 0.05 /
 (1 − 1.05^−1) / 1.05 = 1000 CUR/MW per year (one payment at the start of the
@@ -28,8 +29,8 @@ year, the default discount_offset_investment 0); the design's 173 250 / 157 500
 were at the year-end annuity 1050, so each is 1000 / 1050 of it.
   * ``hedge_na_divest`` — ``base`` made ``invest_retire_total`` + existing
     50 so ``v_divest`` exists; the divest ties fire too (F2).
-  * ``hedge_na_none`` — the window set on a ``stochastic_invest_method
-    =none`` solve → graceful no-op (no invest-NA rows).
+  * ``hedge_na_none`` — ``operations_only`` over the same layers → every
+    investment one decision (no invest-NA rows).
 """
 from __future__ import annotations
 
@@ -272,10 +273,9 @@ def test_divest_net_capacity_equal_across_branches(na_divest_resolved) -> None:
 
 @pytest.mark.solver
 def test_none_graceful_noop(na_none_run) -> None:
-    """T-None (§4.5): the window set on a stochastic_invest_method=none
-    solve emits ZERO non_anticipativity_invest_* rows (investment is
-    already shared across all periods — the domain guard / recourse gate
-    makes it inert)."""
+    """T-None (§4.5): ``operations_only`` emits ZERO
+    non_anticipativity_invest_* rows (investment is already shared across
+    all periods, on the real period names)."""
     from polar_high import Problem
 
     from flextool.engine import build_flextool
@@ -312,9 +312,9 @@ def test_registry_has_four_invest_families() -> None:
 
 @pytest.mark.solver
 def test_recourse_fan_invest_marginals_stay_on_forecast_branches(tmp_path, monkeypatch) -> None:
-    """Under ``stochastic_invest_method = recourse`` the fan's ``v_invest`` columns are on the forecast branch
-    periods, so its reduced costs are read on the dispatch axis, not the investment axis with the fan's period
-    labels (read on the investment axis, a fan's investment duals put 0 rows at the labels
+    """When the investments branch (``investments_after_reveal_period``) the fan's ``v_invest`` columns are on the
+    forecast branch periods, so its reduced costs are read on the dispatch axis, not the investment axis with the
+    fan's period labels (read on the investment axis, a fan's investment duals put 0 rows at the labels
     p2035 / p2040, dropped the p2040_low reduced cost and wrote a ``unit_invest_marginal__d`` of -0 rows with an
     empty solve label).  1000 is the p2040_low reduced cost: its annuity 1 · 1000 · 0.05 / (1 − 1.05^−1) / 1.05 (the
     parquet once held 1050, the year-end annuity)."""

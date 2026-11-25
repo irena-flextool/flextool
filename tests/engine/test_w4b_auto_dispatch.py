@@ -1,12 +1,14 @@
 """W4b — engine-automatic realized-dispatch sibling for a single
-top-level ``separate_dispatch`` solve.
+top-level stochastic investment solve.
 
 W8.1 (``test_w8_realized_dispatch.py``) proved that realized operations
 can come from a SEPARATE deterministic dispatch solve whose investments
 are fixed from a stochastic solve — using an AUTHOR-DECLARED second solve.
-W4b removes the author-declared solve: a single top-level solve that sets
-``dispatch_realization_method = separate_dispatch`` causes the engine to
-AUTOMATICALLY register a deterministic realized-dispatch SIBLING
+W4b removes the author-declared solve: a single top-level investment solve
+with a ``realized: yes`` branch reaching its realized period (and no
+``dispatch_realization_method``: an investment solve does not read it, and
+``separate_dispatch`` there is ignored with warning W-0640) causes the
+engine to AUTOMATICALLY register a deterministic realized-dispatch SIBLING
 ``<parent>__realized_dispatch`` that takes the full override path
 (invest→dispatch handoff fixes committed capacity; realized last-wins
 empties the parent's realized window; the sibling owns the reported
@@ -17,19 +19,24 @@ This module pins:
 
   * the four W8.1 oracles, now against the AUTO-spawned
     ``stoch_rd__realized_dispatch`` step
-    (``w4b_auto_dispatch`` fixture — W8.1 collapsed to one solve +
-    ``dispatch_realization_method=separate_dispatch``);
-  * a RESERVE full-path proof — a ``separate_dispatch`` solve carrying an
+    (``w4b_auto_dispatch`` fixture — W8.1 collapsed to one solve);
+  * a RESERVE full-path proof — the solve carrying an
     up-reserve requirement; the sibling's LP must contain a reserve
     variable (the synthetic ``<base>_<anchor>`` fallback would silently
     drop the reserve subsystem), proving the sibling takes the real DB
     override path;
   * the two in-memory registration primitives
     (:meth:`SpineDbReader.register_derived_solve`,
-    :meth:`SolveConfig.spawn_realized_dispatch_sibling`).
+    :meth:`SolveConfig.spawn_realized_dispatch_sibling`);
+  * ``separate_dispatch`` on the investment solve ignored with W-0640 (the
+    same realization), and the two-solve structure the warning points to
+    (investment solve, then a ``separate_dispatch`` dispatch solve)
+    reproducing the realized dispatch.
 """
 from __future__ import annotations
 
+import base64
+import json
 import os
 import sys
 from pathlib import Path
@@ -254,7 +261,7 @@ def test_sibling_objective_hand_calc(chain) -> None:
 
 @pytest.mark.solver
 def test_reserve_present_in_sibling_lp(reserve_chain) -> None:
-    """A ``separate_dispatch`` solve carrying an up-reserve requirement:
+    """The investment solve carrying an up-reserve requirement:
     the auto sibling's LP must CONTAIN the reserve subsystem (``v_reserve``
     and the reserve relationship frames), and the peaker must actually hold
     the 10 MW/step reserve on its FIXED capacity.
@@ -386,11 +393,13 @@ def test_spawn_realized_dispatch_sibling_copies_sets_and_drops(tmp_path):
     assert SIBLING not in sc.realized_invest_periods
     assert SIBLING not in sc.fix_storage_periods
     assert SIBLING not in sc.decomposition
-    assert SIBLING not in sc.stochastic_invest_method
+    assert SIBLING not in sc.invest_solve_branching_method
     assert SIBLING not in sc.contains_solves
-    # dispatch_realization_method absent → resolver yields within_solve →
-    # the run()-site guard no-ops → no re-spawn.
-    assert sc.dispatch_realization_method_for(SIBLING) == "within_solve"
+    # dispatch_realization_method absent → resolver yields deterministic (the
+    # default; the sibling has no stochastic_branches) → the run()-site guard
+    # no-ops → no re-spawn.
+    assert SIBLING not in sc.dispatch_realization_method
+    assert sc.dispatch_realization_method_for(SIBLING) == "deterministic"
 
 
 def test_spawn_helper_registers_in_both_reader_and_config(tmp_path):
@@ -502,3 +511,84 @@ def test_spawn_helper_fix_storage_guard_raises():
     reader_ok = _FakeReader()
     _spawn_realized_dispatch_siblings(sc_ok, reader_ok, logger=None)
     assert reader_ok.registered == [(PARENT, SIBLING)]
+
+
+# ===========================================================================
+# separate_dispatch on the investment solve: ignored, and the structure the warning points to
+# ===========================================================================
+
+
+def _enc(value) -> list:
+    kind = "str" if isinstance(value, str) else "array" if "value_type" in value else "map"
+    return [base64.b64encode(json.dumps(value).encode()).decode("ascii"), kind]
+
+
+def _variant(tmp_path: Path, name: str, mutate) -> Path:
+    data = json.loads(AUTO_FIXTURE.read_text(encoding="utf-8"))
+    mutate(data)
+    out = tmp_path / f"{name}.json"
+    out.write_text(json.dumps(data), encoding="utf-8")
+    return out
+
+
+@pytest.mark.solver
+def test_separate_dispatch_on_the_investment_solve_is_ignored(tmp_path) -> None:
+    """``stoch_rd`` invests (``invest_periods`` [p2035]): ``separate_dispatch`` on it is not read.  One W-0640 line
+    names the solve, and the run is the one without the value: the engine realization ``stoch_rd__realized_dispatch``
+    of the ``realized: yes`` branch, with W8.1's oracle (peaker 60 MW per step, objective 60 · 10 · 8760)."""
+    from tests._support.coded_warnings import capture_coded
+
+    def mutate(data: dict) -> None:
+        data["parameter_values"].append(
+            ["solve", PARENT, "dispatch_realization_method", _enc("separate_dispatch"), "init"])
+
+    with capture_coded() as got:
+        steps, wf = _run_chain(_variant(tmp_path, "w4b_separate", mutate), tmp_path)
+    assert [c for c in got.codes() if c in ("W-0640", "W-0636", "W-0593")] == ["W-0640"]
+    assert got.lines("W-0640") == [
+        f"Warning: investment solve '{PARENT}': dispatch_realization_method separate_dispatch ignored [W-0640]"]
+    assert set(steps) == {PARENT, SIBLING}
+    obj = float(pl.read_parquet(wf / "output_raw" / f"v_obj__{SIBLING}.parquet")["objective"][0])
+    assert obj == pytest.approx(DISPATCH_OBJECTIVE, rel=1e-9)
+    peaker = steps[SIBLING].solution.value("v_flow").filter(pl.col("source") == "peaker")
+    assert peaker["value"].to_list() == pytest.approx([60.0] * 3)
+
+
+DISPATCH = "stoch_rd_dispatch"
+
+
+@pytest.mark.solver
+def test_investment_solve_then_separate_dispatch_solve(tmp_path) -> None:
+    """The structure W-0640 points to.  ``stoch_rd`` keeps ``invest_periods`` / ``realized_invest_periods``
+    [p2035] and its forecasts, without ``realized_periods`` (so no realization of its own); ``stoch_rd_dispatch``
+    follows it: no invest periods, ``realized_periods`` [p2035], the same ``stochastic_branches`` (realized ``rlz``
+    weight 0, forecasts ``high`` / ``low``) and ``separate_dispatch``.
+
+    By hand (W8.1's numbers, ``build_stoch_realized_dispatch.py``): every branch reads the same data, residual
+    100 − 40 = 60 MW per step, so ``stoch_rd`` invests 60 MW of peaker; ``stoch_rd_dispatch`` starts from that
+    capacity, and its engine realization ``stoch_rd_dispatch__realized_dispatch`` dispatches the realized branch:
+    peaker 60 MW per step, objective 60 · 10 · 8760 = 5 256 000 (no annuity: the capacity is existing there)."""
+    def mutate(data: dict) -> None:
+        rows = data["parameter_values"]
+        copied = [[r[0], DISPATCH, *r[2:]] for r in rows if r[0] == "solve" and r[1] == PARENT and r[2] in (
+            "period_timeset", "realized_periods", "solve_mode", "years_represented", "stochastic_branches")]
+        data["parameter_values"] = [r for r in rows if not (
+            r[0] == "solve" and r[1] == PARENT and r[2] == "realized_periods")]
+        data["parameter_values"] += copied + [
+            ["solve", DISPATCH, "dispatch_realization_method", _enc("separate_dispatch"), "init"]]
+        for r in data["parameter_values"]:
+            if r[0] == "model" and r[2] == "solves":
+                r[3] = _enc({"value_type": "str", "data": [PARENT, DISPATCH]})
+        data["entities"].append(["solve", DISPATCH, None])
+
+    steps, wf = _run_chain(_variant(tmp_path, "w4b_two_solves", mutate), tmp_path)
+    realization = f"{DISPATCH}__realized_dispatch"
+    assert set(steps) == {PARENT, DISPATCH, realization}
+    assert all(steps[s].optimal for s in steps)
+    ri = steps[PARENT].handoff.realized_cohort.filter(pl.col("kind") == "invest")
+    assert {r["entity"]: float(r["size"]) for r in ri.iter_rows(named=True)} == {
+        "peaker": pytest.approx(COMMITTED_PEAKER_MW)}
+    obj = float(pl.read_parquet(wf / "output_raw" / f"v_obj__{realization}.parquet")["objective"][0])
+    assert obj == pytest.approx(DISPATCH_OBJECTIVE, rel=1e-9)
+    peaker = steps[realization].solution.value("v_flow").filter(pl.col("source") == "peaker")
+    assert peaker["value"].to_list() == pytest.approx([60.0] * 3)

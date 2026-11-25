@@ -55,6 +55,8 @@ def _run(tmp_path_factory, branches: tuple[str, str]):
         ("solve", "sol", "realized_periods", api.Array(["p1", "p2"])),
         ("solve", "sol", "years_represented", _m({"p1": 1.0, "p2": 1.0}, "period")),
         ("solve", "sol", "stochastic_branches", fan),
+        # The forecasts are solved: deterministic, the default since 4.7.0, would ignore them.
+        ("solve", "sol", "dispatch_realization_method", "within_solve"),
         ("timeset", "ts1", "timeline", "tl"), ("timeset", "ts1", "timeset_duration", _m({"t0001": 4.0}, "time")),
         ("timeset", "ts2", "timeline", "tl"), ("timeset", "ts2", "timeset_duration", _m({"t0005": 4.0}, "time")),
     ]

@@ -425,6 +425,7 @@ def test_benders_master_receives_user_options(monkeypatch) -> None:
     master._region_membership = None
     master._master_hosted_nodes = None
     master._obj_scale = 1.0
+    master._solve_name = None
     master._solver_options = {"threads": 2, "parallel": "on", "mip_rel_gap": 0.05}
     with pytest.raises(_Stop):
         master._build_flextool_master(toy_data())

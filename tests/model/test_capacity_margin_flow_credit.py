@@ -325,21 +325,15 @@ def _period_map(periods: list[str], value: float) -> list:
     return b64({"index_type": "str", "index_name": "period", "data": [[p, value] for p in periods]}, "map")
 
 
-def _run_vehicle(tmp_path_factory, name: str, veh: str, values: list) -> dict:
+def _run_recourse(tmp_path_factory, name: str, values: list) -> dict:
     from flextool.engine import run_chain_from_db
     from tests.model import test_capacity_margin_invest_periods as cm
 
     if name in _RUNS:
         return _RUNS[name]
-    if veh == "roll":
-        fj, chain, ents = (cm._deterministic_rolling_json(tmp_path_factory),
-                           cm._chain(cm.STOCHASTICS_JSON, "1_week_rolling_wind"), cm.ELEC_G)
-        values = values + [["solve", "1week_rolling", "invest_periods",
-                            b64({"value_type": "str", "data": ["period1"], "index_name": "period"}, "array")]]
-    else:
-        fj, chain, ents = cm.RECOURSE_JSON, cm._chain(cm.RECOURSE_JSON, "recourse"), cm.CM_G
-    url, scen = make_db(tmp_path_factory, alt=f"cmf_{name}", values=values, base_chain=chain, fixture_json=fj,
-                        entities=ents)
+    url, scen = make_db(tmp_path_factory, alt=f"cmf_{name}", values=values,
+                        base_chain=cm._chain(cm.RECOURSE_JSON, "recourse"), fixture_json=cm.RECOURSE_JSON,
+                        entities=cm.CM_G)
     _RUNS[name] = run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"cmf_{name}_w"),
                                     keep_solutions=True, warm=False)
     return _RUNS[name]
@@ -350,16 +344,13 @@ def _margins(step) -> dict[str, float]:
     return {} if m is None else {d: v for d, v in utf8(m.frame).select("d", "value").iter_rows()}
 
 
-@pytest.mark.parametrize("veh,group,periods", [("roll", "elec_g", ["period1"]),
-                                               ("stoch", "cm_g", ["p2035", "p2040"])])
-def test_share_constant_equals_period_map_in_rolling_and_stochastic_solves(tmp_path_factory, veh, group,
-                                                                           periods) -> None:
+def test_share_constant_equals_period_map_in_a_stochastic_solve(tmp_path_factory) -> None:
     """A constant ``capacity_margin_relative`` and the same value as a period map give the same margin and the same
-    objective in every roll of a rolling investment solve and in a stochastic (recourse) fan.  The margin is the
-    share of the peak over the period's original timeline, so every roll has the same margin, and each forecast
-    branch period has a margin of its own peak."""
-    const = _run_vehicle(tmp_path_factory, f"{veh}_const", veh, _share(group, sc(0.1)))
-    as_map = _run_vehicle(tmp_path_factory, f"{veh}_map", veh, _share(group, _period_map(periods, 0.1)))
+    objective in a stochastic (recourse) fan: each forecast branch period has a margin of its own peak (the share
+    of the peak over the period's original timeline).  A rolling solve has no capacity margin in its rolls
+    (``test_capacity_margin_invest_periods.test_rolling_with_invest_periods_builds_no_margin``)."""
+    const = _run_recourse(tmp_path_factory, "stoch_const", _share("cm_g", sc(0.1)))
+    as_map = _run_recourse(tmp_path_factory, "stoch_map", _share("cm_g", _period_map(["p2035", "p2040"], 0.1)))
     assert len(const) == len(as_map)
     for a, b in zip(const.values(), as_map.values()):
         assert float(a.solution.obj) == pytest.approx(float(b.solution.obj), rel=1e-9)
@@ -367,11 +358,8 @@ def test_share_constant_equals_period_map_in_rolling_and_stochastic_solves(tmp_p
         peak = {d: v for d, v in utf8(a.flex_data.pdGroup_peak_demand.frame).select("d", "value").iter_rows()}
         assert _margins(a) == {d: pytest.approx(0.1 * peak[d]) for d in _margins(a)}
         assert all(v > 0 for v in _margins(a).values())
-    if veh == "roll":
-        assert len({tuple(sorted(_margins(s).items())) for s in const.values()}) == 1
-    else:
-        (step,) = const.values()
-        assert sorted(_margins(step)) == ["p2035_high", "p2035_low", "p2040_high", "p2040_low"]
+    (step,) = const.values()
+    assert sorted(_margins(step)) == ["p2035_high", "p2035_low", "p2040_high", "p2040_low"]
 
 
 # ─── input checks ────────────────────────────────────────────────────────
@@ -433,6 +421,23 @@ def test_relative_of_peak_demand_per_period_on_a_shared_timeline(tmp_path_factor
     peak = {d: v for g, d, v in utf8(step.flex_data.pdGroup_peak_demand.frame).iter_rows() if g == "cm"}
     first = max(DEMAND[f"t{i:04d}"] for i in range(1, 25))
     assert peak == {"p2020": pytest.approx(first), "p2025": pytest.approx(1000.0)}
+
+
+def test_relative_margin_in_a_roll_is_not_resolved(coded_log) -> None:
+    """A roll has no capacity margin: a relative_of_peak_demand share without peak demand gives no W-0585 and no
+    margin there (the same share in a single solve: :func:`test_relative_margin_without_demand_is_one_coded_line`)."""
+    from types import SimpleNamespace
+
+    from flextool import run_warnings
+    from flextool.engine.model._group_slack import resolve_capacity_margin
+
+    run_warnings.start_run()
+    share = pl.DataFrame({"g": ["cm"], "d": ["p1"], "value": [0.1]})
+    d = SimpleNamespace(pdGroup_capacity_margin_relative=SimpleNamespace(frame=share), pdGroup_peak_demand=None,
+                        pdGroup_capacity_margin=None, solve_is_rolling=True)
+    resolve_capacity_margin(d)
+    assert "[W-0585]" not in coded_log()
+    assert d.pdGroup_capacity_margin is None
 
 
 def test_relative_margin_without_demand_is_one_coded_line(coded_log) -> None:

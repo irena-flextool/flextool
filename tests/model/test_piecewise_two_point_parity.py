@@ -102,7 +102,7 @@ def pw(unit: str, l0: float, e0: float, e1: float, *, startup: str | None = None
 
 
 def _chain(fixture_json: Path, scenario: str) -> list[str]:
-    rows = [r for r in json.loads(fixture_json.read_text())["scenario_alternatives"] if r[0] == scenario]
+    rows = [r for r in json.loads(fixture_json.read_text(encoding="utf-8"))["scenario_alternatives"] if r[0] == scenario]
     nxt = {a: b for _, a, b in rows}
     alt = next(a for a in nxt if a not in set(nxt.values()))
     chain = []
@@ -133,7 +133,7 @@ STOCH_HEAT = [["node", "heat_s", "node_type", text("balance")], ["node", "heat_s
 
 CASES: dict[str, dict] = {
     "direct_linear": dict(chain=PLANT, unit="coal_plant", curve=PLANT_CURVE, extra=[]),
-    "direct_binary": dict(chain=PLANT, unit="coal_plant", curve=PLANT_CURVE, startup="binary", extra=[]),
+    "direct_binary": dict(chain=PLANT, unit="coal_plant", curve=PLANT_CURVE, startup="integer_fix_in_uc", extra=[]),
     "direct_input_coeff_2": dict(chain=PLANT, unit="coal_plant", curve=PLANT_CURVE, extra=[
         ["unit__inputNode", ["coal_plant", "coal_market"], "conversion_flow_coeff", scalar(2.0)]]),
     # mle needs start-ups; the rising curve gets automatic linear start-ups (none authored on the piecewise twin).

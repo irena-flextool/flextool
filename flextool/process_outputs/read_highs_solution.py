@@ -909,8 +909,8 @@ def extract_variable(
             elif labels or (realized_invest and canonical_d is not None):
                 # Every realized-invest period gets its row, also one that is not on the solve's dispatch axis.
                 # A stochastic fan solve: a period label of the fan has no dispatch but is where the solve
-                # realizes its here-and-now investment (stochastic_invest_method = none; no column under
-                # recourse, so a 0 row); with a realized branch the realization dispatch solve holds the
+                # realizes its here-and-now investment (invest_solve_branching_method operations_only; no column
+                # when the investments branch, so a 0 row); with a realized branch the realization dispatch solve holds the
                 # dispatch of every period, so the stochastic solve has no dispatch axis and its pre-reveal
                 # (real-named) investment period had no row (item 258).  Any other solve: its realized-invest
                 # periods need not all be realized-dispatch periods (realized_invest_periods not within
@@ -1799,9 +1799,10 @@ def write_v_invest_fan(
     # invest_fan[e,L] = Σ_{b ∈ B(L)} pd_branch_weight[b]·v_invest[e,b]      (divest_fan: v_divest)
     #   L a period label of a stochastic fan the solve realizes the investment of (``realized_invest_periods``),
     #   B(L) its forecast-branch periods (``period__branch`` rows (L, b), b ≠ L)
-    # Under ``stochastic_invest_method = recourse`` every branch decides its own investment and retirement: this is
-    # the probability-weighted decision of the fan, the amount whose cost the LP objective carries.  The reported
-    # costs add it to the label's own (shared) decision, which is 0 under recourse.  Rows: the realized labels;
+    # When the investments branch (``invest_solve_branching_method`` other than ``operations_only``) every branch
+    # decides its own investment and retirement (copies tied to one value in a shared period): this is the
+    # probability-weighted decision of the fan, the amount whose cost the LP objective carries.  The reported
+    # costs add it to the label's own (shared) decision, which is 0 then.  Rows: the realized labels;
     # columns: the entities with a branch decision.
 
     No file without FlexData, without a fan or without a decision in a branch period.

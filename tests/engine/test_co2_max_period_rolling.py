@@ -371,23 +371,21 @@ def test_nested_sub_solves_fraction(tmp_path_factory, monkeypatch) -> None:
 
 
 def test_stochastic_rolls_fraction(tmp_path_factory, monkeypatch) -> None:
-    """Stochastic rolling (``1_week_rolling_wind``): every roll's fraction is its window hours over the
-    complete 168 h, the same for the anchor period and each forecast branch period.  The fixture's realized: yes
-    designation adds a realization roll after each stochastic roll (only the anchor period, its jump window):
-    its fraction follows the same rule."""
-    seen = _record_builds(monkeypatch, 12)
+    """Stochastic rolling (``1_week_rolling_wind``, horizon 96 h, jump 24 h): every period name's fraction is its
+    hours in the roll over the complete 168 h.  Since 4.7.0 each roll k is one solve (no realization roll): the
+    period ``period1`` holds the 24 h jump, each forecast the hours after it, min(72, 144 − 24k); the last roll
+    (k = 6) is its jump only."""
+    seen = _record_builds(monkeypatch, 7)
     _run_until_stop(tmp_path_factory, "co2roll_stoch_roll", [], _stoch_chain(), FIX / "stochastics.json")
-    assert len(seen) == 12
-    stochastic = [s for s in seen if "__realized_dispatch" not in s[0]]
-    assert len(stochastic) == 6, [s[0] for s in seen]
-    for name, _hours, _share, frac in stochastic:
-        assert len(frac) > 1, (name, frac)  # anchor + branch periods
-    for name, hours, share, frac in seen:
+    assert len(seen) == 7 and not any("__realized_dispatch" in s[0] for s in seen), [s[0] for s in seen]
+    for k, (name, hours, share, frac) in enumerate(seen):
         assert all(share[d] == pytest.approx(168.0, rel=1e-12) for d in share), (name, share)
         for d in frac:
             assert frac[d] == pytest.approx(hours[d] / 168.0, rel=1e-12), (name, d)
-        assert len(set(frac.values())) == 1, (name, frac)
-    assert any(next(iter(f.values())) < 1.0 for _, _, _, f in seen)
+        assert frac.pop("period1") == pytest.approx(24 / 168, rel=1e-12), name
+        assert set(frac) == (set(FORECASTS) if k < 6 else set()), (name, frac)
+        for d in frac:
+            assert frac[d] == pytest.approx(min(72, 144 - 24 * k) / 168, rel=1e-12), (name, d)
 
 
 def _stoch_chain() -> list[str]:
@@ -410,14 +408,15 @@ def _stoch_chain() -> list[str]:
 #
 # ``1_week_rolling_wind`` (stochastics.json): one period ``period1`` of 168 one-hour steps (timeset ``1week``,
 # timeset_duration 168), rolling horizon 96 h, jump 24 h -> 7 stochastic rolls k = 0..6 starting at hour 24k.
-# Every roll fans into the forecasts ``period1_lower`` / ``_mid`` / ``_upper`` at its first step; the
-# ``realized: yes`` branch makes the engine add a realization roll after each stochastic roll, which realizes
-# that roll's 24 h jump under the period label ``period1``.  So stochastic roll k starts with 24k realized
-# hours and its forecasts cover min(96, 168 - 24k) more:
-#     f_d_k[forecast] = (24k + min(96, 168 - 24k)) / 168 = min(24k + 96, 168) / 168   (roll 1: 120/168 = 0.714)
-#     f_d_k[period1]  = 24k / 168                                                    (no steps of its own)
+# Since 4.7.0 every roll k is one solve that realizes its 24 h jump under the period ``period1`` on the
+# ``realized: yes`` branch and, after it, branches into the forecasts ``period1_lower`` / ``_mid`` / ``_upper``
+# made at the end of the jump; roll 6 (t0145-t0168) is its jump only.  So roll k starts with 24k realized hours,
+# realizes 24 more and its forecasts cover min(72, 144 - 24k) more:
+#     f_d_k[forecast] = (24k + 24 + min(72, 144 - 24k)) / 168 = min(24k + 96, 168) / 168   (roll 1: 120/168)
+#     f_d_k[period1]  = (24k + 24) / 168                    (read by no row of a roll with forecasts)
+# Period rows sit on the forecasts and sum the jump's cells too (the path: period1's jump + one forecast).
 # The group ``co2_limit`` holds gas_market (gas co2_content 0.2, cap 2e6 t/a in period1): gas runs in every
-# realization roll, so the realized emissions grow roll by roll (coal does not run there).
+# jump, so the realized emissions grow roll by roll.
 
 STOCH_ENTITIES = [["group", "co2_limit", None], ["group__node", ["co2_limit", "gas_market"], None]]
 STOCH_CAP = 2.0e6
@@ -436,10 +435,7 @@ def stochastic_fan_rolls(tmp_path_factory) -> dict:
                         entities=STOCH_ENTITIES, fixture_json=FIX / "stochastics.json")
     steps = run_chain_from_db(url, scen, keep_solutions=True, work_folder=tmp_path_factory.mktemp("co2roll_fan_w"))
     assert steps and all(st.solution is not None for st in steps.values())
-    names = list(steps)
-    assert [n for n in names if "__realized_dispatch" not in n] == [f"{STOCH_SOLVE}_roll_{k}" for k in range(7)]
-    assert [n for n in names if "__realized_dispatch" in n] == [
-        f"{STOCH_SOLVE}__realized_dispatch_roll_{k}" for k in range(7)]
+    assert list(steps) == [f"{STOCH_SOLVE}_roll_{k}" for k in range(7)]
     return steps
 
 
@@ -456,18 +452,20 @@ def _forecast_rhs(fd) -> dict[str, float]:
 
 
 def test_stochastic_forecast_f_d_k_counts_realized_hours(stochastic_fan_rolls) -> None:
-    """Each forecast's ``f_d_k`` counts the realized hours of its period (the label's carry) plus its own window;
-    before, it counted the window alone (roll 1: 96/168 instead of 120/168), so a forecast's period cap allocated
-    nothing for the hours already realized."""
+    """Each forecast's ``f_d_k`` counts the realized hours of its period (the earlier rolls' carry and this roll's
+    jump) plus its own hours: the path's; before item 59 a forecast counted its own window alone, so its period
+    cap allocated nothing for the hours already realized.  The last roll has no forecasts: its row is on period1,
+    which reaches the whole period."""
     for k in range(7):
         fd = stochastic_fan_rolls[f"{STOCH_SOLVE}_roll_{k}"].flex_data
         fdk = _period_values(fd.p_co2_f_d_k)
-        assert set(fdk) == {"period1", *FORECASTS}, k
-        assert fdk["period1"] == pytest.approx(24 * k / 168, rel=1e-12, abs=1e-15), k
-        for b in FORECASTS:
+        forecasts = FORECASTS if k < 6 else ()
+        assert set(fdk) == {"period1", *forecasts}, k
+        assert fdk["period1"] == pytest.approx((24 * k + 24) / 168, rel=1e-12), k
+        for b in forecasts:
             assert fdk[b] == pytest.approx(min(24 * k + 96, 168) / 168, rel=1e-12), (k, b)
         rhs = _forecast_rhs(fd)
-        assert set(rhs) == set(FORECASTS), k
+        assert set(rhs) == (set(FORECASTS) if k < 6 else {"period1"}), k
         assert all(math.isfinite(v) for v in rhs.values()), (k, rhs)
 
 
@@ -490,23 +488,24 @@ def stochastic_total_rolls(tmp_path_factory) -> dict:
 
 
 def test_stochastic_total_cap_reached_share_counts_each_hour_once(stochastic_total_rolls) -> None:
-    """``co2_max_total``'s reached share counts the period once, through its label: the f_d_k of a forecast, which
-    holds the realized hours.  Stochastic roll k reaches min(24k + 96, 168) / 168 of the week, realization roll k
-    (24k + 24) / 168 (years_represented 1, one period); adding the label's own 24k / 168 on top of a forecast's
-    f_d_k would count the realized hours twice."""
+    """``co2_max_total``'s reached share counts the period once, through the f_d_k of a forecast, which holds the
+    realized hours and the jump: roll k reaches min(24k + 96, 168) / 168 of the week (years_represented 1, one
+    period; the last roll, its jump only, 168 / 168); adding the period's own (24k + 24) / 168 on top of a
+    forecast's f_d_k would count the realized hours twice."""
     steps = stochastic_total_rolls
+    assert list(steps) == [f"{STOCH_SOLVE}_roll_{k}" for k in range(7)]
     for k in range(7):
-        stochastic = steps[f"{STOCH_SOLVE}_roll_{k}"].flex_data
-        realization = steps[f"{STOCH_SOLVE}__realized_dispatch_roll_{k}"].flex_data
-        assert stochastic.co2_horizon_fraction_reached == pytest.approx(min(24 * k + 96, 168) / 168, rel=1e-12), k
-        assert realization.co2_horizon_fraction_reached == pytest.approx((24 * k + 24) / 168, rel=1e-12), k
+        fd = steps[f"{STOCH_SOLVE}_roll_{k}"].flex_data
+        assert fd.co2_horizon_fraction_reached == pytest.approx(min(24 * k + 96, 168) / 168, rel=1e-12), k
 
 
 def _gas_tonnes(step) -> float:
-    """CO2 of the gas burnt over a solve's steps (gas co2_content 0.2): v_flow · unitsize · slope · step_duration."""
+    """CO2 of the gas burnt over a roll's jump, its ``period1`` cells (gas co2_content 0.2): v_flow · unitsize · slope ·
+    step_duration."""
     fd = step.flex_data
     size = float(utf8(fd.p_unitsize.frame).filter(pl.col("p") == "gas_plant")["value"][0])
-    vf = utf8(step.solution.value("v_flow")).filter((pl.col("p") == "gas_plant") & (pl.col("source") == "gas_market"))
+    vf = utf8(step.solution.value("v_flow")).filter(
+        (pl.col("p") == "gas_plant") & (pl.col("source") == "gas_market") & (pl.col("d") == "period1"))
     slope = utf8(fd.p_slope.frame).filter(pl.col("p") == "gas_plant").select("d", "t", slope="value")
     sd = utf8(fd.p_step_duration.frame).select("d", "t", sd="value")
     rows = vf.join(slope, on=["d", "t"], how="inner").join(sd, on=["d", "t"], how="inner")
@@ -516,9 +515,10 @@ def _gas_tonnes(step) -> float:
 
 def test_stochastic_forecast_period_cap_carries_realized_history(stochastic_fan_rolls) -> None:
     """Each forecast's ``co2_max_period`` RHS continues from its period's realized emissions:
-    ``2e6 · f_d_k − R_k / period_share``, R_k = the tonnes emitted by realization rolls 0..k−1 (read from their
-    solutions), period_share = 168/8760.  Before, a forecast joined the realized carrier on its own name, found
-    nothing and took R = 0, so every forecast could emit the period's realized tonnes again."""
+    ``2e6 · f_d_k − R_k / period_share``, R_k = the tonnes the jumps of rolls 0..k−1 emitted (read from their
+    ``period1`` cells), period_share = 168/8760; the last roll's row is on period1 (f_d_k 1).  Before item 59 a
+    forecast joined the realized carrier on its own name, found nothing and took R = 0, so every forecast could emit
+    the period's realized tonnes again."""
     share = 168 / 8760
     realized = 0.0
     for k in range(7):
@@ -526,33 +526,44 @@ def test_stochastic_forecast_period_cap_carries_realized_history(stochastic_fan_
         if k > 0:
             assert realized > 0.0, k
         rhs = _forecast_rhs(fd)
-        assert set(rhs) == set(FORECASTS), k
-        for b in FORECASTS:
+        rows = FORECASTS if k < 6 else ("period1",)
+        assert set(rhs) == set(rows), k
+        for b in rows:
             want = STOCH_CAP * min(24 * k + 96, 168) / 168 - realized / share
             assert rhs[b] == pytest.approx(want, rel=1e-9), (k, b)
             assert rhs[b] >= 0.0, (k, b)
-        realized += _gas_tonnes(stochastic_fan_rolls[f"{STOCH_SOLVE}__realized_dispatch_roll_{k}"])
+        realized += _gas_tonnes(stochastic_fan_rolls[f"{STOCH_SOLVE}_roll_{k}"])
 
 
 def test_stochastic_rolls_total_cap_per_forecast_path(stochastic_total_rolls) -> None:
-    """Every stochastic roll keeps one ``co2_max_total`` row per forecast path, each with the whole remaining budget
-    and only its own forecast's emissions; before, a roll had no scenario paths and summed the three forecasts'
-    emissions into one row against one budget (about 3× too tight).
+    """Every roll with forecasts keeps one ``co2_max_total`` row per forecast path, each with the whole remaining budget
+    and the emissions of the jump (``period1``) and its own forecast; before, a roll had no scenario paths and summed
+    the three forecasts' emissions into one row against one budget (about 3× too tight).
 
     Hand values: roll k's reached share is min(24k + 96, 168)/168 (one period, years_represented 1), and the
-    realized carry R_k is the tonnes the realization rolls 0..k−1 emitted (read from their solutions).  The row's
+    realized carry R_k is the tonnes the jumps of rolls 0..k−1 emitted (read from their solutions).  The row's
     LHS weighs a tonne by years_represented / period_share = 1 / (168/8760) = 8760/168 (timeset_duration 168 h,
     one-hour steps), so the carry is subtracted with that weight too:
     RHS = 1e7·min(24k + 96, 168)/168 − R_k·8760/168, the same on every path.
-    Roll 0: 1e7·96/168 = 5 714 285.71.  Roll 1: realization roll 0 dispatches hours 1-24; its solution runs
-    gas_plant (unitsize 1000, efficiency 0.9) at 1000 MW in 19 h and 0, 160.6, 969.3, 748.7, 896.5 MW in the
-    other 5, 21 775.1 MWh out, so R_1 = 21 775.1 / 0.9 · 0.2 = 4 838.9 t (checked here through the input-side
-    fuel flow), and RHS = 1e7·120/168 − 4 838.9·8760/168 = 7 142 857.14 − 252 314.6 = 6 890 542.5.  The
-    pre-fix RHS subtracted raw tonnes: 7 138 018.2."""
+    Roll 0: 1e7·96/168 = 5 714 285.71.  Roll 1: R_1 = the gas burnt in roll 0's jump (hours 1-24), by hand
+    (the cap, ~2.6e5 t in the row's units, never binds).  Demand 3000 MW, wind 4000·r_t (the realized series made
+    at t0001), so the residual is 3000 − 4000·r_t.  Gas (6/0.9 EUR/MWh out, ≤ 1000 MW) is cheaper than coal
+    (16/0.9); hydro sends x to the demand and x to ``downriver`` per x of water (efficiency 2, ``hydro_divide``),
+    so the 100 MW downriver demand needs x ≥ 100.  An MWh of water left at the jump end is worth, over the three
+    equally weighted tails (the reservoir ends at its reference level on every path): coal in ``lower`` (wind
+    ~0.2, coal runs every hour), gas in ``mid`` (wind ~0.5: hydro and gas cover the residual, gas below its
+    capacity), nothing in ``upper`` (wind ~0.9 covers the demand): (17.8 + 6.7 + 0)/3 = 8.1 EUR/MWh, between gas
+    and coal.  So the jump uses water to displace coal only: hydro max(100, residual − 1000), gas
+    min(1000, residual − 100), no coal.  This keeps the reservoir (start 2500, inflow 400/h, size 5000) below its
+    size at every hour (the water used by hour t exceeds 400t − 2500 for every t ≤ 24) and uses 7 829.9 MWh.
+    Σ_t min(1000, 3000 − 4000·r_t − 100) = 23 545.152764 MWh of gas out, so R_1 = 23 545.152764 / 0.9 · 0.2 =
+    5 232.25617 t (read from the input-side fuel flow).  Before 4.7.0 the jump-only realization had to end the jump
+    at the reference level (water use = 9 600 MWh): gas = Σ residual − 9 600 = 21 775.1, R_1 = 4 838.9 t.
+    RHS = 1e7·120/168 − R_1·8760/168.  The pre-item-59 RHS subtracted raw tonnes."""
     from tests.engine._lp_rows import row_bounds, row_terms
 
     realized = 0.0
-    for k in range(7):
+    for k in range(6):
         fd = stochastic_total_rolls[f"{STOCH_SOLVE}_roll_{k}"].flex_data
         pb = build(fd)
         assert row_bounds(pb, "co2_max_total", "") == {}, k
@@ -560,18 +571,20 @@ def test_stochastic_rolls_total_cap_per_forecast_path(stochastic_total_rolls) ->
         assert set(rows) == {f"co2_max_total_path[co2_limit,{f.removeprefix('period1_')}]" for f in FORECASTS}, k
         want = STOCH_TOTAL_CAP * min(24 * k + 96, 168) / 168 - realized * 8760 / 168
         if k == 1:
-            assert realized == pytest.approx(4838.9, abs=0.05)
-            assert want == pytest.approx(6_890_542.5, abs=1.0)
+            assert realized == pytest.approx(23_545.152764 / 0.9 * 0.2, rel=1e-6)
+            assert want == pytest.approx(1e7 * 120 / 168 - realized * 8760 / 168, rel=1e-12)
         for nm, (_lb, ub) in rows.items():
             assert ub == pytest.approx(want, rel=1e-9), (k, nm)
         for nm, terms in row_terms(pb, "co2_max_total_path", "co2_limit,").items():
             periods = {col.rsplit(",", 2)[-2] for col in terms if col.startswith("v_flow[")}
-            assert periods == {f"period1_{nm[nm.rindex(',') + 1:-1]}"}, (k, nm, periods)
-        realized += _gas_tonnes(stochastic_total_rolls[f"{STOCH_SOLVE}__realized_dispatch_roll_{k}"])
-    for k in range(7):
-        pb = build(stochastic_total_rolls[f"{STOCH_SOLVE}__realized_dispatch_roll_{k}"].flex_data)
-        assert row_bounds(pb, "co2_max_total_path", "") == {}, k
-        assert set(row_bounds(pb, "co2_max_total", "")) == {"co2_max_total[co2_limit]"}, k
+            assert periods == {"period1", f"period1_{nm[nm.rindex(',') + 1:-1]}"}, (k, nm, periods)
+        realized += _gas_tonnes(stochastic_total_rolls[f"{STOCH_SOLVE}_roll_{k}"])
+    # The last roll is its jump only: one row, the whole remaining budget (reached share 1).
+    pb = build(stochastic_total_rolls[f"{STOCH_SOLVE}_roll_6"].flex_data)
+    assert row_bounds(pb, "co2_max_total_path", "") == {}
+    rows = row_bounds(pb, "co2_max_total", "")
+    assert set(rows) == {"co2_max_total[co2_limit]"}
+    assert rows["co2_max_total[co2_limit]"][1] == pytest.approx(STOCH_TOTAL_CAP - realized * 8760 / 168, rel=1e-9)
 
 
 # ---------------------------------------------------------------------------
@@ -615,16 +628,16 @@ def test_rolling_total_cap_binds_at_the_budget(tmp_path_factory) -> None:
 
 
 def test_stochastic_rolling_week_total_cap_binds_at_the_budget(tmp_path_factory) -> None:
-    """The rolling stochastic week (7 stochastic rolls, each followed by a realization roll that realizes its 24 h)
-    with a binding ``co2_max_total`` = 1e6 t: the realized week emits exactly the budget.
+    """The rolling stochastic week (7 rolls, each realizing its 24 h jump and looking ahead with the forecasts made
+    at its end) with a binding ``co2_max_total`` = 1e6 t: the realized week emits exactly the budget.
 
-    One period of 168 h, years_represented 1: the LHS weighs a tonne by 1 / (168/8760) = 8760/168.  Realization
-    roll k reaches (24k + 24)/168 of the week, so it may emit C·(k + 1)/7 minus what rolls 0..k−1 realized (in
-    the same weight): the realized total through roll k never exceeds C·(k + 1)/7, and a day that needs less gas
-    (windier) leaves its allowance to the later days.  Gas burns about 4.8e3 t on the first day (2.5e5 weighted,
-    see the per-path test above), far over 1e6/7 = 1.4e5, so the last realization roll binds and the week's
-    realized emissions are C.  Before, the carry was subtracted as raw tonnes, so each realization roll got
-    about C·(k + 1)/7 again and the week emitted several times the budget."""
+    One period of 168 h, years_represented 1: the LHS weighs a tonne by 1 / (168/8760) = 8760/168.  Roll k reaches
+    min(24k + 96, 168)/168 of the week on each path (its jump and one forecast's hours after it), so it may emit
+    C·min(24k + 96, 168)/168 minus what rolls 0..k−1 realized (in the same weight) over the jump and a forecast:
+    the realized total through roll k never exceeds that share.  Gas burns about 4.8e3 t a day (2.5e5 weighted),
+    over the 1e6/7 = 1.4e5 a day of the budget, so the last roll (its jump only, the whole remaining budget)
+    binds and the week's realized emissions are C.  Before item 59 the carry was subtracted as raw tonnes, so each
+    roll got about its share again and the week emitted several times the budget."""
     from flextool.engine import run_chain_from_db
 
     cap = 1.0e6
@@ -635,14 +648,15 @@ def test_stochastic_rolling_week_total_cap_binds_at_the_budget(tmp_path_factory)
                         base_chain=_stoch_chain(), entities=STOCH_ENTITIES, fixture_json=FIX / "stochastics.json")
     steps = run_chain_from_db(url, scen, keep_solutions=True,
                               work_folder=tmp_path_factory.mktemp("co2tot_fan_binding_w"))
-    realization = [steps[f"{STOCH_SOLVE}__realized_dispatch_roll_{k}"] for k in range(7)]
-    weighted, duals = 0.0, []
-    for k, st in enumerate(realization):
+    rolls = [steps[f"{STOCH_SOLVE}_roll_{k}"] for k in range(7)]
+    assert list(steps) == [st.solve_name for st in rolls]
+    weighted = 0.0
+    for k, st in enumerate(rolls):
         weighted += _gas_tonnes(st) * 8760 / 168
-        assert weighted <= cap * (k + 1) / 7 * (1 + 1e-9), k
-        (dual,) = st.solution.constraint_dual("co2_max_total")["dual"].to_list()
-        duals.append(dual)
-    assert duals[-1] != 0.0
+        # the jump and each forecast's hours after it share the budget reached by the path
+        assert weighted <= cap * min(24 * k + 96, 168) / 168 * (1 + 1e-9), k
+    (dual,) = rolls[-1].solution.constraint_dual("co2_max_total")["dual"].to_list()
+    assert dual != 0.0
     assert weighted == pytest.approx(cap, rel=1e-6)
 
 

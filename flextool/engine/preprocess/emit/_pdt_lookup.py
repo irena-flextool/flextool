@@ -320,6 +320,12 @@ def _read_singles(path: Path,
 #   forecast must cover every step such a period reads, and a forecasts-only fan (no realized branch) has no
 #   series for these periods at all; either is an input error raised once per reader before its value loop
 #   (:func:`_check_pre_reveal_reads_have_forecast`), never a silent default.
+# * a period of a solve that runs ``dispatch_realization_method`` ``deterministic`` with ``stochastic_branches``
+#   (``read_first`` = ``flat``): the realized branch flattened into one timeline.  Its rows list the analysis times
+#   of the ``realized: yes`` rows, the one nearest to the solve's or roll's start first (``_stochastic.
+#   realized_analysis_times``), one tier each: a value cell reads the nearest analysis time whose realized series
+#   has a value for it.  A step no realized series covers is an input error
+#   (:func:`_check_pre_reveal_reads_have_forecast`).
 #
 # Non-stochastic (plain time-series) data has no analysis time and is not read through these tiers: unchanged.
 # See docs/how_to/stochastics.md "Stochastics over multiple periods" and "Rolling horizon stochastics".
@@ -328,6 +334,7 @@ def _read_singles(path: Path,
 BRANCH_TIME_START_CSV = "branch_time_start.csv"
 READ_FIRST_OWN = "own"  # only read: a hand-built frame; every solve writes ``fan`` (item 255)
 READ_FIRST_FAN = "fan"
+READ_FIRST_FLAT = "flat"  # a deterministic solve's flattened realized branch (one tier per analysis time)
 
 
 class FanStarts(dict):
@@ -335,13 +342,16 @@ class FanStarts(dict):
     reads the fan-start forecast before the forecast at its own first step (``read_first`` = ``fan``, every
     period a solve writes since item 255), and :attr:`start`: the first time step of the solve or roll (the analysis time
     every period before the reveal reads, :func:`ts_tiers`).  A plain dict works wherever a :class:`FanStarts`
-    is taken (no fan-first periods, no start: a period before the reveal reads its own first step)."""
+    is taken (no fan-first periods, no start: a period before the reveal reads its own first step).
+    :attr:`flat`: the periods whose rows are a deterministic solve's flattened realized analysis times
+    (``read_first`` = ``flat``)."""
 
     def __init__(self, *args, fan_first: "frozenset[str]" = frozenset(), start: "str | None" = None,
-                 **kwargs) -> None:
+                 flat: "frozenset[str]" = frozenset(), **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.fan_first = frozenset(fan_first)
         self.start = start
+        self.flat = frozenset(flat)
 
 
 def _solve_start(solve_data_dir: Path, *, provider: "object | None" = None) -> "str | None":
@@ -362,6 +372,7 @@ def read_fan_starts(path: Path, *, provider: "object | None" = None) -> FanStart
     if df is None:
         return out
     fan_first: set[str] = set()
+    flat: set[str] = set()
     has_read_first = "read_first" in df.columns
     for row in df.iter_rows():
         if len(row) < 2:
@@ -369,9 +380,13 @@ def read_fan_starts(path: Path, *, provider: "object | None" = None) -> FanStart
         d, step = _cell_str(row[0]), _cell_str(row[1])
         if d and step:
             out.setdefault(d, []).append(step)
-            if has_read_first and _cell_str(row[2]) == READ_FIRST_FAN:
+            read_first = _cell_str(row[2]) if has_read_first else None
+            if read_first == READ_FIRST_FAN:
                 fan_first.add(d)
+            elif read_first == READ_FIRST_FLAT:
+                flat.add(d)
     out.fan_first = frozenset(fan_first)
+    out.flat = frozenset(flat)
     return out
 
 
@@ -393,12 +408,15 @@ def ts_tiers(d: str, ts_for_d: "dict[str, list[str]]",
     solve's or roll's start (``fan_for_d.start``): ``[own]`` for the period that holds the start, ``[[start]]``
     for a later one -- never the forecast made at its own (later) first step.  Without a known start (a plain
     dict) it reads ``[own]``.  A period without steps of its own (a period label: no dispatch) reads nothing,
-    not the fan start.
+    not the fan start.  A period in ``fan_for_d.flat`` (a deterministic solve's flattened realized branch) reads
+    one tier per listed analysis time, in the listed order (nearest to the start first).
     """
     own = list(ts_for_d.get(d, ()))
     if not own:
         return [own]
     fan_steps = fan_for_d.get(d, ())
+    if d in getattr(fan_for_d, "flat", ()):
+        return [[ts] for ts in fan_steps]
     if not fan_steps:
         start = getattr(fan_for_d, "start", None)
         return [own] if start is None or start in own else [[start]]
@@ -511,12 +529,15 @@ def _check_pbt_branch_coverage(
     ``reserve``) names the entity in the message.
     """
     fan_for_d = fan_for_d or {}
+    flat = getattr(fan_for_d, "flat", frozenset())
     roster_by_ts: dict[str, frozenset[str]] = {}
     for anchor, members in anchor_members.items():
         tokens = frozenset(tb_for_d[m][0] for m in members if tb_for_d.get(m))
         if len(tokens) <= 1:
             continue
-        starts = dict.fromkeys([*ts_for_d.get(anchor, ()), *fan_for_d.get(anchor, ()),
+        # A label that reads the realized branch flattened (a split realization roll's jump) starts no cohort.
+        own = () if anchor in flat else (*ts_for_d.get(anchor, ()), *fan_for_d.get(anchor, ()))
+        starts = dict.fromkeys([*own,
                                 *(ts for m in members for ts in (*ts_for_d.get(m, ()), *fan_for_d.get(m, ())))])
         for ts in starts:
             roster_by_ts[ts] = tokens
@@ -731,6 +752,10 @@ def _check_pre_reveal_reads_have_forecast(
     step of ``steps_in_use``.  Without a period before the reveal (every solve or roll that fans out at its start)
     the function returns at once.  *kind* (as for :func:`_check_pbt_branch_coverage`) names the entity in the
     message.
+
+    A period of a flattened realized branch (``fan_for_d.flat``: a deterministic solve, the jump of a realization
+    roll) reads every listed analysis time (:func:`ts_tiers`): a step that none of their realized series covers is
+    the same input error, worded for it.
     """
     if not pbt:
         return
@@ -743,15 +768,17 @@ def _check_pre_reveal_reads_have_forecast(
         grid = {}
         for d, t in steps:
             grid.setdefault(d, []).append(t)
-    pre = [d for d in grid if d not in fan_for_d and ts_for_d.get(d)]
+    flat = getattr(fan_for_d, "flat", frozenset())
+    pre = [d for d in grid if (d in flat or d not in fan_for_d) and ts_for_d.get(d)]
     if not pre:
         return
     start = next(iter(times_by_d.values()))[0]
     solve = next(iter(_read_singles(solve_data_dir / "solve_current.csv", provider=provider)), None)
     solve_name = f"solve '{solve}'" if solve else "this solve"
     prefixes = sorted(dict.fromkeys(key[:n_ent + 1] for key in pbt))
-    has_fan = bool(fan_for_d)
-    tiers = {d: ts_tiers(d, ts_for_d, FanStarts(fan_for_d, start=start))[0] for d in pre}
+    has_fan = any(d not in flat for d in fan_for_d)  # a realization roll's tails fan out, its jump reads flat
+    tiers = {d: [ts for tier in ts_tiers(d, ts_for_d, fan_for_d) for ts in tier] if d in flat
+             else ts_tiers(d, ts_for_d, FanStarts(fan_for_d, start=start))[0] for d in pre}
     uncovered: dict[tuple, list[tuple[str, str]]] = {}
     read_branches: dict[tuple[tuple, str], list[str]] = {}
     for prefix in prefixes:
@@ -795,6 +822,17 @@ def _check_pre_reveal_reads_have_forecast(
     if len(steps_shown) > _UNCOVERED_SHOWN:
         shown += f" and {len(steps_shown) - _UNCOVERED_SHOWN} more"
     period_names = ", ".join(f"'{d}'" for d in periods)
+    if flat:
+        made = ", ".join(f"'{ts}'" for ts in dict.fromkeys(ts for d in periods for ts in tiers[d]))
+        raise FlexToolConfigError(
+            f"{_subject(kind, ent)}, parameter '{param}': {solve_name} has stochastic_branches and "
+            "dispatch_realization_method deterministic, or realizes a jump of a rolling within_solve or "
+            "separate_dispatch solve, so it reads the value of the realized: yes branch "
+            f"({branches}) as one timeline.  No realized series covers time step{'s' if len(steps_shown) > 1 else ''} "
+            f"{shown} (period{'s' if len(periods) > 1 else ''} {period_names}); the realized series start at "
+            f"analysis_time {made}.  Give the realized: yes branch values that cover these time steps, or give "
+            f"'{param}' a value without forecasts.  Check which alternative of the scenario gives this value."
+        )
     # Name the forecasts made at other times that do have values there (often the one the user meant, e.g. the
     # forecast made at a later period's first step): they are not read, since a solve or roll reads only the
     # forecast made at its start.

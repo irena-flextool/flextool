@@ -567,7 +567,7 @@ def test_links_match_lp(tmp_path_factory, fixture):
 def _timeline_steps(fixture: Path, timeline: str = "y2020") -> list[str]:
     import base64
 
-    data = json.loads(fixture.read_text())
+    data = json.loads(fixture.read_text(encoding="utf-8"))
     for cls, name, param, val, _alt in data["parameter_values"]:
         if cls == "timeline" and name == timeline and param == "timestep_duration":
             return [k for k, _v in json.loads(base64.b64decode(val[0]))["data"]]
@@ -596,7 +596,7 @@ def _run_json(tmp_path_factory, fixture: Path, base: str, values: list, tag: str
     from flextool.update_flextool.db_migration import migrate_database
     from tests.db_utils import json_to_db
 
-    data = _lp_snapshot()._overlay(json.loads(fixture.read_text()), name="custom", base=base, values=values)
+    data = _lp_snapshot()._overlay(json.loads(fixture.read_text(encoding="utf-8")), name="custom", base=base, values=values)
     work = tmp_path_factory.mktemp(tag)
     (work / "f.json").write_text(json.dumps(data))
     url = json_to_db(work / "f.json", work / "f.sqlite")

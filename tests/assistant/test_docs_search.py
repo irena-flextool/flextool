@@ -53,7 +53,7 @@ def test_documents_are_the_scope_and_engine_md_only_its_shipped_sections(store: 
     titles = [h.title for h in docs_index.headings(store.documents[scope.ENGINE_DOC]) if h.level == 2]
     assert titles == list(scope.ENGINE_SECTIONS)
     engine_sections = {c["section"] for c in store.chunks if c["doc"] == scope.ENGINE_DOC}
-    assert "Equation headers" not in engine_sections and "Fix-storage semantics (Deferred-B wiring)" in \
+    assert "Equation headers" not in engine_sections and "How the fix_storage carriers enter the child solve" in \
         engine_sections
     assert store.result_table("unit_outputNode_dt_ee")["topic"] == "Energy flows"
     assert max(len(c["text"]) for c in store.chunks if c["doc"].startswith("reference/")) <= 2 * docs_index.CHUNK_MAX

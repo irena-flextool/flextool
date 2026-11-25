@@ -555,7 +555,7 @@ def _patch_chp_floor_linear(data: dict) -> dict:
 
 def _patch_chp_floor_integer(data: dict) -> dict:
     """As chp_floor_linear with integer (binary) online variables."""
-    return _chp_floor(data, "chp_floor_integer", "binary")
+    return _chp_floor(data, "chp_floor_integer", "integer_fix_in_uc")
 
 
 def _patch_reserve_dynamic_n1_down(data: dict) -> dict:
@@ -915,6 +915,102 @@ def _patch_flowgroup_cum_stoch_rolling(data: dict) -> dict:
         values=[["flowGroup", "gas_fuel", "max_cumulative_flow", 1.0e6]])
 
 
+def _patch_rk_period_node(data: dict) -> dict:
+    """The period-level families a split realization roll sums over a path, on the rolling stochastic week (horizon
+    96 h, jump 24 h): co2_max_period on gas_market (2e6 t), the annual price ladder on coal (tier 1 at 14 up to 1e7
+    MWh/a, tier 2 at 18), max_cumulative_flow of period1 on coal_plant's output (1500 MW), a balance_within_period
+    node ``water`` (inflow 200 MW) feeding ``water_plant`` (300 MW) into demand_node.  No period_total user
+    constraint: the run refuses one that no solve enforces, and rolls that split a period never enforce it.
+    Today's LPs; the baseline of the realization rolls."""
+    ladder = {"index_type": "str", "rank": 2, "index_name": "tier",
+              "data": [["1", {"type": "map", "index_type": "str", "rank": 1,
+                               "data": [["price", 14.0], ["quantity", 1.0e7]]}],
+                       ["2", {"type": "map", "index_type": "str", "rank": 1,
+                              "data": [["price", 18.0], ["quantity", float("inf")]]}]]}
+    return _overlay(
+        data, name="rk_period_node", base="1_week_rolling_wind",
+        entities=[["group", "co2_limit"], ["group__node", ["co2_limit", "gas_market"]],
+                  ["flowGroup", "coal_out"],
+                  ["flowGroup__unit__node", ["coal_out", "coal_plant", "demand_node"]],
+                  ["node", "water"], ["unit", "water_plant"],
+                  ["unit__inputNode", ["water_plant", "water"]],
+                  ["unit__outputNode", ["water_plant", "demand_node"]]],
+        values=[["commodity", "gas", "co2_content", 0.2],
+                ["group", "co2_limit", "co2_method", "period"],
+                ["group", "co2_limit", "co2_max_period", _pmap({"period1": 2.0e6})],
+                ["commodity", "coal", "price_method", "price_ladder_annual"],
+                ["commodity", "coal", "price_ladder_annual", ladder],
+                ["flowGroup", "coal_out", "max_cumulative_flow", _pmap({"period1": 1500.0})],
+                ["node", "water", "node_type", "balance_within_period"],
+                ["node", "water", "inflow", 200.0],
+                ["node", "water", "penalty_up", 5000.0],
+                ["node", "water", "penalty_down", 5000.0],
+                ["unit", "water_plant", "efficiency", 1.0],
+                ["unit", "water_plant", "existing", 300.0]])
+
+
+def _rk_seam(data: dict, name: str, values: list) -> dict:
+    """The rolling stochastic week (``1_week_rolling_wind``) with *values* on top: the realization-roll seam patches."""
+    return _overlay(data, name=name, base="1_week_rolling_wind", values=values)
+
+
+_RK_WEEK = "1week_rolling"
+
+
+def _patch_rk_storage_cycle(data: dict) -> dict:
+    """hydro_reservoir bind_within_period on the rolling stochastic week (horizon 96 h, jump 24 h): every roll holds
+    period1 in part, so its part in the roll cycles and closes per scope.  Today's LPs; the baseline of the
+    realization rolls (each path closes its period part)."""
+    return _rk_seam(data, "rk_storage_cycle",
+                    [["node", "hydro_reservoir", "storage_binding_method", "bind_within_period"]])
+
+
+def _patch_rk_blocks(data: dict) -> dict:
+    """hydro_reservoir bind_intraperiod_blocks with period1 cut to 96 h (one timeset block t0001-t0096): roll 0
+    (horizon 96 h) holds the period whole, so its blocks loop; rolls 1-3 hold it in part and chain forward.  Today's
+    LPs; the baseline of the realization rolls (the loop closes per path)."""
+    return _rk_seam(data, "rk_blocks",
+                    [["node", "hydro_reservoir", "storage_binding_method", "bind_intraperiod_blocks"],
+                     ["timeset", "1week", "timeset_duration", _pmap({"t0001": 96.0}, "time")]])
+
+
+def _patch_rk_delay(data: dict) -> dict:
+    """gas_plant with a 2 h delay on the rolling stochastic week: the delayed flows of each roll wrap within its
+    period part.  Today's LPs (a model with a delayed unit keeps today's realization)."""
+    return _rk_seam(data, "rk_delay", [["unit", "gas_plant", "delay", 2.0]])
+
+
+def _authored(data: dict, cls: str, ent, param: str, alt: str):
+    """The decoded value of *param* of *ent* in alternative *alt* of the fixture JSON."""
+    row = next(r for r in data["parameter_values"] if r[:3] == [cls, ent, param] and r[4] == alt)
+    return json.loads(base64.b64decode(row[3][0]))
+
+
+def _patch_rk_jump1(data: dict) -> dict:
+    """Jump 1 h, horizon 2 h on period1 cut to 4 h (t0001-t0004), hydro_reservoir bind_intraperiod_blocks: four
+    rolls, the last holding one step of the period in part (a chain start without a block lag, item 310).  Every
+    branch is made at each roll start t0001-t0004 (weights and realized flags as at t0001), each series made at
+    t000k covering t000k-t0004 with the values of the series made at t0001.  Today's LPs; the baseline of one-step
+    realization rolls."""
+    steps = [f"t{i:04d}" for i in range(1, 5)]
+    fan = _authored(data, "solve", _RK_WEEK, "stochastic_branches", _RK_WEEK)
+    for branch in fan["data"][0][1]["data"]:
+        first = branch[1]["data"][0][1]
+        branch[1]["data"] = [[at, first] for at in steps]
+    profile = _authored(data, "profile", "wind", "profile", _RK_WEEK)
+    for branch in profile["data"]:
+        series = dict(branch[1]["data"][0][1]["data"])
+        branch[1]["data"] = [[at, {"type": "map", **_pmap({t: series[t] for t in steps[k:]}, "time")}]
+                             for k, at in enumerate(steps)]
+    return _rk_seam(data, "rk_jump1",
+                    [["node", "hydro_reservoir", "storage_binding_method", "bind_intraperiod_blocks"],
+                     ["timeset", "1week", "timeset_duration", _pmap({"t0001": 4.0}, "time")],
+                     ["solve", _RK_WEEK, "rolling_solve_horizon", 2.0],
+                     ["solve", _RK_WEEK, "rolling_solve_jump", 1.0],
+                     ["solve", _RK_WEEK, "stochastic_branches", fan],
+                     ["profile", "wind", "profile", profile]])
+
+
 def _patch_capacity_margin_stoch(data: dict) -> dict:
     """Manual capacity margin (group cm_g = elec, margin 1e5 MW, penalty 1) on the recourse-invest fan (branch
     weights high 1 : low 3): each forecast branch period keeps its own slack, priced with its branch weight
@@ -1184,7 +1280,7 @@ def _patch_ramp_chp_integer(data: dict) -> dict:
     """chp_floor_integer with ramp limits on coal_chp's fuel input and its
     electricity output: integer startup / shutdown capacity reduction on an
     output arc and on an indirect unit's input arc."""
-    data = _chp_floor(data, "ramp_chp_integer", "binary")
+    data = _chp_floor(data, "ramp_chp_integer", "integer_fix_in_uc")
     vals = (_ramp_on("unit__inputNode", ["coal_chp", "coal_market"], 0.002)
             + _ramp_on("unit__outputNode", ["coal_chp", "west"], 0.002))
     for cls, ent, param, val in vals:
@@ -1488,6 +1584,8 @@ def _rp_stoch(data: dict, name: str, period: str, step: str) -> dict:
                     entities=[["group", "rp_stoch_g"], ["group__node", ["rp_stoch_g", "lh2_B"]]],
                     values=[["solve", _RP_SOLVE, "stochastic_branches",
                              _rp_stoch_branches(period, step, {"a": 0.3, "b": 0.7})],
+                            # The forecasts are solved: deterministic, the default since 4.7.0, would ignore them.
+                            ["solve", _RP_SOLVE, "dispatch_realization_method", "within_solve"],
                             ["group", "rp_stoch_g", "include_stochastics", "yes"]]
                     + [["node", n, "storage_binding_method", m] for n, m in _RP_METHODS_MIX.items()])
 
@@ -1500,6 +1598,23 @@ def _patch_rp_stoch_midhorizon(data: dict) -> dict:
 def _patch_rp_stoch_first_period(data: dict) -> dict:
     """Forecasts open at y2030 (the first period): rp_inter_period_fan_start ties lh2_B's chain starts."""
     return _rp_stoch(data, "rp_stoch_first_period", "y2030", "t0001")
+
+
+def _patch_rsd_storage_reserve(data: dict) -> dict:
+    """Rolling ``separate_dispatch`` with a storage node in the stochastic group (``hydro_reservoir`` made a
+    storage), an upward reserve on ``demand_node`` offered by the hydro, coal and gas units, and a linear-online unit
+    (``gas_plant``): the ties of each roll's stochastic solve (storage use, first state, reserve, linear units online)
+    and the realization rolls after them."""
+    ents, vals = _reserve("rr", "up", "res_g",
+                          [("unit", "hydro_plant", "demand_node"),
+                           ("unit", "coal_plant", "demand_node"),
+                           ("unit", "gas_plant", "demand_node")],
+                          reservation=200.0)
+    return _overlay(
+        data, name="rsd_storage_reserve", base="rolling_separate_dispatch",
+        entities=[["group", "res_g"], ["group__node", ["res_g", "demand_node"]]] + ents,
+        values=vals + [["node", "hydro_reservoir", "node_type", "storage"],
+                       ["unit", "gas_plant", "startup_method", "linear"]])
 
 
 def _patch_nested_rolling_storage_uc(data: dict) -> dict:
@@ -1518,7 +1633,9 @@ def _patch_nested_rolling_storage_uc(data: dict) -> dict:
                         ["node", "battery", "storage_nested_fix_method", "fix_nothing"],
                         ["unit", "coal_plant", "startup_method", "linear"],
                         ["unit", "coal_plant", "min_load", 0.4],
-                        ["unit", "coal_plant", "min_uptime", 8.0]])
+                        ["unit", "coal_plant", "min_uptime", 8.0],
+                        # the min up time applies only with its minimum_time_method
+                        ["unit", "coal_plant", "minimum_time_method", "min_uptime"]])
 
 
 def _patch_storage_sequence_start_end(data: dict) -> dict:
@@ -1651,7 +1768,7 @@ def _patch_conn_online_regular(data: dict) -> dict:
 def _patch_conn_online_regular_mip(data: dict) -> dict:
     """Two-way (regular) west_east with binary online variables."""
     return _overlay(data, name="conn_online_regular_mip", base=_NET,
-                    values=_conn_startup("west_east", "binary"))
+                    values=_conn_startup("west_east", "integer_fix_in_uc"))
 
 
 def _patch_conn_online_1var(data: dict) -> dict:
@@ -1805,7 +1922,7 @@ def _patch_conn_online_stoch(data: dict) -> dict:
             ["connection", "dn_north", "existing", 100.0], ["connection", "dn_north", "efficiency", 0.95],
             ["connection", "dn_north2", "transfer_method", "regular"],
             ["connection", "dn_north2", "existing", 100.0], ["connection", "dn_north2", "efficiency", 0.9]]
-    vals += _conn_startup("dn_north", "linear") + _conn_startup("dn_north2", "binary", 5.0)
+    vals += _conn_startup("dn_north", "linear") + _conn_startup("dn_north2", "integer_fix_in_uc", 5.0)
     return _overlay(data, name="conn_online_stoch", base="2_day_stochastic_dispatch", entities=ents,
                     values=vals)
 
@@ -1823,7 +1940,7 @@ def _patch_conn_online_1var_mip(data: dict) -> dict:
     eu, vu = _reserve("ru", "up", "electricity", [("connection", "west_east", "west")], reservation=100.0)
     ed, vd = _reserve("rd", "down", "electricity", [("connection", "west_east", "west")], reservation=100.0)
     return _overlay(data, name="conn_online_1var_mip", base=_NET, entities=eu + ed,
-                    values=vu + vd + _conn_startup("west_east", "binary") + [
+                    values=vu + vd + _conn_startup("west_east", "integer_fix_in_uc") + [
                         ["connection", "west_east", "transfer_method", "no_losses_no_variable_cost"]])
 
 
@@ -1858,6 +1975,17 @@ def _patch_online_mintime_lin(data: dict) -> dict:
     return _overlay(data, name="online_mintime_lin",
                     base=["init", "west", "coal", "heat", "coal_chp", "coal_min_updowntime"],
                     values=[["unit", "coal_chp", "startup_method", "linear"]])
+
+
+def _patch_min_time_default_both(data: dict) -> dict:
+    """``minimum_time_method`` definition default ``both`` and coal_plant with min up / down times 5 h but no
+    ``startup_method`` or method of its own: online only through the default's promotion, with its min up / down
+    rows (the input derivation and the model read the default alike; C rev 3 §5.3)."""
+    for d in data["parameter_definitions"]:
+        if d[0] == "unit" and d[1] == "minimum_time_method":
+            d[2] = _pack("both")
+    return _overlay(data, name="min_time_default_both", base=["init", "west", "coal"],
+                    values=[["unit", "coal_plant", "min_uptime", 5.0], ["unit", "coal_plant", "min_downtime", 5.0]])
 
 
 # Silent-label inputs: a Map with Toolbox's default index name ``x`` whose keys are periods of other solves only
@@ -2098,6 +2226,7 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "conn_group_override_exact": _patch_conn_group_override_exact,
     "online_bin_lin": _patch_online_bin_lin,
     "online_mintime_lin": _patch_online_mintime_lin,
+    "min_time_default_both": _patch_min_time_default_both,
     "conn_reserve_exact": _patch_conn_reserve_exact,
     "conn_online_1var_mip": _patch_conn_online_1var_mip,
     "agg_blocks_storage": _patch_agg_blocks_storage,
@@ -2122,6 +2251,7 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "rolling_intraperiod_blocks": _patch_rolling_intraperiod_blocks,
     "rp_stoch_midhorizon": _patch_rp_stoch_midhorizon,
     "rp_stoch_first_period": _patch_rp_stoch_first_period,
+    "rsd_storage_reserve": _patch_rsd_storage_reserve,
     "nested_rolling_storage_uc": _patch_nested_rolling_storage_uc,
     "storage_sequence_start_end": _patch_storage_sequence_start_end,
     "nested_fix_quantity_reference": _patch_nested_fix_quantity_reference,
@@ -2141,6 +2271,11 @@ PATCHES: dict[str, Callable[[dict], dict]] = {
     "ladder_cum_stoch_rolling": _patch_ladder_cum_stoch_rolling,
     "co2_total_stoch_rolling": _patch_co2_total_stoch_rolling,
     "flowgroup_cum_stoch_rolling": _patch_flowgroup_cum_stoch_rolling,
+    "rk_period_node": _patch_rk_period_node,
+    "rk_storage_cycle": _patch_rk_storage_cycle,
+    "rk_blocks": _patch_rk_blocks,
+    "rk_delay": _patch_rk_delay,
+    "rk_jump1": _patch_rk_jump1,
 }
 
 
@@ -2222,8 +2357,8 @@ _PLAIN: tuple[tuple[str, str, str], ...] = (
      "recourse_na"),
     ("stoch_hedge_na_window", _F + "stoch_two_period_hedge.json",
      "hedge_na_window"),
-    ("stoch_pinned_ops", _F + "stoch_two_period_free_ops.json",
-     "pinned_ops"),
+    ("stoch_free_ops", _F + "stoch_two_period_free_ops.json",
+     "free_ops"),
     ("stoch_midhorizon_nreal0", _F + "stoch_two_period_midhorizon_nreal0.json",
      "midhorizon"),
     ("stoch_t0_commit", _F + "stoch_t0_commit.json", "stoch_t0_commit"),
@@ -2317,6 +2452,7 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("conn_group_override_exact", _T),
     ("online_bin_lin", _T),
     ("online_mintime_lin", _T),
+    ("min_time_default_both", _T),
     ("conn_reserve_exact", _T),
     ("conn_online_1var_mip", _T),
     ("agg_blocks_storage", _T),
@@ -2362,6 +2498,12 @@ _PATCHED: tuple[tuple[str, str], ...] = (
     ("stoch_rank3_profile_anchor", _F + "stochastics.json"),
     ("rp_stoch_midhorizon", _F + "lh2_three_region_rp_invest.json"),
     ("rp_stoch_first_period", _F + "lh2_three_region_rp_invest.json"),
+    ("rsd_storage_reserve", _F + "rolling_separate_dispatch.json"),
+    ("rk_period_node", _F + "stochastics.json"),
+    ("rk_storage_cycle", _F + "stochastics.json"),
+    ("rk_blocks", _F + "stochastics.json"),
+    ("rk_delay", _F + "stochastics.json"),
+    ("rk_jump1", _F + "stochastics.json"),
 )
 
 FIXTURES: tuple[Fixture, ...] = (
@@ -2514,9 +2656,16 @@ def _worker(json_name: str, scenario: str, patch: str, out_dir: Path, *,
     capture = {"on": False}  # off during a --dirty-with run
     model_mod = importlib.import_module(MODEL_MODULE)
     original = model_mod.build_flextool
+    from flextool.engine.model._period_rows import registry_gaps
+    pin_failures: list[str] = []
 
     def capturing_build_flextool(m, d, *args, **kwargs):
         result = original(m, d, *args, **kwargs)
+        # Pins of the realization-roll checks, per build: every period-level family (over with d, no step column)
+        # is in PERIOD_ROW_KINDS, every family name is classified or reviewed, every FlexData frame with two step
+        # columns is in STEP_RELATIONS (build_flextool raises on the same under FLEXTOOL_AUTOSCALE_STRICT=1).
+        for gap in registry_gaps(m, d):
+            pin_failures.append(f"{_solve_name_from_stack()}: {gap}")
         if not capture["on"]:
             return result
         solve = _solve_name_from_stack()
@@ -2583,6 +2732,9 @@ def _worker(json_name: str, scenario: str, patch: str, out_dir: Path, *,
         print("ERROR: no Problem was built through build_flextool",
               file=sys.stderr)
         return 2
+    if pin_failures:
+        print("ERROR: " + "\n".join(pin_failures), file=sys.stderr)
+        return 3
     (out_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=1) + "\n")
     return 0
@@ -2622,7 +2774,7 @@ class WorkMode:
 
 
 def _run_fixture(fx: Fixture, out_root: Path,
-                 mode: WorkMode = WorkMode(),
+                 mode: WorkMode = WorkMode(),  # noqa: B008 (frozen dataclass)
                  autoscale_plan: bool = False) -> tuple[str, int, float, str]:
     out_dir = out_root / fx.name
     if out_dir.exists():
@@ -2730,7 +2882,7 @@ def parse_mps(path: Path) -> MpsModel:
     obj_rhs = 0.0
     section = ""
     integer = False
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         for raw in fh:
             line = raw.rstrip("\n")
             if not line.strip() or line.startswith("*"):
@@ -3120,7 +3272,7 @@ def constraint_universe() -> dict[str, str]:
 def _row_families(mps: Path) -> set[str]:
     fams: set[str] = set()
     section = ""
-    with open(mps) as fh:
+    with open(mps, encoding="utf-8") as fh:
         for line in fh:
             if line and not line[0].isspace():
                 section = line.split()[0] if line.strip() else section

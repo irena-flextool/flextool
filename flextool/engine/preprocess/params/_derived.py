@@ -80,6 +80,7 @@ from flextool.engine.preprocess.params._per_solve_sets import (
 )
 from flextool.engine.input._solve_state import CommissioningLagError, FlexToolConfigError
 from flextool.engine.input._solve_step_aggregation import aggregate_if_active
+from flextool.input_derivation._method_constants import MIN_TIME_ENABLES, STARTUP_CLASSES
 from flextool.engine.input._param_shapes import (
     broadcast_to_period_time,
     parameter_has_values,
@@ -189,7 +190,7 @@ _RECOURSE_ANCHOR_PAIRS: "pl.DataFrame | None" = None
 # Boundary-scoped Provider (+ its workdir, which the canonical readers need
 # to key the Provider path) for the period walks' year / factor arms.  Set at
 # each Layer-4 boundary alongside the anchor pairs whenever the solve has a
-# stochastic fan (branch periods), under every ``stochastic_invest_method``,
+# stochastic fan (branch periods), under every ``invest_solve_branching_method``,
 # so ``period_walk_iterator`` and ``_existing._solve_walk_years`` read the
 # canonical ``p_years_d.csv`` / ``p_years_represented.csv`` arms, which give
 # each branch period the years of its period label, WITHOUT threading
@@ -241,7 +242,7 @@ def _fan_branch_pairs(
     provider: "object | None" = None,
 ) -> "pl.DataFrame | None":
     """(anchor, br) pairs of the solve's in-use synthetic branch periods,
-    under every ``stochastic_invest_method``; ``None`` without any.
+    under every ``invest_solve_branching_method``; ``None`` without any.
 
     Mirrors :func:`_expand_branch_periods`' acquisition (ctx-first, then
     provider/workdir ``period__branch`` + ``period_in_use``); keeps only
@@ -322,7 +323,7 @@ def _enter_recourse_anchor_scope(
     per-period producer OR walker runs.  Overwrites unconditionally (to
     ``None`` when flag-off) so no stale value from a prior solve can leak.
     Also arms the boundary-scoped walker Provider whenever the solve has
-    branch periods (any ``stochastic_invest_method``) or is under recourse,
+    branch periods (any ``invest_solve_branching_method``) or its investments branch,
     so every period walk gives a branch period its label's years; the
     anchor pairs stay recourse-only.
     """
@@ -455,6 +456,17 @@ def _try_param(source: "InputSource", entity_class: str,
     if df.height == 0:
         return None
     return df
+
+
+def _min_time_methods(source: "InputSource") -> dict[str, str]:
+    """``{unit: minimum_time_method}``: the explicit value, else the definition default (``source.parameter``
+    broadcasts a non-null default).  A unit absent from the result reads ``none``; a ``none`` default reads the same
+    as no default.  The one reading rule of the ``startup_method`` promotion (Step 5 of
+    :func:`_classify_process_method`) and the min up / down gate (:func:`_process_min_time`)."""
+    df = _try_param(source, "unit", "minimum_time_method")
+    if df is None:
+        return {}
+    return {str(n): str(v) for n, v in df.select("name", "value").iter_rows() if v is not None}
 
 
 def _try_param_explicit(source: "InputSource", entity_class: str,
@@ -1089,6 +1101,9 @@ def p_timestep_weight_from_source(
          reproduce the trivial default 1.0 per step.
       4. Periods without a ``timeset_weights`` row keep the trivial
          default 1.0.
+      The scale is per period name.  A split realization roll is a
+      synthetic sub-solve (no derived pass), so its emitted weights, one
+      scale over the label's jump plus a tail, are the ones used.
 
     RP path (``representative_period_weights`` set):
       Representative-period weights are folded into
@@ -1861,12 +1876,16 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
     """Build the per-process internal-method classification.
 
     Returns a DataFrame with schema ``[p, ct, startup, fork, method,
-    klass]``:
+    klass, fix_in_uc]``:
 
       * ``ct`` — user-facing ``conversion_method`` / ``transfer_method``.
-      * ``startup`` — user-facing ``startup_method`` (default ``no_startup``,
-        promoted to ``linear`` when ``minimum_time_method ∈ {min_uptime,
+      * ``startup`` — the startup class (``no_startup`` / ``linear`` /
+        ``binary``, :func:`~flextool.input_derivation._method_constants.startup_class`)
+        of ``startup_method`` (default ``no_startup``, promoted to
+        ``linear`` when ``minimum_time_method ∈ {min_uptime,
         min_downtime, both}``; mirrors input_writer.py:1294-1304).
+      * ``fix_in_uc`` — the ``startup_method`` is a ``_fix_in_uc`` member
+        (``False`` for the promotions and the default).
       * ``fork`` — ``fork_yes`` when |sources|>1 OR |sinks|>1 OR delayed,
         else ``fork_no`` (input_writer.py:1350-1354).
       * ``method`` — internal method per :data:`_METHODS_MAPPING`; rows
@@ -1923,7 +1942,7 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
         return pl.DataFrame(schema={
             "p": schema_dtype(_enums, "p"),
             "ct": pl.Utf8, "startup": pl.Utf8,
-            "fork": pl.Utf8, "method": pl.Utf8, "klass": pl.Utf8,
+            "fork": pl.Utf8, "method": pl.Utf8, "klass": pl.Utf8, "fix_in_uc": pl.Boolean,
         })
     base = pl.concat(parts).unique()
 
@@ -1958,11 +1977,8 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
         ))
     sm_lazy = pl.concat(sm_parts) if sm_parts else None
 
-    mtm = _try_param(source, "unit", "minimum_time_method")
-    mtm_lazy = (mtm.lazy().select(
-        alias_to_axis("name", "p"),
-        pl.col("value").alias("mtm"),
-    )) if mtm is not None else None
+    enabling = sorted(u for u, m in _min_time_methods(source).items()
+                      if m in MIN_TIME_ENABLES["min_uptime"] | MIN_TIME_ENABLES["min_downtime"])
 
     # Only units are delayed: a connection ``delay`` is not implemented
     # and is ignored (input_derivation warns about it), so it must not
@@ -2021,19 +2037,21 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
         lf = lf.join(sm_lazy, on="p", how="left")
     else:
         lf = lf.with_columns(startup_raw=pl.lit(None).cast(pl.Utf8))
+    raw = pl.col("startup_raw").cast(pl.Utf8)
     lf = lf.with_columns(
-        startup=pl.col("startup_raw").fill_null("no_startup")
+        startup=raw.replace({k: cls for k, (cls, _fix) in STARTUP_CLASSES.items()}).fill_null("no_startup"),
+        fix_in_uc=raw.replace_strict({k: fix for k, (_cls, fix) in STARTUP_CLASSES.items()}, default=False,
+                                     return_dtype=pl.Boolean).fill_null(False),
     ).drop("startup_raw")
     # Step 5 — minimum_time_method overrides startup → linear when active.
-    if mtm_lazy is not None:
-        lf = lf.join(mtm_lazy, on="p", how="left")
+    if enabling:
         lf = lf.with_columns(
             startup=pl.when(
                 (pl.col("startup") == "no_startup")
-                & pl.col("mtm").is_in(["min_uptime", "min_downtime", "both"])
+                & (pl.col("klass") == "unit") & pl.col("p").cast(pl.Utf8).is_in(enabling)
             ).then(pl.lit("linear"))
              .otherwise(pl.col("startup"))
-        ).drop("mtm")
+        )
     # Step 5b — piecewise_linear: auto linear start-ups and the forced fork of multi-line curves.
     pw_flags = _piecewise_flags(source) if cm_unit is not None and (
         cm_unit.get_column("value").cast(pl.Utf8) == "piecewise_linear").any() else None
@@ -2088,7 +2106,7 @@ def _classify_process_method(source: "InputSource") -> pl.DataFrame:
 
     # Step 8 — drop not_applicable; project final columns.
     out = (lf.filter(pl.col("method") != "not_applicable")
-              .select("p", "ct", "startup", "fork", "method", "klass")
+              .select("p", "ct", "startup", "fork", "method", "klass", "fix_in_uc")
               .sort("p")
               .collect())
     return out
@@ -4952,22 +4970,24 @@ def p_indirect_input_cap_from_source(source: "InputSource",
 
 def _process_min_time(source: "InputSource",
                         parameter_name: str) -> list[tuple[str, float]]:
-    """Pull (entity, value) for ``unit.<parameter_name>`` (and connection
-    when applicable) — value > 0 only.  Returns a list of (proc, min_time)
-    pairs.
-    """
+    """``[(unit, min_time)]`` of ``unit.<parameter_name>`` (``min_uptime`` / ``min_downtime``, with its definition
+    default): value > 0 and enabled by ``minimum_time_method`` (:data:`MIN_TIME_ENABLES`, read by
+    :func:`_min_time_methods`; unset is ``none``, which enables neither), in source row order.  Every consumer of
+    the minimum times goes through it: the look-backs and their rows, the roll carry, the cut-short warning and the
+    history trim."""
+    df = _try_param(source, "unit", parameter_name)
+    if df is None:
+        return []
+    methods = _min_time_methods(source)
+    enables = MIN_TIME_ENABLES[parameter_name]
     out: dict[str, float] = {}
-    for ec in ("unit", "connection"):
-        df = _try_param(source, ec, parameter_name)
-        if df is None:
+    for r in df.iter_rows(named=True):
+        try:
+            v = float(r["value"])
+        except (TypeError, ValueError):
             continue
-        for r in df.iter_rows(named=True):
-            try:
-                v = float(r["value"])
-            except (TypeError, ValueError):
-                continue
-            if v > 0:
-                out[r["name"]] = v
+        if v > 0 and methods.get(str(r["name"])) in enables:
+            out[r["name"]] = v
     return list(out.items())
 
 
@@ -4992,6 +5012,20 @@ def downtime_lookback_from_source(source: "InputSource",
     return mintime_lookback(dt, p_step_duration, link, _process_min_time(source, "min_downtime"))
 
 
+def _min_time_written_notice(source: "InputSource") -> None:
+    """W-0634 (``minimum_time_method_written``): the units of this solve on which the database upgrade wrote
+    ``minimum_time_method``, one line per write ``U (alternative A: method)`` (each unit once per run)."""
+    from flextool.engine import _behaviour_changes as bc
+    writes = bc.marker_json("minimum_time_method_written").get("writes") or []
+    if not writes:
+        return
+    units = source.entities("unit")
+    in_solve = set() if units.height == 0 else {str(u) for u in units.get_column(units.columns[0]).to_list()}
+    lines = [f"{u} (alternative {alt}: {method})" for u, alt, method in writes if u in in_solve]
+    if lines:
+        bc.notice("minimum_time_method_written", "units", lines)
+
+
 def apply_mintime_lookbacks(flex_data: object, source: "InputSource",
                             first_step_link: pl.DataFrame | None, solve_name: str) -> None:
     """Set ``uptime_lookback`` / ``downtime_lookback`` and the projected ``pdt_*_set`` of ``flex_data`` from its
@@ -5000,6 +5034,7 @@ def apply_mintime_lookbacks(flex_data: object, source: "InputSource",
     solve boundary cuts short (``params._mintime.cut_short_lookback_warnings``; ``first_step_link`` is the
     complete solve's ``step_previous`` of this solve's period first steps, ``None`` when not written)."""
     from flextool.engine.preprocess.params._mintime import report_cut_short_lookback
+    _min_time_written_notice(source)
     dt = getattr(flex_data, "dt", None)
     sd = getattr(flex_data, "p_step_duration", None)
     link = getattr(flex_data, "dt_ramp_link", None)
@@ -5055,16 +5090,35 @@ def online_mintime_carry_from_source(source: "InputSource", flex_data: object, p
     (``params._mintime.mintime_roll_carry``): the first steps that continue from the previous solve's last realized
     step on the timeline — a period that continues the previous one and the forecast branches that start with such a
     step included, a period that does not continue it (``jump != 1``) and a step after a gap excluded.  ``L`` is the
-    authored parameter.  ``None`` when nothing is carried."""
+    authored parameter.  ``None`` when nothing is carried.
+
+    The up-time carry of a process is capped by its units online carried in (``p_roll_continue_online``, ĉ[p]:
+    the previous solve's realized v_online at the carried step): carry_up ≤ ĉ.  Start-ups still within the minimum
+    up-time cannot oblige more units online than were online at the carried step.  Without an outage the earlier
+    solve's own ``minimum_uptime`` row at that step already holds ĉ ≥ the start-ups it covers (a superset of those
+    any later step covers), so the cap binds only after an outage cut the obligation in an earlier solve
+    (``flex_data.carried_obligations_yield_to_outages``, W-0592): the outage forced the units offline, ĉ counts only
+    the start-ups after it, and the start-ups before it stop counting — the obligation does not resume.  The
+    down-time carry is not capped (an outage never conflicts with it: offline is always possible)."""
     from flextool.engine.preprocess.params._mintime import mintime_roll_carry
     history = getattr(flex_data, "online_startup_history", None)
     if history is None or history.height == 0:
         return None
-    return mintime_roll_carry(getattr(flex_data, "dt", None), getattr(flex_data, "p_step_duration", None),
-                              getattr(flex_data, "dt_ramp_link", None), getattr(flex_data, "dt_ramp_carry", None),
-                              history, _process_min_time(source, parameter_name),
-                              "startup" if parameter_name == "min_uptime" else "shutdown",
-                              getattr(flex_data, "period_branch_full", None))
+    carry = mintime_roll_carry(getattr(flex_data, "dt", None), getattr(flex_data, "p_step_duration", None),
+                               getattr(flex_data, "dt_ramp_link", None), getattr(flex_data, "dt_ramp_carry", None),
+                               history, _process_min_time(source, parameter_name),
+                               "startup" if parameter_name == "min_uptime" else "shutdown",
+                               getattr(flex_data, "period_branch_full", None))
+    rco = getattr(flex_data, "p_roll_continue_online", None)
+    if carry is None or parameter_name != "min_uptime" or rco is None:
+        return carry
+    online_in = rco.frame.select(pl.col("p").cast(pl.Utf8), pl.col("value").cast(pl.Float64).alias("__c"))
+    carry = (carry.join(online_in, on="p", how="left", maintain_order="left")
+             .with_columns(pl.when(pl.col("__c") < pl.col("value")).then(pl.col("__c"))
+                           .otherwise(pl.col("value")).alias("value"))
+             .filter(pl.col("value") != 0.0)
+             .select(carry.columns))
+    return carry if carry.height > 0 else None
 
 
 # ---------------------------------------------------------------------------
@@ -6625,9 +6679,10 @@ def _dt_period_active_steps_from_workdir(
         if d and d not in seen:
             period_order.append(d)
             seen.add(d)
-    # A period label is in period_in_use_set for the period-level bookkeeping but has no active steps.
+    # A period label is in period_in_use_set for the period-level bookkeeping but has no active steps (except the
+    # label of a split realization roll, which holds the jump).
     pb_wd = period_branch_pairs_lf(workdir, ctx=ctx, provider=provider).collect()
-    labels = _labels_of_pairs(pb_wd["d"].to_list(), pb_wd["b"].to_list())
+    labels = _labels_of_pairs(pb_wd["d"].to_list(), pb_wd["b"].to_list()) - set(siu["d"].cast(pl.Utf8).to_list())
     period_order = [d for d in period_order if str(d) not in labels]
     if not period_order:
         return None
@@ -7271,7 +7326,12 @@ def dtttdt_with_jump_from_source(source: "InputSource",
                 # of ``make_step_jump`` is pinned by the Step-0.5 parity
                 # guard.
                 p_anchor = branch_anchor.get(period)
-                if p_anchor is not None and p_anchor in period_order:
+                anchor_steps = per_period.get(p_anchor) or [] if p_anchor is not None else []
+                if p_anchor in period_order and anchor_steps and anchor_steps[-1][1] < steps[0][1]:
+                    # The anchor is a period label whose steps end before the copy's (a split realization roll:
+                    # it holds the jump): the copy continues from its last step.
+                    wrap_period = p_anchor
+                elif p_anchor is not None and p_anchor in period_order:
                     pos_anchor = period_order.index(p_anchor)
                     for qi in range(pos_anchor - 1, -1, -1):
                         if period_order[qi] in anchors_with_self:
@@ -8052,6 +8112,7 @@ def dtttdt_block_interior_from_dtttdt(dtttdt: pl.DataFrame | None,
 def dtttdt_block_lag_from_dtttdt(dtttdt: pl.DataFrame | None,
                                  period_block_time: pl.DataFrame | None,
                                  chained: pl.DataFrame | None = None,
+                                 period_branch: pl.DataFrame | None = None,
                                  ) -> pl.DataFrame | None:
     """``(d, t, d_previous, t_previous_within_solve)``: the step each step of a ``bind_intraperiod_blocks`` block
     continues from (the state change of ``nodeBalanceBlock_eq``).
@@ -8062,17 +8123,17 @@ def dtttdt_block_lag_from_dtttdt(dtttdt: pl.DataFrame | None,
     holds only in part) chain forward instead: their rows are the bind_forward_only lag
     (:func:`dtttdt_forward_only_from_dtttdt`), so a period's first step continues from the previous step of the
     solve and the solve's first step has no row (its start is the fix_start state or the roll carry).  Restricted to
-    the steps of *period_block_time*.
+    the steps of *period_block_time*.  *period_branch* ``(d, b)``: in a split realization roll a looping period is
+    one loop per path (the label's jump and one branch period's tail), as the within-period lag gives it.
     """
     if dtttdt is None or dtttdt.height == 0 or period_block_time is None or period_block_time.height == 0:
         return None
     from flextool.engine.preprocess.flex_data import _within_period_lag
 
-    lag = _within_period_lag(dtttdt)
+    lag = _within_period_lag(dtttdt, period_branch)
     if lag is None:
         return None
-    loop = lag.select("d", "t", pl.col("d").alias("d_previous"),
-                      pl.col("t_previous_within_period").alias("t_previous_within_solve"))
+    loop = lag.select("d", "t", "d_previous", pl.col("t_previous_within_period").alias("t_previous_within_solve"))
     if chained is not None and chained.height > 0:
         names = [str(x) for x in chained["d"].to_list()]
         loop = loop.filter(~pl.col("d").cast(pl.Utf8).is_in(names))
@@ -8184,12 +8245,20 @@ def apply_derived_e(
                                                step_duration=getattr(flex_data, "p_step_duration", None))
     dtttdt_db = None if dtttdt_jump is None else dtttdt_jump.drop("jump")
     if dtttdt_db is not None:
+        # A split realization roll: the placeholders at its label's and branch periods' first steps are null
+        # (before the 1b frames below are derived from dtttdt), as in the seed (flex_data._read_step_previous).
+        from flextool.engine.preprocess._step_relations import null_split_dtttdt
+        from flextool.engine.preprocess.params._branch import period_branch_full_df
+        split_pb = period_branch_full_df(workdir, provider=provider) if workdir is not None else None
+        dtttdt_db = null_split_dtttdt(dtttdt_db, split_pb)
         flex_data.dtttdt = dtttdt_db
         # Ramp predecessors: the adjacent (jump == 1) rows, without representative-block starts; the online
         # stretch wrap is derived from them (ramp_link_fields sets both).
         from flextool.engine.preprocess.params._ramp_links import ramp_link_fields, ramp_link_from_jump
+        rp_first = _rp_block_first_utf8(workdir, provider)
         for _name, _value in ramp_link_fields(
-                flex_data.dt, ramp_link_from_jump(dtttdt_jump, _rp_block_first_utf8(workdir, provider))).items():
+                flex_data.dt, ramp_link_from_jump(dtttdt_jump, rp_first), split_pb, rp_first,
+                solve=active_solve).items():
             setattr(flex_data, _name, _value)
     # Minimum up/down-time look-backs along the final ramp predecessor links (the seed links when the source
     # timeline walk gives none).
@@ -8238,7 +8307,7 @@ def apply_derived_e(
             dtttdt_db, period_block_time_for_arc)
         flex_data.dtttdt_block_lag = dtttdt_block_lag_from_dtttdt(
             getattr(flex_data, "dtttdt", None), period_block_time_for_arc,
-            getattr(flex_data, "period_block_chain", None))
+            getattr(flex_data, "period_block_chain", None), getattr(flex_data, "period_branch_full", None))
 
     # 3. nodeStateBlock = the bind_intraperiod_blocks nodes (storage-only) -
     nsb_db = None
@@ -9095,6 +9164,17 @@ def p_f_d_k_from_source(
         out_lf = out_lf.with_columns(pl.col("cum").fill_null(0.0))
     else:
         out_lf = out_lf.with_columns(cum=pl.lit(0.0))
+    # A split realization roll (a period label with steps): a branch period's path also holds its label's jump
+    # (emit_period_calculated_params, the emitted twin).  Empty without a label with steps.
+    pairs = [(a, b) for a, b in _read_period_branch_pairs(workdir, provider=provider) if a != b]
+    jump = (pl.LazyFrame(pairs, schema={"_a": pl.Utf8, "_d": pl.Utf8}, orient="row")
+            .join(sum_step.select(pl.col("d").cast(pl.Utf8).alias("_a"), pl.col("sum_step").alias("jump")),
+                  on="_a", how="inner")
+            .group_by("_d").agg(pl.col("jump").sum()).collect())
+    if jump.height > 0:
+        out_lf = (out_lf.with_columns(_d=pl.col("d").cast(pl.Utf8)).join(jump.lazy(), on="_d", how="left")
+                  .with_columns(sum_step=pl.col("sum_step").fill_null(0.0) + pl.col("jump").fill_null(0.0))
+                  .drop("_d", "jump"))
     out_lf = (out_lf
                 .with_columns(pl.col("sum_step").fill_null(0.0))
                 .with_columns(value=(pl.col("cum") + pl.col("sum_step"))

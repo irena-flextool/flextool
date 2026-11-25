@@ -462,7 +462,7 @@ def print_namespace_structure(namespace, name='r', max_items=3, output_file='nam
             return items_list
         return items_list[:max_n] + [f'... ({len(items_list)} total)']
 
-    with open(output_file, 'a') as f:
+    with open(output_file, 'a', encoding='utf-8') as f:
         original_stdout = sys.stdout
         sys.stdout = f
 
@@ -1188,7 +1188,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
 
     # Write files for debugging purposes
     if debug:
-        open('namespace_structure.txt', 'w').close()
+        open('namespace_structure.txt', 'w', encoding='utf-8').close()
         print_namespace_structure(r, 'r')
         print_namespace_structure(s, 's')
         print_namespace_structure(v, 'v')
@@ -1231,7 +1231,6 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             if isinstance(df, (pd.MultiIndex, pd.Index)):
                 df = df.to_frame(index=False)
                 df.insert(0, 'scenario', scenario_name)
-                df.set_index(list(df.columns)).index
             else:
                 # Derive per-column unit/semantics from the leaf columns
                 # (before the scenario level is prepended) so the keys match

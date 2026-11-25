@@ -55,6 +55,7 @@ SEEDED_FIELDS: tuple[str, ...] = (
     *_VARCOST_SETS, "p_pssdt_varCost",
     "p_co2_content", *_INVEST_CAP_TOTALS, *_INVEST_CAP_PERIODS, *_INVEST_MIN_TOTALS,
     *_GROUP_SETS, "process_sink_nonSync", "process_group_inside_nonSync", "process_minload",
+    "process_online_fix_in_uc",
     *_DELAY_TABLES,
 )
 
@@ -170,13 +171,24 @@ def _process_minload(provider: object) -> pl.DataFrame:
     return provider.get(key).pipe(rename_to_axis, {"process": "p"})
 
 
+def _process_online_fix_in_uc(provider: object) -> pl.DataFrame | None:
+    """``solve_data/process_online_fix_in_uc`` (the dump's copy of the field) as a ``(p,)`` set; None when absent or
+    empty, as the DB overlay leaves it (``_projection._AUTHORITATIVE_SETS``)."""
+    df = _frame_or_none(provider, "solve_data/process_online_fix_in_uc")
+    return None if df is None else df.pipe(rename_to_axis, {"process": "p"}).select("p").unique().sort("p")
+
+
 def _apply_group_and_minload_seeds(flex_data: object, provider: object) -> None:
-    """The group sets, the non-synchronous arcs and groups' internal transfers, and the min-load units (S4-4).
+    """The group sets, the non-synchronous arcs and groups' internal transfers, the min-load units (S4-4) and the
+    ``_fix_in_uc`` processes.
 
     The three group sets and ``process_sink_nonSync`` are ``_group_slack.load_data``'s reads before S4-4 and
     ``process_minload`` ``_load_online``'s read (only when the run has online processes), moved here unchanged.
     ``process_group_inside_nonSync`` is the production rule (``process_group_inside_nonSync_from_flex``) on the
-    reloaded ``process_source_sink`` / ``group_node`` and the seeded ``groupNonSync``.
+    reloaded ``process_source_sink`` / ``group_node`` and the seeded ``groupNonSync``.  ``process_online_fix_in_uc``
+    is set by the DB overlay only (``process__startup_method`` in the dump is already the startup class, without
+    the ``_fix_in_uc`` flag), so the dump writes the field and this seed reads it back: without it a reloaded
+    solve (1) of ``separate_dispatch`` would tie no units online.
     """
     for name in _GROUP_SETS:
         setattr(flex_data, name, _group_set(provider, name))
@@ -184,6 +196,7 @@ def _apply_group_and_minload_seeds(flex_data: object, provider: object) -> None:
     flex_data.process_group_inside_nonSync = process_group_inside_nonSync_from_flex(flex_data)
     if getattr(flex_data, "process_online", None) is not None:
         flex_data.process_minload = _process_minload(provider)
+    flex_data.process_online_fix_in_uc = _process_online_fix_in_uc(provider)
 
 
 def _delay_shift_table(provider: object) -> pl.DataFrame | None:
@@ -264,8 +277,9 @@ def apply_dump_field_seeds(flex_data: object, sd: Path, inp: Path, provider: obj
     * Group sets and min-load units (S4-4, :func:`_apply_group_and_minload_seeds`): ``groupCapacityMargin`` /
       ``groupInertia`` / ``groupNonSync`` from the dump's ``input/<field>.csv``, ``process_sink_nonSync`` from
       ``solve_data/process__sink_nonSync.csv``, ``process_minload`` from the dumped ``process_minload.csv`` (an
-      empty set without the file) when the run has online processes, and ``process_group_inside_nonSync`` derived
-      from the reloaded topology by the production rule.
+      empty set without the file) when the run has online processes, ``process_group_inside_nonSync`` derived
+      from the reloaded topology by the production rule, and ``process_online_fix_in_uc`` from the dumped
+      ``process_online_fix_in_uc.csv``.
     * Delay tables (S4-5, :func:`_apply_delay_seeds`): ``dtt__delay_duration`` / ``p_process_delay_weight`` from
       the emitted CSVs and ``process_delayed__duration`` derived from the weights, when a process is delayed.
       ``p_profile_value`` is not seeded here: the production loader's own ``pdtProfile.csv`` read

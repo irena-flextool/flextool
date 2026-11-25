@@ -43,7 +43,9 @@ def _solve(name: str, periods: list[str], realized: str, at: str, invest: bool) 
             ("solve", name, "period_timeset", _m({p: timeset[p] for p in periods}, "period")),
             ("solve", name, "years_represented", _m({p: 1.0 for p in periods}, "period")),
             ("solve", name, "realized_periods", api.Array([realized])),
-            ("solve", name, "stochastic_branches", _fan(realized, at))]
+            ("solve", name, "stochastic_branches", _fan(realized, at)),
+            # The forecasts are solved: deterministic, the default since 4.7.0, would ignore them.
+            ("solve", name, "dispatch_realization_method", "within_solve")]
     if invest:
         rows += [("solve", name, "invest_periods", api.Array(periods)),
                  ("solve", name, "realized_invest_periods", api.Array([realized]))]

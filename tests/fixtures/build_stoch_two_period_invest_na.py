@@ -18,8 +18,8 @@ builder EXTENDS the proven ``stochastics.json`` shape (the
 ``tests/engine/emission/test_non_anticipativity_storage_use_emits.py``)
 with a new ``recourse_na`` scenario that:
 
-  * turns on ``solve.stochastic_invest_method = recourse`` for
-    ``2day_dispatch``;
+  * sets ``solve.invest_solve_branching_method =
+    investments_after_reveal_period`` for ``2day_dispatch``;
   * gives the solve ``invest_periods`` / ``realized_invest_periods`` =
     ``[period1]`` so the invest axis fans across the period-1 branches;
   * makes the stochastic-group storage node ``hydro_reservoir``
@@ -99,8 +99,8 @@ def build() -> dict:
     # investable exercises the node-side ``annu_n`` under the fanned
     # invest axis while the storage NA keeps the leaves coupled.
     spec["parameter_values"] += [
-        ["solve", "2day_dispatch", "stochastic_invest_method",
-         _pack("recourse", "str"), "recourse_na"],
+        ["solve", "2day_dispatch", "invest_solve_branching_method",
+         _pack("investments_after_reveal_period", "str"), "recourse_na"],
         ["solve", "2day_dispatch", "invest_periods",
          _pack({"value_type": "str", "data": ["period1"]}, "array"),
          "recourse_na"],

@@ -82,12 +82,12 @@ def test_builder_reproduces_committed_fixture_data(name: str, tmp_path: Path) ->
     build, fixture = BUILDERS[name]
     out = tmp_path / fixture
     build(out)
-    with open(out) as f:
+    with open(out, encoding="utf-8") as f:
         built = json.load(f)
     assert section_diffs(built, "packed") == [], "a builder writes the schema's sections"
     committed_path = tmp_path / ("committed_" + fixture)
     migrate_fixture(FIXTURES / fixture, committed_path)
-    with open(committed_path) as f:
+    with open(committed_path, encoding="utf-8") as f:
         committed = json.load(f)
     diff = _diff(normalise_data(built, "packed"), normalise_data(committed, "packed"))
     assert not diff, f"{name} no longer reproduces tests/fixtures/{fixture}:\n" + "\n".join(diff)

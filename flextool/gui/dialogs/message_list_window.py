@@ -2,9 +2,9 @@
 
 * :class:`MessageListWindow` — the non-modal window "FlexTool messages: <project>": "Message 1 of N", Previous /
   Next, the message's title, its subject (which database or project) in the muted colour, its paragraphs, then
-  [Open documentation], the message's extra action, [Dismiss] (only on a dismissable message) and [Close for now].
-  It takes no grab and never waits (``ModalBase`` with ``modal=False``): it is shielded from the main window's
-  shortcuts and centred on it.  Close for now = the window button = Escape; Left / Right page.  However it closes,
+  [Open documentation], the message's extra action, [Dismiss message] (only on a dismissable message) and
+  [Close dialog].  It takes no grab and never waits (``ModalBase`` with ``modal=False``): it is shielded from the
+  main window's shortcuts and centred on it.  Close dialog = the window button = Escape; Left / Right page.  However it closes,
   it calls :meth:`MessageCenter.window_closed` once with every message it listed.
 * :class:`MessageListController` — what ``main_window.py`` holds: one :class:`MessageCenter` per open project, the
   indicator button, the one window, and the deferred auto-show (after idle, then once the main window is viewable
@@ -98,7 +98,7 @@ class MessageListWindow(ModalBase):
         self.text.pack(fill="x")
         ttk.Separator(self.body).grid(row=3, column=0, sticky="ew", pady=self.lh // 2)
 
-        # Created in Tab order: Previous, Next (above), docs, action, Dismiss, Close for now.
+        # Created in Tab order: Previous, Next (above), docs, action, Dismiss message, Close dialog.
         row = ttk.Frame(self.body, name="buttons")
         row.grid(row=4, column=0, sticky="ew")
         row.columnconfigure(2, weight=1)
@@ -107,9 +107,9 @@ class MessageListWindow(ModalBase):
         self.action_button = ttk.Button(row, name="action", command=self._run_action)
         self.action_button.grid(row=0, column=1)
         self.action_tooltip = attach_tooltip(self.action_button, "")
-        self.dismiss_button = ttk.Button(row, name="dismiss", text="Dismiss", command=self.dismiss_current)
+        self.dismiss_button = ttk.Button(row, name="dismiss", text="Dismiss message", command=self.dismiss_current)
         self.dismiss_button.grid(row=0, column=3, padx=(0, self.cw))
-        self.close_button = ttk.Button(row, name="close", text="Close for now", command=self.cancel)
+        self.close_button = ttk.Button(row, name="close", text="Close dialog", command=self.cancel)
         self.close_button.grid(row=0, column=4)
 
         self.bind("<Left>", lambda _e: self.page(-1))
@@ -127,7 +127,7 @@ class MessageListWindow(ModalBase):
         return self.center.messages if self.center is not None else ()
 
     def initial_focus(self) -> tk.Misc | None:
-        """Next when there is more than one message (and a next one), else Close for now (never Dismiss)."""
+        """Next when there is more than one message (and a next one), else Close dialog (never Dismiss message)."""
         if len(self.messages) > 1 and self.next_button.instate(["!disabled"]):
             return self.next_button
         return self.close_button
@@ -155,7 +155,6 @@ class MessageListWindow(ModalBase):
             self._paragraphs((EMPTY_TEXT,))
             for button in (self.docs_button, self.action_button, self.dismiss_button):
                 button.grid_remove()
-            self.close_button.configure(text="Close")
             return
         self.header.grid()
         self.top_rule.grid()
@@ -187,7 +186,6 @@ class MessageListWindow(ModalBase):
             self.dismiss_button.grid()
         else:
             self.dismiss_button.grid_remove()
-        self.close_button.configure(text="Close for now")
 
     def _paragraphs(self, paragraphs: Iterable[str]) -> None:
         for paragraph in paragraphs:
@@ -247,7 +245,7 @@ class MessageListWindow(ModalBase):
         self._changed()
 
     def cancel(self) -> None:
-        """Close for now."""
+        """Close dialog."""
         self.close()
 
     # -- closing ---------------------------------------------------------------------------------------------------

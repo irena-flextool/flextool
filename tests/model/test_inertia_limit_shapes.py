@@ -105,7 +105,7 @@ def _shapes(value: float, period: str, steps: list[str], *, silent: bool) -> dic
 
 
 def _chain(fixture_json: Path, scenario: str) -> list[str]:
-    rows = [r for r in json.loads(fixture_json.read_text())["scenario_alternatives"] if r[0] == scenario]
+    rows = [r for r in json.loads(fixture_json.read_text(encoding="utf-8"))["scenario_alternatives"] if r[0] == scenario]
     nxt = {a: b for _, a, b in rows}
     alt = next(a for a in nxt if a not in set(nxt.values()))
     chain = []
@@ -509,7 +509,7 @@ def _toy_solve(tmp_path_factory, alt: str, values: list, chain: list[str], entit
 
 
 def _csv(folder: Path, name: str) -> list[dict]:
-    with open(folder / name, newline="") as fh:
+    with open(folder / name, encoding="utf-8", newline="") as fh:
         return list(csv.DictReader(fh))
 
 
@@ -599,7 +599,7 @@ def test_inertia_output_tables(tmp_path_factory) -> None:
     for g in ("electricity", "g2"):
         group = {r["time"]: float(r[g]) for r in _csv(out, "group_inertia__dt.csv")}
         assert set(group) == set(T48) and all(v == pytest.approx(500.0, rel=1e-9) for v in group.values()), g
-    with open(out / "group__unit__node_inertia__dt.csv", newline="") as fh:
+    with open(out / "group__unit__node_inertia__dt.csv", encoding="utf-8", newline="") as fh:
         rows = list(csv.reader(fh))
     cols = list(zip(rows[0][3:], rows[1][3:], rows[2][3:]))
     assert sorted(cols) == [("electricity", "coal_plant", "west"), ("g2", "coal_plant", "west")]
@@ -638,7 +638,7 @@ def test_inertia_output_of_units_online(tmp_path_factory) -> None:
     assert all(v == pytest.approx(300.0, rel=1e-9) for v in coal.to_list())
     group = {r["time"]: float(r["electricity"]) for r in _csv(out, "group_inertia__dt.csv")}
     assert set(group) == set(T48) and all(v == pytest.approx(1000.0, rel=1e-9) for v in group.values())
-    with open(out / "group__unit__node_inertia__dt.csv", newline="") as fh:
+    with open(out / "group__unit__node_inertia__dt.csv", encoding="utf-8", newline="") as fh:
         rows = list(csv.reader(fh))
     assert (rows[0][3:], rows[1][3:], rows[2][3:]) == (["electricity"], ["coal_plant"], ["west"])
     assert all(float(r[3]) == pytest.approx(1000.0, rel=1e-9) for r in rows[3:]) and len(rows) == 3 + 48

@@ -760,7 +760,7 @@ def test_concurrent_top_up_on_stale_shared_db(tmp_path):
     lock_path = tmp_path / "shared_results.sqlite.lock"
     if lock_path.exists() and sys.platform != "win32":
         import fcntl  # POSIX-only lock double-check; the top-up itself is portable
-        with open(lock_path, "a") as fh:
+        with open(lock_path, "a", encoding="utf-8") as fh:
             fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 

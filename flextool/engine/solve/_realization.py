@@ -17,7 +17,6 @@ module holds the config-time predicates that decide the registration and the per
 """
 from __future__ import annotations
 
-import logging
 import re
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
@@ -28,7 +27,6 @@ from flextool.engine.input._solve_state import FlexToolConfigError
 
 from flextool.engine.preprocess.params._branch import fan_period_labels
 
-_MODULE_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -187,18 +185,25 @@ def lookahead_in_configured_realization(solve_cfg: Any, realization_solve: str, 
             f"'{realization_solve}' unless this is intended.")
 
 
-def warn_recourse_designation(solve: str) -> None:
-    """Warn that a ``realized: yes`` designation of a recourse-investment solve gets no realization solve.
+def warn_investments_branch_at_first_period(solve_cfg: Any) -> None:
+    """Warn (W-0639, once per database solve) for each solve the model runs (``solves_in_run``) whose
+    ``invest_solve_branching_method`` is ``investments_at_reveal_period`` with the reveal at the solve's first
+    period (``SolveConfig.reveal_period``): every forecast invests and operates on its own, the normal results hold
+    none of it.  A later reveal is the "act, then learn" structure and gets no warning."""
+    from flextool import run_warnings
 
-    Under recourse every forecast branch invests on its own after the reveal, so there is no realized post-reveal
-    investment to fix in a realization solve.  The designation still selects the branch a deterministic solve
-    reads stochastic data from.
-    """
-    _MODULE_LOGGER.warning(
-        "Solve '%s' has a realized: yes designation in stochastic_branches, but it uses "
-        "stochastic_invest_method = recourse: no realization solve is added (there is no realized post-reveal "
-        "investment to fix).  The designation only selects the branch deterministic solves read stochastic data "
-        "from.", solve)
+    copies = getattr(solve_cfg, "map2d_duplicate_of", None) or {}
+    named: set[str] = set()
+    for solve in solve_cfg.solves_in_run():
+        if solve_cfg.invest_branching_method_for(solve) != "investments_at_reveal_period":
+            continue
+        order = _period_order(solve_cfg, solve)
+        if not order or solve_cfg.reveal_period(solve) != order[0]:
+            continue
+        name = copies.get(solve, (solve,))[0]
+        if name not in named:
+            named.add(name)
+            run_warnings.warn("W-0639", solve=name)
 
 
 def _utf8(frame):
@@ -228,48 +233,36 @@ def _join_value(base: pl.DataFrame, param, name: str, default: float) -> pl.Data
     return base.join(vals, on=keys, how="left").with_columns(pl.col(name).fill_null(default))
 
 
-def solve_decides_investments(solve_cfg, solve: str) -> bool:
-    """Whether *solve* authors investment decisions: ``invest_periods`` or ``realized_invest_periods`` non-empty, or
-    ``stochastic_invest_method`` other than ``none`` (the test of the rolling-invest warning in
-    ``_recursive_solve``)."""
-    if (getattr(solve_cfg, "invest_periods", None) or {}).get(solve):
-        return True
-    if (getattr(solve_cfg, "realized_invest_periods", None) or {}).get(solve):
-        return True
-    method_for = getattr(solve_cfg, "stochastic_invest_method_for", None)
-    return method_for is not None and method_for(solve) != "none"
-
-
 def note_realization_inherits_nothing(d, solve: str, parent: str, parent_invests: bool) -> None:
-    """Note when the realization solve *solve* keeps nothing its stochastic solve *parent* decided.
+    """Note (W-0588) when the realization solve *solve* keeps nothing its stochastic solve *parent* decided.
 
-    A realization solve takes from its parent the units online of its binary units (``p_fix_online``) and the
-    investments (when *parent_invests*: :func:`solve_decides_investments` of the parent).  With neither, the realized results do
-    not depend on the stochastic solve: W-0509 when the realization's units online are all linear (they are
-    re-decided with the realized data; the linear processes are named), W-0588 when it has no units online at all.
-    Nothing when binary units are online, even unpinned (a stochastic solve with nothing tied)."""
+    A realization solve takes from its parent the units online of the processes whose ``startup_method`` is
+    ``linear_fix_in_uc`` or ``integer_fix_in_uc`` (``p_fix_online``) and the investments (when *parent_invests*:
+    :func:`~flextool.engine.input._solve_config.is_investment_solve` of the parent; a roll builds no investment).  The note is given when there are neither: no such process
+    has units online in the realization solve (``process_online_fix_in_uc`` ∩ its online processes, so that
+    ``reduce_unit_detail_method`` *online* counts as none) and the parent decides no investments.  Processes with
+    ``linear`` or ``integer`` are decided again with the realized data and do not prevent the note.  Nothing when a
+    ``_fix_in_uc`` process is online, even unpinned (a stochastic solve with nothing tied)."""
     from flextool import run_warnings
 
-    def _names(frame) -> list[str]:
-        return [] if frame is None or frame.height == 0 else sorted(set(frame["p"].cast(pl.Utf8).to_list()))
+    def _names(frame) -> set[str]:
+        return set() if frame is None or frame.height == 0 else set(frame["p"].cast(pl.Utf8).to_list())
 
     if parent_invests or _rows(_frame(getattr(d, "p_fix_online", None))):
         return
-    linear = _names(getattr(d, "process_online_linear", None))
-    integer = _names(getattr(d, "process_online_integer", None))
-    parent = re.sub(r"_roll_\d+$", "", parent)
-    if linear and not integer:
-        run_warnings.note("W-0509", linear, solve=solve, parent=parent)
-    elif not linear and not integer:
-        run_warnings.note("W-0588", solve=solve, parent=parent)
+    online = _names(getattr(d, "process_online_linear", None)) | _names(getattr(d, "process_online_integer", None))
+    if online & _names(getattr(d, "process_online_fix_in_uc", None)):
+        return
+    run_warnings.note("W-0588", solve=solve, parent=re.sub(r"_roll_\d+$", "", parent))
 
 
 def check_pinned_realization_feasible(d, solve: str, *, rtol: float = 1e-6) -> None:
     """Raise when a realization solve cannot balance a node without balance slack.
 
     A realization solve fixes the investments of its stochastic solve (they reach it as existing capacity) and pins
-    the units online of its binary units (``p_fix_online``) to values the stochastic solve chose for its forecasts;
-    the realized data was not among them.  Linear units online are not pinned: such a process counts here with its
+    the units online of its processes with ``startup_method`` ``linear_fix_in_uc`` or ``integer_fix_in_uc``
+    (``p_fix_online``) to values the stochastic solve chose for its forecasts; the realized data was not among them.
+    The units online of ``linear`` and ``integer`` processes are not pinned: such a process counts here with its
     existing capacity, a valid upper bound, as does every process of a realization that pins no units online.  The
     caller runs the check for every realization solve.  On a node with
     ``penalty_method = off`` (no balance slack) the realized net load may then exceed what the supply into the node

@@ -66,7 +66,7 @@ class ScenarioFilters(unittest.TestCase):
             if path.is_dir():
                 out_path = path / "out.dat"
                 self.assertTrue(out_path.exists())
-                with open(out_path) as out_file:
+                with open(out_path, encoding="utf-8") as out_file:
                     contents = out_file.readlines()
                 self.assertEqual(contents, expected_file_contests)
                 return

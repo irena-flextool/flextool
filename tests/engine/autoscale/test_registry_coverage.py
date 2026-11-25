@@ -56,7 +56,8 @@ import pytest
 # calls in ``_dc_power_flow.py`` (``m.add_var(\n    "v_angle", ...)``)
 # are matched too.
 _ADD_VAR_PATT = re.compile(r"add_var\(\s*[\"']([a-zA-Z_][a-zA-Z0-9_]*)[\"']")
-_ADD_CSTR_PATT = re.compile(r"add_cstr\(\s*[\"']([a-zA-Z_][a-zA-Z0-9_]*)[\"']")
+# add_cstr also matches _coarse_flows.add_cstr(b, "name", ...) and add_row_rule_cstr(b, "name", ...).
+_ADD_CSTR_PATT = re.compile(r"add_(?:row_rule_)?cstr\(\s*(?:b\s*,\s*)?[\"']([a-zA-Z_][a-zA-Z0-9_]*)[\"']")
 
 
 # The solver-license probe in ``_solver_dispatch.py`` builds a
@@ -336,6 +337,12 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     *(f"{fam}_{axis}" for fam in ("maxDivest_cohort", "divestedBuilt", "non_anticipativity_divest_built",
                                   "maxExtend_cohort", "extendedCapacity", "non_anticipativity_extend")
       for axis in ("p", "n")),
+    # Names passed as a variable from a loop table: the user constraints' invest-only period rows
+    # (core._eq_user_constraints), the storage state profiles (core._eq_state_profiles), the share rows of the
+    # roll-end anchor / close (core._eq_storage_roll_end).
+    *(f"process_constraint_{s}_period" for s in ("equal", "less_than", "greater_than")),
+    "profile_state_fixed", "profile_state_lower_limit", "profile_state_upper_limit",
+    "storage_state_roll_anchor_share", "storage_state_roll_close_share",
 ]
 
 

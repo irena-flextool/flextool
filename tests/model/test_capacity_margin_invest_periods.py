@@ -54,7 +54,7 @@ def margin(group: str) -> list:
 
 
 def _chain(fixture_json: Path, scenario: str) -> list[str]:
-    rows = [r for r in json.loads(fixture_json.read_text())["scenario_alternatives"] if r[0] == scenario]
+    rows = [r for r in json.loads(fixture_json.read_text(encoding="utf-8"))["scenario_alternatives"] if r[0] == scenario]
     nxt = {a: b for _, a, b in rows}
     alt = next(a for a in nxt if a not in set(nxt.values()))
     chain = []
@@ -220,15 +220,28 @@ def test_nested_chain_margin_in_invest_sub_solves_only(tmp_path_factory) -> None
         assert st.flex_data.period_invest is not None and st.flex_data.period_invest.height == 0, name
 
 
-def test_rolling_with_investment_builds_margin_in_every_roll(tmp_path_factory) -> None:
-    """A rolling solve with ``invest_periods [period1]``: every roll's dt is in period1, so every roll builds the
-    margin (24 rows per day of the roll's horizon) and has its slack."""
+NO_STORAGE = [["node", "hydro_reservoir", "node_type", s("commodity")]]
+
+
+@pytest.mark.parametrize("storage", [True, False], ids=["with-storage", "no-storage-node"])
+def test_rolling_with_invest_periods_builds_no_margin(tmp_path_factory, storage) -> None:
+    """A rolling solve with ``invest_periods [period1]``: every roll's dt is in period1, but a roll builds no
+    investment (no investment column whatever the data), so no roll builds the margin: no row, no slack, and every
+    roll equals the model without the margin and without invest_periods (a roll's invest_periods reach no other
+    row).  Before: dt.height rows per roll (24 per day of the roll's horizon) and a slack on period1 in each.  The
+    same without a storage node (``hydro_reservoir`` a commodity node): the roll is recognised without storage
+    data."""
+    extra = [] if storage else NO_STORAGE
     steps = _run(tmp_path_factory, "roll",
-                 margin("elec_g") + [["solve", "1week_rolling", "invest_periods", periods_array(["period1"])]])
+                 margin("elec_g") + extra + [["solve", "1week_rolling", "invest_periods", periods_array(["period1"])]])
     assert len(steps) == 7
     for name, st in steps.items():
-        assert _rows(st) == st.flex_data.dt.height, name
-        assert set(_slack(st)) == {"period1"}, name
+        assert st.flex_data.solve_is_rolling, name
+        assert storage or st.flex_data.nodeState is None or st.flex_data.nodeState.height == 0, name
+        assert st.flex_data.period_invest.height == 1, name
+        assert _rows(st) == 0, name
+        assert _slack(st) == {}, name
+    _assert_same_objs(steps, _run(tmp_path_factory, "roll", extra))
 
 
 def test_recourse_keeps_branch_periods(tmp_path_factory) -> None:
@@ -265,7 +278,7 @@ def _write_outputs(steps: dict, name: str, monkeypatch) -> Path:
 
 
 def _csv_rows(path: Path) -> list[dict]:
-    with open(path, newline="") as f:
+    with open(path, encoding="utf-8", newline="") as f:
         return list(csv.DictReader(f))
 
 
@@ -296,14 +309,51 @@ def test_outputs_recourse(tmp_path_factory, monkeypatch) -> None:
     assert all(lp[d] > 0 for d in ("p2035_high", "p2035_low", "p2040_high", "p2040_low"))
 
 
+def test_outputs_rolling_with_invest_periods_have_no_margin(tmp_path_factory, monkeypatch) -> None:
+    """Rolling solve with ``invest_periods [period1]`` and a margin group whose shortfall would be 1e5 MW in every
+    roll: no roll has the margin, so the run notes no shortfall (W-0530), the slack table has no value for period1
+    and the costs have no capacity margin penalty."""
+    from tests._support.coded_warnings import capture_coded
+
+    vals = margin("elec_g") + [["group", "elec_g", "penalty_capacity_margin", scalar(1.0)],
+                               ["solve", "1week_rolling", "invest_periods", periods_array(["period1"])]]
+    with capture_coded() as got:
+        steps = _run(tmp_path_factory, "roll", vals)
+    assert "W-0530" not in got.codes()
+    out = _write_outputs(steps, "cm_roll_invest", monkeypatch)
+    slack_csv = out / "slack__capacity_margin__d.csv"
+    if slack_csv.exists():
+        assert all(v in ("", "0", "0.0") for r in _csv_rows(slack_csv) for k, v in r.items()
+                   if k not in ("solve", "period")), _csv_rows(slack_csv)
+    costs = _csv_rows(out / "annualized_costs__d.csv")
+    assert costs and all(float(r.get("capacity margin penalty") or 0.0) == 0.0 for r in costs)
+
+
+def test_rolling_period_map_margin_need_not_cover_the_rolls(tmp_path_factory) -> None:
+    """A rolling solve with ``invest_periods [period1]`` and a period map of ``capacity_margin_absolute`` (of
+    ``period2``, kept in ``model.periods_available``).  A roll has no capacity margin, so the map need not give
+    period1 (a single investment solve stops on such a map); every roll equals the run without the margin."""
+    vals = [["group", "elec_g", "capacity_margin_method", s("absolute")],
+            ["group", "elec_g", "capacity_margin_absolute",
+             b64({"index_type": "str", "index_name": "period", "data": [["period2", 5.0]]}, "map")],
+            ["solve", "1week_rolling", "invest_periods", periods_array(["period1"])],
+            ["model", "flextool", "periods_available", periods_array(["period2"])]]
+    from flextool.engine import run_chain_from_db
+
+    url, scen = make_db(tmp_path_factory, alt="c11b_cover", values=vals, base_chain=_chain(STOCHASTICS_JSON,
+                        "1_week_rolling_wind"), fixture_json=_deterministic_rolling_json(tmp_path_factory),
+                        entities=ELEC_G)
+    steps = run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp("c11b_cover_w"), keep_solutions=True,
+                              warm=False)
+    assert len(steps) == 7 and all(_rows(st) == 0 for st in steps.values())
+    _assert_same_objs(steps, _run(tmp_path_factory, "roll", []))
+
+
 # ---------------------------------------------------------------------------
 # Warm start
 
 
-@pytest.mark.parametrize("invest", [False, True], ids=["dispatch", "invest"])
-def test_rolling_margin_warm_equals_cold(tmp_path_factory, invest) -> None:
-    """Rolling solve with an absolute margin group (with and without invest periods): warm rolls equal cold."""
+def test_rolling_margin_warm_equals_cold(tmp_path_factory) -> None:
+    """Rolling solve with an absolute margin group: warm rolls equal cold."""
     vals = margin("elec_g")
-    if invest:
-        vals = vals + [["solve", "1week_rolling", "invest_periods", periods_array(["period1"])]]
     _assert_same_objs(_run(tmp_path_factory, "roll", vals, warm=True), _run(tmp_path_factory, "roll", vals, warm=False))

@@ -77,7 +77,7 @@ def start_mem_sampler() -> None:
     interval_s = interval_ms / 1000.0
 
     if not sys.platform.startswith("linux"):
-        with open(log_path, "a", buffering=1) as _f:
+        with open(log_path, "a", encoding="utf-8", buffering=1) as _f:
             _f.write(
                 f"# flextool memory sampler pid={pid} WARNING: platform is not "
                 f"linux — sampler disabled\n"
@@ -91,7 +91,7 @@ def start_mem_sampler() -> None:
         """Parse ``Key:   N kB`` lines from a /proc file → bytes."""
         out: dict[str, int] = {}
         want = set(keys)
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             for line in fh:
                 k = line.split(":", 1)[0]
                 if k in want:
@@ -166,7 +166,7 @@ def start_mem_sampler() -> None:
 
     def _loop(log_path: str, interval_s: float) -> None:
         mono_start = time.monotonic()
-        with open(log_path, "a", buffering=1) as f:
+        with open(log_path, "a", encoding="utf-8", buffering=1) as f:
             f.write(
                 f"# flextool memory sampler pid={pid} started_at={started_at} "
                 f"interval_ms={interval_ms} mallinfo2={'yes' if _mallinfo2 else 'no'}\n"

@@ -108,14 +108,12 @@ def test_recourse_branch_invest_in_dump(recourse_horizon) -> None:
     got = {r["d"]: (round(r["value"], 6), r["realized"]) for r in inv.iter_rows(named=True)}
     for d, value in {"p2035_high": 60.0, "p2040_high": 30.0, "p2035_low": 80.0, "p2040_low": 40.0}.items():
         assert got[d] == (value, False), (d, got)
-    # The realized investment periods are the weight-0 period labels p2035/p2040, which carry no investment
-    # column: the normal output reports 0 there and the dump has no row (nothing realized to mark).
+    # investments_at_reveal_period with the reveal at the first period: no period can be realized, so the normal
+    # output holds no row and the dump marks nothing realized (the period labels carry no investment column).
     normal = pl.read_parquet(work / "output_raw" / "v_invest__stoch_2p_inv.parquet")
-    normal_by_d = dict(zip(normal["period"].to_list(), normal["peaker"].to_list()))
-    assert normal_by_d["p2035"] == 0.0 and normal_by_d["p2040"] == 0.0
+    assert normal.height == 0
     assert not {"p2035", "p2040"} & set(inv["d"])
-    for r in inv.filter(pl.col("realized")).iter_rows(named=True):
-        assert r["value"] == pytest.approx(normal_by_d[r["d"]], abs=1e-9), r
+    assert inv.filter(pl.col("realized")).height == 0
 
 
 def _payload(name: str) -> str:

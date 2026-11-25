@@ -171,27 +171,6 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
         ),
     ),
     WarningSpec(
-        code="W-0509",
-        message="realization '{solve}' re-decides linear units online; keeps nothing of '{parent}'",
-        title="Realization solve with only linear units online",
-        topic=_SOLVES,
-        severity=NOTE,
-        body=(
-            "The realization solve takes from its stochastic solve the units online of the binary units "
-            "(`startup_method` = *binary*) and the investments. The units named here have linear units online "
-            "(`startup_method` = *linear*, or online only through `minimum_time_method`): a linear commitment is a "
-            "relaxation, not a schedule, so the realization solve decides them again with the realized data, their "
-            "minimum up and down times and the history of the previous realization. This realization solve has no "
-            "binary units online and its stochastic solve decides no investments (no `invest_periods`, "
-            "`realized_invest_periods` or `stochastic_invest_method`), so nothing that solve decides reaches "
-            "the realized results: they are a dispatch of each committed window with the realized data and no "
-            "look-ahead, and the forecasts only change the stochastic solve's own results. The note is printed "
-            "once per realization solve.\n\n"
-            "**How to fix:** nothing, if that is meant. For a day-ahead commitment that holds in the realization, "
-            "use `startup_method` = *binary* for those units."
-        ),
-    ),
-    WarningSpec(
         code="W-0510",
         message="annual_flow is above what peak_inflow can reach",
         title="annual_flow above the reach of peak_inflow",
@@ -407,13 +386,14 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
         title="Fractional number of existing units",
         topic=_LIFETIME,
         body=(
-            "The unit or connection has integer online variables (whole units), but its existing capacity divided "
+            "The unit or connection has integer online variables (whole units: `startup_method` *integer* or "
+            "*integer_fix_in_uc*), but its existing capacity divided "
             "by its unit size is not a whole number of units in some period. Integer online units cannot use the "
             "fraction (below 1 the unit can never be online, which can make a minimum such as `min_instant_flow` "
             "infeasible). Without `virtual_unitsize`, one unit is the largest existing capacity over the periods. "
             "The debug log gives the counts per period.\n\n"
             "**How to fix:** set `virtual_unitsize` to the size of one unit and `existing` to the number of "
-            "units, or use `startup_method` `linear`."
+            "units, or use `startup_method` `linear` (`linear_fix_in_uc` in place of `integer_fix_in_uc`)."
         ),
     ),
     WarningSpec(
@@ -1029,23 +1009,33 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
     ),
     WarningSpec(
         code="W-0588",
-        message="realization '{solve}' keeps nothing of '{parent}': a myopic dispatch of each window",
+        message="realization '{solve}' keeps nothing of '{parent}': its results do not depend on it",
         title="Realization solve that inherits nothing",
         topic=_SOLVES,
         severity=NOTE,
         entityless=True,
         body=(
-            "The realization solve takes from its stochastic solve the units online of the binary units "
-            "(`startup_method` = *binary*) and the investments. Here there are neither: no unit or connection has "
-            "units online in the realization solve (no `startup_method`, or `reduce_unit_detail_method` left the "
-            "online variables out), and the stochastic solve decides no investments (no `invest_periods`, "
-            "`realized_invest_periods` or `stochastic_invest_method`). Storage and the other states "
-            "continue from the previous realization, not from the stochastic solve, and reserve is met again with "
-            "the realized data. So the realized results are a dispatch of each committed window with the realized "
-            "data and no look-ahead, and the forecasts only change the stochastic solve's own results. The note is "
-            "printed once per realization solve.\n\n"
-            "**How to fix:** nothing, if that is meant. For a two-stage model in which the day-ahead decisions hold, "
-            "give the units that commit a day ahead `startup_method` = *binary*."
+            "The realization solve takes from its stochastic solve the units online of the units and connections "
+            "with `startup_method` *linear_fix_in_uc* or *integer_fix_in_uc*, and the investments. Here there are "
+            "neither: no unit or connection with a _fix_in_uc method has units online in the realization solve "
+            "(units with *linear* or *integer* are decided again with the realized data; units without online "
+            "variables, or with `reduce_unit_detail_method` leaving them out, have none), and the stochastic solve "
+            "decides no investments (no `invest_periods` or `realized_invest_periods`; a rolling solve builds no "
+            "investment in its rolls). Storage and the other states continue from the previous realization, "
+            "not from the stochastic solve, and reserve is met again with the realized data. So the realized "
+            "results do not depend on the stochastic solve, and its forecasts only change its own results. The "
+            "realization of a single solve dispatches its committed window with the realized data and no "
+            "look-ahead; the realization added to a rolling `separate_dispatch` solve dispatches each jump with "
+            "the realized data and then looks ahead with the forecasts made at the end of the jump. Two kinds of "
+            "rolling solve keep a realization solve that does not look ahead with the forecasts: in a model with "
+            "delayed units (note W-0594) a rolling `separate_dispatch` or `within_solve` solve, and a rolling "
+            "stochastic solve followed by a realization solve you configure yourself (that solve dispatches as you configured it). "
+            "The note is printed once per realization solve.\n\n"
+            "**How to fix:** nothing, if that is meant. For a commitment made in the stochastic solve that holds "
+            "in the realization, give those units `startup_method` *integer_fix_in_uc* or *linear_fix_in_uc*. "
+            "For a rolling solve that should keep nothing of a separate unit-commitment solve, use "
+            "`dispatch_realization_method` *within_solve*: each roll is then one solve (not in a model with "
+            "delayed units, note W-0594)."
         ),
     ),
     WarningSpec(
@@ -1095,6 +1085,124 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "was ignored. The warning is printed once per solve.\n\n"
             "**How to fix:** for losses, use `transfer_method` *regular* or *exact* (for a DC power-flow line, "
             "accept a lossless line), or remove the efficiency."
+        ),
+    ),
+    WarningSpec(
+        code="W-0592",
+        message="an outage ended an obligation carried over from an earlier solve",
+        title="Outage ends a carried obligation",
+        topic=_SOLVES,
+        severity=NOTE,
+        body=(
+            "An earlier solve started these units, or left them ramping down. Their minimum up-time, or "
+            "ramp-down limit, would have kept them running into time steps where they cannot run: their "
+            "availability is below their `min_load` there (for the ramp-down limit, the flow their capacity "
+            "allows there is below what the limit asks for). That solve could not see the outage, because it lay "
+            "beyond its horizon or only the realized data have it. FlexTool ends the carried obligation at the "
+            "first such step, and the rest of its minimum up-time is dropped. A realization solve keeps the units "
+            "online its stochastic solve committed up to such an outage and decides the unit again from the outage "
+            "on. A solve that sees an outage coming still keeps the minimum up-time: it does not start a unit it "
+            "cannot keep. The debug log gives the solve and the step of each unit. The note is printed once per "
+            "run.\n\n"
+            "**How to fix:** nothing, if the outage could not be foreseen. If it was planned, make sure the "
+            "solve that starts the unit sees it: give it in the stochastic solve's forecasts, or lengthen "
+            "`rolling_solve_horizon`."
+        ),
+    ),
+    WarningSpec(
+        code="W-0593",
+        message="solve '{solve}' has dispatch_realization_method deterministic: forecasts not solved",
+        title="Deterministic solve with stochastic branches",
+        topic=_SOLVES,
+        entityless=True,
+        body=(
+            "The solve is a dispatch solve with `stochastic_branches`, and its `dispatch_realization_method` is "
+            "`deterministic` (the default of a dispatch solve since FlexTool 4.7.0; an investment solve, a solve "
+            "that is not rolling and has `invest_periods` or `realized_invest_periods`, does not read the method "
+            "and always solves its forecasts). It is solved with the data of the `realized: yes` "
+            "branch only, as one "
+            "timeline: each time step reads the realized series that covers it (where several do, the one made "
+            "nearest to the start of the solve, or of the roll in a rolling solve). The forecasts "
+            "and the realization solve are ignored. Without a "
+            "`realized: yes` branch, or at a time step no realized series covers, the run stops with an error.\n\n"
+            "**How to fix:** set `dispatch_realization_method` to `within_solve` or `separate_dispatch` to solve "
+            "the forecasts."
+        ),
+    ),
+    WarningSpec(
+        code="W-0639",
+        message="investment solve '{solve}': investments branch at its first period (expert option)",
+        title="Investments branch at the first period",
+        topic=_SOLVES,
+        entityless=True,
+        body=(
+            "The solve is an investment solve with `invest_solve_branching_method` "
+            "`investments_at_reveal_period`, and its forecasts start at its first period. Every forecast then "
+            "invests and operates on its own from the start, as one deterministic solve per forecast weighted "
+            "together (the wait-and-see value of the forecasts). No decision is shared, so nothing can be "
+            "realized: the solve gets no realization dispatch, and the normal results hold no investment or "
+            "operation of the forecasts. They are written only by the `model.output_horizon` dump.\n\n"
+            "**How to fix:** nothing, if the wait-and-see value is intended. To decide one investment for every "
+            "forecast at the first period, set `investments_after_reveal_period` (or leave the setting out: "
+            "`operations_only`); to learn after a first period, start the forecasts at a later period."
+        ),
+    ),
+    WarningSpec(
+        code="W-0640",
+        message="investment solve '{solve}': dispatch_realization_method separate_dispatch ignored",
+        title="separate_dispatch on an investment solve",
+        topic=_SOLVES,
+        entityless=True,
+        body=(
+            "The solve is an investment solve (not rolling, with `invest_periods` or `realized_invest_periods`), "
+            "and it sets `dispatch_realization_method` `separate_dispatch`, which applies to dispatch solves only. "
+            "An investment solve does not read `dispatch_realization_method`: it solves its forecasts under its "
+            "`invest_solve_branching_method`, and with a `realized: yes` branch it gets the realization dispatch of "
+            "an investment solve under `operations_only` and `investments_after_reveal_period` (none under "
+            "`investments_at_reveal_period`, where nothing from the reveal period on can be realized). The value is "
+            "ignored.\n\n"
+            "**How to fix:** remove `dispatch_realization_method` from the solve. To dispatch in two steps, put a "
+            "dispatch solve after it in `model.solves`: no `invest_periods`, `realized_periods` = the periods to "
+            "dispatch, `stochastic_branches` with a `realized: yes` branch, `dispatch_realization_method` "
+            "`separate_dispatch`; leave those periods out of the `realized_periods` of the investment solve, but keep "
+            "them in its `realized_invest_periods`: a solve dispatches a period only after the period's investments "
+            "are realized, otherwise the run stops with an error (with `investments_after_reveal_period` these are "
+            "the periods up to the reveal period, with `investments_at_reveal_period` those before it). The dispatch "
+            "solve starts from the investments the investment solve realized."
+        ),
+    ),
+    WarningSpec(
+        code="W-0641",
+        message="solve '{solve}' dispatches {periods} on investments it does not realize",
+        title="Dispatch on investments that are not realized",
+        topic=_SOLVES,
+        entityless=True,
+        body=(
+            "The solve realizes the dispatch of the named periods (`realized_periods`) and decides their "
+            "investments itself (`invest_periods`), but does not realize those investments: the periods are not in "
+            "its `realized_invest_periods` (and no earlier solve realizes them). The reported dispatch of these "
+            "periods ran on investments that are not reported as realized: the investment results and costs leave "
+            "them out, and a later solve does not start from them.\n\n"
+            "**How to fix:** add the periods to the solve's `realized_invest_periods` to report the investments the "
+            "dispatch used, or leave them out of its `realized_periods` if they are look-ahead only."
+        ),
+    ),
+    WarningSpec(
+        code="W-0594",
+        message="solve '{solve}' has delayed units: each jump is realized without look-ahead",
+        title="Realization without look-ahead: delayed units",
+        topic=_SOLVES,
+        severity=NOTE,
+        body=(
+            "The solve is a rolling solve with `stochastic_branches` and `dispatch_realization_method` "
+            "`within_solve` or `separate_dispatch`, and the model has units with a `delay`. Such a solve realizes "
+            "each jump in a realization solve that dispatches it on the realized data, continuing from the "
+            "previous realization and keeping what it inherits from the roll's stochastic solve (note W-0588): the "
+            "realization itself does not look past the jump with the forecasts made at its end. The look-ahead "
+            "is not available with delays: within the roll a delay wraps the last time steps' flows back to its "
+            "first ones, and the forecasts that follow the jump would all wrap into the same first time steps. The "
+            "note names the delayed units and is printed once per run.\n\n"
+            "**How to fix:** nothing, if that is meant. For the look-ahead, model the units without `delay`."
         ),
     ),
 ) + BEHAVIOUR_SPECS

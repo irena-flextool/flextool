@@ -912,7 +912,7 @@ class ResultViewer(tk.Toplevel):
         if not avail_path.exists():
             return set()
         try:
-            with open(avail_path) as f:
+            with open(avail_path, encoding="utf-8") as f:
                 data = json.load(f)
             return {(r, s) for r, s in data.get("available", [])}
         except (json.JSONDecodeError, OSError):
@@ -2522,7 +2522,7 @@ class ResultViewer(tk.Toplevel):
         if not meta_path.is_file():
             return []
         try:
-            with open(meta_path) as f:
+            with open(meta_path, encoding="utf-8") as f:
                 payload = _json.load(f)
         except (OSError, _json.JSONDecodeError):
             return []
@@ -2980,7 +2980,7 @@ class ResultViewer(tk.Toplevel):
         )
         if meta_path.is_file():
             try:
-                with open(meta_path) as f:
+                with open(meta_path, encoding="utf-8") as f:
                     payload = _json.load(f)
                 scenarios = payload.get("scenarios")
                 if isinstance(scenarios, list):
@@ -3661,7 +3661,7 @@ class ResultViewer(tk.Toplevel):
             checked_set = set()
             if meta_path.exists():
                 try:
-                    with open(meta_path) as f:
+                    with open(meta_path, encoding="utf-8") as f:
                         checked_set = set(json.load(f).get("scenarios", []))
                 except (json.JSONDecodeError, OSError):
                     pass

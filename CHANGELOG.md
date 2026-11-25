@@ -1,3 +1,265 @@
+## Release 4.7.0 (24.11.2026) — stochastic realization: rolling `within_solve` realizes each jump in one solve, `separate_dispatch` realization looks ahead, `deterministic` default; `startup_method` `_fix_in_uc` members; `minimum_time_method` gates min up / down times; outages end carried obligations; rounded carried units online; one branching setting for stochastic investment solves (schema v84)
+
+Input databases move to data version 84. The FlexTool window, the Spine Toolbox workflow and `flextool-run
+--migrate` migrate them. Requires `polar-high>=3.16.1`. Results change for stochastic solves (see the
+realization and stochastic investment entries below), for units whose minimum up or down time its `minimum_time_method` leaves out, for
+rolling solves with a capacity margin, and for databases without a `Base` alternative upgraded from data version
+55 or older; upgraded databases keep their results elsewhere, and the upgrade notes (W-0601, W-0634, W-0635,
+W-0636, W-0637) name what changed.
+
+### Behaviour changes — read before upgrading
+
+- **`startup_method` members.** The members are now `no_startup`, `linear`, `linear_fix_in_uc`, `integer` and
+  `integer_fix_in_uc`; `binary` is gone. The upgrade rewrites every `binary` value and default, in every
+  alternative, to `integer_fix_in_uc`, which is the same model, so the rewrite alone changes no result. Tools and
+  scripts that write `startup_method` `binary` must write `integer_fix_in_uc`: a database at data version 83
+  refuses `binary`. An Excel workbook of an earlier version is migrated when the GUI imports it; with
+  `flextool-read-tabular-input` without `--migration-follows`, a `binary` cell is refused, as for every earlier
+  member rename.
+- **What a realization solve keeps of the units online follows `startup_method`.** In a separate realization
+  solve (a rolling `separate_dispatch` solve, or a single solve with a `realized: yes` branch), the units online of
+  the units and connections with `linear_fix_in_uc` or `integer_fix_in_uc` are kept at the stochastic solve's
+  commitment over the jump (the realized periods); with `linear` or `integer` the realization decides them again
+  with the realized data. Upgraded databases keep their results (`binary` became `integer_fix_in_uc`, `linear`
+  stays `linear`). The new members change the realization: `integer` decides whole units again (a mixed-integer
+  realization), and `linear_fix_in_uc` keeps a linear commitment (as before 4.6.1). Without a separate realization
+  solve a member and its `_fix_in_uc` variant give the same model. Note W-0509 is retired: note W-0588 now says
+  when a realization keeps nothing of its stochastic solve (no `_fix_in_uc` unit online and no investments), also
+  when its units online are all `linear` or `integer`.
+- **Carried units online are rounded.** The units online that a separate realization solve keeps of its
+  stochastic solve, and the units online, start-ups and shut-downs a roll hands to the next roll, are rounded where
+  they are produced. Where the units online are whole units, they and their start-ups and shut-downs go to the
+  nearest whole unit. Other values that the solver could not tell from 0 go to 0: those within its primal
+  feasibility tolerance (1e-7 by default) in the solve's own scaling, a move the solver itself accepts as feasible.
+  Other values stay as the solver gave them. A unit carried offline this way also carries no ramp flow into the
+  next roll. Before, these values carried the solver's last-digit noise, which depends on the computer and the
+  number of threads: near-zero and whole-unit values could differ between computers, and a near-zero number of
+  units online at an outage step could give note W-0592 on one computer and not on another. The same rule applies
+  to `roll_end_online` and `online_history` handoff overrides (near 0 is within 1e-7 there). Results change by no
+  more than that noise.
+- **`min_uptime` / `min_downtime` apply only with their `minimum_time_method`.** A unit's minimum up time
+  constraints are built only when its `minimum_time_method` is `min_uptime` or `both`, its minimum down time
+  constraints only with `min_downtime` or `both`; without a method (the default, `none`) neither applies, as the
+  documentation always said. Before, a time above 0 applied whenever the unit had online variables, whatever the
+  method (also an explicit `none`), in every solve and roll. The upgrade to data version 83 writes the method where
+  a unit relied on a time alone, so such units keep their results; note W-0634 names what it wrote. Results change:
+  where a method of your own leaves a time out (an explicit `none`, a `min_uptime` method next to a
+  `min_downtime`, or such a definition default); for units the upgrade could not decide (it prints why, and warning
+  W-0231 names them at each run); for values that an old upgrade turned from `min_uptime` into `none` (W-0231
+  names the damaged value list); and for data written after the upgrade without the method. Warning W-0231 names
+  every unit whose time its method leaves out, except under an explicit `none`.
+- **A `minimum_time_method` definition default other than `none` is read everywhere.** The input checks read only
+  explicit values, while the model read the default too: with a default `both`, a unit without `startup_method`
+  got online variables in the model only, and the run stopped with an internal error ("feature 'online' is active
+  but data fields are not populated"). Both now read the explicit value, else the definition default, else `none`
+  (and the minimum times with their definition default), so such a unit runs with linear start-ups and its times.
+  The input checks now read the `startup_method` definition default as well, as the model does: a unit without a
+  `startup_method` of its own under a default other than `no_startup` stopped the run with the same error.
+- **FlexTool 2 import.** A unit or storage discharger with online variables in FlexTool 2 (`use online` with a min
+  up or down time) now gets `startup_method linear` and the matching `minimum_time_method`, so its times apply (a
+  unit without a start-up cost had no online variables before). The `use online` sensitivity now also covers the
+  units with only a min up or down time and the dischargers: switched off, they get `no_startup` and
+  `minimum_time_method none`; a discharger with a start-up cost now loses its online variables there, as in
+  FlexTool 2. A `min_load_efficiency` unit keeps its linear start-ups under the switched-off sensitivity, as it
+  does with `use online` 0 in the base (before, a start-up cost gave it `no_startup` there and the run stopped
+  with an error), and its times no longer apply in new imports under `use online` 0 (FlexTool 2 has no online
+  variables there); a database imported earlier keeps them through the upgrade. With `use online` 0 in the
+  base, a unit's min up and down times are written with `minimum_time_method none`, so they stay off without a
+  warning at each run.
+- **An outage ends an obligation carried in from an earlier solve, instead of making the solve infeasible.** A
+  rolling solve carries the minimum up-time of the units the previous roll started, and a realization solve pins
+  the units online to its stochastic solve's commitment. Where such a unit cannot run (its availability, times its
+  `capacity_max_coeff`, is below its `min_load`; for a unit with coarse time steps, the averages over its coarse
+  step), that solve stopped as infeasible when the earlier solve could not see the outage (beyond its horizon, or
+  only in the realized data). Now the carried minimum up-time ends at the first such step and does not resume
+  after it, also not in the following rolls (a carried minimum up-time never asks more units online than the
+  previous roll ended with); a pinned unit keeps its pins up to the outage and is decided again in the realization solve from the
+  outage on (the minimum up-time of a start it was pinned to ends at the outage; the other units keep their pins);
+  and the carried ramp-down limit of a unit without online variables asks at most the flow its capacity
+  allows there. Under a `reduce_unit_detail_method` that leaves out min limits nothing changes. Note W-0592 names
+  the units, once per run. A solve that sees the outage coming still keeps the minimum up-time. Only solves that
+  were infeasible before change, or that had to invest to keep a ramp-down limit an outage voided.
+- **`deterministic` is the new default of `dispatch_realization_method` for dispatch solves.** A dispatch solve
+  with stochastic branches and no method uses the `realized: yes` branch only, as a deterministic solve (warning
+  W-0593 names it): the forecasts and the realization solve are ignored. The method governs dispatch solves only:
+  an investment solve (not rolling, with `invest_periods` or `realized_invest_periods`) does not read it,
+  `deterministic` included, and solves its forecasts as before, under its `invest_solve_branching_method` (next
+  entries). A perfect-foresight benchmark of an investment solve is a scenario without `stochastic_branches`. The
+  realized series of the
+  analysis times are read as one timeline (where they overlap, the one made nearest to the solve's or roll's
+  start is used). Without a `realized: yes` branch, or at a time step no realized series covers, the run stops
+  with an error naming the solve. Upgraded databases get `within_solve` written on the stochastic
+  solves that relied on the default, so their results are unchanged. Tools and scripts that write stochastic
+  solves must write `dispatch_realization_method` (`within_solve` or `separate_dispatch`) to solve the forecasts.
+- **One setting for stochastic investment solves: `invest_solve_branching_method`.** It replaces
+  `stochastic_invest_method`, `shared_invest_periods` and `shared_operation_periods`, and says which investments
+  all the forecasts of an investment solve share. The reveal period is the period where the forecasts start.
+  `operations_only` (the default, the old `none`): the investments of every period are one plan.
+  `investments_after_reveal_period`: the investments up to and including the reveal period are shared, and each
+  forecast invests on its own in the later periods. `investments_at_reveal_period`: only the periods before the
+  reveal period share their investments. In every case each forecast operates on its own from the reveal period.
+  The setting is read on investment solves with `stochastic_branches` only; on a rolling solve, a solve without
+  investments or one without `stochastic_branches` the run stops with an error naming the solve. A period whose
+  investments are per forecast cannot be realized: in `realized_periods` or `realized_invest_periods` it stops the
+  run with an error. The upgrade to data version 84 writes `investments_after_reveal_period` for `recourse` on a
+  solve that is not rolling and has investments and `stochastic_branches` (and `operations_only` for its other
+  rows, each in its own alternative); everywhere else the default `operations_only` applies. It prints, and note
+  W-0637 names at each run, the solves that had any of the old settings: check their
+  `invest_solve_branching_method` (their results may change, the next entries). A written value that does not fit
+  a scenario (for example a solve that realizes a period after the reveal period) stops that run with an error
+  naming the solve. Tools and scripts that write the old parameters must write `invest_solve_branching_method`.
+- **`recourse` becomes `investments_after_reveal_period`.** The investment of the period where the forecasts start
+  is now one decision of all the forecasts, reported under its own period name. Before, with
+  `shared_invest_periods` unset, empty or naming only earlier periods, each forecast invested on its own from that
+  period (a wait-and-see run);
+  `investments_at_reveal_period` keeps that structure. With the forecasts starting at the solve's first period,
+  `investments_at_reveal_period` shares nothing: the solve gets no realization dispatch, the normal results hold
+  no investment or operation of the forecasts (only the `model.output_horizon` dump has them), and warning W-0639
+  names the solve at each run. A converted solve whose `shared_invest_periods` named the reveal period keeps its
+  investments; with a `realized: yes` branch it may now get a realization dispatch (next entries but one).
+- **The forecasts of an investment solve operate on their own from the reveal period.** Before, with
+  `shared_operation_periods` unset (the default) or a list, an investment solve tied the storage, units online and
+  reserves of its forecasts over its realized periods (or the listed ones). Now nothing operational is tied, as
+  with `shared_operation_periods = []` before; there is no setting for the old tie. A dispatch solve no
+  longer reads `shared_operation_periods`: it ties its forecasts over its realized periods again.
+- **The realization dispatch of an investment solve starts at the reveal period.** An investment solve with a
+  `realized: yes` branch whose investments branch after the reveal period (old `recourse`) now gets a realization
+  dispatch, as a solve with shared investments does (before, a warning said it got none). The realization of an
+  investment solve with a mid-horizon reveal no longer dispatches the periods before the reveal again: their
+  results come from the investment solve, which operates them once for every forecast. The realization starts at
+  the reveal period from the storage levels the investment solve ends the period before with (and, where the
+  reveal period continues that period in time, its units online, ramps and minimum up and down time history).
+  Results change in the realized operation of such solves. A realization solve you configure yourself keeps the
+  periods you give it.
+- **`dispatch_realization_method` `separate_dispatch` is ignored on an investment solve.** Warning W-0640 names
+  the solve and points to the structure that works: the investment solve followed in `model.solves` by a dispatch
+  solve (no `invest_periods`, the periods to dispatch in `realized_periods`, its own `stochastic_branches` with a
+  `realized: yes` branch, `separate_dispatch`) that starts from the investments the investment solve realized (keep
+  the dispatched periods in its `realized_invest_periods`, see the next entry). With a
+  `realized: yes` branch such an investment solve gets the realization dispatch of an investment solve under
+  `operations_only` and `investments_after_reveal_period`, none under `investments_at_reveal_period`. Results
+  change: the first solve no longer ties the `_fix_in_uc` units online or the free storage start.
+- **A period is dispatched only after its investments are realized.** When another solve lists a period in
+  `invest_periods`, a solve that realizes the period's dispatch (`realized_periods`) now needs an investment solve,
+  itself or one before it in the run, that realizes the period's investments (`realized_invest_periods`, or without
+  it the `realized_periods` that are also `invest_periods`). Otherwise the run stops, before anything solves, with
+  an error naming the solve, the periods and the investment solves that list them. Before, such a solve dispatched
+  the period on the capacity that existed before the period's investments, without a message: for example a
+  dispatch solve after a stochastic investment solve whose investments of that period are per forecast
+  (`investments_after_reveal_period` after the reveal period, `investments_at_reveal_period` from it on), or after
+  an investment solve that left the period out of its `realized_invest_periods`. Fix: add the period to the
+  `realized_invest_periods` of an investment solve that runs no later, or leave it out of the `realized_periods`.
+  A solve's own `invest_periods` count as decided for its own dispatch (the same solve decides both): a solve that
+  dispatches a period whose investments it decides but does not realize runs as before, with the new warning
+  W-0641 (the investments that dispatch used are not reported or handed on). The example scenario
+  `y2020_2029_2x5y` shows it. Models without investments and a chain where each solve realizes its own period are
+  not affected.
+- **A rolling `within_solve` solve realizes each jump in one solve.** Each roll of a rolling stochastic solve with
+  `dispatch_realization_method` `within_solve` is now solved once: over its jump it dispatches the data of the
+  `realized: yes` branch (one path, the same decisions in every forecast, reported under the period's own name),
+  and after the jump it looks ahead with each forecast made at the end of the jump, with its probability; the
+  next roll continues from the end of the jump. Before, each roll solved the forecasts made at its start, and a
+  separate realization solve then dispatched the jump alone, without looking ahead. Results change: units online,
+  storage levels and prices in the jump and, with timeset weights that are not equal, the costs reported for the
+  jump (the jump's cost now uses the scale of the whole roll, as a deterministic rolling solve does). Such a solve
+  now needs a `realized: yes` branch and forecasts made at the end of each jump: without the branch the run stops
+  with an error naming the solve, without the forecasts with an error naming the roll and the time step. The last
+  roll, whose horizon ends with its jump, is solved with the realized data only. A single `within_solve` solve
+  keeps its separate realization solve. Note W-0635 names the solves of an upgraded database that chose this
+  method.
+- **A `separate_dispatch` realization looks ahead, and its first solve shares only the `_fix_in_uc` commitment.**
+  With `dispatch_realization_method` `separate_dispatch`, rolling or single, the first, stochastic solve now shares
+  across the forecasts only the units online of the units and connections with `startup_method`
+  `linear_fix_in_uc` or `integer_fix_in_uc`, the only decisions the realization keeps, and the start level of a
+  storage node that starts free (no fixed start and no state carried in: every forecast starts from the same
+  level); before, it also shared the other units online, the reserves and the storage use of the stochastic
+  nodes. In a rolling solve the
+  realization solve then dispatches the jump with the `realized: yes` branch's data and looks ahead after it with
+  each forecast made at the end of the jump, with its probability; before, it dispatched the jump alone. A single
+  solve's realization still dispatches its realized periods only. Results change: units online, storage levels,
+  prices and, with timeset weights that are not equal, the costs reported for the jump. A rolling solve without
+  forecasts made at the start of each roll and at the end of each jump now stops with an error naming the roll and
+  the time step. Note W-0636 names the solves of an upgraded database that chose this method.
+- **Rolling stochastic solves with delayed units keep the realization without look-ahead.** In a model with units
+  that have a `delay`, a rolling `within_solve` or `separate_dispatch` solve still realizes each jump in a separate
+  realization solve that does not look past the jump; note W-0594 names the delayed units, once per run. A rolling
+  stochastic solve followed by a realization solve you configure yourself also keeps its two solves. Their first
+  solve changes all the same (it shares only the `_fix_in_uc` commitment, see above), so note W-0636 names the
+  `separate_dispatch` ones; its full notice says that their realization dispatches each jump alone. A rolling
+  solve with `stochastic_invest_method` `recourse` loses the setting in the upgrade (see above) and is realized as
+  any other rolling solve.
+- **A `realized: yes` row where no roll fans out is read by a rolling solve whose realization looks ahead.** In a
+  rolling `within_solve` or `separate_dispatch` solve (other than those that keep the earlier realization) each jump
+  reads the realized branch over all its `realized: yes` rows as one timeline, so such a row is one more realized
+  series and is no longer an error. In a single solve and in the rolling solves that keep the earlier realization
+  nothing reads it, and it is still an error, now also where forecasts are declared at the same point (they are
+  ignored there, as before).
+- **A rolling solve builds no capacity margin.** Its rolls build no investment, so a capacity-margin group's rows
+  could only add a shortfall penalty on capacity the roll cannot change. Before, a rolling solve with
+  `invest_periods` built the margin in every roll and reported and paid its shortfall; now it has none, as a
+  rolling solve without `invest_periods` already had. Invest in a solve before the rolling solve to have the margin
+  checked. A single solve with `invest_periods` keeps its margin, also when nothing in it can be invested.
+- **The repair tool keeps an `invest_method` default changed by hand.** On a W-0490 database, an `invest_method`
+  default that reads `cumulative_limits` and was saved after the last upgrade is now kept when you press Enter
+  (4.6.3 suggested `not_allowed`); its entities keep investing as before in the repaired copy. Type `e` to restore
+  `not_allowed`. A default set to another member is no longer asked about and stays as it is.
+- **Databases without a `Base` alternative keep their reserves and profiles through the upgrade.** The upgrade to
+  data version 56 keeps the older behaviour of reserve provisions and profiles by writing values into the `Base`
+  alternative: `is_enabled` `no` on the reserve provisions that were inactive by default, `profile_method` and
+  `ramp_method` `none` on the entities without a method in any alternative (so such a `unit__node__profile` does
+  not become `upper_limit`). In a database without `Base`, such as one made from FlexTool's templates of data
+  version 25 or older, or with an empty `Base` that no scenario uses, nothing reached the scenarios: after the
+  upgrade those reserve provisions were active and those unit profiles capped the flow. The upgrade now makes
+  `Base` there (or uses the empty one), adds it to every scenario at the lowest rank (below every other
+  alternative, so any value of yours wins) and writes the values in it. A lower-case `base` is a different
+  alternative and is left as it is. Include `Base` at the bottom of the scenarios you make after the upgrade. Results
+  change only for such databases upgraded from data version 55 or older; one already upgraded past 56 is not
+  repaired (check its reserve provisions and `unit__node__profile` methods by hand).
+
+### New features
+
+- **The GUI's "This database was upgraded" message lists the behaviour notes the upgrade added**, in two groups: the
+  changes that affect the results of the model (with the note codes, e.g. W-0635) and the other notes (W-0601,
+  W-0634: where the upgrade wrote a method, results stay the same; listed also when it only left entities
+  undecided). The first group names the entities the upgrade left undecided (the first ten of each kind): units
+  without a decided minimum up/down time method run without those limits until a `minimum_time_method` is chosen
+  (warning W-0231 names all at each run); storage nodes whose `storage_start_end_method` fixes a start or end
+  state that some scenarios give no value for stop the run of such a scenario with an error naming them (add the
+  value, or choose a method that leaves that state free). A database upgraded again before the message is dismissed keeps the earlier notes and
+  names in the new message, without checking whether those entities were decided since.
+- **The GUI message list's buttons are named "Dismiss message" and "Close dialog"** (before: "Dismiss" and "Close
+  for now"). The close button keeps its label also when the list is empty.
+- **The repair tool asks about method parameter defaults in one question**: it says once why, lists each default
+  with the entities that rely on it in some scenario, and says whether restoring changes results (then it lists
+  the entities to check; the report lists them too). An `invest_method` default changed by hand after the last
+  upgrade is kept unless you choose otherwise; one set to another member than `cumulative_limits` is no longer
+  asked about. Storage nodes whose start an old upgrade left free are listed to check, and Enter keeps them as they
+  are. W-0491 and its GUI message are titled "Method parameter defaults lost in an old upgrade".
+
+### Fixes
+
+- **A rolling solve without storage nodes and with `stochastic_invest_method` `recourse` no longer stops with
+  "recourse in nested sub-solve ... is not supported".** The upgrade to data version 84 drops `recourse` from
+  rolling solves (their rolls build no investment; invest in a solve before the rolling solve), so such a solve
+  runs as any other rolling stochastic solve.
+- **A rolling solve with a `bind_intraperiod_blocks` storage node no longer stops with "no timeset blocks in this
+  solve" when a roll holds only one time step of a period it holds in part** (e.g. the last roll with
+  `rolling_solve_jump` 1). That step is the start of the roll's block chain and continues from the level carried
+  from the previous roll (or from `fix_start` in the first roll).
+- **Parameter descriptions brought up to date in older databases.** The upgrade to data version 83 replaces old
+  shipped descriptions that named too few value shapes ("Constant or time." for `availability` and `reservation`,
+  "Constant, Period or time." / "Constant, Period or Time." for `other_operational_cost`, "Constant, Period or
+  Time." for `penalty_up` and `penalty_down`, "Constant, period or time." for `co2_price`, "Constant." for
+  `storage_state_reference_value`), the old member name `no_method` in `group.co2_method`, and the `binary`
+  start-ups in `virtual_unitsize` (now `integer` or `integer_fix_in_uc`). Databases made from the shipped database
+  or template of FlexTool 3.22–3.43 also get the current descriptions of `unit.minimum_time_method` (it no longer
+  says "Not functional yet"), `node.penalty_up` and `penalty_down` (unit CUR/MWh, not CUR/MW),
+  `group.penalty_inertia`, `connection.reactance` (it had none), `connection.transfer_method`,
+  `group.transfer_method` and `commodity.price_ladder_cumulative`. A description you edited is kept. The
+  unused value list `solver` (left over from before `solve.solver` moved to `solvers`) is deleted.
+- **Note W-0508 also names forecasts made at the start of a roll whose previous roll has no look-ahead** (its
+  jump equals its horizon): nothing reads them. The first roll's start is still not reported.
+
 ## Release 4.6.3 (23.11.2026) — fixes: list-valued defaults kept when migrating FlexTool 3.x databases, Benders between regions, FlexTool 2.0 conversion in the GUI; repair tool for W-0490 databases; GUI message list
 
 Patch release: no new data version (input databases stay at 82). Requires `polar-high>=3.16.1`. Results change

@@ -57,6 +57,7 @@ from flextool.engine.input._solve_state import (
 # implementations.  The legacy disk-writing module remains in the tree
 # but is no longer called from the cascade.
 from flextool.engine.preprocess.emit import _solve_writers as solve_writers
+from flextool.engine.preprocess.emit._pdt_lookup import READ_FIRST_FLAT
 from flextool.engine.preprocess import _provider_keys
 from flextool.engine.preprocess import _provider_translators
 
@@ -68,6 +69,7 @@ from flextool.engine.preprocess.params._run_calendar import (
     run_calendar_from_frame,
 )
 from flextool.engine.solve._realized_overlap import (
+    check_dispatch_after_investments,
     effective_realized_invest_periods,
     find_realized_invest_overlaps,
     resolve_realized_dispatch_overlap,
@@ -81,9 +83,10 @@ from flextool.engine.solve._recursive_solve import (
     ParentSolveInfo,
     RecursiveSolveBuilder,
 )
-from flextool.engine.solve._stochastic import StochasticSolver
+from flextool.engine.solve._stochastic import StochasticSolver, realized_analysis_times
 from flextool.engine.solve import _carry_routing
 from flextool.engine.solve import _realization
+from flextool.engine.solve import _realization_tail
 from flextool.engine.input._timeline import (
     _new_step_of_base_steps,
     get_active_time,
@@ -109,6 +112,43 @@ _RP_METHOD_DOWNGRADE: dict[str, str] = {
 }
 
 
+def _roll_tail_plans(solve_cfg, rolls: dict, timelines: dict) -> dict:
+    """``{sub-solve: RollTail}``: the realization-roll plans of the run (``_realization_tail.roll_tail_plan`` of
+    each gated solve's rolls *rolls* on its timeline *timelines*, :func:`_solve_timelines`).  A sub-solve without a
+    plan reads its complete solve's ``stochastic_branches`` rows."""
+    plans: dict = {}
+    for solve, windows in rolls.items():
+        plans.update(_realization_tail.roll_tail_plan(solve_cfg, windows, timelines[solve]))
+    return plans
+
+
+def _solve_timelines(state, solves, complete_solve: dict, active_time_lists: dict,
+                     wanted) -> dict[str, list[tuple[str, str]]]:
+    """``{complete solve: [(period, step), ...]}`` for each complete solve in *wanted*: the timeline its realized
+    branch is read on, flattened (``_stochastic.realized_analysis_times``).
+
+    Per period, every step of the timeline of the period's timeset (also those the solve does not use), so a
+    realized series made before the solve's first step counts; the steps the rolls of *solves* use when they are
+    not all on it.  Periods in the order the rolls first use them.
+    """
+    by_solve: dict[str, dict[str, dict[str, None]]] = {}
+    for s in solves:
+        if complete_solve[s] in wanted:
+            by_period = by_solve.setdefault(complete_solve[s], {})
+            for p, ats in active_time_lists[s].items():
+                by_period.setdefault(p, {}).update(dict.fromkeys(e.timestep for e in ats))
+    timelines: dict[str, list[tuple[str, str]]] = {}
+    for c, by_period in by_solve.items():
+        timeset_of = dict(state.solve.timesets_used_by_solves.get(c, []))
+        line: dict[tuple[str, str], None] = {}
+        for p, active in by_period.items():
+            tl = state.timeline.timesets__timeline.get(timeset_of.get(p))
+            full = [step for step, *_ in state.timeline.timelines.get(tl, [])]
+            line.update(dict.fromkeys((p, step) for step in (full if set(active) <= set(full) else active)))
+        timelines[c] = list(line)
+    return timelines
+
+
 def _roll_period_whole(active_time_list: dict, complete_active_time_list: dict,
                        period_branch: list) -> "pl.DataFrame":
     """``(period, whole)`` of a rolling_window sub-solve: True where the roll holds every step that the complete
@@ -116,14 +156,30 @@ def _roll_period_whole(active_time_list: dict, complete_active_time_list: dict,
 
     The ``bind_intraperiod_blocks`` blocks of a whole period loop within the roll, as in a solve that is not rolling;
     the blocks of a period the roll holds in part chain forward and carry the storage level from roll to roll
-    (owner decision Q-c15e-A).
+    (owner decision Q-c15e-A).  In a split realization roll the label keeps the jump steps and each branch period
+    the rest of the period: a path (the label's steps, then one branch period's) is compared, so the label and its
+    branch periods are whole together.
     """
     anchor = {b: p for p, b in period_branch if b != p}
     rows: list[tuple[str, bool]] = []
     for period, steps in active_time_list.items():
-        full = complete_active_time_list.get(anchor.get(period, period)) or []
-        rows.append((str(period), bool(steps) and [s.timestep for s in steps] == [s.timestep for s in full]))
+        base = anchor.get(period, period)
+        full = complete_active_time_list.get(base) or []
+        names = _path_steps(active_time_list, period_branch, period)
+        rows.append((str(period), bool(steps) and names == [s.timestep for s in full]))
     return pl.DataFrame(rows, schema={"period": pl.Utf8, "whole": pl.Boolean}, orient="row")
+
+
+def _path_steps(active_time_list: dict, period_branch: list, period: str) -> list:
+    """The step names of ``period`` in the roll, on its path through a split realization roll: a branch period after
+    its label's (jump) steps, a label before the steps of its first branch period (every branch period holds the same
+    steps).  Elsewhere the period's own steps."""
+    own = [s.timestep for s in active_time_list.get(period) or []]
+    label = next((p for p, b in period_branch if b == period and p != period), None)
+    if label is not None and active_time_list.get(label):
+        return [s.timestep for s in active_time_list[label]] + own
+    branch = next((b for p, b in period_branch if p == period and b != period and active_time_list.get(b)), None)
+    return own + [s.timestep for s in active_time_list[branch]] if branch is not None and own else own
 
 
 def _warn_rolling_blocks_chained(state, complete_solve_name: str, solve: str, active_time_list: dict,
@@ -388,7 +444,7 @@ def _first_scope(active_time_list: dict, complete_active_time_list: dict,
     if s0 not in names:
         return None
     start, end = 0, len(full) - 1
-    held = {str(e.timestep) for e in steps}
+    held = {str(t) for t in _path_steps(active_time_list, period_branch, period)}
     return (base, names[start]), names[start] != s0, names[end] in held
 
 
@@ -1553,24 +1609,31 @@ def native_run_model(state, solver) -> int:
         for _sib_base, _par_base in list(_rdp.items()):
             _sib_rolls = _by_base.get(_sib_base)
             _par_rolls = _by_base.get(_par_base)
+            # A realization roll (``_realization_tail``) keeps the UC roll's whole horizon: it realizes the jump and
+            # looks ahead after it with the forecasts made at the jump end.
+            _rolls_ahead = (
+                _realization_tail.realization_roll_method(state.solve, _sib_base) == "separate_dispatch")
             if _sib_rolls and _par_rolls:
                 for _idx, _uc in _par_rolls.items():
                     _dp = _sib_rolls.get(_idx)
                     if _dp is not None:
                         _uc_to_disp[_uc] = _dp
                         _rdp[_dp] = _uc           # per-roll parent map
-                        # OC1 fix — the realized-dispatch roll realizes ONLY
-                        # its JUMP (the committed/realized section).  Restrict
-                        # its SOLVE window to the realized (jump) time list
-                        # instead of inheriting the parent's full roll horizon
-                        # (jump + look-ahead): the look-ahead has no realized
-                        # data and no online pin, so solving it forced
-                        # spurious unserved load.  ``realized_time_lists[_dp]``
-                        # here is the start→next-jump slice (untrimmed at this
-                        # point); copy it as the active window.  The fix_online
-                        # pin and the disp→disp realized carry already align on
-                        # the jump.
-                        if _dp in realized_time_lists:
+                        # A realized-dispatch roll that is no realization roll
+                        # (``_rolls_ahead`` False: delayed units, recourse, ...,
+                        # ``_realization_tail.realization_roll_method``) realizes
+                        # ONLY its JUMP.  Its SOLVE
+                        # window is the realized (jump) time list instead of the
+                        # parent's full roll horizon: without forecasts after the
+                        # jump, the look-ahead has no realized data and no online
+                        # pin, so solving it forced spurious unserved load.
+                        # ``realized_time_lists[_dp]`` here is the start→next-jump
+                        # slice (untrimmed at this point); copy it as the active
+                        # window.  The fix_online pin and the disp→disp realized
+                        # carry already align on the jump.  A realization roll
+                        # keeps the horizon and looks ahead with the forecasts
+                        # made at the end of its jump (its plan, step 2.9).
+                        if _dp in realized_time_lists and not _rolls_ahead:
                             active_time_lists[_dp] = copy.deepcopy(
                                 realized_time_lists[_dp])
         if _uc_to_disp:
@@ -1592,6 +1655,9 @@ def native_run_model(state, solver) -> int:
                     _rebuilt.append(_dp)
                     _emitted.add(_dp)
             all_solves = _rebuilt
+
+    # The periods of each sub-solve, before the stochastic pass names the periods of a fan by their branches.
+    _sub_solve_periods = {_s: list(active_time_lists.get(_s) or {}) for _s in all_solves}
 
     # NOTE: the realized-dispatch overlap resolution (last-wins) runs
     # AFTER the stochastic pass below (step 3.5), where
@@ -1661,6 +1727,17 @@ def native_run_model(state, solver) -> int:
         _behaviour_changes.notice("chained_solve_costs_from_run_start", "solves", state.solve.real_solves)
 
     # ------------------------------------------------------------------
+    # 2.9 Realization-roll plans (``_realization_tail``): per roll of a gated solve, from the authored rows (never
+    # changed), before the expansion reads them.
+    # ------------------------------------------------------------------
+    _tail_rolls = _realization_tail.realization_rolls(
+        state.solve, all_solves, complete_solve, active_time_lists, realized_time_lists)
+    _tail_timelines = _solve_timelines(state, all_solves, complete_solve, active_time_lists, set(_tail_rolls))
+    state.solve.roll_tail_plan = _roll_tail_plans(state.solve, _tail_rolls, _tail_timelines)
+    state.solve.roll_branch_rows = _realization_tail.roll_branch_rows(
+        state.solve, _tail_rolls, state.solve.roll_tail_plan)
+
+    # ------------------------------------------------------------------
     # 3. Stochastic branching expansion.
     # ------------------------------------------------------------------
     stochastic_solver = StochasticSolver(state)
@@ -1681,14 +1758,16 @@ def native_run_model(state, solver) -> int:
         fix_storage_time_lists,
         realized_time_lists,
     )
+    # The plans (2.9) and the expansion have passed their checks: the realization notices of the listed solves.
+    _realization_tail.announce_realization_notices(state.solve)
 
     # ------------------------------------------------------------------
     # 3.1 Realization plan per sub-solve.  A period label has no dispatch, so
     # the cells a sub-solve commits inside its fan (its pre-stochastic
     # realized and fix-storage cells of the labels) are kept as
-    # ``committed_in_fan``: the non-anticipativity window of an unset
-    # ``non_anticipativity_periods`` and the trigger of the committed-window
-    # check.  The labels' pre-stochastic steps are kept for a curated window.
+    # ``committed_in_fan``: the non-anticipativity window of a dispatch solve
+    # and the trigger of the committed-window check.  The labels'
+    # pre-stochastic steps are kept as ``label_steps``.
     # ------------------------------------------------------------------
     _rdp_registry = getattr(state.solve, "realized_dispatch_parent", {}) or {}
     committed_in_fan_frames: dict[str, pl.DataFrame] = {}
@@ -1776,6 +1855,10 @@ def native_run_model(state, solver) -> int:
             realized_periods=state.solve.realized_periods,
         )))
     warn_realized_invest_overlaps(find_realized_invest_overlaps(_invest_claims))
+    # A period is dispatched only after its investments are realized, per sub-solve (a nested solve renamed for one
+    # period has that period), each under its complete solve: an error before anything solves.
+    check_dispatch_after_investments(state.solve, [
+        (complete_solve[_s], _sub_solve_periods.get(_s, [])) for _s in all_solves])
 
     # ------------------------------------------------------------------
     # 3.6 W4c — project each stochastic parameter onto the REALIZED branch
@@ -1811,8 +1894,11 @@ def native_run_model(state, solver) -> int:
     realized_dispatch_parent = getattr(
         state.solve, "realized_dispatch_parent", {}
     ) or {}
+    # A planned realization roll (``roll_tail_plan``) gets its realized branch from its plan (3.8) and keeps the
+    # forecast rows of its tail.
+    _planned = getattr(state.solve, "roll_tail_plan", None) or {}
     for sibling, parent in realized_dispatch_parent.items():
-        if sibling not in solve_branch__time_branch_lists:
+        if sibling not in solve_branch__time_branch_lists or sibling in _planned:
             continue
         if (
             parent not in solve_branch__time_branch_lists
@@ -1832,18 +1918,71 @@ def native_run_model(state, solver) -> int:
             if row[0] in _sibling_periods
         ]
 
+    # 3.7 ``dispatch_realization_method`` deterministic: the stochastic pass
+    # above solved the solve as a deterministic one (its stochastic_branches
+    # rows are set aside, ``SolveConfig.apply_deterministic_realization``).
+    # It reads its realized branch flattened into one timeline: every period
+    # of every roll reads the realized branch (``solve_branch__time_branch``)
+    # through one analysis-time tier per ``realized: yes`` row, the one
+    # nearest to the roll's start first (``branch_time_start`` rows with
+    # ``read_first`` = ``flat``, ``_pdt_lookup.ts_tiers``), so each step reads
+    # the nearest realized series that covers it; a step none covers is an
+    # input error (``_check_pre_reveal_reads_have_forecast``).  Rolls only cut
+    # that timeline.  No fan: no fan start, no branch weight but the self row's.
+    # Distance to the roll's start is counted on each period's full timeline
+    # (every step of the timeline of the period's timeset, also those the
+    # solve does not use), so a realized series made before the solve's
+    # first step is read; a step it does not cover is left to the coverage
+    # check.
+    deterministic_branches = getattr(state.solve, "deterministic_branches", None) or {}
+    flat_time_start_lists: dict[str, list[tuple[str, str, str]]] = {}
+
+    def _read_realized_flat(s: str, periods: list, branch: str, times) -> None:
+        # Periods *periods* of sub-solve *s* read *branch* through one ``flat`` tier per analysis time of *times*.
+        solve_branch__time_branch_lists[s] = [
+            *(row for row in solve_branch__time_branch_lists[s] if row[0] not in periods),
+            *((d, branch) for d in periods)]
+        flat_time_start_lists[s] = [(d, ts, READ_FIRST_FLAT) for d in periods for ts in times]
+
+    _det_timelines = _solve_timelines(state, all_solves, complete_solve, active_time_lists, deterministic_branches)
+    for _s in all_solves:
+        _info = deterministic_branches.get(complete_solve[_s])
+        _steps = [(_p, _e.timestep) for _p, _ats in active_time_lists[_s].items() for _e in _ats]
+        if not _info or not _steps:
+            continue
+        _times = realized_analysis_times(_info, _det_timelines[complete_solve[_s]], _steps[0])
+        if not _times:
+            _name = state.solve.map2d_duplicate_of.get(complete_solve[_s], (complete_solve[_s],))[0]
+            raise FlexToolConfigError(
+                f"Solve '{_name}' has stochastic_branches and dispatch_realization_method deterministic, but no "
+                "realized: yes row of its stochastic_branches starts at a time step of the timeline of its "
+                "periods, so it has no realized series to read. Give the realized: yes rows the analysis_time "
+                "of a time step of that timeline, or set dispatch_realization_method within_solve or "
+                "separate_dispatch.")
+        branch_start_time_lists[_s] = None
+        _read_realized_flat(_s, list(active_time_lists[_s]), next(row[1] for row in _info if row[3] == "yes"),
+                            _times)
+    # 3.8 A realization roll (``roll_tail_plan``) reads its realized branch flattened in the same way over its jump
+    # periods (every period of a ``deterministic`` roll): one source, the plan (``RollTail.realized`` /
+    # ``realized_times``).  Its tail keeps the forecast rows of the expansion.
+    for _s, _tail in (getattr(state.solve, "roll_tail_plan", None) or {}).items():
+        _read_realized_flat(_s, list(dict.fromkeys(_d for _d, _t in _tail.jump_steps)), _tail.realized,
+                            _tail.realized_times)
+
     # The fan start of each solve (``solve_data/branch_time_start``): a branch
     # period whose own first step authors no stochastic-time value for a cell
     # reads the forecast authored at the fan start.  A realization-dispatch
     # sibling reads the parent's realized branch, so it takes the parent's
     # rows of the real period names.
-    branch_time_start_lists: dict[str, list[tuple[str, str]]] = {
+    # Rows (period, time) here; the flat merge below adds (period, time, read_first) triples, so the W4c projection
+    # (which unpacks pairs) runs before it.
+    branch_time_start_lists: dict[str, list[tuple[str, str] | tuple[str, str, str]]] = {
         s: solve_writers.branch_time_start_rows(
             period__branch_lists[s], branch_start_time_lists.get(s))
         for s in period__branch_lists
     }
     for sibling, parent in realized_dispatch_parent.items():
-        if sibling not in branch_time_start_lists or parent not in branch_time_start_lists:
+        if sibling not in branch_time_start_lists or parent not in branch_time_start_lists or sibling in _planned:
             continue
         _sibling_periods = set(active_time_lists.get(sibling, {}))
         branch_time_start_lists[sibling] = [
@@ -1851,6 +1990,11 @@ def native_run_model(state, solver) -> int:
                 branch_time_start_lists[parent], period__branch_lists[parent])
             if row[0] in _sibling_periods
         ]
+    # The flat rows replace the fan rows of the periods that read the realized branch (3.7, 3.8).
+    for _s, _flat in flat_time_start_lists.items():
+        _periods = {row[0] for row in _flat}
+        branch_time_start_lists[_s] = [
+            *_flat, *(row for row in branch_time_start_lists.get(_s, []) if row[0] not in _periods)]
 
     for solve in active_time_lists.keys():
         for period in active_time_lists[solve]:
@@ -2268,12 +2412,11 @@ def native_run_model(state, solver) -> int:
                 complete_solve[solve], state.solve.invest_periods,
             ),
         )
-        # Slice D — emit the RESOLVED stochastic_invest_method so the
-        # derived/model layers can gate the recourse feature through the
-        # provider/workdir (they hold no SolveConfig).  Absent CSV ==
-        # flag-off (byte-parity-safe default).
+        # The recourse switch (investments branch after the reveal: SolveConfig.recourse_invest), so the
+        # derived/model layers can gate the recourse feature through the provider/workdir (they hold no
+        # SolveConfig).  Absent CSV == flag-off.
         solve_writers.emit_stochastic_invest_method(
-            state.solve.stochastic_invest_method_for(complete_solve[solve]),
+            "recourse" if state.solve.recourse_invest(complete_solve[solve]) else "none",
             str(wf / "solve_data/stochastic_invest_method.csv"),
             provider=sub_solve_provider,
         )
@@ -2346,6 +2489,14 @@ def native_run_model(state, solver) -> int:
             label_step_frames.get(solve),
             provider=sub_solve_provider,
         )
+        # Solve (1) of separate_dispatch (single or rolling: the stochastic solve a realization solve follows) ties
+        # across its forecasts only the units online of the _fix_in_uc units (``_non_anticipativity.na_role``).
+        _plan = realization_plans.get(solve)
+        solve_writers.emit_na_online_fix_in_uc(
+            _plan is not None and _plan.realization_solve is not None
+            and state.solve.dispatch_realization_method_for(complete_solve[solve]) == "separate_dispatch",
+            provider=sub_solve_provider,
+        )
         solve_writers.emit_fix_storage_timesteps(
             fix_storage_time_lists[solve],
             complete_solve[solve],
@@ -2369,7 +2520,7 @@ def native_run_model(state, solver) -> int:
             str(wf / "solve_data/period__branch.csv"),
             provider=sub_solve_provider,
         )
-        solve_writers.emit_branch_weights_and_map(
+        _branch_weights = solve_writers.emit_branch_weights_and_map(
             complete_solve[solve],
             active_time_lists[solve],
             solve_branch__time_branch_lists[solve],
@@ -2377,11 +2528,18 @@ def native_run_model(state, solver) -> int:
             period__branch_lists[solve],
             state.solve.stochastic_branches,
             provider=sub_solve_provider,
+            branch_rows=_realization_tail.plan_branch_rows(state.solve, solve),
         )
+        _tail = state.solve.roll_tail_plan.get(solve)
+        if _tail is not None:
+            # G2b: every forecast of a realization roll has its own branch weight.
+            _realization_tail.check_tail_weights(
+                solve, _tail, solve_branch__time_branch_lists[solve], _branch_weights)
         # Every period from the fan onwards reads the forecast made at the
         # fan's analysis time, in a single solve and in a roll alike, never a
         # forecast made later (``_pdt_lookup`` "Which forecast a branch
         # period reads").
+        # The periods that read a realized branch flattened (3.7, 3.8) have ``flat`` rows.
         solve_writers.emit_branch_time_start(
             branch_time_start_lists.get(solve, []),
             provider=sub_solve_provider,
@@ -2417,7 +2575,7 @@ def native_run_model(state, solver) -> int:
                 period__branch_lists[solve],
             )
             with open(
-                wf / "solve_data/timeline_matching_map.csv", "w", newline=""
+                wf / "solve_data/timeline_matching_map.csv", "w", encoding="utf-8", newline=""
             ) as realfile:
                 writer = csv.writer(realfile)
                 writer.writerow(["period", "step", "upper_step"])
@@ -2425,7 +2583,7 @@ def native_run_model(state, solver) -> int:
                     writer.writerow([period, step, upper_step])
                     matching_rows.append((str(period), str(step), str(upper_step)))
         else:
-            with open(wf / "solve_data/timeline_matching_map.csv", "w") as realfile:
+            with open(wf / "solve_data/timeline_matching_map.csv", "w", encoding="utf-8") as realfile:
                 realfile.write("period,step,upper_step\n")
         # The same rows in the Provider: the fix_price reference-price derive reads the Provider only (the disk file
         # stays for the csv dump); written every iter, the level Provider being shared by the iters of a level.
@@ -2894,7 +3052,7 @@ def native_run_model(state, solver) -> int:
             mod_phases_path = wf / "solve_data" / "mod_phases.csv"
             if mod_phases_path.exists():
                 try:
-                    with open(mod_phases_path) as _mp:
+                    with open(mod_phases_path, encoding="utf-8") as _mp:
                         _reader = csv.DictReader(_mp)
                         for _row in _reader:
                             try:

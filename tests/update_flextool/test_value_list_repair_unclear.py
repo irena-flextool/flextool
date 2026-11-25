@@ -3,8 +3,8 @@
 The W-0490 body sends an ``unclear`` file to its manual checklist; the checklist's step 7 is "Run the repair tool on
 the fixed copy to record the repair".  Each test builds an ``unclear`` file (``_value_list_cases.make_hit``), does
 the hand fix the checklist describes with spinedb_api (as the Spine DB editor does: a new member goes at the end,
-step 3; the three class defaults set to ``not_allowed``, step 4; the values decided one by one, step 5), then runs
-the tool again.
+step 3; the three method parameter defaults set to ``not_allowed``, step 4; the values decided one by one, step 5),
+then runs the tool again.
 
 Oracles (from the checklist text and the design's state rules, never from the tool's output):
 
@@ -14,7 +14,7 @@ Oracles (from the checklist text and the design's state rules, never from the to
   list now complete and ``cumulative_limits`` present: design state ``not-hit`` → no suspect → the record alone;
 - R still reads ``cumulative_limits`` with a hand-restored shipped member at the top (added after the session):
   a known lost member and older siblings → ``hit-unanchored`` → the tool asks only about the values that still
-  refer to R (the defaults are the shipped default after step 4, so they are not asked); one ``keep`` → the record
+  refer to R (the defaults are FlexTool's default after step 4, so they are not asked); one ``keep`` → the record
   with ``kept`` 1;
 - the record ends W-0490 on the repaired copy (``possible_value_list_overwrite_ro`` → ``[]``) and the tool still
   sees the session (``session_findings_ro`` → the one finding, step 22, 21 → 22, 2024-09-19).

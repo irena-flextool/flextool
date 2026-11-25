@@ -515,7 +515,7 @@ def update_flextool(skip_git):
     ]
 
     # add the database used in the input_data tool
-    with open("./.spinetoolbox/project.json") as json_file:
+    with open("./.spinetoolbox/project.json", encoding="utf-8") as json_file:
         specifications = json.load(json_file)
     path = specifications["items"]["Input data"]["url"]["database"]["path"]
     db_to_update.append(path)
@@ -537,7 +537,7 @@ def update_flextool(skip_git):
         shutil.copy("templates/results_template.sqlite", "results.sqlite")
     #update result parameter definitions
     #get template JSON. This can be the master or old template if conflicting migrations in between
-    with open (result_template_path) as json_file:
+    with open (result_template_path, encoding="utf-8") as json_file:
         template = json.load(json_file)
     with open_database_mapping(sqlite_url_string('results.sqlite'), create = False, upgrade = True) as db:
         #these update the old descriptions, but wont remove them or change names (the new name is created, but old stays)
@@ -588,7 +588,7 @@ def _report_skipped_databases(skipped_frozen: list[str], not_migrated: list[str]
 
 def initialize_result_database(filename,json_path):
 
-    with open (json_path) as json_file:
+    with open (json_path, encoding="utf-8") as json_file:
         template = json.load(json_file)
     with open_database_mapping(sqlite_url_string(filename), create = True) as db:
         (num,log) = import_data(db,**template)
@@ -642,7 +642,7 @@ def migrate_project(old_path, new_path):
                                                                 "path": ".spinetoolbox/specifications/Tool/migrate_database.json"})
 
     
-    with open("./.spinetoolbox/project_temp2.json", "w") as outfile: 
+    with open("./.spinetoolbox/project_temp2.json", "w", encoding="utf-8") as outfile: 
         json.dump(old_dict, outfile, indent=4)
 
     shutil.copy("./.spinetoolbox/project_temp2.json", new_path)

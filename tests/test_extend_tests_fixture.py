@@ -35,7 +35,7 @@ def staged_fixture(tmp_path: Path) -> Path:
 
 
 def _write_yaml(path: Path, body: str) -> None:
-    path.write_text(textwrap.dedent(body).lstrip())
+    path.write_text(textwrap.dedent(body).lstrip(), encoding="utf-8")
 
 
 @pytest.mark.skipif(
@@ -66,7 +66,7 @@ def test_apply_delta_adds_entries(staged_fixture: Path, tmp_path: Path) -> None:
     rc = ext.apply_delta(yaml_file, target_path=staged_fixture)
     assert rc == 0
 
-    with open(staged_fixture) as f:
+    with open(staged_fixture, encoding="utf-8") as f:
         data = json.load(f)
 
     # Entity present.
@@ -124,7 +124,7 @@ def test_second_apply_raises_on_collision(staged_fixture: Path, tmp_path: Path) 
 
 def test_validate_only_does_not_mutate(staged_fixture: Path, tmp_path: Path) -> None:
     """--validate / validate-only path must leave the fixture untouched."""
-    before = staged_fixture.read_text()
+    before = staged_fixture.read_text(encoding="utf-8")
     yaml_file = tmp_path / "valid.yaml"
     _write_yaml(
         yaml_file,
@@ -140,7 +140,7 @@ def test_validate_only_does_not_mutate(staged_fixture: Path, tmp_path: Path) -> 
     errs = ext.validate_delta(delta, schema, source_index=src_idx)
     assert errs == []
     # File is byte-identical — validation did no I/O on the source.
-    assert staged_fixture.read_text() == before
+    assert staged_fixture.read_text(encoding="utf-8") == before
 
 
 def test_validate_reports_unknown_class(staged_fixture: Path, tmp_path: Path) -> None:

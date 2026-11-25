@@ -166,11 +166,12 @@ def test_adjacent_representative_blocks_break(runs):
 
 
 def test_rolling_stochastic_realization_seams_are_one_line(tmp_path_factory):
-    """Rolling stochastic 1-week fixture with a realized branch (an engine-added realization solve per roll): the
-    realized rolls follow each other on the timeline, so the realized dispatch is one line — no break."""
+    """Rolling stochastic 1-week fixture with a realized branch: since 4.7.0 each of the 7 rolls realizes its jump
+    itself (no realization solve), and the realized jumps follow each other on the timeline, so the realized
+    dispatch is one line — no break."""
     from tests.engine._unit_db import is_realization
 
     steps, pdir = _write(tmp_path_factory, "tb_stoch_roll", [], chain=["init", "base", "system", "1week_rolling"],
                          fixture_json=FLEXTOOL_ROOT / "tests" / "fixtures" / "stochastics.json")
-    assert sum(is_realization(k) for k in steps) > 1, list(steps)
+    assert list(steps) == [f"1week_rolling_roll_{k}" for k in range(7)] and not any(map(is_realization, steps))
     assert _breaks(pdir) == set()

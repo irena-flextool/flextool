@@ -59,7 +59,7 @@ def real_input() -> Iterator[None]:
     fcntl = pytest.importorskip("fcntl")
     display = os.environ.get("DISPLAY", "").replace(":", "_").replace("/", "_")
     path = Path(tempfile.gettempdir()) / f"flextool-gui-real-input{display}.lock"
-    with open(path, "a") as handle:
+    with open(path, "a", encoding="utf-8") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         try:
             yield

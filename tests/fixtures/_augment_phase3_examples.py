@@ -105,12 +105,12 @@ def _must_run_data() -> dict[str, list]:
         ["must_run_fleet_output_floor",
          "Must-run how-to: user constraint on the fleet output, sum >= 100 MW."],
         ["must_run_fleet_two_online",
-         "Must-run how-to: binary online steam units with min_load 0.5 and a "
+         "Must-run how-to: whole-unit online steam units with min_load 0.5 and a "
          "user constraint on the online count, sum >= 2 units."],
         ["must_run_flowgroup",
          "Must-run how-to: flowGroup steam_fleet with min_instant_flow 100 MW."],
         ["must_run_min_load_only",
-         "Must-run how-to: binary online steam units with min_load 0.5 and no "
+         "Must-run how-to: whole-unit online steam units with min_load 0.5 and no "
          "must-run (control case: min_load is not a must-run)."],
     ]
     entities: list[list] = [
@@ -181,7 +181,7 @@ def _must_run_data() -> dict[str, list]:
         ]
         for alt in ("must_run_fleet_two_online", "must_run_min_load_only"):
             values += [
-                ["unit", unit, "startup_method", "binary", alt],
+                ["unit", unit, "startup_method", "integer_fix_in_uc", alt],
                 ["unit", unit, "min_load", 0.5, alt],
             ]
 

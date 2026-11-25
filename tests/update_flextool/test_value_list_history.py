@@ -81,7 +81,8 @@ def test_an_unreadable_file_gives_no_finding(tmp_path: Path) -> None:
 
 
 def _step_blocks() -> dict[int, str]:
-    """``{N: source of step N}``, the helper functions it calls included (three levels deep)."""
+    """``{N: source of step N}``, the helper functions it calls included (four levels deep: step 82 reaches
+    the member appends through ``_v81_refresh`` → ``_v81_value_lists`` → ``_append_list_members``)."""
     parts = re.split(r"elif next_version == (\d+):", inspect.getsource(db_migration._migrate_open))
 
     def expand(text: str, depth: int, seen: set[str]) -> str:
@@ -92,7 +93,7 @@ def _step_blocks() -> dict[int, str]:
                 seen.add(name)
                 out += expand(inspect.getsource(func), depth - 1, seen)
         return out
-    return {int(parts[i]): expand(parts[i + 1], 3, set()) for i in range(1, len(parts), 2)}
+    return {int(parts[i]): expand(parts[i + 1], 4, set()) for i in range(1, len(parts), 2)}
 
 
 def test_touch_and_append_match_the_migration_steps() -> None:
@@ -144,7 +145,7 @@ def test_a_run_warns_once_at_its_start(tmp_path_factory) -> None:
 
 
 def test_gui_lists_the_flagged_file_at_every_check(make, tmp_path: Path) -> None:
-    """The GUI's message list asks at every recompute: the flagged file stays flagged (W-0490 has no Dismiss)."""
+    """The GUI's message list asks at every recompute: the flagged file stays flagged (W-0490 has no Dismiss message)."""
     from flextool.gui.data_models import ProjectSettings
     from flextool.gui.input_sources import InputSourceManager
 

@@ -25,6 +25,7 @@ SCHEMA_FIELDS: dict[str, tuple[str, ...]] = {
     "dispatch_realization_method": ("dispatch_realization_method",),
     "fix_storage_periods": ("fix_storage_periods",),
     "invest_periods": ("invest_periods",),
+    "invest_solve_branching_method": ("invest_solve_branching_method",),
     "new_stepduration": ("timeline.new_step_durations",),
     "period_timeset": ("timesets_used_by_solves",),
     "realized_invest_periods": ("realized_invest_periods",),
@@ -35,15 +36,12 @@ SCHEMA_FIELDS: dict[str, tuple[str, ...]] = {
     "rolling_solve_horizon": ("rolling_times",),
     "rolling_solve_jump": ("rolling_times",),
     "scaling": ("scaling",),
-    "shared_invest_periods": ("non_anticipativity_invest_periods",),
-    "shared_operation_periods": ("non_anticipativity_periods",),
     "solve_mode": ("solve_modes", "roll_counter"),
     "solver": ("solver_settings.solvers", "solver_configs"),
     "solver_arguments": ("solver_settings.arguments", "solver_configs"),
     "solver_mip_gap": ("solver_configs",),
     "solver_precommand": ("solver_settings.precommand",),
     "stochastic_branches": ("stochastic_branches",),
-    "stochastic_invest_method": ("stochastic_invest_method",),
     "timeline_hole_multiplier": ("hole_multipliers",),
     "years_represented": ("solve_period_years_represented",),
 }
@@ -90,6 +88,7 @@ def _all_parameters() -> list:
         ["contains_solves", scm.array(["child"])],
         ["decomposition", scm.pack("benders", "str")],
         ["dispatch_realization_method", scm.pack("separate_dispatch", "str")],
+        ["invest_solve_branching_method", scm.pack("investments_after_reveal_period", "str")],
         ["new_stepduration", scm.pack(2.0, "float")],
         ["reduce_system_detail_method", scm.pack("reserves", "str")],
         ["reduce_unit_detail_method", scm.pack("integers", "str")],
@@ -97,14 +96,11 @@ def _all_parameters() -> list:
         ["rolling_solve_horizon", scm.pack(2.0, "float")],
         ["rolling_solve_jump", scm.pack(1.0, "float")],
         ["scaling", scm.pack("basic", "str")],
-        ["shared_invest_periods", scm.array(["p1"])],
-        ["shared_operation_periods", scm.array(["p2"])],
         ["solver", scm.pack("gurobi", "str")],
         ["solver_arguments", scm.pack(scm.pmap([("TimeLimit", "800")]), "map")],
         ["solver_mip_gap", scm.pack(0.2, "float")],
         ["solver_precommand", scm.pack("echo", "str")],
         ["stochastic_branches", scm.pack(stochastic, "map")],
-        ["stochastic_invest_method", scm.pack("recourse", "str")],
         ["timeline_hole_multiplier", scm.pack(2.0, "float")],
     ]
 
@@ -133,13 +129,20 @@ def _spec(trigger: str | None) -> dict:
 
 
 def _load(spec: dict, folder):
-    """``(SolveConfig, TimelineConfig, reader)`` of *spec*, as the cascade prepares them (copies registered)."""
+    """``(SolveConfig, TimelineConfig, reader)`` of *spec*, as the cascade prepares them (copies registered).
+
+    Every schema solve parameter on one solve is no valid model: ``invest_solve_branching_method`` applies to
+    investment solves only, and the rolling solve ``inv`` is none (``SolveConfig.check_invest_branching``, tested
+    in ``test_recourse_guards``).  The copies are what is tested here, so that check is left out of the load."""
+    from unittest import mock
+
     from flextool.engine.input._solve_config import SolveConfig, register_solve_copies
     from flextool.engine.input._spinedb_reader import SpineDbReader
     from flextool.engine.input._timeline import TimelineConfig
 
     url = scm.build_db(scm.write_spec(spec, folder), folder)
-    sc = SolveConfig.load_from_db_url(url, "base")
+    with mock.patch.object(SolveConfig, "check_invest_branching", lambda self: None):
+        sc = SolveConfig.load_from_db_url(url, "base")
     tc = TimelineConfig.load_from_db_url(url, "base")
     tc.inherit_solve_copies(sc)
     reader = SpineDbReader(url, scenario="base")
@@ -184,8 +187,7 @@ def _periods(value) -> list[str]:
 @pytest.mark.parametrize("trigger", PERIOD_LISTS)
 def test_a_split_solve_has_every_parameter_of_its_database_solve(tmp_path, trigger):
     """For each 2-D trigger: the split solves ``inv_p1`` / ``inv_p2`` equal ``inv`` in every field except their
-    own period lists (the trigger's inner list; the 1-D lists cut to the solve's period; shared_invest_periods
-    with no entry where the cut is empty, shared_operation_periods an empty list there) and timesets; their
+    own period lists (the trigger's inner list; the 1-D lists cut to the solve's period) and timesets; their
     reader rows equal ``inv``'s except the same period lists, as arrays, and period_timeset / years_represented
     as maps of their own period with the index name ``period``."""
     from flextool.engine.input._solve_config import NOT_COPIED_FIELDS
@@ -193,7 +195,7 @@ def test_a_split_solve_has_every_parameter_of_its_database_solve(tmp_path, trigg
     sc, tc, reader = _load(_spec(trigger), tmp_path)
     assert sc.model_solve["flextool"] == ["inv_p1", "inv_p2"]
     own_fields = {"invest_periods", "realized_periods", "realized_invest_periods", "fix_storage_periods",
-                  "non_anticipativity_periods", "non_anticipativity_invest_periods", "timesets_used_by_solves",
+                  "timesets_used_by_solves",
                   "stochastic_branches"}
     for p in scm.PERIODS:
         new = f"inv_{p}"
@@ -208,26 +210,20 @@ def test_a_split_solve_has_every_parameter_of_its_database_solve(tmp_path, trigg
         for field in PERIOD_LISTS:
             assert sc.__dict__[field][new] == [(p, p)], field
         assert sc.timesets_used_by_solves[new] == [(p, scm.PERIODS[p])]
-        assert sc.non_anticipativity_invest_periods.get(new) == ([("p1", "p1")] if p == "p1" else None)
-        assert sc.non_anticipativity_periods[new] == ([] if p == "p1" else [("p2", "p2")])
         # Each split solve keeps the forecast fan of the period it realizes (item 257).
         assert sc.stochastic_branches[new] == [row for row in sc.stochastic_branches["inv"] if row[0] == p]
         assert len(sc.stochastic_branches[new]) == 2
 
         parent_rows, rows = _reader_values(reader, "inv"), _reader_values(reader, new)
-        replaced = {*PERIOD_LISTS, "period_timeset", "years_represented", "shared_invest_periods",
-                    "shared_operation_periods", "stochastic_branches"}
-        # The trigger's 2-D row is gone from the database solve; inv_p2 has no shared_invest_periods (cut empty).
-        expected = (set(parent_rows) | set(_split_params(trigger))) - ({"shared_invest_periods"} if p == "p2"
-                                                                       else set())
+        replaced = {*PERIOD_LISTS, "period_timeset", "years_represented", "stochastic_branches"}
+        # The trigger's 2-D row is gone from the database solve.
+        expected = set(parent_rows) | set(_split_params(trigger))
         assert set(rows) == expected, sorted(set(rows) ^ expected)
         for par, value in rows.items():
             if par not in replaced:
                 assert value == parent_rows[par], par
         for par in PERIOD_LISTS:
             assert _periods(rows[par]) == [p], par
-        assert _periods(rows["shared_operation_periods"]) == ([] if p == "p1" else ["p2"])
-        assert ("shared_invest_periods" in rows) == (p == "p1")
         for par, expected in (("period_timeset", scm.PERIODS[p]), ("years_represented", 5.0)):
             assert rows[par].index_name == "period", par
             assert list(map(str, rows[par].indexes)) == [p] and list(rows[par].values) == [expected], par

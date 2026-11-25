@@ -1,7 +1,7 @@
 """Slice D — Phase D3: α-1 year/factor provider threading.
 
 Design: ``specs/sliceD_recourse_invest_design.md`` §5 / §18 D3.
-In a solve with branch periods (any ``stochastic_invest_method``) the walker
+In a solve with branch periods (any ``invest_solve_branching_method``) the walker
 forwards ``provider`` so the canonical ``p_years_d.csv`` /
 ``p_years_represented.csv`` arms — which byte-copy the fan-member year rows —
 go live, giving branch periods their anchor's year-from-start.

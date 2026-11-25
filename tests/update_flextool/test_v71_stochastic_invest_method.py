@@ -7,10 +7,9 @@ how stochastic branches participate in investment:
 2. Adds the ``solve.stochastic_invest_method`` definition (default
    ``"none"``) bound to that value list, grouped under ``solve_advanced``.
 
-``'none'`` (default) is byte-identical to prior behaviour; ``'recourse'``
-is hard-rejected by the Slice C guards until Slice D lands.  The
-engine-side read/resolver + guards are covered by
-``tests/engine/test_recourse_guards.py``.
+v84 replaces the parameter by ``solve.invest_solve_branching_method``
+(``tests/update_flextool/test_v84_branching.py``), so the step is tested on
+a database migrated to 83 at most.
 """
 
 from __future__ import annotations
@@ -27,10 +26,7 @@ from flextool.update_flextool.sync_master_json_template import (
     sync_master_template,
 )
 
-from tests.db_utils import json_to_db
 
-TEST_DIR = Path(__file__).resolve().parents[1]
-FIXTURES_DIR = TEST_DIR / "fixtures"
 
 
 def test_v71_version_constant_is_at_least_71() -> None:
@@ -42,12 +38,13 @@ def test_v71_version_constant_is_at_least_71() -> None:
 
 
 def _migrated_db(tmp_path: Path) -> DatabaseMapping:
-    """Build a fixture DB from JSON (at the fixture's old version, which
-    predates v71 so the parameter can ONLY appear via the v71 block),
-    migrate it to HEAD, and return an open mapping."""
-    db_path = tmp_path / "lh2.sqlite"
-    url = json_to_db(FIXTURES_DIR / "lh2_three_region.json", db_path)
-    migrate_database(url)
+    """A minimal v70 database (:func:`_build_v70_solve_db`) migrated to 83, the last data version that has the
+    parameter (v84 replaces it by ``invest_solve_branching_method``: ``test_v84_branching``), as an open mapping.
+    The fixture corpus is at the head, so it cannot start below v71."""
+    db_path = tmp_path / "v70.sqlite"
+    url = f"sqlite:///{db_path.resolve()}"
+    _build_v70_solve_db(url)
+    migrate_database(url, up_to=83)
     db = DatabaseMapping(url, create=False)
     db.fetch_all()
     return db

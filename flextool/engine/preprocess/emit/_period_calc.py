@@ -447,9 +447,13 @@ def emit_period_calculated_params(
                          schema={"period": pl.Utf8, "value": pl.Float64}),
             pb_pairs_set, period_col="period")
         cum_of = dict(zip(carry["period"].to_list(), carry["value"].to_list()))
+    # A split realization roll (a period label with steps): a branch period's path also holds its label's jump,
+    # f_d_k[p_f] = (H[p] + W[p] + W[p_f]) / T[p].  Without a label with steps (every other solve) this is empty.
+    jump_hours = {b: sum_step_dur_by_period[a] for a, b in pb_rows
+                  if a != b and sum_step_dur_by_period.get(a, 0.0) > 0}
     f_d_k_rows: list[tuple[str, float]] = []
     for d in period_in_use:
-        num = cum_of.get(d, 0.0) + sum_step_dur_by_period.get(d, 0.0)
+        num = cum_of.get(d, 0.0) + sum_step_dur_by_period.get(d, 0.0) + jump_hours.get(d, 0.0)
         denom = complete_share_lookup.get(d, 0.0) * HOURS_PER_YEAR
         f_d_k_rows.append((d, num / denom))
     # A period only leaves `period_in_use` once the rolling chain has moved past it, which (periods
@@ -572,8 +576,10 @@ def emit_branch_weights(input_dir: Path, solve_data_dir: Path,
     pdt_rows: list[tuple[str, str, float]] = []
     for d, t in dt_pairs:
         if d in phantom:
-            # Period-label operational weight → 0 (forecasts carry the mass).
-            pdt_rows.append((d, t, 0.0))
+            # A label's step that none of its forecasts has (a split realization roll: the label dispatches its
+            # jump on the realized data) is a cohort of one: weight 1; else the forecasts carry the mass: 0.
+            shared = any((d, b) in pb_set for b in branches_for_t.get(t, ()) if b != d)
+            pdt_rows.append((d, t, 0.0 if shared else 1.0))
             continue
         branches_with_t = branches_for_t.get(t, set())
         denom = 0.0

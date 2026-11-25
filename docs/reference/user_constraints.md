@@ -26,7 +26,7 @@ A user constraint is a linear row that you write yourself. It ties flows, storag
 |---|---|---|---|
 | `constraint_flow_coeff` | `unit__inputNode`, `unit__outputNode`, `connection__node` | The flow between the unit or connection and the node, in each time step. For a connection, the flow in both directions (see below). | MW |
 | `constraint_state_coeff` | `node` (storage) | The storage state of the node, in each time step. | MWh |
-| `constraint_online_coeff` | `unit`, `connection` (with online variables) | The number of units online, in each time step. One unit is `virtual_unitsize`; without it, the largest `existing` capacity, else 1000 MW. Whole numbers with *binary* startup, continuous with *linear*. | count of units |
+| `constraint_online_coeff` | `unit`, `connection` (with online variables) | The number of units online, in each time step. One unit is `virtual_unitsize`; without it, the largest `existing` capacity, else 1000 MW. Whole numbers with *integer* or *integer_fix_in_uc*, continuous with *linear* or *linear_fix_in_uc*. | count of units |
 | `constraint_invested_capacity_coeff` | `node`, `unit`, `connection` | The capacity that comes online in the period. Without a construction lead time, this is the capacity invested in that period. | MW (MWh for a storage node) |
 | `constraint_in_construction_capacity_coeff` | `node`, `unit`, `connection` | The capacity in construction in the period: decided, but not yet online. It is zero without a construction lead time. | MW (MWh for a storage node) |
 | `constraint_retired_capacity_coeff` | `node`, `unit`, `connection` | The capacity retired in the period. | MW (MWh for a storage node) |
@@ -110,6 +110,6 @@ The full descriptions are with each entity: [nodes](nodes.md#data-for-nodes), [u
 **Data.**
 
 - `constraint` *two_online*: `sense` *greater_than*, `constant` 2
-- `unit` *g1*, *g2*, *g3*: `startup_method` *binary*, `constraint_online_coeff` Map (*two_online* | 1)
+- `unit` *g1*, *g2*, *g3*: `startup_method` *integer*, `constraint_online_coeff` Map (*two_online* | 1)
 
 **The row.** In each time step: online(g1) + online(g2) + online(g3) ≥ 2. The row counts units, so it is the same for one entity of three units: `existing` 3, `virtual_unitsize` 100 and `constraint_online_coeff` Map (*two_online* | 1). With *linear* startup, the count is continuous: ≥ 2 then means at least two units' worth of online capacity, with the minimum load applying to it, not two whole machines. A coefficient on a unit without online variables (`startup_method` unset and no `minimum_time_method`) stops the run with an error naming the unit and the constraint.

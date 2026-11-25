@@ -112,7 +112,8 @@ BEHAVIOUR_TEXTS: dict[str, tuple[str, str, str, str]] = {
     ),
     "stochastic_branch_period_years": (
         "W-0610", "stochastic branch periods count from their year",
-        ("In a stochastic solve whose stochastic_invest_method is not recourse, the branch periods of the"
+        ("In a stochastic solve whose investments do not branch per forecast (stochastic_invest_method none, "
+         "invest_solve_branching_method operations_only from FlexTool 4.7.0 on), the branch periods of the"
          " stochastic branches now count from the year of their period. Before, every branch period "
          "counted as the first year of the solve: capacity invested in a later period, or starting to "
          "operate in a later period after a construction lead time, was missing from the branches of that"
@@ -399,7 +400,62 @@ BEHAVIOUR_TEXTS: dict[str, tuple[str, str, str, str]] = {
         ("Set end_of_life_method on these entities: next_seam keeps the old rounding, closest_seam the "
          "new."),
     ),
+    "minimum_time_method_written": (
+        "W-0634", "the upgrade wrote minimum_time_method",
+        ("minimum_time_method now decides whether min_uptime and min_downtime apply: a unit without it (none, "
+         "the default) has no minimum up or down time. Before, a time applied whenever it was set. The "
+         "database upgrade wrote minimum_time_method (both, min_uptime or min_downtime, and none where a unit "
+         "is kept offline) on these units, so their results are unchanged. Units the upgrade could not decide "
+         "got nothing written: in the scenarios it named, their times no longer apply (results change), and warning W-0231 names them at "
+         "each run. Set minimum_time_method on them where the times should apply."),
+        _delete_marker("minimum_time_method_written"),
+    ),
+    "rolling_within_solve_one_solve": (
+        "W-0635", "rolling within_solve realizes the jump in one solve",
+        ("A rolling stochastic solve with dispatch_realization_method within_solve now solves each roll once. Over "
+         "the jump it dispatches the data of the realized: yes branch once, under the period's own name. After the "
+         "jump it looks ahead with each forecast made at the end of the jump, with its probability. Before, each "
+         "roll solved the forecasts made at its start, and a separate realization solve then dispatched the jump "
+         "alone, without looking ahead. Results change: units online, storage levels and prices in the jump, and, "
+         "with timeset weights that are not equal, the costs reported for the jump. Such a solve now needs a "
+         "realized: yes branch and forecasts made at the end of each jump: without the branch the run stops with an "
+         "error naming the solve, without the forecasts with an error naming the roll and the time step."),
+        _delete_marker("rolling_within_solve_one_solve"),
+    ),
+    "separate_dispatch_realization_looks_ahead": (
+        "W-0636", "separate_dispatch: first solve shares less across forecasts",
+        ("In rolling and single solves with dispatch_realization_method separate_dispatch, the first solve now "
+         "shares across the forecasts only the units online of units whose startup_method ends in _fix_in_uc, the "
+         "only decisions the realization keeps, and the start level of a storage that starts free; before, it also "
+         "shared the other units online, reserves and the storage use of the stochastic nodes. In a rolling solve "
+         "the realization solve now also looks ahead after its jump with each forecast made at the end of the jump "
+         "and its probability; before, it dispatched the jump alone. The rolling solves that keep the earlier "
+         "realization (a model with delayed units, or a realization solve you "
+         "configure) still dispatch the jump alone: only their first solve changed. Results change: units online, "
+         "storage levels, prices and, with timeset weights that are not equal, the costs reported for the jump. A "
+         "rolling solve whose realization looks ahead and that has no forecasts made at the start of each roll and "
+         "at the end of each jump now stops with an error naming the roll and the time step."),
+        _delete_marker("separate_dispatch_realization_looks_ahead"),
+    ),
+    "stochastic_invest_controls_rewritten": (
+        "W-0637", "old stochastic settings: check invest_solve_branching_method",
+        ("stochastic_invest_method, shared_invest_periods and shared_operation_periods are replaced by "
+         "invest_solve_branching_method, read on investment solves only (not rolling, with invest_periods or "
+         "realized_invest_periods, and stochastic_branches). The upgrade wrote investments_after_reveal_period where "
+         "stochastic_invest_method was recourse on a solve that is not rolling and has investments and "
+         "stochastic_branches (the investment of the period where the forecasts start is now one decision of all "
+         "branches; investments_at_reveal_period lets each branch invest on its own from that period), and "
+         "operations_only (the default: the investments of every period are one plan) everywhere else. The "
+         "operations of an investment solve's branches are no longer tied: each branch operates on its own from "
+         "the period where the forecasts start. Listed: the solves that had any of the old settings. Results may "
+         "change: check invest_solve_branching_method on them."),
+        _delete_marker("stochastic_invest_controls_rewritten"),
+    ),
 }
+
+#: The changes whose upgrade keeps the results (the upgrade wrote values that keep the old behaviour); every
+#: other entry changes results.  The GUI's "database upgraded" message lists them under their own heading.
+RESULTS_UNCHANGED = frozenset({"storage_fix_method_rewritten", "minimum_time_method_written"})
 
 BEHAVIOUR_SPECS: tuple[WarningSpec, ...] = tuple(
     WarningSpec(

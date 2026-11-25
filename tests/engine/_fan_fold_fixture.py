@@ -130,3 +130,74 @@ def pbt_frame(entity_cols: dict[str, "list[str] | str"], *, rows=PBT_ROWS) -> pl
     data["time"] = [r[3] for r in rows]
     data["value"] = [r[4] for r in rows]
     return pl.DataFrame(data)
+
+
+# ---------------------------------------------------------------------------
+# A split realization roll (``_realization_tail``): the period label ``p`` keeps its jump steps ``t1`` / ``t2``
+# and reads its realized branch ``r`` flattened (``read_first`` = ``flat``: one tier per analysis time, ``t1``
+# then ``t0``); its forecasts ``p_b`` / ``p_c`` hold the rest of the period, ``t3`` / ``t4``, and read the
+# forecasts made at the end of the jump (``fan`` rows at ``t3``, which is also their own first step).
+#
+# Values (hand-derived from "per value cell, the first tier that has a value"):
+#
+# * ``X`` (stochastic, branch 1): ``p/t1`` 1 (the ``t1`` series; the ``t0`` series' -1 is not read), ``p/t2`` 2
+#   (the ``t1`` series has no ``t2``: the ``t0`` series), ``p_b`` 30 / 40 and ``p_c`` 300 / 400 (made at ``t3``;
+#   the forecast made at ``t1``, -9, is not read; it authors ``b`` only, which is no partial cohort: no forecast
+#   starts at the label's own first step).
+# * ``Y`` (not stochastic, branch 2 over the anchor's ``r``): ``p`` reads its own ``r`` through the parent fold
+#   with its flat tiers, 5 / 6; ``p_b`` / ``p_c`` read ``r`` made at ``t3``, 7 / 8.
+#
+# Uncovered variant (``split_uncovered``): without ``X``'s ``t0`` value at ``t2`` no realized series covers
+# ``p/t2``: the input error of the flattened realized branch (:func:`split_uncovered_error`).
+# ---------------------------------------------------------------------------
+
+SPLIT_PBT_ROWS: list[tuple[str, str, str, str, float]] = [
+    ("X", "r", "t1", "t1", 1.0), ("X", "r", "t0", "t1", -1.0), ("X", "r", "t0", "t2", 2.0),
+    ("X", "b", "t3", "t3", 30.0), ("X", "b", "t3", "t4", 40.0),
+    ("X", "c", "t3", "t3", 300.0), ("X", "c", "t3", "t4", 400.0),
+    ("X", "b", "t1", "t3", -9.0),
+    ("Y", "r", "t1", "t1", 5.0), ("Y", "r", "t0", "t2", 6.0), ("Y", "r", "t3", "t3", 7.0), ("Y", "r", "t3", "t4", 8.0),
+]
+
+SPLIT_CASES = ["split_roll", "split_uncovered"]
+
+SPLIT_STEPS: list[tuple[str, str]] = [("p", "t1"), ("p", "t2"), ("p_b", "t3"), ("p_b", "t4"),
+                                      ("p_c", "t3"), ("p_c", "t4")]
+
+EXPECTED_SPLIT: dict[tuple[str, str, str], float] = {
+    ("X", "p", "t1"): 1.0, ("X", "p", "t2"): 2.0,
+    ("X", "p_b", "t3"): 30.0, ("X", "p_b", "t4"): 40.0, ("X", "p_c", "t3"): 300.0, ("X", "p_c", "t4"): 400.0,
+    ("Y", "p", "t1"): 5.0, ("Y", "p", "t2"): 6.0,
+    ("Y", "p_b", "t3"): 7.0, ("Y", "p_b", "t4"): 8.0, ("Y", "p_c", "t3"): 7.0, ("Y", "p_c", "t4"): 8.0,
+}
+
+
+def split_rows(case: str) -> list[tuple[str, str, str, str, float]]:
+    """The pbt rows of a :data:`SPLIT_CASES` case."""
+    if case == "split_roll":
+        return SPLIT_PBT_ROWS
+    return [r for r in SPLIT_PBT_ROWS if r[:4] != ("X", "r", "t0", "t2")]
+
+
+def put_split_scaffold(put) -> None:
+    """Register the split roll's period / branch / step frames through ``put(parent, stem, frame)``."""
+    put("solve_data", "first_timesteps", pl.DataFrame({"period": ["p", "p_b", "p_c"], "step": ["t1", "t3", "t3"]}))
+    put("solve_data", "branch_time_start", pl.DataFrame({
+        "period": ["p", "p", "p_b", "p_c"], "step": ["t1", "t0", "t3", "t3"],
+        "read_first": ["flat", "flat", "fan", "fan"]}))
+    put("solve_data", "solve_branch__time_branch", pl.DataFrame({
+        "period": ["p_b", "p_c", "p"], "branch": ["b", "c", "r"]}))
+    put("solve_data", "period__branch", pl.DataFrame({"period": ["p", "p", "p"], "branch": ["p", "p_b", "p_c"]}))
+    put("solve_data", "steps_in_use", pl.DataFrame({
+        "period": [d for d, _t in SPLIT_STEPS], "time": [t for _d, t in SPLIT_STEPS]}))
+    put("input", "groupIncludeStochastics", pl.DataFrame({"group": ["g"]}))
+    put("solve_data", "solve_current", pl.DataFrame({"solve": [ROLL]}))
+
+
+def split_uncovered_error(subject: str, param: str) -> str:
+    """The ``pytest.raises(match=...)`` pattern of ``split_uncovered`` for entity *subject* and parameter *param*."""
+    return (re.escape(f"{subject}, parameter '{param}': solve '{ROLL}' has stochastic_branches and "
+                      "dispatch_realization_method deterministic, or realizes a jump of a rolling within_solve or "
+                      "separate_dispatch solve, so it reads the value of the realized: yes branch ('r') as one "
+                      "timeline.  No realized series covers time step 't2' (period 'p'); the realized series "
+                      "start at analysis_time 't1', 't0'."))

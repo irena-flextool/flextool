@@ -1763,7 +1763,7 @@ def warn_existing_not_whole_units(db, provider) -> None:
 
     With ``virtual_unitsize`` set, ``existing`` is the number of units (capacity = existing × virtual_unitsize; the
     ``params._existing`` capacity cascade), so the unit count is ``existing`` itself.  An integer online variable
-    (``process_online_integer``: ``startup_method = binary``) counts whole units up to that count, so a count such
+    (``process_online_integer``: ``startup_method`` ``integer`` or ``integer_fix_in_uc``) counts whole units up to that count, so a count such
     as 2.5 cannot all be online.  Without ``virtual_unitsize`` the entity is one unit of its existing capacity, a
     whole number by construction, so it is not checked.  Nodes and investments have no integer variables, so they
     are not checked either.  Reads the integer set from the Provider (after ``emit_process_method_projections``).
@@ -1958,7 +1958,7 @@ def validate_startup_inputs(db, provider, logger: logging.Logger) -> None:
     offline = sorted({u for u, _n in roles if process_methods.get(u) not in online_methods})
     if offline:
         errors.append(f"startup_input_method needs online variables, but these units have none: "
-                      f"{', '.join(offline)}. Set startup_method linear or binary (or a minimum_time_method), or "
+                      f"{', '.join(offline)}. Set a startup_method other than no_startup (or a minimum_time_method), or "
                       "set startup_input_method just_input.")
     only = {arc for arc, m in roles.items() if m == "startup_only"}
     outputs = {(u, n) for u, nodes in _arcs(db, "unit__outputNode").items() for n in nodes}

@@ -2889,9 +2889,11 @@ def _with_label_steps(dt: "pl.DataFrame | None", label_steps: "pl.DataFrame | No
 def _invest_period_need(flex_data: object, dt: "pl.DataFrame | None", dt_invest: "pl.DataFrame | None",
                         active_solve: str | None) -> PeriodNeed:
     """The investment periods of the solve (``flex_data.period_invest``, with the branch periods) that the
-    period filter of the investment limits (``dt_invest``) keeps; empty without investment periods."""
+    period filter of the investment limits (``dt_invest``) keeps; empty without investment periods and in a roll
+    (it builds no investment and no capacity margin, ``_group_slack._capacity_margin_periods``)."""
     period_invest = getattr(flex_data, "period_invest", None)
-    invest_periods = _periods_of(period_invest) if period_invest is not None else set()
+    invest_periods = (_periods_of(period_invest)
+                      if period_invest is not None and not getattr(flex_data, "solve_is_rolling", False) else set())
     return PeriodNeed(frozenset(invest_periods & _periods_of(dt_invest)), "invest", active_solve)
 
 

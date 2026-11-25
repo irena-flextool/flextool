@@ -16,8 +16,8 @@ from flextool.update_flextool import value_list_repair as vr
 from flextool.update_flextool import value_list_suspects as vs
 from tests.update_flextool._value_list_cases import LEGACY, add_commit, make_hit, member_id, sql, write_values
 
-REASON = ("Recommended: FlexTool's shipped default. A class default that is not the shipped default, or a missing "
-          "one, can lead to unwanted behaviour (here: entities that rely on it invest and retire up to 1e6 MW).")
+REASON = ("Recommended: FlexTool's default. A method parameter default that reads cumulative_limits can lead to "
+          "unwanted behaviour (here: entities that rely on it invest and retire up to 1e6 MW).")
 LATER = "2025-01-10"
 _DEFAULT = ("UPDATE parameter_definition SET default_value = ?, default_type = ? WHERE name = 'invest_method' AND "
             "entity_class_id = (SELECT id FROM entity_class WHERE name = ?)")
@@ -58,7 +58,7 @@ def _add_numbers(path: Path, items) -> None:
 
 
 def test_defaults_only_hit_gives_four_default_suspects(tmp_path, schema_db_url) -> None:
-    """Design F2 shape: the four defaults point to R, no value does.  Each is recommended back to the shipped
+    """Design F2 shape: the four defaults point to R, no value does.  Each is recommended back to FlexTool's
     default with the reason."""
     case = make_hit(tmp_path, schema_db_url, pre_v77_group=True)
     _, found = _suspects(case.path, tmp_path)
@@ -68,33 +68,38 @@ def test_defaults_only_hit_gives_four_default_suspects(tmp_path, schema_db_url) 
     assert all(s.reason == REASON and s.item.startswith("def:") and not s.certain for s in found)
 
 
-def test_null_and_text_defaults_are_suspects(tmp_path, schema_db_url) -> None:
-    """At v82 lost defaults are NULL (the realistic shape): each is a suspect with no current member.  A text-form
-    default is turned into a reference to R by the item-279 pre-pass and is then a suspect like any reference to R.
-    The group default (``not_active`` in its own list) is already shipped: no suspect."""
+def test_null_and_text_defaults(tmp_path, schema_db_url) -> None:
+    """Lost defaults are NULL (the realistic shape): not part A's (the bug did not make them read
+    ``cumulative_limits``) but part B's, "no sign of the bug" (``make_hit`` has no FlexTool 3.x v22 fingerprint
+    commit), recommended ``not_allowed``.  A text-form default is turned into a reference to R by the item-279
+    pre-pass and is then a part A suspect like any reference to R.  The group default (``not_active`` in its own
+    list) is FlexTool's: no suspect."""
+    from flextool.update_flextool import list_default_restore as ldr
+
     case = make_hit(tmp_path, schema_db_url)
     for cls in ("connection", "node"):
         sql(case.path, _DEFAULT, (None, None, cls))
     sql(case.path, _DEFAULT, (b'"cumulative_limits"', "list_value_ref", "unit"))
     a, found = _suspects(case.path, tmp_path)
     assert a.pre_pass.repaired == 1
-    assert sorted((s.cls, s.current, s.suggestion, s.keep_text) for s in found) == [
-        ("connection", "", "set:not_allowed", "keep (no default)"),
-        ("node", "", "set:not_allowed", "keep (no default)"),
-        ("unit", "cumulative_limits", "set:not_allowed", "keep cumulative_limits")]
-    assert all(s.kind == vs.DEFAULT and s.reason == REASON for s in found)  # answers needed before any record
+    assert [(s.cls, s.current, s.suggestion, s.keep_text, s.reason) for s in found] == [
+        ("unit", "cumulative_limits", "set:not_allowed", "keep cumulative_limits", REASON)]
+    assert sorted((s.cls, s.label, s.suggestion, s.part_b) for s in vr.all_suspects(a) if s.part_b) == [
+        ("connection", ldr.NO_SIGN, "set:not_allowed", True), ("node", ldr.NO_SIGN, "set:not_allowed", True)]
 
 
 def test_shipped_default_is_not_a_suspect_and_legacy_values_get_no_suggestion(tmp_path, schema_db_url) -> None:
-    """Legacy-member hit: the defaults point to the ``not_allowed`` row (index 14), so they are shipped; a default
-    set to another member is a suspect; a value written before the session read the legacy member: no
-    suggestion."""
+    """Legacy-member hit: the defaults point to the ``not_allowed`` row (index 14), so they are FlexTool's; a
+    default set to another member (``invest_total``) is the user's choice: no suspect; a default on R (it read the
+    legacy member before the session, ``cumulative_limits`` now) is a suspect; a value written before the session
+    read the legacy member: no suggestion."""
     case = make_hit(tmp_path, schema_db_url, legacy=True, before=[("unit", "U1", "base", LEGACY)])
     other = member_id(case.path, "invest_methods", "invest_total")
     sql(case.path, _DEFAULT, (str(other).encode(), "list_value_ref", "connection"))
+    sql(case.path, _DEFAULT, (str(case.r_id).encode(), "list_value_ref", "node"))
     _, found = _suspects(case.path, tmp_path)
     assert [(s.kind, s.cls, s.current, s.suggestion) for s in found] == [
-        ("default", "connection", "invest_total", "set:not_allowed"),
+        ("default", "node", "cumulative_limits", "set:not_allowed"),
         ("value", "unit", "cumulative_limits", None)]
     assert found[1].label == vs.LEGACY
 
@@ -137,7 +142,8 @@ def test_renamed_back_asks_only_about_values_between_c_and_h(tmp_path, schema_db
 
 def test_carried_v77_group_values(tmp_path, schema_db_url) -> None:
     """A group value v77 rewrote by name to ``cumulative_limits`` (commit = the v77 step's) is a carried suspect in
-    its own list; one the user wrote later is not.  An empty group default is recommended ``not_active``."""
+    its own list; one the user wrote later is not.  An empty group default is part B's (recommended
+    ``not_active``), not part A's."""
     case = make_hit(tmp_path, schema_db_url)
     write_values(case.path, [("group", "G1", "base", "cumulative_limits")])
     v77 = add_commit(case.path, "v77: schema batch", LATER)
@@ -145,19 +151,20 @@ def test_carried_v77_group_values(tmp_path, schema_db_url) -> None:
                    "name = 'G1')", (v77,))
     write_values(case.path, [("group", "G2", "base", "cumulative_limits")])
     sql(case.path, _DEFAULT, (None, None, "group"))
-    _, found = _suspects(case.path, tmp_path)
+    a, found = _suspects(case.path, tmp_path)
     group_list = _list_id(case.path, "group_invest_methods")
     group = [s for s in found if s.cls == "group"]
     assert [(s.kind, s.entity, s.list_id, s.current, s.label, s.suggestion) for s in group] == [
-        ("default", "", group_list, "", vs.SHIPPED, "set:not_active"),
         ("carried", "G1", group_list, "cumulative_limits", vs.CARRIED_LABEL, None)]
-    assert group[0].reason == REASON
+    assert [(s.kind, s.list_id, s.suggestion, s.part_b) for s in vr.all_suspects(a) if s.cls == "group"
+            and s.kind == vs.DEFAULT] == [("default", group_list, "set:not_active", True)]
 
 
 def test_context_and_similarity_groups(tmp_path, schema_db_url) -> None:
     """U2 and U3 (no parameters, alternative ``base`` used by scenario ``s1``) are one group; U4 in ``spare`` (no
     scenario) is inert, its own group; U5 has an ``invest_cost``, its own group.  The unit default is relied on by
-    R1 (``invest_cost``) and R2 (a cumulative cap)."""
+    R1 (``invest_cost``), R2 (a cumulative cap) and U4 (its own value is only in ``spare``, which ``s1`` does not
+    use)."""
     case = make_hit(tmp_path, schema_db_url)
     sql(case.path, "INSERT INTO alternative (name, description) VALUES ('spare', '')")
     write_values(case.path, [("unit", "U2", "base", "cumulative_limits"), ("unit", "U3", "base", "cumulative_limits"),
@@ -171,8 +178,9 @@ def test_context_and_similarity_groups(tmp_path, schema_db_url) -> None:
     _, found = _suspects(case.path, tmp_path)
     values = _by_entity(found)
     unit = next(s for s in found if s.kind == vs.DEFAULT and s.cls == "unit")
-    assert (unit.context.relying, unit.context.relying_cost, unit.context.relying_cap) == (2, 1, 1)
-    assert unit.context.text().startswith("2 entities rely on it: 1 with invest_cost, 1 with a cumulative cap "
+    assert (unit.context.relying, unit.context.relying_cost, unit.context.relying_cap) == (3, 1, 1)
+    assert unit.context.relying_names == (("R1", False), ("R2", True), ("U4", False))
+    assert unit.context.text().startswith("3 entities rely on it: 1 with invest_cost, 1 with a cumulative cap "
                                           "(without one: invests and retires up to 1e6 MW)")
     assert values["U5"].context.text().startswith(
         "invest_cost yes, no cumulative cap: invests and retires up to 1e6 MW; scenarios: s1; written ")

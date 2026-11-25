@@ -1437,9 +1437,11 @@ class _StochasticTimeSource:
         A realized (or forecast) branch assignment can exist even when this solve has no
         branch-anchor pairs of its own: an auto-spawned realized-dispatch sibling
         (``dispatch_realization_method=separate_dispatch``) leaves its own ``period__branch``
-        empty, but ``_run_model.project_realized_branch_time_branch_rows`` projects its parent's
-        already-realized ``solve_branch__time_branch`` rows onto it, so the fold below reads the
-        realized branch's own value instead of silently falling through to the class default.
+        empty unless it is a realization roll with a tail (``_realization_tail``), and
+        ``_run_model.project_realized_branch_time_branch_rows`` projects its parent's
+        already-realized ``solve_branch__time_branch`` rows onto it (a realization roll: its
+        plan's realized branch), so the fold below reads the realized branch's own value instead
+        of silently falling through to the class default.
         """
         provider = self._provider
         if provider is None or not provider.has("solve_data/solve_branch__time_branch"):
@@ -1549,9 +1551,9 @@ def stochastic_time_values(
             f"{key[0]} {names}, parameter '{key[1]}': the value is a stochastic forecast (a map over branch, "
             "analysis time and time), but this solve has no realized branch to take the value from: no row of "
             "its stochastic_branches says realized: yes, and no other solve hands its realized branch to this "
-            "one. Either mark one branch realized: yes in this solve's stochastic_branches, or give the "
-            "parameter a plain value instead of a forecast map. Check also which alternative of the scenario "
-            "gives the value.")
+            "one (a solve that runs dispatch_realization_method deterministic hands none on). Either mark one "
+            "branch realized: yes in this solve's stochastic_branches, or give the parameter a plain value "
+            "instead of a forecast map. Check also which alternative of the scenario gives the value.")
     emit_cols = list(STOCHASTIC_TIME_PARAMS[key][1])
     dim_cols = list(entity_dim_columns)
     ents = pl.DataFrame([list(e) for e in sorted(entities)], schema={c: pl.Utf8 for c in emit_cols},

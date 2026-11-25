@@ -44,8 +44,6 @@ from flextool.engine.solve._solver_catalogue import (
 )
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from polar_high import Problem
 
     from flextool._solver_config_source import SolverOptionFiles

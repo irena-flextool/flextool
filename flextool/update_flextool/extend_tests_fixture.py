@@ -652,7 +652,7 @@ def apply_delta(
     if not yaml_path.is_file():
         print(f"YAML delta file not found: {yaml_path}", file=sys.stderr)
         return 2
-    with open(yaml_path) as f:
+    with open(yaml_path, encoding="utf-8") as f:
         delta = yaml.safe_load(f) or {}
 
     target = _resolve_target(delta, target_path)
@@ -742,7 +742,7 @@ def main(argv: list[str] | None = None) -> int:
         if not args.yaml.is_file():
             print(f"YAML delta file not found: {args.yaml}", file=sys.stderr)
             return 2
-        with open(args.yaml) as f:
+        with open(args.yaml, encoding="utf-8") as f:
             delta = yaml.safe_load(f) or {}
         schema = _load_schema()
         source_index: dict | None = None

@@ -1,18 +1,18 @@
 """Non-anticipativity: decisions taken before a forecast is revealed are equal in every forecast branch.
 
 Owns the dispatch ties non_anticipativity_storage_use, _storage_state_first, _rp_block_start,
-_online_{integer,linear} and _reserve, which hold over the tied steps dt_non_anticipativity between the forecast branches of each anchor
-period, and the investment ties non_anticipativity_{invest,divest}_{p,n}, which hold over the window
-pd_non_anticipativity of a recourse-investment solve (the ties of the retirements of model-built capacity,
-non_anticipativity_divest_built_{p,n}, are _retire_built's).  The module declares no variables.
+_online_{integer,linear} and _reserve, which hold over the tied steps dt_non_anticipativity between the forecast
+branches of each anchor period (which of them a solve has is its role, :func:`na_role`), and the investment ties
+non_anticipativity_{invest,divest}_{p,n}, which hold over the window pd_non_anticipativity of a recourse-investment
+solve (the ties of the retirements of model-built capacity, non_anticipativity_divest_built_{p,n}, are
+_retire_built's).  The module declares no variables.
 """
 
-import logging
 from typing import TYPE_CHECKING
 
 import polars as pl
 
-from flextool.engine.input._axis_enums import cast_dim
+from flextool.engine.input._axis_enums import align_join_dtypes, cast_dim
 from flextool.engine.model import _balance_terms, _coarse_flows, _extend, _retire_built
 from flextool.engine.model._common import _has_rows, _var_view
 from flextool.engine.model._online import online_rows
@@ -21,7 +21,6 @@ from flextool.engine.preprocess.params._branch import forecast_star_pairs
 if TYPE_CHECKING:
     from flextool.engine.model.core import _Build
 
-_LOG = logging.getLogger(__name__)
 
 
 def reference_forecasts(d) -> "list[tuple[str, list[str]]]":
@@ -98,6 +97,22 @@ def _forecast_star(d) -> "tuple[pl.DataFrame | None, pl.DataFrame | None]":
     return star, tie_dt
 
 
+def na_role(d) -> str:
+    """The non-anticipativity role of the solve: ``"uc_only"`` or ``"full"``.
+
+    ``"uc_only"`` (``d.na_online_fix_in_uc``, from ``solve_data/na_online_fix_in_uc``): solve (1) of
+    ``dispatch_realization_method`` ``separate_dispatch``, single or rolling.  It makes, and so ties across the
+    forecasts, only the decisions the realization solve takes over: the units online of the ``_fix_in_uc`` units
+    (``process_online_fix_in_uc``).  Storage use, the first state, block starts and reserves are decided per
+    forecast; the realization solve decides them again.  The free start level of a ``bind_forward_only`` stochastic
+    node is the present state, so ``storage_state_fan_start`` still ties it; a cyclic node's level
+    (``bind_within_period`` / ``bind_within_solve``) is part of its cycle and stays per forecast.  ``"full"``: every
+    dispatch tie.  The investment ties
+    (:func:`add_invest_constraints`) do not depend on the role.
+    """
+    return "uc_only" if getattr(d, "na_online_fix_in_uc", False) else "full"
+
+
 def _stochastic_nodes(d) -> "pl.DataFrame | None":
     """Nodes ``n`` in a group of groupStochastic; None when there are none."""
     gn, gs = d.group_node, d.groupStochastic
@@ -165,9 +180,11 @@ def _state_first_cells(star, tie_dt, stoch_nodes, v_state) -> "pl.DataFrame | No
 
 def storage_state_first_cells(b: "_Build") -> "pl.DataFrame | None":
     """``(n, d, b, t)``: the rows non_anticipativity_storage_state_first has in this build (the same guards as
-    :func:`add_dispatch_constraints`); None when it has none.  ``model.core._eq_storage_state_fan_start`` leaves
-    the root pairs these rows tie out."""
+    :func:`add_dispatch_constraints`); None when it has none (always under the ``uc_only`` role).
+    ``model.core._eq_storage_state_fan_start`` leaves the root pairs these rows tie out."""
     d = b.d
+    if na_role(d) == "uc_only":
+        return None
     if not _has_rows(d.period_branch_full) or not _has_rows(d.dt_non_anticipativity):
         return None
     star, tie_dt = _forecast_star(d)
@@ -176,17 +193,78 @@ def storage_state_first_cells(b: "_Build") -> "pl.DataFrame | None":
     return _state_first_cells(star, tie_dt, _stochastic_nodes(d), b.v_state)
 
 
+def _add_online_ties(b: "_Build", star: pl.DataFrame, tie_dt: pl.DataFrame,
+                     only: "pl.DataFrame | None" = None) -> None:
+    """The units-online ties non_anticipativity_online_{integer,linear}: of every online process when ``only`` is
+    None, else (``(p,)`` with rows, the ``uc_only`` role's process_online_fix_in_uc) of just those processes."""
+    d, m = b.d, b.m
+
+    # ─── EQ. ─── non_anticipativity_online_{integer,linear} ──────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_online[p,d,t] − v_online[p,b,t] = 0
+    #   ∀ p ∈ process_online_{integer,linear}, (d,b) ∈ forecast star, (d,t) ∈ tied steps,
+    #     (p,d,t) and (p,b,t) ∈ p_online_dt
+    #   role uc_only (na_role, solve (1) of separate_dispatch): only p ∈ process_online_fix_in_uc
+    # Units online are the same in every forecast over the tied steps, the committed section decided before the
+    # forecast is known (inside a fan: the committed cells of its period label, solve_data/committed_in_fan).
+    # With no tied step (an investment solve, whose forecasts operate each on their own from the reveal, or a rolling
+    # fan only in the look-ahead) they are free.
+    # Solve (1) of separate_dispatch commits only what its realization solve takes over (the fix_online pins of the
+    # _fix_in_uc units); the realization solve decides the other units online again with the realized data, so
+    # they are free per forecast here.
+    # A coarse process (processCoarse) is tied once per coarse step, at its first fine step: it is coarse only where
+    # each of its coarse steps is wholly tied or wholly untied and both forecasts have the same coarse steps
+    # (flex_data.coarse_tie_straddles).
+    for kind, v_online, online_set in (("integer", b.v_online_integer, d.process_online_integer),
+                                       ("linear", b.v_online_linear, d.process_online_linear)):
+        if v_online is None or not _has_rows(online_set):
+            continue
+        if only is not None:
+            online_set, keep = align_join_dtypes(online_set, only.select("p"), ["p"])
+            online_set = online_set.join(keep, on="p", how="semi")
+            if online_set.height == 0:
+                continue
+        over = (online_set
+                .join(star, how="cross")
+                .join(tie_dt, on="d", how="inner")
+                .select("p", "d", "b", "t").unique())
+        if d.p_online_dt is not None:
+            pdt = d.p_online_dt.select("p", "d", "t").unique()
+            over = (over
+                    .join(pdt, on=["p", "d", "t"], how="inner")
+                    .join(pdt.rename({"d": "b"}), on=["p", "b", "t"], how="inner")
+                    .select("p", "d", "b", "t").unique())
+        if b.has_coarse_proc:
+            # A coarse process: one row per wholly tied coarse step, at its first fine step (the rows of the other
+            # fine steps tie the same two columns).
+            over = over.join(online_rows(b, kind).select("p", "d", "t"), on=["p", "d", "t"], how="semi")
+        if over.height > 0:
+            m.add_cstr(
+                f"non_anticipativity_online_{kind}",
+                over      = over,
+                sense     = "==",
+                lhs_terms = {"v_d":  v_online,
+                             "v_b": -_var_view(v_online, "__nab", {"d": "b"})},
+                rhs_terms = {},
+            )
+
+
 def add_dispatch_constraints(b: "_Build") -> None:
-    """Tie storage use, units online and reserves across the forecast branches of each anchor period."""
+    """Tie storage use, units online and reserves across the forecast branches of each anchor period; under the
+    ``uc_only`` role (:func:`na_role`) only the units online of the ``_fix_in_uc`` units."""
     d = b.d
     if not _has_rows(d.period_branch_full) or not _has_rows(d.dt_non_anticipativity):
         return
     star, tie_dt = _forecast_star(d)
     if star is None or not _has_rows(tie_dt):
         return
+    if na_role(d) == "uc_only":
+        # No _fix_in_uc process (None: _projection._AUTHORITATIVE_SETS): nothing is tied.
+        if _has_rows(d.process_online_fix_in_uc):
+            _add_online_ties(b, star, tie_dt, d.process_online_fix_in_uc)
+        return
     m = b.m
     v_state = b.v_state
-    v_online_integer, v_online_linear = b.v_online_integer, b.v_online_linear
     v_reserve = b.v_reserve
     stoch_nodes = _stochastic_nodes(d)
 
@@ -202,6 +280,7 @@ def add_dispatch_constraints(b: "_Build") -> None:
     #              − Σ_{(p,n) ∈ startup_to_balance} v_startup[p,d,t] · startup_energy[p,n,d] · unitsize[p]
     #   ∀ n ∈ nodes of groupStochastic ∩ nodeBalance, (d,b) ∈ forecast star, (d,t) ∈ tied steps
     #   section only for p ∈ process_min_load_eff (v_online = v_online_linear or v_online_integer)
+    #   role full only (na_role; not in solve (1) of separate_dispatch)
     # The net flow into a stochastic node is the same in every forecast over the tied steps: exactly the flow
     # terms of nodeBalance_eq, built by the same helper (_balance_terms.balance_flow_terms).  It ties the flows,
     # not v_state, and leaves out the balance slacks: they could otherwise absorb a flow difference.  The
@@ -240,7 +319,7 @@ def add_dispatch_constraints(b: "_Build") -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # v_state[n,d,t_first(d)] − v_state[n,b,t_first(d)] = 0
     #   ∀ n ∈ nodes of groupStochastic, (d,b) ∈ forecast star, t_first(d) = first tied step of d,
-    #     only where the tied steps of d are fewer than the v_state steps of (n,d)
+    #     only where the tied steps of d are fewer than the v_state steps of (n,d); role full only (na_role)
     # The net-charge tie above fixes the shape of the state over the tied
     # steps but leaves a constant offset between forecasts; this row removes
     # it.  Where the tied steps cover the whole horizon the state is already
@@ -265,7 +344,8 @@ def add_dispatch_constraints(b: "_Build") -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # v_state_rp_start[n,d,t] − v_state_rp_start[n,b,t] = 0
     #   ∀ n ∈ nodes of groupStochastic ∩ nodeState_rp, (d,b) ∈ forecast star, (d,t) ∈ tied steps,
-    #     (d,t) and (b,t) ∈ rp_block_first, (n,d,b,t) ∉ the rows of non_anticipativity_storage_state_first
+    #     (d,t) and (b,t) ∈ rp_block_first, (n,d,b,t) ∉ the rows of non_anticipativity_storage_state_first;
+    #     role full only (na_role)
     # A representative block starts from a free level; inside the tie window it
     # is a decision taken before the forecast is known, so it is the same in
     # every forecast (the net-flow tie fixes only the shape of the state within
@@ -308,49 +388,13 @@ def add_dispatch_constraints(b: "_Build") -> None:
                     rhs_terms = {},
                 )
 
-    # ─── EQ. ─── non_anticipativity_online_{integer,linear} ──────────────────
-    # ─────────────────────────────────────────────────────────────────────────
-    # v_online[p,d,t] − v_online[p,b,t] = 0
-    #   ∀ p ∈ process_online_{integer,linear}, (d,b) ∈ forecast star, (d,t) ∈ tied steps,
-    #     (p,d,t) and (p,b,t) ∈ p_online_dt
-    # Units online are the same in every forecast over the tied steps, the committed section decided before the
-    # forecast is known (inside a fan: the committed cells of its period label, solve_data/committed_in_fan).
-    # With no tied step (shared_operation_periods = [], or a rolling fan only in the look-ahead) they are free.
-    # A coarse process (processCoarse) is tied once per coarse step, at its first fine step: it is coarse only where
-    # each of its coarse steps is wholly tied or wholly untied and both forecasts have the same coarse steps
-    # (flex_data.coarse_tie_straddles).
-    for kind, v_online, online_set in (("integer", v_online_integer, d.process_online_integer),
-                                       ("linear", v_online_linear, d.process_online_linear)):
-        if v_online is None or not _has_rows(online_set):
-            continue
-        over = (online_set
-                .join(star, how="cross")
-                .join(tie_dt, on="d", how="inner")
-                .select("p", "d", "b", "t").unique())
-        if d.p_online_dt is not None:
-            pdt = d.p_online_dt.select("p", "d", "t").unique()
-            over = (over
-                    .join(pdt, on=["p", "d", "t"], how="inner")
-                    .join(pdt.rename({"d": "b"}), on=["p", "b", "t"], how="inner")
-                    .select("p", "d", "b", "t").unique())
-        if b.has_coarse_proc:
-            # A coarse process: one row per wholly tied coarse step, at its first fine step (the rows of the other
-            # fine steps tie the same two columns).
-            over = over.join(online_rows(b, kind).select("p", "d", "t"), on=["p", "d", "t"], how="semi")
-        if over.height > 0:
-            m.add_cstr(
-                f"non_anticipativity_online_{kind}",
-                over      = over,
-                sense     = "==",
-                lhs_terms = {"v_d":  v_online,
-                             "v_b": -_var_view(v_online, "__nab", {"d": "b"})},
-                rhs_terms = {},
-            )
+    _add_online_ties(b, star, tie_dt)
 
     # ─── EQ. ─── non_anticipativity_reserve ──────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # v_reserve[p,r,ud,n,d,t] − v_reserve[p,r,ud,n,b,t] = 0
-    #   ∀ (p,r,ud,n) ∈ process_reserve_upDown_node_active, (d,b) ∈ forecast star, (d,t) ∈ tied steps
+    #   ∀ (p,r,ud,n) ∈ process_reserve_upDown_node_active, (d,b) ∈ forecast star, (d,t) ∈ tied steps;
+    #     role full only (na_role)
     # Reserve offered is the same in every forecast over the tied steps.  A coarse process is tied once per coarse step,
     # at its first fine step (coarse only where each coarse step is wholly tied or untied, as the units online).
     if v_reserve is not None and _has_rows(d.process_reserve_upDown_node_active) \
@@ -382,14 +426,8 @@ def add_invest_constraints(b: "_Build") -> None:
         return
     window = window.with_columns(cast_dim(pl.col("b"), None, "d"))
     if not getattr(d, "recourse_invest", False):
-        # Without recourse investment there is one investment per period for all branches: nothing to tie.
-        _LOG.info(
-            "shared_invest_periods is set but "
-            "stochastic_invest_method is not 'recourse'; investment is "
-            "already shared across all periods, so the invest-NA window "
-            "has no effect (use 'recourse' for shared-first-period / "
-            "recourse-later)."
-        )
+        # Without branching investments there is one investment per period for all branches: nothing to tie
+        # (SolveConfig.invest_tie_periods_for gives tie periods only to investments_after_reveal_period).
         return
     m = b.m
 

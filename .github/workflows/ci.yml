@@ -43,6 +43,10 @@ jobs:
         run: |
           pip install -e ".[dev]"
 
+      - name: Lint
+        # Rule set in pyproject.toml [tool.ruff.lint]; seconds.
+        run: ruff check .
+
       - name: Run smoke gate
         # Just the smoke-marked fast Layer-1 scenarios — the genuine per-commit
         # gate. The whole suite runs sharded in the Tests workflow (it ran ~the

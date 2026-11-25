@@ -1,11 +1,11 @@
-"""Slice C — recourse validation guards.
+"""The guards around investments that branch per forecast (``invest_solve_branching_method``):
 
-Design: ``specs/sliceC_optin_guards_design.md`` §2/§4 (G1, G2a-c, G3).
-The three guards keep the ``stochastic_invest_method`` opt-in inert until
-Slice D:
-
-* Guard 1 — flag hard-reject (``stochastic_invest_method != none``) at the
-  top of ``run()`` + a fail-fast pass in ``_validate_model_solve``.
+* Guard 1 — ``invest_solve_branching_method``: an unrecognised raw value is
+  refused (``_invest_branching_raw_guard``, at the top of ``run()`` and in
+  ``_validate_model_solve``), and so is the setting where it does not apply
+  (``SolveConfig.check_invest_branching``: a rolling or dispatch solve, no
+  ``stochastic_branches``, a realized period whose investments are per
+  branch).
 * Guard 2 — Benders x genuine stochastics, flag-independent
   (``_is_genuinely_stochastic`` = ``period_branch_full`` d!=b tokens
   intersected with ``period_in_use_set``).
@@ -18,7 +18,6 @@ small fixture once and drives the real handoff builder.
 from __future__ import annotations
 
 import dataclasses
-import re
 
 import polars as pl
 import pytest
@@ -61,90 +60,160 @@ def _piu(periods, *, enum=False) -> pl.DataFrame:
 
 
 # ===========================================================================
-# Guard 1 — flag hard-reject
+# Guard 1 — invest_solve_branching_method: the raw value and where it may be set
 # ===========================================================================
 
 
-def _solve_config_with_flag(model_solve, flag_map) -> SolveConfig:
-    """A bare SolveConfig carrying only the two fields the guard reads —
-    ``model_solve`` and ``stochastic_invest_method`` (+ its resolver)."""
+def _solve_config_with_flag(model_solve, flag_map, **fields) -> SolveConfig:
+    """A bare SolveConfig carrying ``model_solve`` and ``invest_solve_branching_method`` (+ the fields its
+    resolver and :meth:`SolveConfig.check_invest_branching` read, empty unless given in *fields*)."""
     sc = object.__new__(SolveConfig)
     sc.model_solve = model_solve
-    sc.stochastic_invest_method = flag_map
-    # ``_validate_model_solve`` also runs the sibling W4a
-    # dispatch_realization_method fail-fast guard, which reads this dict;
-    # keep it empty (all-default 'within_solve') so that guard is inert and
-    # only the stochastic_invest guard is under test here.
+    sc.invest_solve_branching_method = flag_map
+    # ``_validate_model_solve`` also runs the dispatch_realization_method raw guard, which reads this dict; keep it
+    # empty so only the branching guard is under test here.
     sc.dispatch_realization_method = {}
+    for name in ("contains_solves", "map2d_duplicate_of", "deterministic_branches", "solve_modes",
+                 "stochastic_branches", "timesets_used_by_solves", "invest_periods", "realized_invest_periods",
+                 "realized_periods"):
+        setattr(sc, name, fields.get(name, {}))
     return sc
 
 
 def test_g1_resolver_normalisation():
     sc = _solve_config_with_flag(
         {"m": ["s"]},
-        {"s": "recourse", "loud": "RECOURSE", "blank": "", "junk": "xyz"},
+        {"s": "investments_after_reveal_period", "loud": "INVESTMENTS_AT_REVEAL_PERIOD", "blank": "",
+         "junk": "xyz"},
     )
-    assert sc.stochastic_invest_method_for("s") == "recourse"
-    assert sc.stochastic_invest_method_for("loud") == "recourse"  # case-fold
-    assert sc.stochastic_invest_method_for("blank") == "none"
-    assert sc.stochastic_invest_method_for("junk") == "none"
-    assert sc.stochastic_invest_method_for("absent") == "none"  # default
+    assert sc.invest_branching_method_for("s") == "investments_after_reveal_period"
+    assert sc.invest_branching_method_for("loud") == "investments_at_reveal_period"  # case-fold
+    assert sc.invest_branching_method_for("blank") == "operations_only"
+    assert sc.invest_branching_method_for("junk") == "operations_only"
+    assert sc.invest_branching_method_for("absent") == "operations_only"  # default
+    assert sc.recourse_invest("s") and sc.recourse_invest("loud")
+    assert not sc.recourse_invest("blank") and not sc.recourse_invest("absent")
 
 
-def test_g1_validate_model_solve_accepts_recourse():
-    """Slice D: Guard 1 is LIFTED for 'recourse' — the fail-fast pass no
-    longer raises on a recourse solve and returns the solve list."""
+def test_g1_validate_model_solve_accepts_the_members():
     from flextool.engine.solve._orchestration import _validate_model_solve
 
-    sc = _solve_config_with_flag({"m": ["s_ok", "s_rec"]},
-                                  {"s_rec": "recourse"})
+    sc = _solve_config_with_flag({"m": ["s_ok", "s_after", "s_at"]},
+                                  {"s_after": "investments_after_reveal_period",
+                                   "s_at": "investments_at_reveal_period"})
     state = dataclasses.make_dataclass("S", ["solve"])(solve=sc)
-    assert _validate_model_solve(state) == ["s_ok", "s_rec"]
+    assert _validate_model_solve(state) == ["s_ok", "s_after", "s_at"]
 
 
 def test_g1_raw_value_typo_rejected():
-    """Slice D §12/F4: the guard inspects the RAW authored value (the
-    resolver would silently collapse a typo to 'none'), so an unrecognised
-    authored value raises — while 'recourse' / blank / absent do not."""
+    """The guard inspects the RAW authored value (the resolver reads a typo as operations_only), so an unrecognised
+    authored value raises, naming the value, while the members, blank and absent do not.  The old values of
+    ``stochastic_invest_method`` are unknown here: every database is migrated to v84 before it runs."""
     from flextool.engine.solve._orchestration import (
-        _stochastic_invest_raw_guard,
+        _invest_branching_raw_guard,
         _validate_model_solve,
     )
 
-    for bad in ("recuorse", "expected_value"):
+    for bad in ("investments_after_reveal", "recourse", "none"):
         sc = _solve_config_with_flag({"m": ["s"]}, {"s": bad})
         with pytest.raises(FlexToolConfigError) as exc:
-            _stochastic_invest_raw_guard(sc, "s")
+            _invest_branching_raw_guard(sc, "s")
         assert bad in str(exc.value)
         state = dataclasses.make_dataclass("S", ["solve"])(solve=sc)
         with pytest.raises(FlexToolConfigError):
             _validate_model_solve(state)
 
-    # Accepted / tolerated raw values → no raise.
-    for ok in ("recourse", "", "none", "RECOURSE"):
+    for ok in ("operations_only", "", "investments_after_reveal_period", "INVESTMENTS_AT_REVEAL_PERIOD"):
         sc = _solve_config_with_flag({"m": ["s"]}, {"s": ok})
-        _stochastic_invest_raw_guard(sc, "s")  # no raise
-    # Absent → no raise.
-    _stochastic_invest_raw_guard(
-        _solve_config_with_flag({"m": ["s"]}, {}), "s")
+        _invest_branching_raw_guard(sc, "s")  # no raise
+    _invest_branching_raw_guard(_solve_config_with_flag({"m": ["s"]}, {}), "s")
 
 
-def test_g1_validate_model_solve_passes_flag_none():
+def test_g1_validate_model_solve_passes_flag_absent():
     from flextool.engine.solve._orchestration import _validate_model_solve
 
-    sc = _solve_config_with_flag({"m": ["s1", "s2"]}, {})  # all default none
+    sc = _solve_config_with_flag({"m": ["s1", "s2"]}, {})
     state = dataclasses.make_dataclass("S", ["solve"])(solve=sc)
     assert _validate_model_solve(state) == ["s1", "s2"]
 
 
-def test_g1_rolling_suffix_strip_composition():
-    """The ``run()``-site guard strips the ``_roll_N`` suffix before the
-    resolver lookup, so a rolling child of a flag-on solve is rejected."""
-    sc = _solve_config_with_flag({"m": ["my_solve"]},
-                                  {"my_solve": "recourse"})
-    base = re.sub(r"_roll_\d+$", "", "my_solve_roll_2")
-    assert base == "my_solve"
-    assert sc.stochastic_invest_method_for(base) == "recourse"
+# Solve ``v`` over p1, p2 (in that order), forecasts A / B from p2 (the reveal period), an investment solve unless
+# a test says otherwise.  Rows of stochastic_branches: (period, branch, analysis_time, realized, weight).
+_FAN = [("p2", "A", "t1", "no", 1.0), ("p2", "B", "t1", "no", 1.0)]
+_ORDER = [("p1", "ts"), ("p2", "ts")]
+
+
+def _branching(method, **fields) -> SolveConfig:
+    base = {"solve_modes": {"v": "single_solve"}, "stochastic_branches": {"v": list(_FAN)},
+            "timesets_used_by_solves": {"v": list(_ORDER)}, "invest_periods": {"v": [("v", "p1"), ("v", "p2")]}}
+    base.update(fields)
+    return _solve_config_with_flag({"m": ["v"]}, {"v": method}, **base)
+
+
+def test_g1_rolling_solve_with_the_setting_is_refused():
+    """T9: a rolling solve is never an investment solve (its rolls build no investment), so the setting is refused
+    there, naming the solve and pointing to dispatch_realization_method."""
+    sc = _branching("investments_after_reveal_period", solve_modes={"v": "rolling_window"})
+    with pytest.raises(FlexToolConfigError) as exc:
+        sc.check_invest_branching()
+    text = str(exc.value)
+    assert "Solve 'v' sets invest_solve_branching_method investments_after_reveal_period" in text
+    assert "it is a rolling solve" in text and "dispatch_realization_method" in text
+
+
+def test_g1_dispatch_solve_with_the_setting_is_refused():
+    """T9: a single solve without invest_periods / realized_invest_periods is a dispatch solve: refused too."""
+    sc = _branching("operations_only", invest_periods={})
+    with pytest.raises(FlexToolConfigError) as exc:
+        sc.check_invest_branching()
+    assert "it has no invest_periods or realized_invest_periods" in str(exc.value)
+
+
+def test_g1_setting_without_stochastic_branches_is_refused():
+    """T10: an investment solve without stochastic_branches has nothing to branch: refused, naming the solve."""
+    sc = _branching("investments_at_reveal_period", stochastic_branches={})
+    with pytest.raises(FlexToolConfigError) as exc:
+        sc.check_invest_branching()
+    text = str(exc.value)
+    assert "Solve 'v' sets invest_solve_branching_method investments_at_reveal_period" in text
+    assert "has no stochastic_branches" in text
+
+
+@pytest.mark.parametrize("method, realized, refused", [
+    # after_reveal: the reveal period p2 is shared, so it can be realized; nothing after it here.
+    ("investments_after_reveal_period", ["p1", "p2"], False),
+    # at_reveal: p2 invests per branch -> realizing it is refused; p1 (before the reveal) is fine.
+    ("investments_at_reveal_period", ["p1", "p2"], True),
+    ("investments_at_reveal_period", ["p1"], False),
+    # operations_only: every period shared, anything can be realized.
+    ("operations_only", ["p1", "p2"], False),
+])
+def test_g1_realized_period_with_per_branch_investments_is_refused(method, realized, refused):
+    """Refusal 3: a realized period whose investments are per branch cannot be realized (after the reveal under
+    investments_after_reveal_period, from the reveal on under investments_at_reveal_period); the error names the
+    period and the parameter."""
+    sc = _branching(method, realized_invest_periods={"v": [("v", p) for p in realized]})
+    if not refused:
+        sc.check_invest_branching()
+        return
+    with pytest.raises(FlexToolConfigError) as exc:
+        sc.check_invest_branching()
+    text = str(exc.value)
+    assert "realized_invest_periods include 'p2'" in text and "from the reveal period on ('p2')" in text
+
+
+def test_g1_after_reveal_refuses_a_period_after_the_reveal():
+    """Refusal 3 under investments_after_reveal_period with the reveal at p1: p2 invests per branch, so a realized
+    p2 (operations here) is refused; p1 alone is not."""
+    sc = _branching("investments_after_reveal_period",
+                    stochastic_branches={"v": [("p1", "A", "t1", "no", 1.0), ("p1", "B", "t1", "no", 1.0)]},
+                    realized_periods={"v": [("v", "p1"), ("v", "p2")]})
+    with pytest.raises(FlexToolConfigError) as exc:
+        sc.check_invest_branching()
+    assert "realized_periods include 'p2'" in str(exc.value)
+    assert "after the reveal period ('p1')" in str(exc.value)
+    sc.realized_periods = {"v": [("v", "p1")]}
+    sc.check_invest_branching()
 
 
 # ===========================================================================

@@ -86,6 +86,9 @@ PATCHED_SCENARIOS: dict[str, tuple[str | list[str], list, list]] = {
         ["unit__outputNode", ["wind_plant", "west"], "is_non_synchronous", "yes"],
         ["connection", "west_north", "is_DC", "yes"],
     ], [["group", "gwe"], ["group__node", ["gwe", "west"]], ["group__node", ["gwe", "east"]]]),
+    # coal_plant with startup_method linear_fix_in_uc: process_online_fix_in_uc = [coal_plant] (the DB overlay's
+    # only writer; no tests.json scenario has a _fix_in_uc member).
+    "coal_fix_in_uc": ("coal", [["unit", "coal_plant", "startup_method", "linear_fix_in_uc"]], []),
 }
 
 #: field -> a scenario whose last solve seeds it (``tests.json`` or :data:`PATCHED_SCENARIOS`).  Must name exactly
@@ -118,6 +121,8 @@ SCENARIO_OF_FIELD: dict[str, str] = {
     "process_sink_nonSync": "nonsync_internal",
     "process_group_inside_nonSync": "nonsync_internal",
     "process_minload": "coal_min_load",
+    # MR-b4b review: the _fix_in_uc processes of a separate_dispatch solve (1)'s units-online ties.
+    "process_online_fix_in_uc": "coal_fix_in_uc",
     # S4-5 delay tables.  water_pump_delayed: the delayed water pump.  (p_profile_value is not here: the c24
     # stage-4 follow-up restored its seed to the production loader, so the hook no longer writes it.)
     "dtt__delay_duration": "water_pump_delayed",

@@ -75,7 +75,7 @@ def _base_values(demand: float = 100.0) -> list:
             ["node", "fuel", "node_type", _s("commodity")], ["commodity", "fuelc", "price", _f(20.0)],
             ["unit", "g1", "conversion_method", _s("min_load_efficiency")], ["unit", "g1", "efficiency", _f(0.5)],
             ["unit", "g1", "efficiency_at_min_load", _f(0.4)], ["unit", "g1", "min_load", _f(0.5)],
-            ["unit", "g1", "existing", _f(100.0)], ["unit", "g1", "startup_method", _s("binary")]]
+            ["unit", "g1", "existing", _f(100.0)], ["unit", "g1", "startup_method", _s("integer_fix_in_uc")]]
 
 
 def _full_entities() -> list:
@@ -260,6 +260,8 @@ def test_field_lists_cover_the_unit_fields(tmp_path_factory) -> None:
         "p_process_sink_max_capacity_coef",  # a capacity cap, not a min limit
         "ed_cumulative_min_capacity", "pd_group_cumulative_min_capacity",  # investment limits
         "process_piecewise_needs_online",  # a property of the curve (the efficiency rises from its first point)
+        "process_online_fix_in_uc",  # a property of startup_method; its readers intersect it with the online sets
+        "na_online_fix_in_uc",  # a solve-level flag (the non-anticipativity role), not a unit field
     }
     cleared = set(RAMP_FIELDS + MIN_LOAD_FIELDS + MIN_TIME_FIELDS + ONLINE_FIELDS)
     pattern = re.compile(r"online|uptime|downtime|ramp|minload|min_load|exact|startup|min_capacity|mintime|integer")

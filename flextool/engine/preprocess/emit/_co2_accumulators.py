@@ -160,7 +160,9 @@ def compute_co2_rolling_accumulator(
     ``realized_dispatch`` (below) holds no cell of a stochastic fan: the
     period label (the original period name) has no dispatch and the
     forecast branches are never realized, so a fan's tonnes come only from
-    the realization solve's own extraction (#59).
+    the realization solve's own extraction (#59).  A split realization
+    roll's label dispatches its jump under its own name: those realized
+    cells are in ``realized_dispatch`` and their tonnes are carried here.
 
     ``is_dispatch_sibling_parent`` (#59 fix 3, applied the same way as the
     commodity-ladder carry): True when THIS solve is the parent of an

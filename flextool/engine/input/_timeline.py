@@ -1634,7 +1634,12 @@ def make_step_jump(
                             if b == period and a != period:
                                 p_anchor = a
                                 break
-                        if p_anchor is not None and p_anchor in period_names:
+                        if (p_anchor is not None and p_anchor in period_names
+                                and active_time_list[p_anchor][-1].index < active_time[0].index):
+                            # The anchor is a period label whose steps end before the copy's (a split
+                            # realization roll: it holds the jump): the copy continues from its last step.
+                            prev_anchor = p_anchor
+                        elif p_anchor is not None and p_anchor in period_names:
                             pos_anchor = period_names.index(p_anchor)
                             for kk in range(pos_anchor - 1, -1, -1):
                                 if (

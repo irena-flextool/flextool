@@ -50,11 +50,13 @@ USER_DOCS: tuple[str, ...] = (
     "solvers/cplex.md",
     "solvers/xpress.md",
     "solvers/copt.md",
+    "solvers/option_trust_internals.md",
 )
 
 # Developer pages shipped whole.
 DEV_DOCS: tuple[str, ...] = (
     "dev/architecture.md",
+    "dev/assistant.md",
     "dev/slack_convention.md",
 )
 

@@ -498,9 +498,10 @@ def _gas_ladder(method: str, quantity1: float) -> list:
 
 
 def _stochastic_rolls(steps: dict) -> list:
-    rolls = [steps[f"{ROLL_SOLVE}_roll_{k}"] for k in range(7)]
-    assert len([n for n in steps if "__realized_dispatch" in n]) == 7
-    return rolls
+    """The 7 rolls of the rolling week.  Since 4.7.0 each roll realizes its 24 h jump under ``period1`` and looks
+    ahead with the forecasts made at the jump end (no realization solve); roll 6 is its jump only."""
+    assert list(steps) == [f"{ROLL_SOLVE}_roll_{k}" for k in range(7)]
+    return list(steps.values())
 
 
 def _forecast_f(k: int) -> float:
@@ -508,22 +509,25 @@ def _forecast_f(k: int) -> float:
 
 
 def _bought(step, tier: str = "1") -> float:
-    """Tier MWh bought in a realization roll (commodity unitsize 1, the default): its whole horizon is realized."""
+    """Tier MWh a roll bought in its jump (commodity unitsize 1, the default): its ``period1`` purchase, the realized
+    one (the forecasts buy under ``period1_<f>``)."""
     rows = _v_trade(step).filter((pl.col("c") == "gas") & (pl.col("i") == tier))
-    assert set(rows["d"]) == {"period1"}
-    return float(rows["value"].sum())
+    assert "period1" in set(rows["d"])
+    return float(rows.filter(pl.col("d") == "period1")["value"].sum())
 
 
 def test_rolling_forecast_annual_cap_counts_realized_hours(tmp_path_factory) -> None:
-    """Each forecast's annual tier cap is Q·share·f_d_k − realized[period1], with f_d_k counting the realized
-    hours: the cap never goes negative, and the chain solves to the end of the week."""
+    """Each forecast's annual tier cap is Q·share·f_d_k − realized[period1], with f_d_k counting the realized hours
+    (the earlier jumps and this roll's, which the row's path sums with the forecast's purchases): the cap never goes
+    negative, and the chain solves to the end of the week.  The last roll (its jump only) has the row on period1,
+    f_d_k = 168/168."""
     from tests.engine._lp_rows import row_bounds
 
     quantity = 1.0e6  # 2740 MWh per realized day, below the gas a realization roll burns: tier 1 binds
     steps = _steps(tmp_path_factory, "c59_roll_ann_cap", _gas_ladder("price_ladder_annual", quantity),
                    chain=CHAIN_ROLL)
-    realization = [steps[f"{ROLL_SOLVE}__realized_dispatch_roll_{k}"] for k in range(7)]
-    for k, step in enumerate(_stochastic_rolls(steps)):
+    realization = _stochastic_rolls(steps)
+    for k, step in enumerate(realization):
         fd = step.flex_data
         fdk = dict(utf8(fd.p_f_d_k.frame).select("d", "value").iter_rows())
         # the twin (flex_data.p_f_d_k) and the emitted f_d_k.csv (p_co2_f_d_k) agree
@@ -533,8 +537,9 @@ def test_rolling_forecast_annual_cap_counts_realized_hours(tmp_path_factory) -> 
         if k > 0:
             assert realized > 0.0, k
         rows = row_bounds(build(fd), "ladder_tier_cap_annual_roll", "gas,1,")
-        assert {nm[nm.rindex(",") + 1:-1] for nm in rows} == set(ROLL_FORECASTS), k
-        for b in ROLL_FORECASTS:
+        rowed = ROLL_FORECASTS if k < 6 else ("period1",)
+        assert {nm[nm.rindex(",") + 1:-1] for nm in rows} == set(rowed), k
+        for b in rowed:
             assert fdk[b] == pytest.approx(_forecast_f(k), rel=1e-12), (k, b)
             assert share[b] == pytest.approx(ROLL_SHARE, rel=1e-12), (k, b)
             ub = rows[f"ladder_tier_cap_annual_roll[gas,1,{b}]"][1]
@@ -557,7 +562,7 @@ def test_cumulative_ladder_fallback_counts_realized_hours_once(tmp_path_factory)
     quantity = 5.0e7
     steps = _steps(tmp_path_factory, "c59_roll_cum_fallback", _gas_ladder("price_ladder_cumulative", quantity),
                    chain=CHAIN_ROLL)
-    for k, step in list(enumerate(_stochastic_rolls(steps)))[1:]:
+    for k, step in list(enumerate(_stochastic_rolls(steps)))[1:6]:  # roll 6 has no forecast paths
         fd = step.flex_data
         assert fd.p_ladder_cum_weight is not None
         realized = float(fd.p_ladder_cum_realized_mwh.frame.filter(
@@ -589,9 +594,12 @@ FUEL_ENTITIES = [["commodity", "fuel", None], ["node", "fuel_node", None],
 
 
 def _two_period_rolling_ladder(tmp_path_factory, alt: str, quantity: float) -> dict:
-    """``stoch_two_period.json`` as a rolling solve (horizon = jump = 3 h, one roll per period) with a forecast fan
-    revealed at the start of each period (realized designation + forecasts high/low), and the thermal unit burning
-    ``fuel`` bought on a cumulative ladder (tier 1 at 5 up to ``quantity``, tier 2 at 7 unlimited)."""
+    """``stoch_two_period.json`` as a rolling ``separate_dispatch`` solve (horizon = jump = 3 h, one roll per period)
+    with a forecast fan revealed at the start of each period (realized designation + forecasts high/low), and the
+    thermal unit burning ``fuel`` bought on a cumulative ladder (tier 1 at 5 up to ``quantity``, tier 2 at 7
+    unlimited).  Since 4.7.0 the first solve of each roll of a rolling ``separate_dispatch`` solve fans out at the
+    roll's start (a rolling ``within_solve`` roll whose horizon is its jump has no forecasts); its realization roll
+    reads the ``realized`` wind series, made at t0001 with the ``high`` values (0.6 in p2035, 0.5 in p2040)."""
     def at(step: str, realized: str, weight: float) -> dict:
         return {"type": "map", "index_type": "str",
                 "data": [[step, {"type": "map", "index_type": "str", "data": [[realized, weight]]}]]}
@@ -601,7 +609,16 @@ def _two_period_rolling_ladder(tmp_path_factory, alt: str, quantity: float) -> d
             ["realized", at(step, "yes", 1.0)], ["high", at(step, "no", 1.0)], ["low", at(step, "no", 3.0)]]}]
         for period, step in (("p2035", "t0001"), ("p2040", "t0004"))]}
     tiers = {k: v for k, v in _tiers(5.0, quantity, 7.0).items() if k != "type"}
+
+    def series(p2035: float, p2040: float) -> dict:
+        return {"type": "map", "index_type": "str", "data": [["t0001", {"type": "map", "index_type": "str", "data": [
+            [f"t{i:04d}", p2035 if i <= 3 else p2040] for i in range(1, 7)]}]]}
+
+    wind = {"index_type": "str", "data": [["high", series(0.6, 0.5)], ["low", series(0.2, 0.1)],
+                                          ["realized", series(0.6, 0.5)]]}
     values = [["solve", "stoch_2p", "solve_mode", b64("rolling_window", "str")],
+              ["solve", "stoch_2p", "dispatch_realization_method", b64("separate_dispatch", "str")],
+              ["profile", "wprof", "profile", b64(wind, "map")],
               ["solve", "stoch_2p", "rolling_solve_horizon", b64(3.0, "float")],
               ["solve", "stoch_2p", "rolling_solve_jump", b64(3.0, "float")],
               ["solve", "stoch_2p", "stochastic_branches", b64(branches, "map")],
@@ -667,24 +684,25 @@ def test_rolling_path_tier_cap_counts_finished_periods(tmp_path_factory) -> None
 
 
 def test_rolling_fan_cumulative_tier_cap_per_forecast_path(tmp_path_factory) -> None:
-    """Every stochastic roll of the rolling week keeps one cumulative tier cap per forecast path; before, a roll had
-    no scenario paths and pooled the three forecasts into one row whose budget summed all their hours.
+    """Every roll of the rolling week with forecasts keeps one cumulative tier cap per forecast path (this roll's jump
+    under ``period1`` and the forecast's hours after it); before, a roll had no scenario paths and pooled the three
+    forecasts into one row whose budget summed all their hours.
 
-    Hand values (q = 1e6, years_represented 1): stochastic roll k starts after 24k realized hours (the realization
-    rolls 0..k−1, each realizing its 24 h jump under ``period1``) and its forecasts cover min(96, 168 − 24k) more, so
-    each path's RHS is q·(24k + min(96, 168 − 24k))/8760 − R_k, R_k = the tier-1 MWh the realization rolls 0..k−1
-    bought (read from their solutions).  Roll 0: q·96/8760 = 10 958.904 MWh.  A realization roll buys more gas than its
-    q·24/8760 = 2 739.726 MWh day cap, and a forecast more than its window's, so the rows bind."""
+    Hand values (q = 1e6, years_represented 1): roll k starts after 24k realized hours (the jumps of rolls 0..k−1,
+    each realized under ``period1``), realizes 24 more and its forecasts cover min(72, 144 − 24k) more, so each
+    path's RHS is q·(24k + min(96, 168 − 24k))/8760 − R_k, R_k = the tier-1 MWh the jumps of rolls 0..k−1 bought
+    (read from their solutions).  Roll 0: q·96/8760 = 10 958.904 MWh.  A day buys more gas than its
+    q·24/8760 = 2 739.726 MWh share, so the rows bind.  The last roll is its jump only: one row, no path."""
     from tests.engine._lp_rows import row_bounds, row_terms
 
     quantity = 1.0e6
     steps = _steps(tmp_path_factory, "ladder_roll_cum_paths", _gas_ladder("price_ladder_cumulative", quantity),
                    chain=CHAIN_ROLL)
-    realization = [steps[f"{ROLL_SOLVE}__realized_dispatch_roll_{k}"] for k in range(7)]
+    realization = _stochastic_rolls(steps)
     family = "ladder_tier_cap_cumulative_roll"
     bought = 0.0
     binding = 0
-    for k, step in enumerate(_stochastic_rolls(steps)):
+    for k, step in enumerate(realization[:6]):
         pb = build(step.flex_data)
         assert row_bounds(pb, family, "") == {}, k
         rows = row_bounds(pb, f"{family}_path", "gas,1,")
@@ -694,15 +712,14 @@ def test_rolling_fan_cumulative_tier_cap_per_forecast_path(tmp_path_factory) -> 
             assert ub == pytest.approx(want, rel=1e-9), (k, nm)
         for nm, terms in row_terms(pb, f"{family}_path", "gas,1,").items():
             periods = {col.split(",")[2] for col in terms if col.startswith("v_trade[")}
-            assert periods == {f"period1_{nm[nm.rindex(',') + 1:-1]}"}, (k, nm, periods)
+            assert periods == {"period1", f"period1_{nm[nm.rindex(',') + 1:-1]}"}, (k, nm, periods)
         duals = step.solution.constraint_dual(f"{family}_path")["dual"].to_list()
         binding += sum(1 for v in duals if v != 0.0)
         bought += _bought(realization[k])
     assert binding > 0
-    for k, step in enumerate(realization):
-        pb = build(step.flex_data)
-        assert row_bounds(pb, f"{family}_path", "") == {}, k
-        assert set(row_bounds(pb, family, "")) == {f"{family}[gas,1]"}, k
+    pb = build(realization[6].flex_data)
+    assert row_bounds(pb, f"{family}_path", "") == {}
+    assert set(row_bounds(pb, family, "")) == {f"{family}[gas,1]"}
 
 
 def _single_reveal_branches() -> list:
@@ -716,14 +733,32 @@ def _single_reveal_branches() -> list:
     return ["solve", ROLL_SOLVE, "stochastic_branches", b64(branches, "map")]
 
 
+def _weekly_realized_wind() -> list:
+    """The fixture's ``wind`` profile (alternative 1week_rolling) with its ``realized`` series made at t0001, t0025,
+    ... joined into one series made at t0001 for the whole week."""
+    raw = json.loads(STOCHASTICS_JSON.read_text(encoding="utf-8"))
+    (value,) = [pv[3] for pv in raw["parameter_values"]
+                if pv[:3] == ["profile", "wind", "profile"] and pv[4] == ROLL_SOLVE]
+    wind = json.loads(base64.b64decode(value[0]))
+    for branch in wind["data"]:
+        if branch[0] == "realized":
+            week = [cell for _at, made in branch[1]["data"] for cell in made["data"]]
+            branch[1]["data"] = [["t0001", {"type": "map", "index_type": "str", "data": week}]]
+    return ["profile", "wind", "profile", b64(wind, "map")]
+
+
 def test_one_roll_fan_equals_single_solve_fan(tmp_path_factory) -> None:
-    """A rolling solve of one roll (horizon = jump = 168 h) is the single solve of the same week: the same scenario
-    paths, and the same per-path cumulative tier cap and CO2 total cap rows."""
+    """A rolling ``separate_dispatch`` solve of one roll (horizon = jump = 168 h): its first solve is that of the
+    single ``separate_dispatch`` solve of the same week: the same scenario paths, and the same per-path cumulative
+    tier cap and CO2 total cap rows.  (Since 4.7.0 a rolling ``within_solve`` roll whose horizon is its jump has no
+    forecasts.)  The realized wind is given as one series made at t0001 over the whole week (the fixture's daily
+    series, joined), the only analysis time of the fan's realized row, which the realization rolls read."""
     from tests.engine._lp_rows import row_bounds
     from tests.engine._unit_db import last_stochastic, without_realization
 
     entities = [["group", "co2_limit", None], ["group__node", ["co2_limit", "gas_market"], None]]
-    values = (_gas_ladder("price_ladder_cumulative", 1.0e6) + [_single_reveal_branches()]
+    values = (_gas_ladder("price_ladder_cumulative", 1.0e6) + [_single_reveal_branches(), _weekly_realized_wind()]
+              + [["solve", ROLL_SOLVE, "dispatch_realization_method", b64("separate_dispatch", "str")]]
               + [["commodity", "gas", "co2_content", b64(0.2, "float")],
                  ["group", "co2_limit", "co2_method", b64("total", "str")],
                  ["group", "co2_limit", "co2_max_total", b64(1.0e7, "float")]])

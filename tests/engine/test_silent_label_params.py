@@ -233,7 +233,7 @@ def _build_and_run(tmp_path_factory, patch, scenario: str,
     lps = _lp_snapshot()
     fn = lps.PATCHES[patch] if isinstance(patch, str) else patch
     work = tmp_path_factory.mktemp(scenario)
-    (work / "f.json").write_text(json.dumps(fn(json.loads(json_path.read_text()))))
+    (work / "f.json").write_text(json.dumps(fn(json.loads(json_path.read_text(encoding="utf-8")))))
     url = json_to_db(work / "f.json", work / "f.sqlite")
     migrate_database(url)
 

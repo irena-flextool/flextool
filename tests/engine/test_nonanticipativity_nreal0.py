@@ -10,8 +10,9 @@ Fixture ``stoch_two_period_nreal0.json`` (built via
 two 3-step periods ``p2035`` / ``p2040``, branch-asymmetric wind timing, a
 stochastic-group storage node ``resv`` — but with all three branches
 ``mid`` / ``up`` / ``low`` as FORECASTS (``realized: no``, weight 1.0 each,
-``n_real = 0``) and a curated ``shared_operation_periods = [p2035, p2040]``
-window so ``dt_non_anticipativity`` populates without any realised_dispatch.
+``n_real = 0``), in a dispatch solve (no invest periods), which ties its
+forecasts over its committed window, the steps of its ``realized_periods``
+p2035 / p2040, without any realised branch.
 
 The storage NA family must:
 

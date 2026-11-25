@@ -1,12 +1,12 @@
 """Build ``tests/fixtures/stoch_two_period_free_ops.json`` — the Slice G
-configurable-non-anticipativity fixture (design
+operations-branch-at-the-reveal fixture (design
 ``specs/sliceG_configurable_nonanticipativity_design.md`` §7).
 
-Goal: a two-period, t0-branching stochastic model that exercises the
-operational non-anticipativity WINDOW knob (``shared_operation_periods``)
-on a stochastic-group storage node, with a UNIQUE per-branch storage
-optimum so the "operations differ across branches" assertion is
-deterministic (design §7 / F6).
+Goal: a two-period, t0-branching stochastic investment solve whose
+forecasts operate each on their own from the reveal (an investment solve
+ties no operations) on a stochastic-group storage node, with a UNIQUE
+per-branch storage optimum so the "operations differ across branches"
+assertion is deterministic (design §7 / F6).
 
 Structure
 ---------
@@ -36,26 +36,17 @@ realized branch (weight 2); ``up`` / ``low`` carry weight 1 each
   family pins.  ``charge`` (elec->resv) and ``discharge`` (resv->elec) are
   free existing 100 MW units; a tiny 0.01 CUR/MWh discharge cost breaks
   degenerate cycling so the per-branch optimum is unique.
-* unit ``base`` — investable peaker -> elec, ``stochastic_invest_method =
-  none`` so there is exactly ONE shared ``v_invest`` (R-O6: invest stays
-  realized-only, never fans to the branch copies).  ``other_operational_
+* unit ``base`` — investable peaker -> elec, ``invest_solve_branching_method``
+  at its default ``operations_only`` so there is exactly ONE shared
+  ``v_invest`` (R-O6: invest stays realized-only, never fans to the branch
+  copies).  ``other_operational_
   cost`` 5 CUR/MWh so wind + stored energy is preferred to fresh base.
 
-Behaviour under the two scenarios (identical data, differing ONLY in the
-``shared_operation_periods`` value):
-
-* ``pinned_ops`` — ``shared_operation_periods`` UNSET -> legacy window
-  = realized_dispatch u fix_storage = the whole horizon.  The storage NA
-  family ties the branches' charge/discharge net-charge equal at every
-  step, so with no branch inflow the ``v_state[resv]`` trajectory is
-  IDENTICAL across ``mid`` / ``up`` / ``low`` — the branches cannot follow
-  their opposite surplus/deficit timing and pay for it.  (Byte-parity
-  guard: this is the flag-off behaviour.)
-* ``free_ops`` — ``shared_operation_periods = []`` -> empty window ->
-  ZERO ``non_anticipativity_*`` rows -> each branch charges/discharges to
-  its own optimum, so ``v_state[resv]`` DIVERGES across branches, and the
-  objective is <= the pinned objective (freeing operations only relaxes
-  the feasible set).
+Behaviour (scenario ``free_ops``): ZERO ``non_anticipativity_*`` rows ->
+each branch charges/discharges to its own optimum, so ``v_state[resv]``
+DIVERGES across branches.  (Before data version 84 the unset
+``shared_operation_periods`` tied the operations over the committed
+window; an investment solve no longer does.)
 
 Run:  ~/venv-spi/bin/python tests/fixtures/build_stoch_two_period_free_ops.py
 """
@@ -98,26 +89,17 @@ def build() -> dict:
         ["init", "Model, solve and time structure"],
         ["base", "System data (elec demand + wind + investable base)"],
         ["stoch", "include_stochastics + branch-varying wind + t0 branches "
-                  "+ stochastic-group storage (stochastic_invest_method=none)"],
-        ["freeops", "shared_operation_periods = [] (operations free "
-                    "from t0)"],
+                  "+ stochastic-group storage (investments shared)"],
     ]
     spec["scenarios"] = [
         ["free_ops", False,
-         "shared_operation_periods = [] -> operations branch freely; "
-         "shared invest, divergent v_state"],
-        ["pinned_ops", False,
-         "shared_operation_periods UNSET -> legacy window; storage NA "
-         "pins v_state equal across branches (byte-parity guard)"],
+         "Operations branch from the reveal (t0); shared invest, "
+         "divergent v_state"],
     ]
     spec["scenario_alternatives"] = [
         ["free_ops", "init", "base"],
         ["free_ops", "base", "stoch"],
-        ["free_ops", "stoch", "freeops"],
-        ["free_ops", "freeops", None],
-        ["pinned_ops", "init", "base"],
-        ["pinned_ops", "base", "stoch"],
-        ["pinned_ops", "stoch", None],
+        ["free_ops", "stoch", None],
     ]
 
     spec["entities"] = [
@@ -241,8 +223,8 @@ def build() -> dict:
          "stoch"],
         ["solve", "stoch_2p_free", "stochastic_branches",
          _pack(stochastic_branches, "map"), "stoch"],
-        ["solve", "stoch_2p_free", "stochastic_invest_method",
-         _pack("none", "str"), "stoch"],
+        ["solve", "stoch_2p_free", "dispatch_realization_method",
+         _pack("within_solve", "str"), "stoch"],
         ["node", "resv", "node_type", _pack("storage", "str"), "stoch"],
         ["node", "resv", "existing", _pack(1000.0, "float"), "stoch"],
         ["node", "resv", "storage_state_start",
@@ -259,9 +241,6 @@ def build() -> dict:
         ["unit", "discharge", "existing", _pack(100.0, "float"), "stoch"],
         ["unit__outputNode", ["discharge", "elec"], "other_operational_cost",
          _pack(0.01, "float"), "stoch"],
-        # ---- freeops: empty NA window (operations free from t0) --------
-        ["solve", "stoch_2p_free", "shared_operation_periods",
-         _pack({"value_type": "str", "data": []}, "array"), "freeops"],
     ]
     return spec
 

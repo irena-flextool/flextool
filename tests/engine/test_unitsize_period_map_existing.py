@@ -48,7 +48,7 @@ def _existing(shape: str, p2020: float, p2025: float) -> list:
 
 
 def _values(shape: str, mode: str, p2020: float = 17.0, p2025: float = 17.0, *, floor: bool = True) -> list:
-    values = uc(PLANT, 0.0, "binary") + [
+    values = uc(PLANT, 0.0, "integer_fix_in_uc") + [
         ["unit", PLANT, "existing", _existing(shape, p2020, p2025)],
         ["unit", PLANT, "availability", b64(0.89, "float")],
     ]

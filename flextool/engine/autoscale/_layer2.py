@@ -1227,6 +1227,10 @@ def unscale_solution(sol: Any, plan: Layer2Plan) -> None:
         )
     new_col_value = cv / plan.col_factors
     sol.col_value = new_col_value
+    # The forward column factors stay with the solution: a value the solver could not tell from 0 is one whose
+    # scaled magnitude ``cf · |x|`` is within its primal feasibility tolerance
+    # (``output._coarse_flows.var_zero_tolerance``, the carried units online).
+    sol.layer2_col_factors = plan.col_factors
 
     new_col_dual: "np.ndarray | None" = None
     cd = np.asarray(getattr(sol, "col_dual", None), dtype=np.float64) \

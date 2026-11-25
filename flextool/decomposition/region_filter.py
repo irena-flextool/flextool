@@ -101,7 +101,7 @@ def _read_csv_rows(path: Path) -> tuple[list[str], list[list[str]]]:
     """
     if not path.exists():
         return [], []
-    with path.open() as fh:
+    with path.open(encoding="utf-8") as fh:
         reader = csv.reader(fh)
         rows = [row for row in reader if row and any(cell.strip() for cell in row)]
     if not rows:
@@ -114,7 +114,7 @@ def _write_csv_rows(
 ) -> None:
     """Write CSV with *header* and *rows* to *path*.  Creates parent dirs."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="") as fh:
+    with path.open("w", encoding="utf-8", newline="") as fh:
         writer = csv.writer(fh)
         writer.writerow(header)
         for row in rows:

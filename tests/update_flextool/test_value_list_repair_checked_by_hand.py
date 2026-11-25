@@ -7,9 +7,10 @@ part A record into a repaired copy, so W-0490 ends for that copy.
 The ``unclear`` file (:func:`_unclear`, the P7 follow-up's case U3a) is ``make_hit(legacy=True)`` with R's commit
 moved after the session: R reads ``cumulative_limits`` but its commit is no anchor, every shipped member is
 present (``not_allowed`` is the legacy layout's row at index 14, commit NULL, so it is not a hand-restored row), so
-no lost member is known → ``unclear``.  The three ``invest_method`` class defaults already read ``not_allowed``
-(``make_hit`` points them to that row), and no value refers to R, so the checklist's steps 2-5 change nothing: this
-is the file after the checklist.  The schema database has every shipped default, so part B asks nothing.
+no lost member is known → ``unclear``.  The three ``invest_method`` method parameter defaults already read
+``not_allowed`` (``make_hit`` points them to that row), and no value refers to R, so the checklist's steps 2-5 change
+nothing: this is the file after the checklist.  The schema database has every one of FlexTool's defaults, so part B
+asks nothing.
 
 Oracles (from the request and the record format, never from the tool's output):
 

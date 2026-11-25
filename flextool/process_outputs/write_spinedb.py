@@ -433,7 +433,7 @@ def _top_up_schema_if_stale(db_url: str) -> None:
     # Stale path: serialize the top-up under the sidecar lock.
     path = str(sqlite_file_path(db_url))
     lock_path = path + ".lock"
-    with open(lock_path, "a") as lock_fh:
+    with open(lock_path, "a", encoding="utf-8") as lock_fh:
         _lock_exclusive(lock_fh)
         try:
             # FRESH mapping under the lock (do NOT reuse the gate mapping — its
@@ -514,7 +514,7 @@ def _ensure_results_db_atomic(db_url: str, path: str) -> None:
     lock_path = path + ".lock"
     # The lock file persists (it is the rendez-vous point); only the lock is
     # released.  Opened in append mode so concurrent opens never truncate it.
-    with open(lock_path, "a") as lock_fh:
+    with open(lock_path, "a", encoding="utf-8") as lock_fh:
         _lock_exclusive(lock_fh)
         try:
             # Re-check UNDER the lock: another process may have created the

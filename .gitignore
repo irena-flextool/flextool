@@ -74,3 +74,5 @@ _diagrams/
 # Editor / IDE settings and local scratch notes — personal, never tracked.
 .vscode/
 namespace_structure.txt
+# Local pyright / LSP settings (machine-specific venv path).
+pyrightconfig.json

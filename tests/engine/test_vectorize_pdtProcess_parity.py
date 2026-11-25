@@ -27,7 +27,7 @@ from flextool.engine.preprocess.emit._pdt_params import (
     derive_pdtProcess,
     derive_pdtProcess_vectorized,
 )
-from tests.engine._fan_fold_fixture import FAN_CASES
+from tests.engine._fan_fold_fixture import FAN_CASES, SPLIT_CASES
 
 
 def _provider_from_workdir(workdir: Path):
@@ -296,7 +296,7 @@ def test_vectorized_pdtProcess_branch_period_inherits_anchor_pd(tmp_path):
         f"legacy:\n{df_legacy}\nvec:\n{df_vec}")
 
 
-@pytest.mark.parametrize("case", FAN_CASES)
+@pytest.mark.parametrize("case", FAN_CASES + SPLIT_CASES)
 def test_vectorized_pdtProcess_fan_start_fallback(case, tmp_path):
     """Items 228 / 255: a non-empty ``fan_for_d`` (``branch_time_start``) -- each fold cell reads the forecast at
     the fan start (``read_first`` = ``fan``, as every solve writes it; a cell it does not cover that a later
@@ -306,7 +306,8 @@ def test_vectorized_pdtProcess_fan_start_fallback(case, tmp_path):
     :mod:`tests.engine._fan_fold_fixture`."""
     from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
     from tests.engine._fan_fold_fixture import (
-        STEPS, expected_fold, fan_case, pbt_frame, put_fan_scaffold, uncovered_error)
+        EXPECTED_SPLIT, SPLIT_STEPS, STEPS, expected_fold, fan_case, pbt_frame, put_fan_scaffold,
+        put_split_scaffold, split_rows, split_uncovered_error, uncovered_error)
 
     provider = FlexDataProvider()
 
@@ -314,8 +315,10 @@ def test_vectorized_pdtProcess_fan_start_fallback(case, tmp_path):
         provider.put(f"{parent}/{stem}", df)
         provider.put(stem, df)
 
-    rolling, rows = fan_case(case)
-    put_fan_scaffold(put, rolling=rolling)
+    # A split realization roll (flat jump, fan tails) or one of the fans.
+    split = case in SPLIT_CASES
+    rolling, rows = (True, split_rows(case)) if split else fan_case(case)
+    put_split_scaffold(put) if split else put_fan_scaffold(put, rolling=rolling)
     put("solve_data", "pbt_process", pbt_frame({"process": "entity", "param": "cap"}, rows=rows))
     put("input", "pd_process", pl.DataFrame(schema={
         "process": pl.Utf8, "param": pl.Utf8, "period": pl.Utf8, "value": pl.Float64}))
@@ -328,15 +331,17 @@ def test_vectorized_pdtProcess_fan_start_fallback(case, tmp_path):
         "process": ["X", "Y"], "param": ["cap", "cap"]}))
 
     inp, sdd = tmp_path / "input", tmp_path / "solve_data"
-    if case == "uncovered":
+    if case in ("uncovered", "split_uncovered"):
         for derive in (derive_pdtProcess, derive_pdtProcess_vectorized):
-            with pytest.raises(FlexToolConfigError, match=uncovered_error("unit or connection 'Y'", "cap")):
+            with pytest.raises(FlexToolConfigError, match=(split_uncovered_error("unit or connection 'X'", "cap") if split
+                                                    else uncovered_error("unit or connection 'Y'", "cap"))):
                 derive(inp, sdd, provider=provider)
         return
     df_legacy = derive_pdtProcess(inp, sdd, provider=provider)
     df_vec = derive_pdtProcess_vectorized(inp, sdd, provider=provider)
     leg = {(r[0], r[2], r[3]): r[4] for r in df_legacy.iter_rows()}
     for e in ("X", "Y"):
-        for d, t in STEPS:
-            assert leg[(e, d, t)] == repr(expected_fold(rolling).get((e, d, t), 0.0)), (e, d, t, leg)
+        for d, t in (SPLIT_STEPS if split else STEPS):
+            want = EXPECTED_SPLIT if split else expected_fold(rolling)
+            assert leg[(e, d, t)] == repr(want.get((e, d, t), 0.0)), (e, d, t, leg)
     assert df_vec.equals(df_legacy), f"fan fallback: vectorized != legacy.\nlegacy:\n{df_legacy}\nvec:\n{df_vec}"

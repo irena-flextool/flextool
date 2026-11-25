@@ -148,7 +148,7 @@ def _values(blocks):
     # Demand: block 1 high then 0, block 2 0 then high.
     demand = {t: -HIGH for t in BLOCK_1[:12] + BLOCK_2[12:]}
     demand.update({t: 0.0 for t in BLOCK_1[12:] + BLOCK_2[:12]})
-    return uc(PLANT, 0.4, "binary") + [
+    return uc(PLANT, 0.4, "integer_fix_in_uc") + [
         ["unit", PLANT, "startup_cost", b64(50.0, "float")],
         ["node", "west", "inflow", time_map(demand, 0.0)],
         _timeset(blocks)]
@@ -252,7 +252,7 @@ def period_runs(tmp_path_factory):
     # Demand: p2020 (t0001-t0024) high throughout; p2025 (t0049-t0072) high in t0049-t0060, 0 after.
     demand = {t: -HIGH for t in BLOCK_1 + BLOCK_2[:12]}
     demand.update({t: 0.0 for t in BLOCK_2[12:]})
-    values = uc(PLANT, 0.4, "binary") + [["unit", PLANT, "startup_cost", b64(50.0, "float")],
+    values = uc(PLANT, 0.4, "integer_fix_in_uc") + [["unit", PLANT, "startup_cost", b64(50.0, "float")],
                                          ["node", "west", "inflow", time_map(demand, 0.0)]] + _two_periods()
     single = _run(tmp_path_factory, "period_single", values, TWO_PERIODS_ENTS)
     rolled = _run(tmp_path_factory, "period_rolling", values + ROLLING, TWO_PERIODS_ENTS)
@@ -295,7 +295,7 @@ def test_a_period_start_inside_a_rolling_window_starts_free(tmp_path_factory):
     """
     demand = {t: -HIGH for t in BLOCK_1 + BLOCK_2[:12]}
     demand.update({t: 0.0 for t in BLOCK_2[12:]})
-    values = uc(PLANT, 0.4, "binary") + [["unit", PLANT, "startup_cost", b64(50.0, "float")],
+    values = uc(PLANT, 0.4, "integer_fix_in_uc") + [["unit", PLANT, "startup_cost", b64(50.0, "float")],
                                          ["node", "west", "inflow", time_map(demand, 0.0)]] + _two_periods()
     first = _run(tmp_path_factory, "period_start_in_window", values + ROLLING_36_24, TWO_PERIODS_ENTS)[0]
     at = (pl.col("d") == "p2025") & (pl.col("t") == "t0049")
@@ -305,3 +305,21 @@ def test_a_period_start_inside_a_rolling_window_starts_free(tmp_path_factory):
     assert ("p2025", "t0049", "p2025", "t0060") in utf8(fd.dt_online_wrap).rows()
     assert online_free_start_cells(fd.dt, fd.dt_online_wrap, fd.rp_block_first).rows() == [
         ("p2020", "t0001"), ("p2025", "t0049")]
+
+
+def test_split_roll_with_a_gap_in_the_jump_is_a_configuration_error():
+    """A split realization roll (label p with steps, forecasts p_b / p_c) whose jump has a gap: p holds t01 and t03
+    (not linked: the gap), so p has two stretches and its first step t01 is no free start; the label's online wrap
+    has no defined start there.  The user gets a configuration error naming the solve and the step."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    dt = _dt([("p", "t01"), ("p", "t03"), ("p_b", "t04"), ("p_c", "t04")])
+    link = _link([("p_b", "t04", "p", "t03"), ("p_c", "t04", "p", "t03")])
+    pb = pl.DataFrame({"d": ["p", "p", "p"], "b": ["p", "p_b", "p_c"]})
+    with pytest.raises(FlexToolConfigError, match=r"Solve 'st'.*period 'p' of the roll does not run continuously "
+                                                  r"from its first step 't01'"):
+        ramp_link_fields(dt, link, pb, solve="st")
+    # Without the gap p has one stretch: its first step starts free and its wrap predecessor is null.
+    dt = _dt([("p", "t01"), ("p", "t02"), ("p_b", "t03"), ("p_c", "t03")])
+    link = _link([("p", "t02", "p", "t01"), ("p_b", "t03", "p", "t02"), ("p_c", "t03", "p", "t02")])
+    assert ramp_link_fields(dt, link, pb, solve="st")["dt_online_wrap"].rows() == [("p", "t01", None, None)]
