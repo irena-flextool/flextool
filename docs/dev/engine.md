@@ -582,10 +582,12 @@ companion sets, one set of rows per period of the solve (every frame has a
 `period` column), plus `rp_period_previous` (the rp periods in solve
 order).  `solve/_run_model.py` emits them for every period whose timeset
 has `representative_period_weights`; periods without keep their
-`timeset_weights` rows in the same `timestep_weight` frame.  A solve with
-stochastic branch periods and an rp timeset, a rolling solve with
-blended-weights nodes, and a solve that mixes rp and other periods while it
-has blended-weights nodes stop with an error.
+`timeset_weights` rows in the same `timestep_weight` frame.  The forecast
+branch periods of a stochastic solve are rp periods with the timeset of the
+period they branch from (`tests/engine/test_invest_branching_rp.py`).  A
+rolling solve on representative periods (`_reject_rolling_rp`) and a solve
+that mixes rp and other periods while it has blended-weights nodes
+(`_check_rp_solve`) stop with an error.
 
 ## Emitters
 

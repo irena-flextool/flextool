@@ -129,7 +129,7 @@ Every period's investment is one decision, made before the forecasts are known, 
 
 #### Invest now, adapt later (`investments_after_reveal_period`)
 
-The investment of the reveal period is still one decision for all the forecasts; from the next period on, each forecast invests on its own. Use it when the uncertainty is about the longer term (a policy target, a fuel price level, demand growth, technology costs) and capacity decided after learning it cannot be online before the next period: the reveal period's investment is the "what do we build now" answer, and the later periods show how each future would adapt. It is the same as `operations_only` for a solve with one investment period. Realize the periods up to the reveal period; the per-forecast investments of the later periods are look-ahead.
+The investment of the reveal period is still one decision for all the forecasts; from the next period on, each forecast invests on its own. Use it when the uncertainty is about the longer term (a policy target, a fuel price level, demand growth, technology costs) and capacity decided after learning it cannot be online before the next period: the reveal period's investment is the "what do we build now" answer, and the later periods show how each future would adapt. It is the same as `operations_only` for a solve with one investment period at or before the reveal period (with the one investment period after the reveal, that investment is per forecast here). Realize the periods up to the reveal period; the per-forecast investments of the later periods are look-ahead.
 
 #### Decide after the reveal (`investments_at_reveal_period`)
 
