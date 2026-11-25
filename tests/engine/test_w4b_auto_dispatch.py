@@ -6,8 +6,8 @@ can come from a SEPARATE deterministic dispatch solve whose investments
 are fixed from a stochastic solve — using an AUTHOR-DECLARED second solve.
 W4b removes the author-declared solve: a single top-level investment solve
 with a ``realized: yes`` branch reaching its realized period (and no
-``dispatch_realization_method``: an investment solve reads only an explicit
-``deterministic``, and ``separate_dispatch`` is refused on it) causes the
+``dispatch_realization_method``: an investment solve does not read it, and
+``separate_dispatch`` there is ignored with warning W-0640) causes the
 engine to AUTOMATICALLY register a deterministic realized-dispatch SIBLING
 ``<parent>__realized_dispatch`` that takes the full override path
 (invest→dispatch handoff fixes committed capacity; realized last-wins
@@ -28,9 +28,10 @@ This module pins:
   * the two in-memory registration primitives
     (:meth:`SpineDbReader.register_derived_solve`,
     :meth:`SolveConfig.spawn_realized_dispatch_sibling`);
-  * ``separate_dispatch`` on the investment solve refused with the two-solve
-    structure in the message, and that structure (investment solve, then a
-    ``separate_dispatch`` dispatch solve) reproducing the realized dispatch.
+  * ``separate_dispatch`` on the investment solve ignored with W-0640 (the
+    same realization), and the two-solve structure the warning points to
+    (investment solve, then a ``separate_dispatch`` dispatch solve)
+    reproducing the realized dispatch.
 """
 from __future__ import annotations
 
@@ -513,7 +514,7 @@ def test_spawn_helper_fix_storage_guard_raises():
 
 
 # ===========================================================================
-# separate_dispatch on the investment solve: refused, and the structure it points to
+# separate_dispatch on the investment solve: ignored, and the structure the warning points to
 # ===========================================================================
 
 
@@ -530,25 +531,27 @@ def _variant(tmp_path: Path, name: str, mutate) -> Path:
     return out
 
 
-def test_separate_dispatch_on_the_investment_solve_is_refused(tmp_path) -> None:
-    """``stoch_rd`` invests (``invest_periods`` [p2035]): ``separate_dispatch`` stops the run before any LP, and the
-    error names the two-solve structure (a dispatch solve after it) and the realization of its own."""
-    from flextool.engine.input._solve_state import FlexToolConfigError
+@pytest.mark.solver
+def test_separate_dispatch_on_the_investment_solve_is_ignored(tmp_path) -> None:
+    """``stoch_rd`` invests (``invest_periods`` [p2035]): ``separate_dispatch`` on it is not read.  One W-0640 line
+    names the solve, and the run is the one without the value: the engine realization ``stoch_rd__realized_dispatch``
+    of the ``realized: yes`` branch, with W8.1's oracle (peaker 60 MW per step, objective 60 · 10 · 8760)."""
+    from tests._support.coded_warnings import capture_coded
 
     def mutate(data: dict) -> None:
         data["parameter_values"].append(
             ["solve", PARENT, "dispatch_realization_method", _enc("separate_dispatch"), "init"])
 
-    with pytest.raises(FlexToolConfigError) as err:
-        _run_chain(_variant(tmp_path, "w4b_separate", mutate), tmp_path)
-    assert str(err.value) == (
-        f"Solve '{PARENT}' invests (invest_periods) and sets dispatch_realization_method separate_dispatch, which "
-        f"applies to dispatch solves only. To dispatch in two steps, put a dispatch solve after '{PARENT}' in "
-        "model.solves: no invest_periods, realized_periods = the periods to dispatch, stochastic_branches with a "
-        "realized: yes branch, dispatch_realization_method separate_dispatch; leave those periods out of the "
-        f"realized_periods of '{PARENT}'. It starts from the capacity '{PARENT}' realized. Or remove "
-        f"dispatch_realization_method from '{PARENT}': with a realized: yes branch it gets a realization dispatch "
-        "of its own.")
+    with capture_coded() as got:
+        steps, wf = _run_chain(_variant(tmp_path, "w4b_separate", mutate), tmp_path)
+    assert [c for c in got.codes() if c in ("W-0640", "W-0636", "W-0593")] == ["W-0640"]
+    assert got.lines("W-0640") == [
+        f"Warning: investment solve '{PARENT}': dispatch_realization_method separate_dispatch ignored [W-0640]"]
+    assert set(steps) == {PARENT, SIBLING}
+    obj = float(pl.read_parquet(wf / "output_raw" / f"v_obj__{SIBLING}.parquet")["objective"][0])
+    assert obj == pytest.approx(DISPATCH_OBJECTIVE, rel=1e-9)
+    peaker = steps[SIBLING].solution.value("v_flow").filter(pl.col("source") == "peaker")
+    assert peaker["value"].to_list() == pytest.approx([60.0] * 3)
 
 
 DISPATCH = "stoch_rd_dispatch"
@@ -556,7 +559,7 @@ DISPATCH = "stoch_rd_dispatch"
 
 @pytest.mark.solver
 def test_investment_solve_then_separate_dispatch_solve(tmp_path) -> None:
-    """The structure the refusal points to.  ``stoch_rd`` keeps ``invest_periods`` / ``realized_invest_periods``
+    """The structure W-0640 points to.  ``stoch_rd`` keeps ``invest_periods`` / ``realized_invest_periods``
     [p2035] and its forecasts, without ``realized_periods`` (so no realization of its own); ``stoch_rd_dispatch``
     follows it: no invest periods, ``realized_periods`` [p2035], the same ``stochastic_branches`` (realized ``rlz``
     weight 0, forecasts ``high`` / ``low``) and ``separate_dispatch``.

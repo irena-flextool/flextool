@@ -1118,8 +1118,8 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
         body=(
             "The solve is a dispatch solve with `stochastic_branches`, and its `dispatch_realization_method` is "
             "`deterministic` (the default of a dispatch solve since FlexTool 4.7.0; an investment solve, a solve "
-            "that is not rolling and has `invest_periods` or `realized_invest_periods`, solves its forecasts "
-            "unless it sets `deterministic`, warning W-0638). It is solved with the data of the `realized: yes` "
+            "that is not rolling and has `invest_periods` or `realized_invest_periods`, does not read the method "
+            "and always solves its forecasts). It is solved with the data of the `realized: yes` "
             "branch only, as one "
             "timeline: each time step reads the realized series that covers it (where several do, the one made "
             "nearest to the start of the solve, or of the roll in a rolling solve). The forecasts "
@@ -1127,23 +1127,6 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "`realized: yes` branch, or at a time step no realized series covers, the run stops with an error.\n\n"
             "**How to fix:** set `dispatch_realization_method` to `within_solve` or `separate_dispatch` to solve "
             "the forecasts."
-        ),
-    ),
-    WarningSpec(
-        code="W-0638",
-        message="investment solve '{solve}' has dispatch_realization_method deterministic",
-        title="Investment solve made deterministic",
-        topic=_SOLVES,
-        entityless=True,
-        body=(
-            "The solve is an investment solve (not rolling, with `invest_periods` or `realized_invest_periods`) "
-            "with `stochastic_branches`, and it sets `dispatch_realization_method` `deterministic`. It invests and "
-            "dispatches with the data of the `realized: yes` branch only, as one timeline, knowing that data in "
-            "advance: a perfect-foresight benchmark. The forecasts, `invest_solve_branching_method` and the "
-            "realization solve are ignored. Without that setting an investment solve solves its forecasts. Without a "
-            "`realized: yes` branch, or at a time step no realized series covers, the run stops with an error.\n\n"
-            "**How to fix:** nothing, if the benchmark is intended. To invest against the forecasts, remove "
-            "`dispatch_realization_method` from the solve, or set it to `within_solve`."
         ),
     ),
     WarningSpec(
@@ -1162,6 +1145,25 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "**How to fix:** nothing, if the wait-and-see value is intended. To decide one investment for every "
             "forecast at the first period, set `investments_after_reveal_period` (or leave the setting out: "
             "`operations_only`); to learn after a first period, start the forecasts at a later period."
+        ),
+    ),
+    WarningSpec(
+        code="W-0640",
+        message="investment solve '{solve}': dispatch_realization_method separate_dispatch ignored",
+        title="separate_dispatch on an investment solve",
+        topic=_SOLVES,
+        entityless=True,
+        body=(
+            "The solve is an investment solve (not rolling, with `invest_periods` or `realized_invest_periods`), "
+            "and it sets `dispatch_realization_method` `separate_dispatch`, which applies to dispatch solves only. "
+            "An investment solve does not read `dispatch_realization_method`: it solves its forecasts under its "
+            "`invest_solve_branching_method`, and with a `realized: yes` branch it gets a realization dispatch of "
+            "its own. The value is ignored.\n\n"
+            "**How to fix:** remove `dispatch_realization_method` from the solve. To dispatch in two steps, put a "
+            "dispatch solve after it in `model.solves`: no `invest_periods`, `realized_periods` = the periods to "
+            "dispatch, `stochastic_branches` with a `realized: yes` branch, `dispatch_realization_method` "
+            "`separate_dispatch`; leave those periods out of the `realized_periods` of the investment solve. The "
+            "dispatch solve starts from the capacity the investment solve realized."
         ),
     ),
     WarningSpec(

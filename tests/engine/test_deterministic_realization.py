@@ -280,27 +280,25 @@ def test_resolver_and_guard() -> None:
         _dispatch_realization_raw_guard(cfg, "x")
 
 
-def _w0638(caplog) -> list[str]:
-    return [r.getMessage() for r in caplog.records if "[W-0638]" in r.getMessage()]
-
-
 def _has_forecast_columns(mps) -> bool:
     cols = set(scm.lp_snapshot().parse_mps(mps).cols)
     return any("p1_high" in c for c in cols) and any("p1_low" in c for c in cols)
 
 
+@pytest.mark.parametrize("method", [None, "deterministic"])
 @pytest.mark.parametrize("invest_method", [None, "investments_after_reveal_period"])
-def test_investment_solve_without_method_solves_its_forecasts(tmp_path_factory, caplog, invest_method) -> None:
-    """The method governs the dispatch model: an investment solve (single, ``invest_periods`` [p1]) without
-    ``dispatch_realization_method`` builds the LPs of the same solve with ``within_solve`` byte for byte, as it did
-    before ``deterministic`` became the default.  It keeps its forecasts (the branch periods p1_high / p1_low) and
-    gives no W-0593 or W-0638.  The ``realized: yes`` branch adds the realization solve under
+def test_investment_solve_does_not_read_the_method(tmp_path_factory, caplog, invest_method, method) -> None:
+    """An investment solve (single, ``invest_periods`` [p1]) does not read ``dispatch_realization_method``: without
+    one, and with an explicit ``deterministic``, it builds the LPs of the same solve with ``within_solve`` byte for
+    byte, as it did before ``deterministic`` became the default of dispatch solves.  It keeps its forecasts (the
+    branch periods p1_high / p1_low) and gives no W-0593 (a perfect-foresight benchmark is a scenario without
+    ``stochastic_branches``).  The ``realized: yes`` branch adds the realization solve under
     ``invest_solve_branching_method`` ``operations_only`` (absent) and under ``investments_after_reveal_period``
     (p1 is the reveal period, its investment one decision of both forecasts, so it is realized)."""
     caplog.set_level(logging.WARNING)
-    case, _ = scm.run_spec(_spec(stochastic=True, invest=True, invest_method=invest_method),
+    case, _ = scm.run_spec(_spec(stochastic=True, invest=True, invest_method=invest_method, method=method),
                            tmp_path_factory.mktemp("case"))
-    lines = _w0593(caplog) + _w0638(caplog)
+    lines = _w0593(caplog)
     twin, _ = scm.run_spec(_spec(stochastic=True, invest=True, invest_method=invest_method, method="within_solve"),
                            tmp_path_factory.mktemp("twin"))
     assert [s for s, _, _ in case] == ["st", "st__realized_dispatch"]
@@ -309,36 +307,12 @@ def test_investment_solve_without_method_solves_its_forecasts(tmp_path_factory, 
     assert lines == [], lines
 
 
-@pytest.mark.parametrize("invest_method", [None, "investments_at_reveal_period"])
-def test_explicit_deterministic_on_an_investment_solve(tmp_path_factory, caplog, invest_method) -> None:
-    """An explicit ``deterministic`` on an investment solve is honoured: one build ``st`` with the LP of the same
-    model without ``stochastic_branches`` (the realized series made at t01 as a plain profile, the same investment;
-    ``invest_solve_branching_method`` is ignored, so ``investments_at_reveal_period`` with the realized reveal
-    period p1 is not refused), and one W-0638 line naming the solve (not W-0593)."""
-    caplog.set_level(logging.WARNING)
-    case, _ = scm.run_spec(_spec(stochastic=True, invest=True, invest_method=invest_method, method="deterministic"),
-                           tmp_path_factory.mktemp("case"))
-    lines = _w0593(caplog) + _w0638(caplog)
-    oracle, _ = scm.run_spec(_spec(stochastic=False, invest=True), tmp_path_factory.mktemp("oracle"))
-    assert [s for s, _, _ in case] == ["st"]
-    _assert_same_lp(case, oracle)
-    assert lines == ["Warning: investment solve 'st' has dispatch_realization_method deterministic [W-0638]"], lines
-
-
-def test_explicit_deterministic_investment_solve_needs_a_realized_branch(tmp_path_factory) -> None:
-    with pytest.raises(FlexToolConfigError, match=(
-            r"Solve 'st' has stochastic_branches and dispatch_realization_method deterministic, but no branch with "
-            r"realized: yes\.")):
-        scm.run_spec(_spec(stochastic=True, invest=True, realized_row=False, method="deterministic"),
-                     tmp_path_factory.mktemp("noreal"))
-
-
 def test_rolling_solve_with_invest_periods_is_a_dispatch_solve(tmp_path_factory, caplog) -> None:
     """A rolling solve builds no investment in its rolls, so with ``invest_periods`` it is still a dispatch solve:
     without a method it runs ``deterministic`` (W-0593), each roll the LP of the plain-profile model."""
     caplog.set_level(logging.WARNING)
     case, _ = scm.run_spec(_spec(stochastic=True, rolling=True, invest=True), tmp_path_factory.mktemp("case"))
-    lines = _w0593(caplog) + _w0638(caplog)
+    lines = _w0593(caplog)
     oracle, _ = scm.run_spec(_spec(stochastic=False, rolling=True, invest=True), tmp_path_factory.mktemp("oracle"))
     assert [s for s, _, _ in case] == ["st"] * 3
     _assert_same_lp(case, oracle)

@@ -382,11 +382,12 @@ def input_facts(db: Any, scenario: str) -> tuple[SolveFacts, ...]:
 
 def _realization(raw: Any, investment: bool = False) -> str:
     """The ``dispatch_realization_method`` as the engine reads it (lower-cased): absent or blank is deterministic on
-    a dispatch solve and within_solve on an *investment* solve (not rolling, with investment periods: the engine's
-    ``is_investment_solve``); an unrecognised value is refused by the engine and shown here as deterministic."""
-    value = str(raw).strip().lower() if raw is not None else ""
-    if value == "" and investment:
+    a dispatch solve; an *investment* solve (not rolling, with investment periods: the engine's
+    ``is_investment_solve``) does not read it and is within_solve whatever the value; an unrecognised value is
+    refused by the engine and shown here as deterministic."""
+    if investment:
         return "within_solve"
+    value = str(raw).strip().lower() if raw is not None else ""
     return value if value in ("within_solve", "separate_dispatch") else "deterministic"
 
 

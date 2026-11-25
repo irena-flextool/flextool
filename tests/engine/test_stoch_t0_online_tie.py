@@ -25,7 +25,7 @@ realized branch — re-keyed to the anchor period) into the sibling, where
 
 Fixture (``stoch_t0_commit.json``, built from JSON per CLAUDE.md invariant 3):
 a fan-at-first ``separate_dispatch`` stochastic dispatch solve (no invest periods:
-``separate_dispatch`` is refused on an investment solve) on ``p2035`` (branches
+an investment solve does not read ``separate_dispatch``) on ``p2035`` (branches
 ``rlz`` w=0, ``high`` w=0.5, ``low`` w=0.5; reveal at t0001) over 3 steps.
 A committable ``peaker`` (existing 2 units of virtual_unitsize 50 MW = 100 MW,
 min_load 0.5, startup_cost 1, other_operational_cost 10 CUR/MWh) backs up

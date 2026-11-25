@@ -2107,7 +2107,9 @@ def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
     solves and has a ``realized: yes`` branch.  A solve that itself
     ``contains_solves`` children, or one nested inside another's
     ``contains_solves``, is rejected; a rolling one with the 4.7.0 texts of
-    a rolling stochastic solve whose jumps cannot be realized.
+    a rolling stochastic solve whose jumps cannot be realized.  On an
+    investment solve it is not read (``is_investment_solve``; warning
+    W-0640), so it is not checked there.
 
     The guard reads the RAW authored value rather than the resolver's
     output: :meth:`SolveConfig.dispatch_realization_method_for` silently
@@ -2132,11 +2134,11 @@ def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
             f"unrecognised value.  Supported: 'deterministic' (default), "
             f"'within_solve' and 'separate_dispatch'."
         )
-    # separate_dispatch on an investment solve: refused (a realization of it is a dispatch solve of its own).
+    # separate_dispatch on an investment solve: not read (W-0640, SolveConfig.apply_deterministic_realization).
     from flextool.engine.input._solve_config import is_investment_solve
 
     if is_investment_solve(solve_cfg, base_name):
-        raise FlexToolConfigError(_separate_dispatch_investment_message(base_name))
+        return
     # separate_dispatch — eligible ONLY for a single top-level single_solve.
     solve_modes = getattr(solve_cfg, "solve_modes", {}) or {}
     model_solve = getattr(solve_cfg, "model_solve", {}) or {}
@@ -2185,17 +2187,6 @@ def _dispatch_realization_raw_guard(solve_cfg, base_name: str) -> None:
             f"dispatch solve of the realized branch, but its stochastic_branches have no branch with realized: "
             f"yes. Mark the branch to realize with realized: yes."
         )
-
-
-def _separate_dispatch_investment_message(solve: str) -> str:
-    """The error on ``dispatch_realization_method`` ``separate_dispatch`` on the investment solve *solve*."""
-    return (f"Solve '{solve}' invests (invest_periods) and sets dispatch_realization_method separate_dispatch, which "
-            f"applies to dispatch solves only. To dispatch in two steps, put a dispatch solve after '{solve}' in "
-            "model.solves: no invest_periods, realized_periods = the periods to dispatch, stochastic_branches with a "
-            "realized: yes branch, dispatch_realization_method separate_dispatch; leave those periods out of the "
-            f"realized_periods of '{solve}'. It starts from the capacity '{solve}' realized. Or remove "
-            f"dispatch_realization_method from '{solve}': with a realized: yes branch it gets a realization dispatch "
-            "of its own.")
 
 
 def _spawn_realized_dispatch_siblings(

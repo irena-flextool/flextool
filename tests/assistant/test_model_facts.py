@@ -239,10 +239,9 @@ def test_a_deterministic_solve_is_not_described_as_stochastic() -> None:
     assert model_facts._realization(None) == model_facts._realization("") == "deterministic"
     assert model_facts._realization("separate_dispatch") == "separate_dispatch"
     assert model_facts._realization(" Within_Solve ") == "within_solve"
-    # An investment solve without a method solves its forecasts; an explicit deterministic is kept.
-    assert model_facts._realization(None, investment=True) == model_facts._realization("", investment=True) \
-        == "within_solve"
-    assert model_facts._realization("deterministic", investment=True) == "deterministic"
+    # An investment solve does not read the method: it solves its forecasts whatever the value.
+    assert [model_facts._realization(v, investment=True) for v in (None, "", "deterministic", "separate_dispatch")] \
+        == ["within_solve"] * 4
     fans = model_facts._fans({"p1": {"a": {"t1": {"no": 1.0}}, "r": {"t1": {"yes": 0.0}}}})
     line = render(ScenarioFacts((_solve("s", branches=fans),), _run())).splitlines()[1]
     assert line == ("Solve s: single solve; deterministic (dispatch_realization_method): reads only the realized "

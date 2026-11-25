@@ -8,8 +8,8 @@ solve entirely and lets the engine AUTOMATICALLY register the
 deterministic realized-dispatch sibling ``stoch_rd__realized_dispatch``:
 an investment solve whose ``stochastic_branches`` has a ``realized: yes``
 branch reaching its realized periods gets a realization solve without any
-``dispatch_realization_method`` (an investment solve reads only an explicit
-``deterministic`` there, and ``separate_dispatch`` is refused on it).
+``dispatch_realization_method`` (an investment solve does not read it; a
+``separate_dispatch`` there is ignored with warning W-0640).
 
 Transforms applied to the W8.1 spec (so the two never drift):
 
@@ -57,7 +57,7 @@ def build() -> dict:
             pv[3] = [_enc({"value_type": "str", "data": [PARENT]}), "array"]
 
     # 2. drop the author-declared dispatch solve entity + its params, and the
-    #    parent's within_solve (an investment solve reads no method but an explicit deterministic).
+    #    parent's within_solve (an investment solve does not read the method).
     spec["entities"] = [
         e for e in spec["entities"]
         if not (e[0] == "solve" and e[1] == AUTHOR_DISPATCH)

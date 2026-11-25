@@ -1662,9 +1662,7 @@ class SolveConfig:
         ``realized_invest_periods``), when it is set on a solve without ``stochastic_branches``, or when a solve whose
         investments branch realizes a period whose investments are per branch: under
         ``investments_after_reveal_period`` a period after the reveal period, under
-        ``investments_at_reveal_period`` the reveal period or a later one.  A solve that runs ``deterministic``
-        (:meth:`apply_deterministic_realization`) counts its moved rows as ``stochastic_branches`` and is not checked
-        further: its forecasts and branching are ignored (warning W-0638).  Over the solves the model runs
+        ``investments_at_reveal_period`` the reveal period or a later one.  Over the solves the model runs
         (:meth:`solves_in_run`), after the 2-D map split."""
         problems: list[str] = []
         for s in self.solves_in_run():
@@ -1681,13 +1679,13 @@ class SolveConfig:
                     f"only, but {kind}. Remove invest_solve_branching_method from '{name}': a dispatch solve with "
                     "stochastic_branches is set up with dispatch_realization_method.")
                 continue
-            if not (self.stochastic_branches.get(s) or self.deterministic_branches.get(s)):
+            if not self.stochastic_branches.get(s):
                 problems.append(
                     f"Solve '{name}' sets invest_solve_branching_method {method} but has no stochastic_branches, "
                     "so there is nothing to branch. Add stochastic_branches to the solve, or remove "
                     "invest_solve_branching_method.")
                 continue
-            if s in self.deterministic_branches or method == INVEST_SOLVE_BRANCHING_METHODS[0]:
+            if method == INVEST_SOLVE_BRANCHING_METHODS[0]:
                 continue
             reveal = self.reveal_period(s)
             order = [str(p) for p, _ts in self.timesets_used_by_solves.get(s, [])]
@@ -1720,12 +1718,15 @@ class SolveConfig:
         parameter of this class, the definition default is not read, so the
         fall-back is hard-coded.  An unrecognised value also reads
         ``"deterministic"`` here; ``_dispatch_realization_raw_guard`` refuses
-        it before the solve runs.  An investment solve without a method still solves its forecasts
-        (:meth:`apply_deterministic_realization` flattens it only on an explicit ``deterministic``).  Authoring case is ignored.  Without
+        it before the solve runs.  An investment solve (:func:`is_investment_solve`) does not read the
+        method: it reads ``"within_solve"`` (it solves its forecasts; a ``separate_dispatch`` there is ignored,
+        warning W-0640 from :meth:`apply_deterministic_realization`).  Authoring case is ignored.  Without
         ``stochastic_branches``, ``deterministic`` and ``within_solve`` give
         the same model (``separate_dispatch`` needs a ``realized: yes``
         branch).
         """
+        if is_investment_solve(self, solve_name):
+            return "within_solve"
         raw = self.dispatch_realization_method.get(solve_name)
         value = "" if raw is None else str(raw).strip().lower()
         return value if value in ("within_solve", "separate_dispatch") else "deterministic"
@@ -1737,10 +1738,10 @@ class SolveConfig:
         ``stochastic_branches`` rows move to :attr:`deterministic_branches` (the solve then reads only its
         ``realized: yes`` branch, flattened into one timeline, ``native_run_model`` step 3.7), and
         :meth:`invest_branching_method_for` reads it as ``operations_only``.  A dispatch solve runs ``deterministic`` when its method is blank,
-        absent or ``deterministic``; an investment solve (:func:`is_investment_solve`) only when it is an explicit
-        ``deterministic``: the method governs the dispatch model, so an investment solve without one solves its
-        forecasts.  One warning per database solve (W-0593 for a dispatch solve, W-0638 for an investment solve; a
-        solve of a 2-D period map is named by the solve the user wrote).  Raises :class:`FlexToolConfigError` naming the solve when no
+        absent or ``deterministic``, with one warning W-0593 per database solve (a solve of a 2-D period map is named
+        by the solve the user wrote).  An investment solve (:func:`is_investment_solve`) never does: it does not read
+        the method and solves its forecasts; a ``separate_dispatch`` on it is ignored with one warning W-0640 per
+        database solve.  Raises :class:`FlexToolConfigError` naming the solve when no
         row says ``realized: yes`` (the same exact match as the stochastic pass), or when the ``realized: yes``
         rows name more than one branch (one realized series per solve, as for ``within_solve``).  Only a blank,
         absent or ``deterministic`` value counts; an unknown value is left for ``_dispatch_realization_raw_guard``.
@@ -1755,17 +1756,19 @@ class SolveConfig:
             # one is deterministic; a realization roll's forecasts come from its plan), so it is never made
             # deterministic.
             method = str("" if raw is None else raw).strip().lower()
+            name = self.map2d_duplicate_of.get(s, (s,))[0]
+            if is_investment_solve(self, s):
+                if method == "separate_dispatch" and name not in warned:
+                    warned.add(name)
+                    run_warnings.warn("W-0640", solve=name)
+                continue
             if not rows or method not in ("", "deterministic"):
                 continue
-            investment = is_investment_solve(self, s)
-            if investment and method != "deterministic":
-                continue
-            name = self.map2d_duplicate_of.get(s, (s,))[0]
             realized = list(dict.fromkeys(row[1] for row in rows if len(row) > 3 and row[3] == "yes"))
             if not realized:
-                default = "" if investment else " (the default of a dispatch solve since FlexTool 4.7.0)"
                 raise FlexToolConfigError(
-                    f"Solve '{name}' has stochastic_branches and dispatch_realization_method deterministic{default}, "
+                    f"Solve '{name}' has stochastic_branches and dispatch_realization_method deterministic (the "
+                    "default of a dispatch solve since FlexTool 4.7.0), "
                     "but no branch with realized: yes. Mark the branch that holds "
                     "the realized data with realized: yes, or set dispatch_realization_method within_solve or "
                     "separate_dispatch to solve the forecasts.")
@@ -1778,7 +1781,7 @@ class SolveConfig:
             self.deterministic_branches[s] = self.stochastic_branches.pop(s)
             if name not in warned:
                 warned.add(name)
-                run_warnings.warn("W-0638" if investment else "W-0593", solve=name)
+                run_warnings.warn("W-0593", solve=name)
 
     def _reduce_detail_for(self, solve_name: str, values: dict, param: str, valid: tuple[str, ...]) -> str:
         """The authored ``solve.<param>`` of *solve_name*: its roll suffix stripped, a realization solve mapped to
