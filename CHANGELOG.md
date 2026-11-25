@@ -102,19 +102,24 @@ W-0636, W-0637) name what changed.
   investments or one without `stochastic_branches` the run stops with an error naming the solve. A period whose
   investments are per forecast cannot be realized: in `realized_periods` or `realized_invest_periods` it stops the
   run with an error. The upgrade to data version 84 writes `investments_after_reveal_period` for `recourse` and
-  `operations_only` for the `none` rows of such a solve, each in its own alternative. Where `recourse` came with a
-  `shared_invest_periods` other than unset, empty or the reveal period, it writes nothing and prints the solve.
-  `recourse` on a rolling solve or one without investments (nothing to branch) is dropped. Note W-0637 lists the
-  solves whose results change (the next entries). Tools and scripts that write the old parameters must write
+  `operations_only` for a `none` row that would otherwise let it win, each in its own alternative. It never writes
+  a value the run would stop on: where `recourse` came with a `shared_invest_periods` that ties a period after
+  the reveal period, or where the written value would be refused in some scenario (for example a solve that
+  realizes a period after the reveal period), it writes nothing and prints the solve with what to set. Such a solve
+  then runs `operations_only`, the default, and note W-0637 names it. `recourse` that had no effect (on a rolling
+  solve, one without investments, one without forecasts or one that runs `deterministic`) is dropped. Note W-0637
+  lists the solves whose results may change (the next entries). Tools and scripts that write the old parameters must write
   `invest_solve_branching_method`.
 - **`recourse` becomes `investments_after_reveal_period`.** The investment of the period where the forecasts start
   is now one decision of all the forecasts, reported under its own period name. Before, with
-  `shared_invest_periods` unset or empty, each forecast invested on its own from that period (a wait-and-see run);
+  `shared_invest_periods` unset, empty or naming only earlier periods, each forecast invested on its own from that
+  period (a wait-and-see run);
   `investments_at_reveal_period` keeps that structure. With the forecasts starting at the solve's first period,
   `investments_at_reveal_period` shares nothing: the solve gets no realization dispatch, the normal results hold
   no investment or operation of the forecasts (only the `model.output_horizon` dump has them), and warning W-0639
-  names the solve at each run. A converted solve with `shared_invest_periods` equal to the reveal period keeps its
-  results.
+  names the solve at each run. A converted solve whose `shared_invest_periods` named the reveal period keeps its
+  investments; with a `realized: yes` branch it may now get a realization dispatch (next entries but one), and note
+  W-0637 names it.
 - **The forecasts of an investment solve operate on their own from the reveal period.** Before, with
   `shared_operation_periods` unset (the default) or a list, an investment solve tied the storage, units online and
   reserves of its forecasts over its realized periods (or the listed ones). Now nothing operational is tied, as
