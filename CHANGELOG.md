@@ -56,6 +56,9 @@
 
 ### Fixes
 
+- **Excel export: numbers kept exactly.** The export wrote numbers with 16 significant digits, so a value such as
+  0.30000000000000004 came back from the workbook as 0.3. It now writes the shortest form that reads back to the
+  same number.
 - **Capacity tables under `investments_after_reveal_period`.** The investment and the retirement of the reveal
   period were missing from the `invested` and `divested` columns of `unit_capacity__d`, `connection_capacity__d`
   and `node_capacity__d`, and in a solve without a realization solve `total` left them out too; they are now

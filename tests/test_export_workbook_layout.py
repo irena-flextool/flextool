@@ -13,7 +13,7 @@ from pathlib import Path
 import openpyxl
 import pytest
 from openpyxl.utils import get_column_letter, range_boundaries
-from spinedb_api import Array, DatabaseMapping, Map, from_database
+from spinedb_api import Array, DatabaseMapping, Map, from_database, to_database
 
 from flextool._resources import package_data_path
 from flextool.export_to_tabular.export_to_excel import export_to_excel
@@ -306,3 +306,25 @@ def test_omit_empty_columns_needs_the_v2_format(examples_db: Path, tmp_path: Pat
     with pytest.raises(ValueError, match="v2"):
         export_to_excel(f"sqlite:///{examples_db}", str(tmp_path / "v1.xlsx"), use_new_format=False,
                         omit_empty_columns=True)
+
+
+def test_floats_survive_the_workbook_exactly(tmp_path: Path) -> None:
+    # openpyxl writes "%.16g": 0.1 + 0.2 (0.30000000000000004) would come back as 0.3.  The export writes repr().
+    exact = 0.1 + 0.2
+    third = 1 / 7  # 0.14285714285714285: 17 significant digits
+    assert exact != 0.3 and float("%.16g" % third) != third
+    db = tmp_path / "floats.sqlite"
+    initialize_database(str(SCHEMA_JSON), str(db))
+    with DatabaseMapping(f"sqlite:///{db}") as mapping:
+        mapping.add_entity(entity_class_name="unit", entity_byname=("u",))
+        for name, value in (("existing", exact), ("efficiency", third)):
+            v, t = to_database(value)
+            mapping.add_parameter_value(entity_class_name="unit", entity_byname=("u",),
+                                        parameter_definition_name=name, alternative_name="base", value=v, type=t)
+        mapping.commit_session("floats")
+    out = tmp_path / "floats.xlsx"
+    export_to_excel(f"sqlite:///{db}", str(out))
+    values = {rec["param_name"]: rec["value"]
+              for sheet in read_self_describing_excel(str(out)) if sheet.sheet_name == "unit_c"
+              for rec in sheet.records if rec.get("param_name") in ("existing", "efficiency")}
+    assert values == {"existing": exact, "efficiency": third}

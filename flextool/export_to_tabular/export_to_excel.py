@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import math
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import openpyxl.cell._writer as _openpyxl_cell_writer
 from openpyxl import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
@@ -74,6 +77,36 @@ def _write_parameter_sheet(
         omitted_params=empty,
     ), db_contents)
     return ws
+
+
+_openpyxl_safe_string = _openpyxl_cell_writer.safe_string
+
+
+def _exact_number_string(value: Any) -> str:
+    """openpyxl's cell-value formatter, but a finite float is written with ``repr`` (shortest exact form).
+
+    openpyxl writes numbers with ``"%.16g"``, which loses the 17th significant digit (0.1 + 0.2 comes back as
+    0.3).  ``repr`` gives the shortest string that reads back to the same float; Excel and LibreOffice read it.
+    """
+    if isinstance(value, float) and math.isfinite(value):
+        return repr(float(value))  # float() also turns a numpy float into a plain one (numpy's repr differs)
+    return _openpyxl_safe_string(value)
+
+
+@contextmanager
+def _exact_floats() -> Iterator[None]:
+    """Write floats exactly while saving: swap the formatter openpyxl's cell writer looks up for each cell."""
+    _openpyxl_cell_writer.safe_string = _exact_number_string
+    try:
+        yield
+    finally:
+        _openpyxl_cell_writer.safe_string = _openpyxl_safe_string
+
+
+def _save_workbook(wb: Workbook, path: str | Path) -> None:
+    """Save *wb* with every float written exactly (see :func:`_exact_number_string`)."""
+    with _exact_floats():
+        wb.save(path)
 
 
 def _cells_as_text(wb: Workbook) -> None:
@@ -274,7 +307,7 @@ def export_to_excel(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     _cells_as_text(wb)
-    wb.save(output_path)
+    _save_workbook(wb, output_path)
 
     # 7. Print summary
     format_label = "v2 (self-describing)" if use_new_format else "v1 (original)"
