@@ -1,5 +1,5 @@
 """Data version 84: ``invest_solve_branching_method`` replaces ``stochastic_invest_method``, ``shared_invest_periods``
-and ``shared_operation_periods`` (spec ``stochastic_controls`` revision 6, owner decision D10).
+and ``shared_operation_periods``.
 
 The rules (from the spec, not from the code): a solve is eligible when its own rows, in any alternative, can make it
 a stochastic investment solve (a ``solve_mode`` other than ``rolling_window`` or none, a non-empty ``invest_periods``

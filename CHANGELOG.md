@@ -136,7 +136,8 @@ W-0636, W-0637) name what changed.
   solve (no `invest_periods`, the periods to dispatch in `realized_periods`, its own `stochastic_branches` with a
   `realized: yes` branch, `separate_dispatch`) that starts from the investments the investment solve realized (keep
   the dispatched periods in its `realized_invest_periods`, see the next entry). With a
-  `realized: yes` branch such an investment solve gets the realization dispatch of an investment solve. Results
+  `realized: yes` branch such an investment solve gets the realization dispatch of an investment solve under
+  `operations_only` and `investments_after_reveal_period`, none under `investments_at_reveal_period`. Results
   change: the first solve no longer ties the `_fix_in_uc` units online or the free storage start.
 - **A period is dispatched only after its investments are realized.** When another solve lists a period in
   `invest_periods`, a solve that realizes the period's dispatch (`realized_periods`) now needs an investment solve,

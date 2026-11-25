@@ -1645,6 +1645,20 @@ class SolveConfig:
         reveal = self.reveal_period(solve_name)
         return [] if reveal is None else [(reveal, reveal)]
 
+    def per_forecast_invest_periods(self, solve_name: str) -> list[str]:
+        """The periods of *solve_name* (in its period order, ``timesets_used_by_solves``) whose investments are per
+        forecast branch, so cannot be realized: those after the reveal period under
+        ``investments_after_reveal_period``, the reveal period and later ones under ``investments_at_reveal_period``,
+        none under ``operations_only`` or without a reveal period the solve has."""
+        method = self.invest_branching_method_for(solve_name)
+        if method == INVEST_SOLVE_BRANCHING_METHODS[0]:
+            return []
+        reveal = self.reveal_period(solve_name)
+        order = [str(p) for p, _ts in self.timesets_used_by_solves.get(solve_name, [])]
+        if reveal is None or reveal not in order:
+            return []
+        return order[order.index(reveal) + (1 if method == "investments_after_reveal_period" else 0):]
+
     def operational_window_for(self, solve_name: str) -> list[tuple[str, str]] | None:
         """The operational non-anticipativity window of *solve_name* (``_per_solve.emit_per_solve_sets``):
         ``[]`` for an investment solve (:func:`is_investment_solve`) with ``stochastic_branches``, whose forecasts
@@ -1685,14 +1699,10 @@ class SolveConfig:
                     "so there is nothing to branch. Add stochastic_branches to the solve, or remove "
                     "invest_solve_branching_method.")
                 continue
-            if method == INVEST_SOLVE_BRANCHING_METHODS[0]:
+            branched = set(self.per_forecast_invest_periods(s))
+            if not branched:
                 continue
             reveal = self.reveal_period(s)
-            order = [str(p) for p, _ts in self.timesets_used_by_solves.get(s, [])]
-            if reveal is None or reveal not in order:
-                continue
-            first_branched = order.index(reveal) + (1 if method == "investments_after_reveal_period" else 0)
-            branched = set(order[first_branched:])
             for par, field_name in (("realized_invest_periods", "realized_invest_periods"),
                                     ("realized_periods", "realized_periods")):
                 bad = list(dict.fromkeys(str(t[1]) for t in getattr(self, field_name).get(s, [])

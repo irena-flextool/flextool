@@ -23,7 +23,7 @@ Two kinds of overlap can occur between the solves of one model run
 
 * **Dispatch before the investments.**  A solve realizes the dispatch of a
   period that another solve invests in and no solve up to it has realized
-  the investments of (decisions D11, D12).
+  the investments of.
   :func:`check_dispatch_after_investments` raises before anything solves;
   a solve dispatching its own unrealized investment periods gets W-0641.
 
@@ -313,7 +313,7 @@ def warn_realized_invest_overlaps(
 
 
 # ---------------------------------------------------------------------------
-# Dispatch before the investments are realized (D11)
+# Dispatch before the investments are realized
 # ---------------------------------------------------------------------------
 
 
@@ -368,7 +368,8 @@ def dispatch_before_investments_message(
     found: Sequence[UndecidedDispatch],
     *,
     names: Mapping[str, str],
-    per_forecast: Mapping[str, str],
+    parents: Mapping[str, str],
+    per_forecast: Mapping[str, tuple[Collection[str], str]],
 ) -> str:
     """The error of :func:`find_dispatch_before_investments`, one sentence group per solve.
 
@@ -376,87 +377,104 @@ def dispatch_before_investments_message(
         found: The records, in run order.
         names: ``{solve: how the message names it}`` (a 2-D map copy by its database solve and row); a solve not
             in it is named as is.
-        per_forecast: ``{investment solve: why some of its investments are per forecast}`` for the solves whose
-            ``invest_solve_branching_method`` makes them so.
+        parents: ``{realization solve: the solve it realizes}`` for the realization solves the engine adds: their
+            ``realized_periods`` come from the parent, so the fix names the parent.
+        per_forecast: ``{investment solve: (its per-forecast investment periods, the method sentence)}`` for the
+            solves whose ``invest_solve_branching_method`` makes some investments per forecast branch; the sentence
+            is added only where a refused period is one of them.
     """
+    def name(solve: str) -> str:
+        return names.get(solve, f"solve '{solve}'")
+
     parts: list[str] = []
     for rec in found:
-        solve = names.get(rec.solve, f"solve '{rec.solve}'")
+        parent = parents.get(rec.solve)
+        solve = (f"the realization solve '{rec.solve}' of {name(parent)}" if parent is not None
+                 else name(rec.solve))
         periods = ", ".join(f"'{p}'" for p in rec.periods)
         them = "it" if len(rec.periods) == 1 else "them"
         word = "period" if len(rec.periods) == 1 else "periods"
-        investors = ", ".join(names.get(s, f"solve '{s}'") for s in rec.investors)
+        investors = ", ".join(name(s) for s in rec.investors)
         listed = "lists" if len(rec.investors) == 1 else "list"
         its = "its" if len(rec.periods) == 1 else "their"
+        if parent is None:
+            fix = (f"add {periods} to the realized_invest_periods of an investment solve that runs no later, or "
+                   f"leave {them} out of the realized_periods of this solve.")
+        else:
+            fix = (f"add {periods} to the realized_invest_periods of {name(parent)} (or of an investment solve "
+                   f"before it), or leave {them} out of the realized_periods of {name(parent)}: its realization "
+                   "solve dispatches those realized_periods on the investments it realizes.")
         text = (
             f"{solve[0].upper()}{solve[1:]} realizes the dispatch of {word} {periods} (realized_periods) before {its} "
             f"investments are realized: {investors} {listed} {them} in invest_periods, and no investment solve up "
             f"to and including this one realizes {them} (realized_invest_periods). A period is dispatched only "
-            f"after its investments are decided: add {periods} to the realized_invest_periods of an investment "
-            f"solve that runs no later, or leave {them} out of the realized_periods of this solve.")
+            f"after its investments are decided: {fix}")
         for s in rec.investors:
-            if s in per_forecast:
-                investor = names.get(s, f"solve '{s}'")
-                text += f" {investor[0].upper()}{investor[1:]} {per_forecast[s]}"
+            branched, why = per_forecast.get(s, ((), ""))
+            if any(p in branched for p in rec.periods):
+                investor = name(s)
+                text += f" {investor[0].upper()}{investor[1:]} {why}"
         parts.append(text)
     return " ".join(parts)
 
 
-def check_dispatch_after_investments(solve_cfg: Any, run_order: Sequence[tuple[str, str, Collection[str]]]) -> None:
+def check_dispatch_after_investments(solve_cfg: Any, run_order: Sequence[tuple[str, Collection[str]]]) -> None:
     """Raise :class:`FlexToolConfigError` when a solve of the run realizes the dispatch of a period before the
-    period's investments are realized (decisions D11, D12).
+    period's investments are realized.
 
-    *run_order*: ``(solve, complete solve, periods)`` per sub-solve in run order, *periods* being those the sub-solve
-    has (its active time; a nested solve renamed for one period has that period, a roll its window).  Of each, the
-    ``realized_periods`` of its complete solve in *periods* are its realized dispatch; only an investment solve
+    *run_order*: ``(complete solve, periods)`` per sub-solve in run order, *periods* being those the sub-solve has
+    (its active time; a nested solve renamed for one period has that period, a roll its window).  A sub-solve is
+    checked and named as its complete solve (a roll and a nested solve renamed for one period by the solve the user
+    wrote).  Of each, the ``realized_periods`` in *periods* are its realized dispatch; only an investment solve
     (:func:`is_investment_solve`) invests (``invest_periods``) and realizes investments
     (:func:`effective_realized_invest_periods`), in *periods*.  A realization solve (``realized_dispatch_parent``)
     invests in nothing and dispatches a part of its parent's realized periods on the investments its parent
     realized: it is refused when its parent dispatches a period on investments it does not realize (only the
-    realized ones are handed on), and named as the realization solve of its parent.  A solve's own
-    ``invest_periods`` count as decided for its own dispatch (D12: the same LP decides both); dispatching such a
-    period without realizing its investments gives warning W-0641 per solve (the solve of a 2-D period map by its
-    database solve), when nothing is refused."""
+    realized ones are handed on), named as the realization solve of its parent, with the fix on the parent.  A
+    solve's own ``invest_periods`` count as decided for its own dispatch (the same LP decides both); dispatching
+    such a period without realizing its investments gives warning W-0641 per solve (the solve of a 2-D period map
+    by its database solve), when nothing is refused.  The advice to realize the investments in a later investment
+    solve is added only for a refused period whose investments are per forecast branch
+    (``SolveConfig.per_forecast_invest_periods``)."""
     from flextool.engine.input._solve_config import is_investment_solve
     from flextool.engine.input._solve_state import FlexToolConfigError
 
     invested: dict[str, list[str]] = {}
     run: list[tuple[str, list[str], list[str], list[str]]] = []
-    for name, cs, periods in run_order:
+    for cs, periods in run_order:
         has = {str(p) for p in periods}
         investing = is_investment_solve(solve_cfg, cs)
         if investing:
             for p in dict.fromkeys(str(t[1]) for t in solve_cfg.invest_periods.get(cs, [])):
-                if p in has and name not in invested.setdefault(p, []):
-                    invested[p].append(name)
+                if p in has and cs not in invested.setdefault(p, []):
+                    invested[p].append(cs)
         realized_invest = [str(p) for p in effective_realized_invest_periods(
             cs, realized_invest_periods=solve_cfg.realized_invest_periods, invest_periods=solve_cfg.invest_periods,
             realized_periods=solve_cfg.realized_periods) if str(p) in has] if investing else []
         dispatch = [str(t[1]) for t in solve_cfg.realized_periods.get(cs, []) if str(t[1]) in has]
         own_invest = [str(t[1]) for t in solve_cfg.invest_periods.get(cs, []) if str(t[1]) in has] if investing else []
-        run.append((name, dispatch, realized_invest, own_invest))
-    siblings = getattr(solve_cfg, "realized_dispatch_parent", None) or {}
+        run.append((cs, dispatch, realized_invest, own_invest))
     found, own = find_dispatch_before_investments(run, invested)
-    names = {s: f"solve '{parent}' (2D-map entry '{outer}')"
-             for s, (parent, outer) in (getattr(solve_cfg, "map2d_duplicate_of", None) or {}).items()}
-    names.update({s: f"the realization solve '{s}' of solve '{parent}'" for s, parent in siblings.items()})
+    copies = getattr(solve_cfg, "map2d_duplicate_of", None) or {}
     if not found:
         from flextool import run_warnings
-        database_solve = {s: parent for s, (parent, _outer) in
-                          (getattr(solve_cfg, "map2d_duplicate_of", None) or {}).items()}
         for rec in own:
-            run_warnings.warn("W-0641", solve=database_solve.get(rec.solve, rec.solve),
+            run_warnings.warn("W-0641", solve=copies.get(rec.solve, (rec.solve,))[0],
                               periods=", ".join(rec.periods))
         return
-    per_forecast: dict[str, str] = {}
+    names = {s: f"solve '{parent}' (2D-map entry '{outer}')" for s, (parent, outer) in copies.items()}
+    per_forecast: dict[str, tuple[list[str], str]] = {}
     for s in dict.fromkeys(s for rec in found for s in rec.investors):
+        branched = solve_cfg.per_forecast_invest_periods(s)
+        if not branched:
+            continue
         method = solve_cfg.invest_branching_method_for(s)
         reveal = solve_cfg.reveal_period(s)
-        if method == "operations_only" or reveal is None:
-            continue
         which = "after" if method == "investments_after_reveal_period" else "from"
-        per_forecast[s] = (
+        per_forecast[s] = (branched, (
             f"sets invest_solve_branching_method {method}: its investments {which} the reveal period '{reveal}' "
             f"{'on ' if which == 'from' else ''}are per forecast branch and cannot be realized there; realize them "
-            "in a later investment solve, or dispatch only the periods whose investments it realizes.")
-    raise FlexToolConfigError(dispatch_before_investments_message(found, names=names, per_forecast=per_forecast))
+            "in a later investment solve, or dispatch only the periods whose investments it realizes."))
+    raise FlexToolConfigError(dispatch_before_investments_message(
+        found, names=names, parents=getattr(solve_cfg, "realized_dispatch_parent", None) or {},
+        per_forecast=per_forecast))

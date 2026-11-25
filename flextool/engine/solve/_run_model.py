@@ -1855,10 +1855,10 @@ def native_run_model(state, solver) -> int:
             realized_periods=state.solve.realized_periods,
         )))
     warn_realized_invest_overlaps(find_realized_invest_overlaps(_invest_claims))
-    # A period is dispatched only after its investments are realized (D11), per sub-solve (a nested solve renamed
-    # for one period has that period): an error before anything solves.
+    # A period is dispatched only after its investments are realized, per sub-solve (a nested solve renamed for one
+    # period has that period), each under its complete solve: an error before anything solves.
     check_dispatch_after_investments(state.solve, [
-        (re.sub(r"_roll_\d+$", "", _s), complete_solve[_s], _sub_solve_periods.get(_s, [])) for _s in all_solves])
+        (complete_solve[_s], _sub_solve_periods.get(_s, [])) for _s in all_solves])
 
     # ------------------------------------------------------------------
     # 3.6 W4c — project each stochastic parameter onto the REALIZED branch

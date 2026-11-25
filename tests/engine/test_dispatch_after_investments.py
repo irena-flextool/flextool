@@ -1,4 +1,4 @@
-"""A period is dispatched only after its investments are realized (decision D11).
+"""A period is dispatched only after its investments are realized.
 
 The run stops before anything solves when a solve realizes the dispatch of a period (``realized_periods``) that an
 investment solve lists in ``invest_periods`` while no investment solve up to and including it realized the period's
@@ -15,14 +15,16 @@ the check (``disp`` dispatching on the capacity that existed before the period's
   ``disp`` realizes p2035: refused.
 * (c) ``det`` (no ``stochastic_branches``): ``stoch_2p_inv`` invests in p2035 and p2040 and realizes p2035 (the
   investments and the dispatch); ``disp`` realizing p2040 is refused, ``disp`` realizing p2035 runs.
-* D12: ``y2020_2029_2x5y`` (``tests.json``) dispatches p2025, whose investments it decides itself but does not
+* ``y2020_2029_2x5y`` (``tests.json``) dispatches p2025, whose investments it decides itself but does not
   realize: it runs, with warning W-0641.
 * (f) the engine's realization solve (``w4b_auto_dispatch``: ``stoch_rd`` invests, ``stoch_rd__realized_dispatch``
   dispatches its realized periods after it) runs.
 
 The pure check (``check_dispatch_after_investments``) on hand rows: (d) no investments, (e) a year-by-year chain (and
-the same solve dispatching its own look-ahead period: W-0641), a nested solve renamed per period, a realization
-solve whose parent did not realize the investments of a period it dispatches.
+the same solve dispatching its own look-ahead period: W-0641), a nested solve renamed per period (named by the solve
+the user wrote), a realization solve whose parent did not realize the investments of a period it dispatches (the fix
+named on the parent, a 2-D map parent by its database solve and row), and the per-forecast advice given only for a
+refused period whose investments are per forecast.
 """
 from __future__ import annotations
 
@@ -157,7 +159,7 @@ def test_dispatch_of_a_realized_investment_period_runs(tmp_path) -> None:
 
 @pytest.mark.solver
 def test_a_solve_dispatching_its_own_unrealized_investments_runs_with_a_warning(tmp_path) -> None:
-    """D12 on ``y2020_2029_2x5y`` (``tests.json``): one solve invests in p2020 and p2025, realizes the investments
+    """``y2020_2029_2x5y`` (``tests.json``): one solve invests in p2020 and p2025, realizes the investments
     of p2020 only and dispatches both.  Its own ``invest_periods`` count as decided for its dispatch: it runs, with
     one W-0641 naming the solve and p2025."""
     with capture_coded() as got:
@@ -177,27 +179,31 @@ def _cfg(solves: dict[str, dict[str, list[str]]], **extra) -> SimpleNamespace:
     """A solve configuration with the period lists of *solves* (``{solve: {field: [period]}}``), not rolling."""
     fields = ("invest_periods", "realized_invest_periods", "realized_periods")
     lists = {f: {s: [(s, p) for p in v.get(f, [])] for s, v in solves.items()} for f in fields}
+    extra.setdefault("per_forecast_invest_periods", lambda s: [])
     return SimpleNamespace(**lists, solve_modes={}, **extra)
 
 
-def _order(solves: list[str], periods: tuple[str, ...] = ("p1", "p2")) -> list[tuple[str, str, tuple[str, ...]]]:
-    """``(solve, complete solve, periods)`` of single solves over *periods*, in run order."""
-    return [(s, s, periods) for s in solves]
+def _order(solves: list[str], periods: tuple[str, ...] = ("p1", "p2")) -> list[tuple[str, tuple[str, ...]]]:
+    """``(complete solve, periods)`` of single solves over *periods*, in run order."""
+    return [(s, periods) for s in solves]
 
 
 def test_a_nested_solve_renamed_per_period_is_checked_per_period() -> None:
     """``inv`` split by a 2-D map into ``inv_p1`` / ``inv_p2`` (each realizes its period), with ``disp`` contained
-    in each and renamed ``disp_p1`` / ``disp_p2`` (``realized_periods`` [p1, p2] of ``disp``, one period each): run
-    order inv_p1, disp_p1, inv_p2, disp_p2 passes; dispatching p2 in ``disp_p1`` would come before ``inv_p2``."""
+    in each and run once per period (sub-solves ``disp_p1`` / ``disp_p2`` of the complete solve ``disp``,
+    ``realized_periods`` [p1, p2], one period each): run order inv_p1, disp, inv_p2, disp passes; dispatching p2 in
+    the first run of ``disp`` would come before ``inv_p2``.  The error names ``disp``, the solve the user wrote, and
+    the 2-D map copy ``inv_p2`` by its database solve and row."""
     rows = {"inv_p1": {"invest_periods": ["p1"], "realized_invest_periods": ["p1"]},
             "inv_p2": {"invest_periods": ["p2"], "realized_invest_periods": ["p2"]},
             "disp": {"realized_periods": ["p1", "p2"]}}
-    order = [("inv_p1", "inv_p1", ("p1",)), ("disp_p1", "disp", ("p1",)),
-             ("inv_p2", "inv_p2", ("p2",)), ("disp_p2", "disp", ("p2",))]
+    order = [("inv_p1", ("p1",)), ("disp", ("p1",)), ("inv_p2", ("p2",)), ("disp", ("p2",))]
     check_dispatch_after_investments(_cfg(rows), order)
-    order[1] = ("disp_p1", "disp", ("p1", "p2"))
-    cfg = _cfg(rows, invest_branching_method_for=lambda s: "operations_only", reveal_period=lambda s: None)
-    with pytest.raises(FlexToolConfigError, match=r"^Solve 'disp_p1' realizes the dispatch of period 'p2' "):
+    order[1] = ("disp", ("p1", "p2"))
+    cfg = _cfg(rows, map2d_duplicate_of={"inv_p1": ("inv", "p1"), "inv_p2": ("inv", "p2")})
+    with pytest.raises(FlexToolConfigError, match=r"^Solve 'disp' realizes the dispatch of period 'p2' "
+                                                  r"\(realized_periods\) before its investments are realized: solve "
+                                                  r"'inv' \(2D-map entry 'p2'\) lists it in invest_periods"):
         check_dispatch_after_investments(cfg, order)
 
 
@@ -209,7 +215,7 @@ def test_a_run_without_investments_passes() -> None:
 
 def test_a_year_by_year_chain_passes_and_an_own_look_ahead_dispatch_warns() -> None:
     """(e): A invests in p1 and p2 (p2 is look-ahead) and realizes p1; B invests in and realizes p2: no line.  With A
-    dispatching p2 as well, A decides p2's investments itself (D12): it runs, with one W-0641 naming A and p2."""
+    dispatching p2 as well, A decides p2's investments itself (the same LP): it runs, with one W-0641 naming A and p2."""
     chain = {"A": {"invest_periods": ["p1", "p2"], "realized_invest_periods": ["p1"], "realized_periods": ["p1"]},
              "B": {"invest_periods": ["p2"], "realized_invest_periods": ["p2"], "realized_periods": ["p2"]}}
     with capture_coded() as got:
@@ -228,15 +234,89 @@ def test_a_realization_solve_needs_the_investments_its_parent_realized() -> None
     rows = {"inv": {"invest_periods": ["p1", "p2"], "realized_invest_periods": ["p1"],
                     "realized_periods": ["p1", "p2"]},
             "inv__realized_dispatch": {"realized_periods": ["p2"]}}
-    cfg = _cfg(rows, realized_dispatch_parent={"inv__realized_dispatch": "inv"},
-               invest_branching_method_for=lambda s: "operations_only", reveal_period=lambda s: None)
+    cfg = _cfg(rows, realized_dispatch_parent={"inv__realized_dispatch": "inv"})
     with pytest.raises(FlexToolConfigError) as err:
         check_dispatch_after_investments(cfg, _order(["inv", "inv__realized_dispatch"]))
-    assert str(err.value).startswith("The realization solve 'inv__realized_dispatch' of solve 'inv' realizes the "
-                                     "dispatch of period 'p2' (realized_periods) before its investments are realized: "
-                                     "solve 'inv' lists it in invest_periods")
+    msg = str(err.value)
+    assert msg.startswith("The realization solve 'inv__realized_dispatch' of solve 'inv' realizes the dispatch of "
+                          "period 'p2' (realized_periods) before its investments are realized: solve 'inv' lists it "
+                          "in invest_periods")
+    # The realization solve is not in the database: the fix is on its parent.
+    assert ("add 'p2' to the realized_invest_periods of solve 'inv' (or of an investment solve before it), or leave "
+            "it out of the realized_periods of solve 'inv'") in msg
+    assert "realized_periods of this solve" not in msg
     rows["inv"]["realized_invest_periods"] = ["p1", "p2"]
     with capture_coded() as got:
         check_dispatch_after_investments(_cfg(rows, realized_dispatch_parent={"inv__realized_dispatch": "inv"}),
                                          _order(["inv", "inv__realized_dispatch"]))
     assert "W-0641" not in got.codes()
+
+
+def test_the_realization_solve_of_a_2d_map_copy_names_the_parent_by_its_database_solve_and_row() -> None:
+    """The parent ``inv_p1`` is the 2-D map copy of ``inv`` for row ``p1``: its realization solve's error names the
+    parent as ``solve 'inv' (2D-map entry 'p1')``, in the subject, the investors and the fix."""
+    rows = {"inv_p1": {"invest_periods": ["p1", "p2"], "realized_invest_periods": ["p1"],
+                       "realized_periods": ["p1", "p2"]},
+            "inv_p1__realized_dispatch": {"realized_periods": ["p2"]}}
+    cfg = _cfg(rows, realized_dispatch_parent={"inv_p1__realized_dispatch": "inv_p1"},
+               map2d_duplicate_of={"inv_p1": ("inv", "p1")})
+    with pytest.raises(FlexToolConfigError) as err:
+        check_dispatch_after_investments(cfg, _order(["inv_p1", "inv_p1__realized_dispatch"]))
+    msg = str(err.value)
+    parent = "solve 'inv' (2D-map entry 'p1')"
+    assert msg.startswith(f"The realization solve 'inv_p1__realized_dispatch' of {parent} realizes the dispatch of "
+                          f"period 'p2' (realized_periods) before its investments are realized: {parent} lists it in "
+                          "invest_periods")
+    assert (f"add 'p2' to the realized_invest_periods of {parent} (or of an investment solve before it), or leave it "
+            f"out of the realized_periods of {parent}") in msg
+    assert "inv_p1'" not in msg.replace("inv_p1__realized_dispatch", "")
+
+
+def _branching_cfg(method: str, reveal: str, inv_realized_invest: list[str], disp_realized: list[str]):
+    """``inv`` invests in [p1, p2] (period order p1, p2) with *method* and the reveal at *reveal*, realizes the
+    investments of *inv_realized_invest* and no dispatch; ``disp`` (no investments) realizes *disp_realized*.  The
+    per-forecast periods follow the rule by hand: after the reveal (after-reveal), from the reveal on (at-reveal)."""
+    order = ["p1", "p2"]
+    first = order.index(reveal) + (1 if method == "investments_after_reveal_period" else 0)
+    branched = order[first:]
+    rows = {"inv": {"invest_periods": ["p1", "p2"], "realized_invest_periods": inv_realized_invest},
+            "disp": {"realized_periods": disp_realized}}
+    return _cfg(rows, invest_branching_method_for=lambda s: method, reveal_period=lambda s: reveal,
+                per_forecast_invest_periods=lambda s: branched if s == "inv" else [])
+
+
+@pytest.mark.parametrize(("method", "reveal"), [
+    ("investments_after_reveal_period", "p1"),   # p1 is the shared reveal investment
+    ("investments_at_reveal_period", "p2"),      # p1 is before the reveal
+])
+def test_a_refused_period_that_can_be_realized_gets_no_per_forecast_advice(method, reveal) -> None:
+    """``disp`` dispatches p1 while ``inv`` realizes nothing.  p1's investment is one decision of every forecast
+    under both cases, so the fix is to add p1 to ``inv``'s ``realized_invest_periods``: the error says that, and
+    not that the investments are per forecast branch."""
+    with pytest.raises(FlexToolConfigError) as err:
+        check_dispatch_after_investments(_branching_cfg(method, reveal, [], ["p1"]), _order(["inv", "disp"]))
+    msg = str(err.value)
+    assert msg.startswith("Solve 'disp' realizes the dispatch of period 'p1' (realized_periods) before its investments "
+                          "are realized: solve 'inv' lists it in invest_periods")
+    assert "add 'p1' to the realized_invest_periods of an investment solve that runs no later" in msg
+    assert "per forecast branch" not in msg
+    assert "invest_solve_branching_method" not in msg
+
+
+@pytest.mark.parametrize(("method", "reveal", "realized_invest", "sentence"), [
+    ("investments_after_reveal_period", "p1", ["p1"],
+     "Solve 'inv' sets invest_solve_branching_method investments_after_reveal_period: its investments after the "
+     "reveal period 'p1' are per forecast branch and cannot be realized there; realize them in a later investment "
+     "solve"),
+    ("investments_at_reveal_period", "p2", ["p1"],
+     "Solve 'inv' sets invest_solve_branching_method investments_at_reveal_period: its investments from the reveal "
+     "period 'p2' on are per forecast branch and cannot be realized there; realize them in a later investment solve"),
+])
+def test_a_refused_per_forecast_period_gets_the_per_forecast_advice(method, reveal, realized_invest,
+                                                                    sentence) -> None:
+    """``disp`` dispatches p2, whose investments are per forecast in ``inv`` (after the reveal p1; from the reveal
+    p2 on): the error adds that they must be realized in a later investment solve."""
+    with pytest.raises(FlexToolConfigError) as err:
+        check_dispatch_after_investments(_branching_cfg(method, reveal, realized_invest, ["p2"]),
+                                         _order(["inv", "disp"]))
+    assert sentence in str(err.value)
