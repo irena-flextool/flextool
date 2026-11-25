@@ -34,9 +34,34 @@ def _commit_step(db, message):
     session and the next commit carries it.
     """
     try:
-        db.commit_session(message)
+        transformations, _info = db.commit_session(message)
     except NothingToCommit:
         logging.info("Migration step idempotent (no changes): %s", message)
+        return
+    _reread_transformed(db, transformations)
+
+
+def _reread_transformed(db, transformations) -> None:
+    """Make the open session read what spinedb_api's commit wrote behind it.
+
+    Every commit runs spinedb_api's compatibility transformations on the file: while a class has an ``is_active``
+    definition bound to a list with ``yes``, they set its ``active_by_default`` from that definition's default (0
+    unless it is ``yes``) and turn its ``is_active`` values into ``entity_alternative`` rows.  The open mapping keeps
+    what it read before.  On a file from before the SpineDB entity schema (v3.0.0 .. v3.5.1) that is 1 for
+    ``constraint`` and the two reserve classes while the file holds 0, and v56 would decide on the 1 (item 1023).
+    The item types the transformations changed are reset, so the next step reads the file; the commit has just
+    written every change of the session, so nothing is lost.
+    """
+    changed = set()
+    for item_type, (added, updated, removed) in transformations:
+        if item_type == "entity_class":
+            if any(db.get_item("entity_class", id=x["id"]).get("active_by_default") != x["active_by_default"]
+                   for x in updated):
+                changed.add(item_type)
+        elif added or updated or removed:
+            changed.add(item_type)
+    if changed:
+        db.reset(*changed)
 
 
 #: The most runs of consecutive ids one commit deletes from a table.  spinedb_api deletes the removed rows of a table
@@ -10410,7 +10435,10 @@ def _migrate_v56_reactivate_is_enabled_parameter(db) -> None:
     * lets the two reserve classes flip to ``active_by_default =
       True`` (their natural default — declared reserves are usually
       meant to be active);
-    * keeps ``constraint.active_by_default = True`` unchanged.
+    * ends ``constraint.active_by_default`` True as well (it is True
+      already except in a database from before the SpineDB entity
+      schema, v3.0.0 .. v3.5.1, where spinedb_api's ``is_active``
+      conversion left it False: item 1023).
 
     Class-specific behaviour
     ------------------------
@@ -10424,17 +10452,17 @@ def _migrate_v56_reactivate_is_enabled_parameter(db) -> None:
     (b) After (a), every ``entity_alternative`` row of the class is
         dropped — the old gate is retired.
 
-    For the **two reserve classes** (flipping
-    ``active_by_default`` False → True) **only**:
+    For each of the three classes whose ``active_by_default`` is False
+    when the step starts (the two reserve classes; ``constraint`` too in
+    a database from before the SpineDB entity schema) **only**:
 
     (c) For each entity in the class that has no Base
         ``entity_alternative`` row pre-migration, write Base
         ``is_enabled="no"``.  Preserves the legacy semantic ``no
         row → inactive`` across the default flip (``Base`` made by
-        :func:`_v56_ensure_base` when the database has none).  Constraint does
-        NOT get this backfill — its ``active_by_default`` was already
-        True, so the post-migration ``is_enabled`` default ``"yes"``
-        matches.
+        :func:`_v56_ensure_base` when the database has none).  A class
+        that is True already does NOT get this backfill: the
+        post-migration ``is_enabled`` default ``"yes"`` matches.
     (d) Flip ``active_by_default`` to True on the entity_class.
 
     The schema-template JSON adds the three ``parameter_definitions``
@@ -10460,9 +10488,14 @@ def _migrate_v56_reactivate_is_enabled_parameter(db) -> None:
         "reserve__upDown__unit__node",
         "reserve__upDown__connection__node",
     )
-    classes_with_flip = (
-        "reserve__upDown__unit__node",
-        "reserve__upDown__connection__node",
+    entity_class_table = db.mapped_table("entity_class")
+    # The classes off by default when the step starts: on a rerun after a
+    # kill, a class whose flip was committed is True and its backfill is
+    # done (both ride on the step's last commit).
+    classes_with_flip = tuple(
+        cls_name for cls_name in affected_classes
+        if (ec := db.item(entity_class_table, name=cls_name)) is not None
+        and ec.get("active_by_default") is False
     )
     group_by_class = {
         "constraint": "constraint",
@@ -10493,8 +10526,8 @@ def _migrate_v56_reactivate_is_enabled_parameter(db) -> None:
     # ---- Step 2: walk entity_alternative rows ------------------------
     # Per affected class: collect every (entity_byname, alt, active),
     # then materialise an is_enabled parameter_value mirroring the
-    # active flag.  Also track per-class Base coverage so the reserve-
-    # class backfill (step 3) can fill the gaps.
+    # active flag.  Also track per-class Base coverage so the backfill
+    # (step 3) can fill the gaps.
     yes_no_values = {
         True: to_database("yes"),
         False: to_database("no"),
@@ -10527,9 +10560,9 @@ def _migrate_v56_reactivate_is_enabled_parameter(db) -> None:
             if alt == "Base":
                 base_alt_covered[cls_name].add(tuple(byname))
 
-    # ---- Step 3: Base is_enabled="no" backfill for the two reserve ---
-    # classes only.  Mirrors the pre-migration "no entity_alternative
-    # row = inactive" semantic across the active_by_default flip.
+    # ---- Step 3: Base is_enabled="no" backfill for the classes that ---
+    # flip.  Mirrors the pre-migration "no entity_alternative row =
+    # inactive" semantic across the active_by_default flip.
     backfilled_count = 0
     no_value, no_type = yes_no_values[False]
     # An entity that already has a Base is_enabled value is covered too:
@@ -10558,7 +10591,7 @@ def _migrate_v56_reactivate_is_enabled_parameter(db) -> None:
                               f"v56: removed the {cls_name} entity_alternative rows")
         dropped_ea_count += len(ea_rows)
 
-    # ---- Step 5: flip active_by_default on the two reserve classes ---
+    # ---- Step 5: flip active_by_default on the classes off by default ---
     entity_class_table = db.mapped_table("entity_class")
     flipped_classes: list[str] = []
     for cls_name in classes_with_flip:
@@ -10638,7 +10671,7 @@ def _migrate_v56_reactivate_is_enabled_parameter(db) -> None:
         "entity_alternative.active gating); materialised "
         f"{materialised_count} parameter_value(s) from "
         f"{dropped_ea_count} entity_alternative row(s); backfilled "
-        f"Base is_enabled='no' on {backfilled_count} reserve entity "
+        f"Base is_enabled='no' on {backfilled_count} entity "
         "row(s) without a pre-migration Base row; flipped "
         f"active_by_default True on {flipped_classes!r}.  Orphan "
         f"is_active value list dropped: {dropped_is_active_vl}.",

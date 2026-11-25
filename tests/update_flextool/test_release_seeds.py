@@ -238,3 +238,32 @@ def test_a_stochastic_solve_without_a_method_gets_within_solve(release, tmp_path
             ("st", "base"): "within_solve"}
         assert db.get_item("parameter_definition", entity_class_name="solve",
                            name="dispatch_realization_method")["parsed_value"] == "deterministic"
+
+
+#: The shipped schema's ``active_by_default`` (``flextool/schemas/spinedb_schema.json``) of the classes that
+#: spinedb_api's ``is_active`` conversion and v56 touch.
+SHIPPED_ACTIVE_BY_DEFAULT = {"constraint": True, "reserve__upDown__unit__node": True,
+                             "reserve__upDown__connection__node": True, "node": False, "unit": False,
+                             "connection": False}
+
+
+def test_the_classes_end_active_by_default_as_shipped(release) -> None:
+    """One run to the head version ends at the shipped ``active_by_default`` (item 1023: v3.0.0 ended with both
+    reserve classes off)."""
+    with open_database_mapping(url_of(release[83])) as db:
+        assert {c: db.get_item("entity_class", name=c)["active_by_default"]
+                for c in SHIPPED_ACTIVE_BY_DEFAULT} == SHIPPED_ACTIVE_BY_DEFAULT
+
+
+def test_step_by_step_equals_the_one_shot(release, tmp_path) -> None:
+    """Each step in a migration of its own (the file reopened after each) ends where one run does, and at the shipped
+    ``active_by_default`` (item 1023: v3.0.0 step by step ended with ``constraint`` off)."""
+    path = copy_db(release["built"], tmp_path / "db.sqlite")
+    stamp = TRAITS[release["name"]][0]  # read without opening: an open upgrades the v3.0.0 file
+    for version in range(int(stamp or 0) + 1, FLEXTOOL_DB_VERSION + 1):
+        migrate(path, up_to=version)
+    assert version_of(path) == FLEXTOOL_DB_VERSION
+    with open_database_mapping(url_of(path)) as db:
+        assert {c: db.get_item("entity_class", name=c)["active_by_default"]
+                for c in SHIPPED_ACTIVE_BY_DEFAULT} == SHIPPED_ACTIVE_BY_DEFAULT
+    assert diff(snapshot(release[83]), snapshot(path)) == []

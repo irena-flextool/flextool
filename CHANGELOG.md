@@ -85,6 +85,12 @@
   reported under the period label, as the costs already were. The `solve` column of the capacity, cohort capacity, retirement and capacity-margin tables now names the
   investment solve, as for the other settings, instead of the dispatch solve. The model and its solution are
   unchanged.
+- **Upgrading databases from FlexTool 3.0.0-3.5.1: constraints and reserves kept on.** Migrating a database made
+  with FlexTool 3.0.0-3.5.1 could leave `constraint`, `reserve__upDown__unit__node` or
+  `reserve__upDown__connection__node` inactive by default, so the constraints or reserve provisions were off in
+  every scenario. They now end active by default, and each one is on where its `is_active` was `yes`. A database
+  from those versions that was migrated with FlexTool 4.7.0 or earlier is not repaired: check that these three
+  classes are active by default and that your constraints and reserves have the `is_enabled` you expect.
 
 ## Release 4.7.0 (24.11.2026) — stochastic realization: rolling `within_solve` realizes each jump in one solve, `separate_dispatch` realization looks ahead, `deterministic` default; `startup_method` `_fix_in_uc` members; `minimum_time_method` gates min up / down times; outages end carried obligations; rounded carried units online; one branching setting for stochastic investment solves (schema v84)
 
