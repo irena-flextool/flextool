@@ -51,6 +51,11 @@ Each example will either include an example database file that is located in the
 
 - [How to use stochastics (representing uncertainty)](stochastics.md#how-to-use-stochastics-representing-uncertainty)
 
+## [Stochastic examples](stochastic_examples.md)
+
+- [How to compare the realization methods of a stochastic rolling dispatch](stochastic_examples.md#how-to-compare-the-realization-methods-of-a-stochastic-rolling-dispatch)
+- [How to compare stochastic investment choices](stochastic_examples.md#how-to-compare-stochastic-investment-choices)
+
 ## [Emissions and system limits](emissions.md)
 
 - [How to add CO2 emissions, costs and limits](emissions.md#how-to-add-co2-emissions-costs-and-limits)

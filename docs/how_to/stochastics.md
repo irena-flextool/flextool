@@ -60,6 +60,8 @@ So a **dispatch** solve commits its committed part (shared storage / online / re
 
 ## Stochastic period solve (investment or multi-period)
 
+An example that compares `operations_only` with `investments_after_reveal_period`, and an investment solve followed by a dispatch solve, on one small model: [How to compare stochastic investment choices](stochastic_examples.md#how-to-compare-stochastic-investment-choices).
+
 A stochastic period solve is a solve that is not rolling, over one period or several, with `stochastic_branches`. With `invest_periods` or `realized_invest_periods` it is an investment solve, set up with `invest_solve_branching_method` (see "Stochastic investment" below); without them it is a dispatch solve over its periods, set up with `dispatch_realization_method` (the methods are listed under "Stochastic rolling dispatch" and apply to single solves too).
 
 ### Single solve stochastics
@@ -175,6 +177,8 @@ A decision maker who invests once a year, each time knowing the past but not the
 7. Perfect-foresight benchmark: to compare the chain with decisions made knowing the actuals (the value of perfect information, or of the stochastic solution), run a separate scenario without `stochastic_branches`: leave out the alternative that holds `stochastic_branches` and the forecast maps, and include one that gives the actual series as plain (non-stochastic) values. An investment solve does not read `dispatch_realization_method`, so `deterministic` does not make it a benchmark; on the dispatch solves of the chain it reads the `realized: yes` branch only (warning W-0593). The realization dispatch is not such a benchmark: it keeps the stochastic solve's investments and dispatches only the committed period.
 
 ## Stochastic rolling dispatch
+
+An example that runs the same rolling solve with each `dispatch_realization_method`, and with a perfect forecast: [How to compare the realization methods of a stochastic rolling dispatch](stochastic_examples.md#how-to-compare-the-realization-methods-of-a-stochastic-rolling-dispatch).
 
 A rolling solve (`solve_mode` *rolling_window*) with `stochastic_branches` is a dispatch solve: its rolls build no investment (invest in a solve before it), so `invest_solve_branching_method` is refused there. `dispatch_realization_method` sets how its forecasts are solved and realized (the methods are listed below; they apply to single dispatch solves too). Representative periods are refused in a rolling solve.
 

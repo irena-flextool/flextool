@@ -1,3 +1,15 @@
+## Unreleased (4.7.1)
+
+### New features
+
+- **Stochastic examples.** `stochastics.sqlite` has new scenarios, with a new how-to page "Stochastic examples": one
+  small rolling dispatch run with each `dispatch_realization_method` and with a perfect forecast
+  (`rolling_deterministic`, `rolling_within_solve`, `rolling_separate_dispatch`, `rolling_perfect_within_solve`,
+  `rolling_perfect_separate_dispatch`), and one small investment model under uncertain demand that compares
+  `invest_solve_branching_method` `operations_only` with `investments_after_reveal_period` and shows an investment
+  solve followed by a dispatch solve (`invest_operations_only`, `invest_after_reveal_period`,
+  `invest_then_dispatch`). The other scenarios of the database are unchanged.
+
 ## Release 4.7.0 (24.11.2026) — stochastic realization: rolling `within_solve` realizes each jump in one solve, `separate_dispatch` realization looks ahead, `deterministic` default; `startup_method` `_fix_in_uc` members; `minimum_time_method` gates min up / down times; outages end carried obligations; rounded carried units online; one branching setting for stochastic investment solves (schema v84)
 
 Input databases move to data version 84. The FlexTool window, the Spine Toolbox workflow and `flextool-run
