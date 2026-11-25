@@ -98,6 +98,23 @@ def test_recourse_with_another_shared_list_is_undecided() -> None:
     assert [u[0] for u in plan.undecided] == ["v"]
 
 
+def test_recourse_on_a_rolling_solve_is_dropped_and_listed() -> None:
+    # A rolling solve is a dispatch solve: the new setting is refused there, so nothing is written.
+    plan = m.plan_branching_methods(_values(stochastic_invest_method={("v", "base"): "recourse"},
+                                            solve_mode={("v", "base"): "rolling_window"}), ONE)
+    assert plan.writes == () and plan.converted == () and plan.undecided == ()
+    assert "recourse dropped on a dispatch solve" in plan.listed["v"]
+
+
+def test_recourse_winning_on_an_investment_and_a_dispatch_solve_is_undecided() -> None:
+    # S1 = [base]: an investment solve; S2 = [base, R]: R makes it rolling.  recourse wins in both.
+    plan = m.plan_branching_methods(_values(stochastic_invest_method={("v", "base"): "recourse"},
+                                            solve_mode={("v", "R"): "rolling_window"}),
+                                    {"S1": ["base"], "S2": ["base", "R"]})
+    assert plan.writes == () and plan.converted == ()
+    assert [u[0] for u in plan.undecided] == ["v"]
+
+
 def test_none_rows_of_a_recourse_solve_become_operations_only() -> None:
     # base holds none, E recourse: S1 = [base] reads none, S2 = [base, E] reads recourse; each keeps its reading.
     plan = m.plan_branching_methods(

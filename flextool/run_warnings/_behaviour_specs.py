@@ -448,7 +448,9 @@ BEHAVIOUR_TEXTS: dict[str, tuple[str, str, str, str]] = {
          "the forecasts start; investments_at_reveal_period keeps that); investment solves whose storage, units "
          "online and reserve were tied across the branches (shared_operation_periods unset or a list; now each branch "
          "operates on its own from the period where the forecasts start); dispatch solves with "
-         "shared_operation_periods (no longer read: their forecasts are tied over their realized_periods again); and "
+         "shared_operation_periods (no longer read: their forecasts are tied over their realized_periods again); "
+         "dispatch solves (rolling, or without investments) whose stochastic_invest_method recourse the upgrade dropped "
+         "(no investments to branch; their forecasts are now realized as on any dispatch solve); and "
          "investment solves whose dispatch_realization_method separate_dispatch the upgrade removed (refused on an "
          "investment solve; with a realized: yes branch the solve gets a realization dispatch of its own). Results "
          "change."),

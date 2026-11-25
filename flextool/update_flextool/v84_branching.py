@@ -166,7 +166,12 @@ def plan_branching_methods(values, scenarios) -> BranchingPlan:
     (:func:`_v83_read`: a winning null reads as unset); it is *stochastic* when its winning
     ``stochastic_branches`` has a forecast row, and its reveal is the first forecast period (:func:`_v84_reveal`).
 
-    * ``stochastic_invest_method``: each ``recourse`` row becomes ``investments_after_reveal_period`` and each
+    * ``stochastic_invest_method`` where ``recourse`` wins only in scenarios where the solve is a dispatch solve (a
+      rolling solve, or one without investments): nothing is written (the engine refuses the new setting there,
+      and there are no investments to branch) and the solve is listed (its realization changes: before, recourse
+      kept a rolling solve on the earlier realization, or gave a single solve none).  Where ``recourse`` wins both
+      where the solve is an investment solve and where it is a dispatch solve: nothing is written (undecided).
+      Otherwise each ``recourse`` row becomes ``investments_after_reveal_period`` and each
       ``none`` or null row of a solve with a ``recourse`` row ``operations_only``, in its own alternative, so every
       scenario reads what it read.  A solve where ``recourse`` wins in a scenario whose winning
       ``shared_invest_periods`` is not unset, ``[]`` or ``[reveal]`` gets nothing written (undecided).  Listed: a
@@ -203,12 +208,20 @@ def plan_branching_methods(values, scenarios) -> BranchingPlan:
             reveal = _v84_reveal(branches, _v84_period_order(read("period_timeset", solve, alts)[0]))
             states[s] = (mode != "rolling_window" and invest, reveal is not None, reveal)
         rows = {a: v for (e, a), v in table("stochastic_invest_method").items() if e == solve}
-        if any(str(v).strip().lower() == "recourse" for v in rows.values() if v is not None):
+        recourse_wins = [s for s, alts in sorted(scenarios.items())
+                         if str(read("stochastic_invest_method", solve, alts)[0] or "").strip().lower() == "recourse"]
+        dispatch_wins = [s for s in recourse_wins if not states[s][0]]
+        if dispatch_wins and len(dispatch_wins) < len(recourse_wins):
+            undecided.append((solve, "stochastic_invest_method recourse wins where the solve is an investment solve "
+                                     f"and where it is a dispatch solve ({_v83_scenarios_text(dispatch_wins)})"))
+        elif dispatch_wins:
+            add_reason(solve, f"stochastic_invest_method recourse dropped on a dispatch solve "
+                              f"({_v83_scenarios_text(dispatch_wins)}): it has no investments to branch, and its "
+                              "forecasts are now realized as on any dispatch solve")
+        elif any(str(v).strip().lower() == "recourse" for v in rows.values() if v is not None):
             problems, wait_and_see, readings = [], [], []
-            for s, alts in sorted(scenarios.items()):
-                method = read("stochastic_invest_method", solve, alts)[0]
-                if str(method or "").strip().lower() != "recourse":
-                    continue
+            for s in recourse_wins:
+                alts = scenarios[s]
                 shared = read("shared_invest_periods", solve, alts)[0]
                 periods = [str(v) for v in getattr(shared, "values", None) or []]
                 reveal = states[s][2]
