@@ -718,6 +718,16 @@ def _entity_all_capacity(
                 v_divest[e, d_dv] * unitsize[e]
               - v_divested_built[e, d] * unitsize[e]   (the model-built capacity retired so far)
               + v_extended[e, d] * unitsize[e]         (the capacity extended beyond its end of life)
+
+        entity_all_capacity[e, L] = Σ_{b ∈ B(L)} pd_branch_weight[b] · entity_all_capacity[e, b]
+          L a realized investment period (``realized_invest_periods``) that is the label of a stochastic fan whose
+          branch periods B(L) decide investments or retirements (``invest_solve_branching_method`` other than
+          ``operations_only``)
+
+    In such a fan the label decides nothing; the capacity at the label is that of its branches, weighted as the
+    reported investment (``v_invest_fan``) and the costs weight them (:mod:`._fan_labels`).  A realized label is a
+    tied period (the reveal period under ``investments_after_reveal_period``), so this is the capacity of every
+    branch.  An unrealized label keeps its own row: its branches' investments are per branch and not reported.
     """
     # Collect base existing — start from p_entity_all_existing if
     # available; else fall back to a (entity × period) zero frame
@@ -934,6 +944,15 @@ def _entity_all_capacity(
         .select("e", "d", "total")
         .collect()
     )
+    from flextool.process_outputs._fan_labels import at_fan_labels, recourse_branch_labels
+
+    realized = set(flex_data.realized_invest_periods or ())
+    tied = [b for b, label in recourse_branch_labels(flex_data, retirements=True).items() if label in realized]
+    if tied and combined.height > 0:
+        at_label = at_fan_labels(combined.filter(pl.col("d").is_in(tied)), flex_data, "d",
+                                 value="total").rename({"total": "at_label"})
+        combined = (combined.join(at_label, on=["e", "d"], how="full", coalesce=True, maintain_order="left_right")
+                            .select("e", "d", total=pl.coalesce("at_label", "total")))
     if combined.height == 0:
         idx = pd.MultiIndex.from_arrays([[], []], names=["solve", "period"])
         out = pd.DataFrame(index=idx, dtype=float)

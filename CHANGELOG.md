@@ -14,8 +14,8 @@
 
 - **Capacity tables under `investments_after_reveal_period`.** The investment and the retirement of the reveal
   period were missing from the `invested` and `divested` columns of `unit_capacity__d`, `connection_capacity__d`
-  and `node_capacity__d` (`total` was right); they are now reported under the period label, as the costs already
-  were. The `solve` column of the capacity, cohort capacity, retirement and capacity-margin tables now names the
+  and `node_capacity__d`, and in a solve without a realization solve `total` left them out too; they are now
+  reported under the period label, as the costs already were. The `solve` column of the capacity, cohort capacity, retirement and capacity-margin tables now names the
   investment solve, as for the other settings, instead of the dispatch solve. The model and its solution are
   unchanged.
 

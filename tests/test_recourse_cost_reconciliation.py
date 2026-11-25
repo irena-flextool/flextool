@@ -21,6 +21,8 @@ The reported investment lines (investment and replacement: lifetime 1, the
 p2035 plant is replaced in p2040) hold the realized decision only, 80·2000 =
 160 000; the rest of the objective is the per-forecast p2040 investment,
 32 500, which only the ``output_horizon`` dump reports.
+The capacity table reports the same realized decision: peaker in p2035,
+invested 80 MW, total 80 MW.
 """
 from __future__ import annotations
 
@@ -107,3 +109,9 @@ def test_shared_reveal_investment_cost_reconciles_to_objective(
     assert invested == pytest.approx(0.16, rel=1e-6)
     # Operations cost nothing and no demand is short, so the counted total is the realized investment alone.
     assert counted == pytest.approx(invested, rel=1e-6)
+    # The realized p2035 capacity of the peaker: the shared 80 MW, decided on both forecasts' copies of p2035 and
+    # reported under the period label by the investment solve; nothing existing, so the total is 80 too.
+    with open(csv_dir / "unit_capacity__d.csv", encoding="utf-8", newline="") as f:
+        peaker = [row for row in csv.DictReader(f) if row["unit"] == "peaker"]
+    assert [(r["solve"], r["period"], float(r["existing"]), float(r["invested"]), r["divested"], float(r["total"]))
+            for r in peaker] == [("stoch_2p_inv", "p2035", 0.0, 80.0, "", 80.0)]
