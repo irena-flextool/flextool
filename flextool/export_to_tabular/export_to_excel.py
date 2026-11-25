@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib
+import logging
 import math
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -9,7 +11,6 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-import openpyxl.cell._writer as _openpyxl_cell_writer
 from openpyxl import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
@@ -79,32 +80,54 @@ def _write_parameter_sheet(
     return ws
 
 
-_openpyxl_safe_string = _openpyxl_cell_writer.safe_string
+logger = logging.getLogger(__name__)
+
+# Where openpyxl's cell writer looks up its value formatter (private API: looked up at each save, so a future
+# openpyxl that moves it only loses the exact floats, see _exact_floats).
+_OPENPYXL_CELL_WRITER = "openpyxl.cell._writer"
+_OPENPYXL_FORMATTER = "safe_string"
 
 
-def _exact_number_string(value: Any) -> str:
-    """openpyxl's cell-value formatter, but a finite float is written with ``repr`` (shortest exact form).
+def _exact_number_formatter(original: Callable[[Any], str]) -> Callable[[Any], str]:
+    """openpyxl's cell-value formatter *original*, but a finite float is written with ``repr``.
 
     openpyxl writes numbers with ``"%.16g"``, which loses the 17th significant digit (0.1 + 0.2 comes back as
     0.3).  ``repr`` gives the shortest string that reads back to the same float; Excel and LibreOffice read it.
+    LibreOffice itself keeps only 15 significant digits when it saves an xlsx again, so the exact value survives
+    only in a workbook that is not re-saved there.
     """
-    if isinstance(value, float) and math.isfinite(value):
-        return repr(float(value))  # float() also turns a numpy float into a plain one (numpy's repr differs)
-    return _openpyxl_safe_string(value)
+    def exact_number_string(value: Any) -> str:
+        if isinstance(value, float) and math.isfinite(value):
+            return repr(float(value))  # float() also turns a numpy float into a plain one (numpy's repr differs)
+        return original(value)
+    return exact_number_string
 
 
 @contextmanager
 def _exact_floats() -> Iterator[None]:
-    """Write floats exactly while saving: swap the formatter openpyxl's cell writer looks up for each cell."""
-    _openpyxl_cell_writer.safe_string = _exact_number_string
+    """Write floats exactly while saving: swap the formatter openpyxl's cell writer looks up for each cell.
+
+    The formatter in place on entry is put back on exit.  When openpyxl no longer has it where expected, the save
+    goes ahead with openpyxl's own formatting (16 significant digits) and a warning says so.
+    """
+    try:
+        cell_writer = importlib.import_module(_OPENPYXL_CELL_WRITER)
+        original = getattr(cell_writer, _OPENPYXL_FORMATTER)
+    except (ImportError, AttributeError):
+        logger.warning(
+            "openpyxl has no %s.%s: the workbook's numbers are written with 16 significant digits, so a value "
+            "that needs 17 may read back slightly different.", _OPENPYXL_CELL_WRITER, _OPENPYXL_FORMATTER)
+        yield
+        return
+    setattr(cell_writer, _OPENPYXL_FORMATTER, _exact_number_formatter(original))
     try:
         yield
     finally:
-        _openpyxl_cell_writer.safe_string = _openpyxl_safe_string
+        setattr(cell_writer, _OPENPYXL_FORMATTER, original)
 
 
 def _save_workbook(wb: Workbook, path: str | Path) -> None:
-    """Save *wb* with every float written exactly (see :func:`_exact_number_string`)."""
+    """Save *wb* with every float written exactly (see :func:`_exact_number_formatter`)."""
     with _exact_floats():
         wb.save(path)
 

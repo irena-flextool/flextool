@@ -142,6 +142,11 @@ A few practical notes:
     spreadsheet locale to one convention (typically English/US) and the
     column format to plain `Number` for data columns.
 
+!!! note "Number precision"
+    The export writes every number exactly, so a value such as 0.30000000000000004 reads back unchanged.
+    LibreOffice keeps only 15 significant digits when it saves an xlsx file again, so a workbook re-saved in
+    LibreOffice reads back such values rounded to 15 digits.
+
 ## Importing edited data back
 
 ### From the FlexTool GUI

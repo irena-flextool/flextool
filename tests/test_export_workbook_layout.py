@@ -299,15 +299,25 @@ def _columns_with_values(ws, def_row: int) -> set[str]:
             if any(ws.cell(row=r, column=col).value is not None for r in range(def_row + 1, ws.max_row + 1))}
 
 
-def test_omit_empty_columns(examples_db: Path, wb: openpyxl.Workbook, workbook_path: Path, tmp_path: Path) -> None:
-    out = tmp_path / "compact.xlsx"
+@pytest.fixture(scope="module")
+def compact_path(examples_db: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    out = tmp_path_factory.mktemp("compact_xlsx") / "compact.xlsx"
     export_to_excel(f"sqlite:///{examples_db}", str(out), include_advanced=True, omit_empty_columns=True)
+    return out
+
+
+def _definition_row(ws) -> int:
+    """The definition row is the last frozen row (a sheet loses its default row when no kept column has one)."""
+    return int(ws.freeze_panes.lstrip("ABCDEFGHIJ")) - 1
+
+
+def test_omit_empty_columns(compact_path: Path, wb: openpyxl.Workbook, workbook_path: Path) -> None:
+    out = compact_path
     compact = openpyxl.load_workbook(out)
     try:
         for sheet in ("node_c", "unit_c", "node_p", "solve"):
             full_ws, compact_ws = wb[sheet], compact[sheet]
-            # The definition row is the last frozen row (a sheet loses its default row when no kept column has one).
-            full_row, compact_row = (int(w.freeze_panes.lstrip("ABCDEFGHIJ")) - 1 for w in (full_ws, compact_ws))
+            full_row, compact_row = _definition_row(full_ws), _definition_row(compact_ws)
             full_params = _parameter_columns(full_ws, full_row)
             # The compact sheet keeps exactly the columns of the full export that hold a value.
             assert set(_parameter_columns(compact_ws, compact_row)) == _columns_with_values(full_ws, full_row), sheet
@@ -364,3 +374,47 @@ def test_array_parameters_are_labelled_string_array(wb: openpyxl.Workbook) -> No
                 first = str(dv.sqref).split()[0]
                 c0, r0, _c1, _r1 = range_boundaries(first)
                 assert sheet.cell(row=r0 - 1, column=c0).value == "entity existence", (sheet.title, first)
+
+
+def test_omit_empty_columns_keeps_a_sheet_without_values_whole(compact_path: Path, wb: openpyxl.Workbook) -> None:
+    # In templates_examples no commodity has a period-indexed price, so commodity_p has no value at all.  Without
+    # any parameter column the reader would take the sheet for a link sheet, so it keeps all its columns.
+    full_ws = wb["commodity_p"]
+    assert _columns_with_values(full_ws, _definition_row(full_ws)) == set()
+    compact = openpyxl.load_workbook(compact_path)
+    try:
+        compact_ws = compact["commodity_p"]
+        assert (_parameter_columns(compact_ws, _definition_row(compact_ws))
+                == _parameter_columns(full_ws, _definition_row(full_ws)) != {})
+    finally:
+        compact.close()
+
+
+def test_exact_floats_falls_back_when_openpyxl_moves_its_formatter(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A future openpyxl without openpyxl.cell._writer.safe_string: the save goes ahead unpatched, with a warning.
+    import openpyxl.cell._writer as cell_writer
+
+    from flextool.export_to_tabular.export_to_excel import _exact_floats
+    monkeypatch.delattr(cell_writer, "safe_string")
+    with caplog.at_level("WARNING"), _exact_floats():
+        assert not hasattr(cell_writer, "safe_string")
+    assert not hasattr(cell_writer, "safe_string")
+    assert "16 significant digits" in caplog.text
+
+
+def test_exact_floats_restores_the_formatter_in_place_on_entry(monkeypatch: pytest.MonkeyPatch) -> None:
+    import openpyxl.cell._writer as cell_writer
+
+    from flextool.export_to_tabular.export_to_excel import _exact_floats
+
+    def formatter_in_place(value: object) -> str:
+        return str(value)
+
+    monkeypatch.setattr(cell_writer, "safe_string", formatter_in_place)
+    with _exact_floats():
+        assert cell_writer.safe_string is not formatter_in_place
+        assert cell_writer.safe_string(0.1 + 0.2) == "0.30000000000000004"
+        assert cell_writer.safe_string("text") == "text"  # anything else goes to the formatter in place
+    assert cell_writer.safe_string is formatter_in_place
