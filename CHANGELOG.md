@@ -2,6 +2,10 @@
 
 ### Behaviour changes
 
+- **Capacity tables in a chain of solves: existing before retirements.** In a rolling chain of investment solves,
+  the `existing` column of `unit_capacity__d`, `connection_capacity__d` and `node_capacity__d` no longer drops the
+  capacity that an earlier solve retired. It is the existing capacity in service before any retirement in every
+  period, as in a single solve, and the retirement shows as `divested` in its own period. `total` is unchanged.
 - **FlexTool 2 import: minimum load without its own efficiency.** A unit with a `min load` whose `eff at min load` is
   empty or equals `efficiency` lost its minimum load and start-ups; it now gets `min_load`, `startup_method` linear
   and `constant_efficiency` (with `use online` 1, as FlexTool 2). With `use online` 0 a unit no longer gets a
@@ -56,6 +60,11 @@
 
 ### Fixes
 
+- **Capacity tables: retired existing capacity counted twice.** After an investment solve that retires existing
+  capacity, a later solve that dispatches the same periods (a realization solve, or a dispatch solve after an
+  investment solve) reported `existing` with the retirement already subtracted, next to the same retirement in
+  `divested`. For example, a 150 MW plant retired in 2030 showed `existing` 0 and `divested` 150. `existing` is now
+  the capacity before the retirement (150). The model and `total` were right.
 - **Excel import: time-series sheets with a default row.** On a time-series sheet with several parameters
   (`unit_t`, `node_t`, ...), the `default` row under the parameter row was read as one more time step: each column's
   series got an extra step named `index: time` carrying the default value. It is now read as a header row. This

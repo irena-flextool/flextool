@@ -100,7 +100,9 @@ def unit_capacity(par, s, v, r, debug):
     # invested capacity under "existing" in the dispatch solve.  The
     # invested capacity is reported in the ``invested`` column (this
     # solve's / roll's ``v_invest``) and the ``total`` column carries
-    # the cumulative sum; ``existing`` stays at the original baseline.
+    # the cumulative sum; ``existing`` stays at the original baseline,
+    # before retirements (also those of earlier solves): they are the
+    # ``divested`` column of their period.
     existing = par.entity_pre_existing[processes].unstack()
     results['existing'] = existing
 

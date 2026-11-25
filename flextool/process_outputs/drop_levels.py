@@ -95,11 +95,11 @@ _PAR_DROP = [
     # earlier rolls' rows for the same period carry the pre-decision
     # value.  keep='last' picks the post-decision row to match v3.32.0.
     'entity_all_existing',
-    # entity_pre_existing is the static baseline before any invest
-    # decision.  In practice constant across rolls for a given
-    # (entity, period), so either keep choice yields the same value —
-    # moved here for symmetry with entity_all_existing per the
-    # 2026-05-14 investigation into the unit_capacity__d.csv lag.
+    # entity_pre_existing is the static baseline before any investment
+    # or retirement decision (read_parameters), the same in every roll
+    # and solve holding the (entity, period), so either keep choice
+    # yields the same value; kept here for symmetry with
+    # entity_all_existing.
     'entity_pre_existing',
     # entity_user_existing — the user's existing capacity aged over its
     # lifetime, the same in every solve (the fixed cost of existing capacity).

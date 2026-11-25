@@ -228,13 +228,13 @@ def retire_runs(tmp_path_factory):
 def test_reveal_period_retirement_is_reported(retire_runs, scenario):
     """The 50 MW retired in y2030 are reported as divested in y2030 under the investment solve, with nothing in
     service after (total 0); under investments_after_reveal_period the retirement, like the investment, is on the
-    forecasts' copies of y2030 and is reported under the period label.  new_plant is unchanged."""
+    forecasts' copies of y2030 and is reported under the period label.  existing is the plant's 50 MW before the
+    retirement (docs/results.md), also in the realization solve that dispatches y2030 after the retirement:
+    50 − 50 = 0 = total.  new_plant is unchanged."""
     steps, _got, csv = retire_runs[scenario]
     x1 = X1[scenario]
     assert steps["invest_plan"].solution.obj == pytest.approx(
         x1 * K1 + (0.5 * 40 * K2 if scenario == "invest_after_reveal_period" else 0.0), rel=1e-9)
     rows = {r[0]: r for r in _capacity_rows(_csv(csv, "unit_capacity__d.csv"))}
     assert rows["new_plant"] == ("new_plant", "invest_plan", "y2030", 0.0, x1, None, None, x1)
-    unit, solve, period, _existing, invested, in_construction, divested, total = rows["old_plant"]
-    assert (unit, solve, period, invested, in_construction, divested, total) \
-        == ("old_plant", "invest_plan", "y2030", None, None, 50.0, 0.0)
+    assert rows["old_plant"] == ("old_plant", "invest_plan", "y2030", 50.0, None, None, 50.0, 0.0)
