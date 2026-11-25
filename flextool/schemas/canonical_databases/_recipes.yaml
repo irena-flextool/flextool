@@ -23,6 +23,7 @@
 #   howto_aggregate_output.json            (scenario: simple_scenario)
 #   howto_connections.json                 (scenario: network)
 #   howto_demand.json                      (5 scenarios, all unique)
+#   howto_demand_response.json             (6 scenarios, all unique)
 #   howto_hydro_reservoir.json             (4 scenarios, all unique)
 #   howto_hydro_reservoir_with_pump.json   (3 unique + 1 also in tests.json)
 #   howto_non_sync_and_curtailment.json    (3 unique + 1 also in tests.json)

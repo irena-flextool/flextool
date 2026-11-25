@@ -26,6 +26,7 @@ USER_DOCS: tuple[str, ...] = (
     "how_to/index.md",
     "how_to/basics.md",
     "how_to/storage_hydro.md",
+    "how_to/demand_response.md",
     "how_to/thermal_chp.md",
     "how_to/investment.md",
     "how_to/solve_sequences.md",

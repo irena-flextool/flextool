@@ -64,6 +64,7 @@ CANONICAL_DATABASES: tuple[CanonicalDatabase, ...] = (
     CanonicalDatabase("howto_aggregate_output.json", "how to example databases/aggregate_output.sqlite"),
     CanonicalDatabase("howto_connections.json", "how to example databases/connections.sqlite"),
     CanonicalDatabase("howto_demand.json", "how to example databases/Demand.sqlite"),
+    CanonicalDatabase("howto_demand_response.json", "how to example databases/demand_response.sqlite"),
     CanonicalDatabase("howto_hydro_reservoir.json", "how to example databases/hydro_reservoir.sqlite"),
     CanonicalDatabase("howto_hydro_reservoir_with_pump.json", "how to example databases/hydro_reservoir_with_pump.sqlite"),
     CanonicalDatabase("howto_non_sync_and_curtailment.json", "how to example databases/non_sync_and_curtailment.sqlite"),

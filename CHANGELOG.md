@@ -9,6 +9,12 @@
   `invest_solve_branching_method` `operations_only` with `investments_after_reveal_period` and shows an investment
   solve followed by a dispatch solve (`invest_operations_only`, `invest_after_reveal_period`,
   `invest_then_dispatch`). The other scenarios of the database are unchanged.
+- **How-to on demand response** (`docs/how_to/demand_response.md`) with a new example database,
+  `how to example databases/demand_response.sqlite`: price-sensitive demand reduction, a price-elastic demand
+  from stepwise price blocks, demand response available only part of the time (`availability`), load shifting as a
+  small storage, and EV smart charging (a storage that the grid reaches only while the cars are plugged in, with a
+  daily driving need). Each is one scenario of a small two-day model, built from units, storage nodes and
+  connections with existing parameters.
 
 ### Fixes
 
