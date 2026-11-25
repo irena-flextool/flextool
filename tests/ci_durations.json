@@ -255,6 +255,7 @@
  "tests/engine/test_input_share_min.py": 56.9,
  "tests/engine/test_instant_flow_support.py": 0.0,
  "tests/engine/test_intraperiod_blocks.py": 121.3,
+ "tests/engine/test_invest_branching_rp.py": 10.1,
  "tests/engine/test_invest_dispatch_handoff.py": 16.3,
  "tests/engine/test_invest_na_window.py": 14.3,
  "tests/engine/test_invest_solve_branching.py": 20.0,
