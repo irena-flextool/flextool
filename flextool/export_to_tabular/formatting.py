@@ -7,7 +7,11 @@ default colour theme shipped with openpyxl workbooks.
 
 from __future__ import annotations
 
-from openpyxl.styles import Font, PatternFill
+from collections.abc import Collection
+
+from openpyxl.comments import Comment
+from openpyxl.formatting.rule import CellIsRule
+from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.styles.colors import Color
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
@@ -72,6 +76,19 @@ FILL_PARAM_LABEL = PatternFill(
 FILL_PARAM_DATA = PatternFill(
     patternType="solid", fgColor=Color(theme=0, tint=-0.0499893185216834)
 )
+
+# Every other parameter column in the data rows (next to FILL_PARAM_DATA, F2F2F2).
+# Conditional-format fills take the colour from bgColor in Excel and fgColor in
+# LibreOffice, so both are set.
+FILL_PARAM_DATA_ALT = PatternFill(patternType="solid", fgColor="E4E9F1", bgColor="E4E9F1")
+# Every other data column of a transposed (time series, array, stochastic) sheet; the others stay white.
+FILL_DATA_ALT_TRANSPOSED = PatternFill(patternType="solid", fgColor="EEF1F6", bgColor="EEF1F6")
+
+# Description row: pale yellow (the colour of notes), apart from the grey data-type row.
+FILL_DESCRIPTION = PatternFill(patternType="solid", fgColor="FFF2CC")
+FILL_DESCRIPTION_LABEL = PatternFill(patternType="solid", fgColor="FFE699")
+DESCRIPTION_ROW_HEIGHT = 60  # points: four lines of Calibri 11
+ALIGN_DESCRIPTION = Alignment(wrap_text=True, vertical="top")
 
 # Index dimension columns (period, time, constraint) — light green
 FILL_INDEX_HEADER = PatternFill(
@@ -317,6 +334,11 @@ def format_constant_sheet_v2(
     max_row = ws.max_row
     max_col = last_data_col if last_data_col > 0 else ws.max_column
 
+    # The description row (labelled ``description`` in the definition column) wraps to four lines.
+    description_rows = {r for r in range(1, def_row) if ws.cell(row=r, column=def_col).value == "description"}
+    for r in description_rows:
+        ws.row_dimensions[r].height = DESCRIPTION_ROW_HEIGHT
+
     for col in range(1, max_col + 1):
         is_index = col in index_cols
 
@@ -328,12 +350,15 @@ def format_constant_sheet_v2(
             cell = ws.cell(row=meta_row, column=col)
             if col == 1 and meta_row == 1:
                 continue  # navigate link
+            is_description = meta_row in description_rows
             if col == def_col and cell.value is not None:
-                cell.fill = FILL_DESC_ROW
+                cell.fill = FILL_DESCRIPTION_LABEL if is_description else FILL_DESC_ROW
                 cell.font = FONT_DESC_ROW
             elif col > def_col and cell.value is not None:
-                cell.fill = FILL_DESC_DATA
+                cell.fill = FILL_DESCRIPTION if is_description else FILL_DESC_DATA
                 cell.font = FONT_DESC_DATA
+                if is_description:
+                    cell.alignment = ALIGN_DESCRIPTION
 
         # --- Definition row: def_row ---
         cell_def = ws.cell(row=def_row, column=col)
@@ -352,8 +377,6 @@ def format_constant_sheet_v2(
     # Conditional formatting paints a 100-row buffer past the actual data.
     data_start = def_row + 1
     if max_row >= data_start:
-        from openpyxl.formatting.rule import CellIsRule
-
         _always = ['"§§§NEVER§§§"']
         data_range_end = max_row + 100
 
@@ -371,7 +394,8 @@ def format_constant_sheet_v2(
             elif col < def_col:
                 fill = FILL_ENTITY_DATA
             elif col > def_col:
-                fill = FILL_PARAM_DATA
+                # Every other column right of the definition column gets the second shade.
+                fill = FILL_PARAM_DATA if (col - def_col) % 2 == 1 else FILL_PARAM_DATA_ALT
             else:
                 continue
 
@@ -480,64 +504,199 @@ def format_link_sheet_v2(ws: Worksheet) -> None:
             ws.cell(row=row, column=col).fill = FILL_ENTITY_DATA
 
 
-def auto_column_width(
+def auto_column_width(ws: Worksheet, min_width: float = 22, max_width: float = 40) -> None:
+    """Size every column to its longest value, between *min_width* and *max_width*.
+
+    Used by the navigate sheet and the v1 writers; the v2 sheets use :func:`fit_column_widths`.
+    """
+    for col_idx in range(1, (ws.max_column or 0) + 1):
+        longest = min_width
+        for row_idx in range(1, min((ws.max_row or 0) + 1, 200)):
+            value = ws.cell(row=row_idx, column=col_idx).value
+            if value is not None:
+                longest = max(longest, len(str(value)) + 1)
+        ws.column_dimensions[get_column_letter(col_idx)].width = min(longest, max_width)
+
+
+# Width bounds (in characters of Calibri 11) per column role, see fit_column_widths.
+WIDTH_BOUNDS: dict[str, tuple[float, float]] = {
+    "key": (8, 32),          # alternative, entity, dimension, filter and index columns
+    "definition": (10, 16),  # the definition column (description / data type / parameter labels)
+    "data": (8, 30),         # parameter columns and the data columns of transposed sheets
+    "scenario": (10, 32),    # scenario sheet columns
+}
+_WIDTH_PADDING = 2
+# Excel's General number format shows at most 11 characters.
+_NUMBER_DISPLAY_CHARS = 11
+
+
+def _display_len(value: object) -> int:
+    """Characters a value needs on screen; 0 for texts meant to run over into the next cells."""
+    if value is None:
+        return 0
+    if isinstance(value, bool):
+        return 5
+    if isinstance(value, (int, float)):
+        return min(len(repr(value)), _NUMBER_DISPLAY_CHARS)
+    text = str(value)
+    lowered = text.lower()
+    # INFO rows and single-parameter ``parameter: x | data type: y | ...`` triplets are long reader labels.
+    if lowered.startswith("info:") or lowered.startswith("parameter:"):
+        return 0
+    return max(len(line) for line in text.split("\n"))
+
+
+def fit_column_widths(
     ws: Worksheet,
-    min_param_width: float = 10,
-    non_param_width: float = 22,
-    def_col_width: float = 11,
-    index_col_width: float = 12,
-    max_width: float = 40,
-    header_row: int = 0,
-    def_col: int = 0,
-    index_cols: set[int] | None = None,
-    last_data_col: int = 0,
+    columns: dict[int, tuple[str, int]],
+    skip_rows: Collection[int] = (),
+    skip_cells: Collection[tuple[int, int]] = (),
 ) -> None:
-    """Size columns based on their role and header content.
+    """Size columns to their content: ``clamp(longest + 2, lo, hi)`` with the bounds of the column's role.
 
     Args:
-        min_param_width: Minimum width for parameter columns (right of def_col).
-        non_param_width: Width for structural columns (alternative, entity).
-        def_col_width: Width for the definition column.
-        index_col_width: Width for index columns (period, time, constraint).
-        max_width: Maximum column width cap.
-        header_row: Row containing parameter names for sizing.  When 0,
-            scan all rows (for navigate, scenario, etc.).
-        def_col: 1-based column of the definition column (the boundary).
-            When 0, all columns use content-based sizing.
-        index_cols: 1-based column numbers that are index dimensions.
-        last_data_col: Last column of the data area (1-based).  Columns
-            beyond this are not sized (e.g. convenience/reference sections
-            set their own widths).  When 0, size all columns.
+        columns: 1-based column -> (role in WIDTH_BOUNDS, first row whose cells count).
+        skip_rows: Rows that never count (description and data-type rows).
+        skip_cells: (row, column) cells that never count (reader labels such as ``filter: {...}``).
     """
-    if index_cols is None:
-        index_cols = set()
+    skip_rows = set(skip_rows)
+    skip_cells = set(skip_cells)
+    longest: dict[int, int] = dict.fromkeys(columns, 0)
+    # ``_cells`` holds only the written cells (ws.cell would create the empty ones).
+    for (row, col), cell in ws._cells.items():
+        spec = columns.get(col)
+        if spec is None or row < spec[1] or row in skip_rows or (row, col) in skip_cells:
+            continue
+        longest[col] = max(longest[col], _display_len(cell.value))
+    for col, (role, _first_row) in columns.items():
+        lo, hi = WIDTH_BOUNDS[role]
+        ws.column_dimensions[get_column_letter(col)].width = max(lo, min(hi, longest[col] + _WIDTH_PADDING))
 
-    end_col = last_data_col if last_data_col > 0 else (ws.max_column or 0)
-    for col_idx in range(1, end_col + 1):
-        if def_col > 0 and col_idx in index_cols:
-            width = index_col_width
-        elif def_col > 0 and col_idx < def_col:
-            width = non_param_width
-        elif def_col > 0 and col_idx == def_col:
-            width = def_col_width
-        elif def_col > 0 and header_row > 0:
-            # Parameter column — size to header row text
-            header_val = ws.cell(row=header_row, column=col_idx).value
-            if header_val is not None:
-                header_len = len(str(header_val)) + 1
-            else:
-                header_len = 0
-            width = max(min_param_width, min(header_len, max_width))
-        else:
-            # No def_col (navigate, scenario, etc.) — scan all rows
-            longest = non_param_width
-            for row_idx in range(1, min((ws.max_row or 0) + 1, 200)):
-                value = ws.cell(row=row_idx, column=col_idx).value
-                if value is not None:
-                    length = len(str(value)) + 1
-                    if length > longest:
-                        longest = length
-            width = min(longest, max_width)
 
-        col_letter = get_column_letter(col_idx)
-        ws.column_dimensions[col_letter].width = width
+def freeze_panes_at(ws: Worksheet, first_scrolling_row: int, first_scrolling_col: int) -> None:
+    """Freeze the rows above *first_scrolling_row* and the columns left of *first_scrolling_col*."""
+    ws.freeze_panes = f"{get_column_letter(first_scrolling_col)}{first_scrolling_row}"
+
+
+def shade_alternate_columns(
+    ws: Worksheet, first_col: int, last_col: int, first_row: int, last_row: int, fill: PatternFill,
+) -> None:
+    """Paint *fill* on every other column from ``first_col + 1``, rows *first_row*..*last_row*.
+
+    Conditional formatting, so no cells are created (the reader's row count stays the data's).
+    """
+    for col in range(first_col + 1, last_col + 1, 2):
+        letter = get_column_letter(col)
+        ws.conditional_formatting.add(
+            f"{letter}{first_row}:{letter}{last_row}",
+            CellIsRule(operator="notEqual", formula=['"§§§NEVER§§§"'], fill=fill),
+        )
+
+
+_NOTE_WIDTH_PX = 420
+_NOTE_CHARS_PER_LINE = 62
+_NOTE_LINE_PX = 18
+
+
+def add_description_note(ws: Worksheet, row: int, col: int, name: str, description: str) -> None:
+    """Attach a note (comment) with the parameter name and its full description, sized to the text."""
+    text = f"{name}\n\n{description}"
+    lines = sum(max(1, -(-len(part) // _NOTE_CHARS_PER_LINE)) for part in text.split("\n"))
+    height = max(40, min(520, _NOTE_LINE_PX * lines + 12))
+    ws.cell(row=row, column=col).comment = Comment(text, "FlexTool", height=height, width=_NOTE_WIDTH_PX)
+
+
+def outline_column_groups(ws: Worksheet, spans: list[tuple[int, int, bool]]) -> None:
+    """Put each (first column, last column, collapsed) span in an outline group of level 1.
+
+    Each column is set on its own: openpyxl's ``column_dimensions.group`` writes one ``<col>`` element with one
+    width for the whole span.  The +/- sits on the column left of each group (``summaryRight=False``), which
+    carries ``collapsed`` when the group starts collapsed.
+    """
+    if not spans:
+        return
+    for first, last, collapsed in spans:
+        for col in range(first, last + 1):
+            dim = ws.column_dimensions[get_column_letter(col)]
+            dim.outline_level = 1
+            dim.hidden = collapsed
+        if collapsed:
+            ws.column_dimensions[get_column_letter(first - 1)].collapsed = True
+    ws.sheet_properties.outlinePr.summaryRight = False
+    # openpyxl writes <sheetFormatPr> before it computes the deepest outline level, so on a first save
+    # outlineLevelCol would be left out and Excel would give the outline bar no room.
+    ws.column_dimensions.max_outline = 1
+
+
+def group_header_fill(color_hex: str) -> PatternFill:
+    """A light tint of a parameter group's colour for the parameter-name cell."""
+    r, g, b = (int(color_hex[i:i + 2], 16) for i in (0, 2, 4))
+    tint = "".join(f"{int(c + (255 - c) * 0.55):02X}" for c in (r, g, b))
+    return PatternFill(patternType="solid", fgColor=tint)
+
+
+def _cell_text(ws: Worksheet, row: int, col: int) -> str:
+    """The text of a written cell, without creating the cell when it is empty."""
+    cell = ws._cells.get((row, col))
+    return "" if cell is None or cell.value is None else str(cell.value)
+
+
+def finish_standard_sheet(
+    ws: Worksheet,
+    *,
+    def_row: int,
+    def_col: int,
+    last_data_col: int,
+    notes: dict[int, tuple[str, str]],
+    label_only_cols: set[int] | None = None,
+) -> None:
+    """Widths, freeze panes and description notes of a standard (constant / periodic / ladder) v2 sheet.
+
+    The metadata rows and the key columns left of the definition column stay frozen; the definition column
+    scrolls.  *label_only_cols* are key columns whose definition-row label is reader metadata (the multi-dim
+    ``entity: (...)`` label, ``filter: {...}``) and does not size the column.
+    """
+    first_counted = def_row - 1 if _cell_text(ws, def_row - 1, def_col) == "default" else def_row
+    columns: dict[int, tuple[str, int]] = {c: ("key", first_counted) for c in range(1, def_col)}
+    columns[def_col] = ("definition", 1)
+    for c in range(def_col + 1, last_data_col + 1):
+        columns[c] = ("data", first_counted)
+    fit_column_widths(ws, columns, skip_cells={(def_row, c) for c in (label_only_cols or ())})
+    freeze_panes_at(ws, def_row + 1, def_col)
+    for col, (name, desc) in notes.items():
+        add_description_note(ws, def_row, col, name, desc)
+
+
+def finish_transposed_sheet(
+    ws: Worksheet,
+    *,
+    n_header_rows: int,
+    def_col: int,
+    last_data_col: int,
+    skip_rows: set[int],
+    notes: dict[tuple[int, int], tuple[str, str]],
+) -> None:
+    """Widths, freeze panes, alternating shading and notes of a transposed (time series / array / stochastic) sheet.
+
+    The header rows and the columns up to the definition column (which labels the header rows) stay frozen.
+    *skip_rows* (data-type and description rows) do not size the columns.
+    """
+    columns: dict[int, tuple[str, int]] = {c: ("key", 1) for c in range(1, def_col)}
+    columns[def_col] = ("definition", 1)
+    for c in range(def_col + 1, last_data_col + 1):
+        columns[c] = ("data", 1)
+    fit_column_widths(ws, columns, skip_rows=skip_rows)
+    freeze_panes_at(ws, n_header_rows + 1, def_col + 1)
+    shade_alternate_columns(ws, def_col + 1, last_data_col, n_header_rows + 1,
+                            max(ws.max_row, n_header_rows + 1) + 100, FILL_DATA_ALT_TRANSPOSED)
+    for (row, col), (name, desc) in notes.items():
+        add_description_note(ws, row, col, name, desc)
+
+
+def finish_link_sheet(ws: Worksheet, n_dims: int) -> None:
+    """Widths and freeze panes of a link sheet: row 2 is the header; column A holds only reader labels."""
+    columns: dict[int, tuple[str, int]] = {1: ("key", 1)}
+    for c in range(2, 2 + n_dims):
+        columns[c] = ("key", 2)
+    fit_column_widths(ws, columns, skip_cells={(2, 1)})
+    freeze_panes_at(ws, 3, 1)

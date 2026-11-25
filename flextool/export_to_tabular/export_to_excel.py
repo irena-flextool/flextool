@@ -98,10 +98,6 @@ def export_to_excel(
 
     # 2b. Load data type overrides and width settings
     _ew._data_type_overrides = settings.get("data_type_overrides", {})
-    _ew._min_param_width = settings.get("minimum_parameter_column_width", 10)
-    _ew._non_param_width = settings.get("width_non_parameter_columns", 22)
-    _ew._def_col_width = settings.get("definition_column_width", 11)
-    _ew._index_col_width = settings.get("index_column_width", 12)
     _ew._period_only_params = settings.get("period_only_params", {})
     _ew._stochastic_index_names = settings.get("stochastic_index_names",
                                                 ["forecast", "branch_time", "time", "is_realized"])

@@ -9,12 +9,6 @@ entity_alternative_classes:
 pre_entity_alternative_params:
   node: ["node_type"]
 
-# Column width settings (unit ≈ width of character '0' in Calibri 11, ~7px).
-minimum_parameter_column_width: 10
-width_non_parameter_columns: 22
-definition_column_width: 11
-index_column_width: 12
-
 # Default index column names per layout type (replaces 'x' from the DB).
 index_name_defaults:
   periodic: "period"

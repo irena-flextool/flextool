@@ -29,6 +29,11 @@ from flextool.export_to_tabular.formatting import (
     format_periodic_sheet_v2,
     format_timeseries_sheet,
     format_timeseries_sheet_v2,
+    finish_link_sheet,
+    finish_standard_sheet,
+    finish_transposed_sheet,
+    fit_column_widths,
+    freeze_panes_at,
     FILL_DEF_COL,
     FILL_ENTITY_HEADER,
     FILL_INDEX_DATA,
@@ -977,12 +982,10 @@ def write_nested_periodic_sheet_v2(
         last_data_col_nested, def_row=def_row,
     )
     add_navigate_link(ws)
-    auto_column_width(ws, min_param_width=_min_param_width,
-                      non_param_width=_non_param_width,
-                      def_col_width=_def_col_width,
-                      index_col_width=_index_col_width,
-                      header_row=def_row, def_col=def_col,
-                      index_cols=index_col_positions)
+    finish_standard_sheet(
+        ws, def_row=def_row, def_col=def_col, last_data_col=last_data_col_nested,
+        notes=_param_notes(spec, db_contents, {def_col + 1 + i: p for i, p in enumerate(nested_params)}),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1196,7 +1199,11 @@ def write_scenario_sheet(
                 cell.font = font_dark
 
     add_navigate_link(ws)
-    auto_column_width(ws)
+    columns: dict[int, tuple[str, int]] = {1: ("key", 1)}
+    for col_idx in range(2, len(scenarios) + 2):
+        columns[col_idx] = ("scenario", 2)
+    fit_column_widths(ws, columns)
+    freeze_panes_at(ws, 3, 2)
 
 
 # ---------------------------------------------------------------------------
@@ -1354,7 +1361,10 @@ def write_array_transposed_sheet_v2(
     )
 
     add_navigate_link(ws)  # always A1
-    auto_column_width(ws)
+    finish_transposed_sheet(
+        ws, n_header_rows=n_header_rows, def_col=2, last_data_col=arr_last_data_col, skip_rows=set(),
+        notes={(r, 2): (pname, desc) for r, t in row_types.items() if t == "param_info"} if desc else {},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1585,12 +1595,10 @@ def write_stochastic_sheet_v2(
     )
 
     add_navigate_link(ws)
-    auto_column_width(ws, min_param_width=_min_param_width,
-                      non_param_width=_non_param_width,
-                      def_col_width=_def_col_width,
-                      index_col_width=_index_col_width,
-                      header_row=n_header_rows, def_col=def_col,
-                      last_data_col=last_data_col)
+    finish_transposed_sheet(
+        ws, n_header_rows=n_header_rows, def_col=def_col, last_data_col=last_data_col, skip_rows=set(),
+        notes={(1, def_col): (pname, desc)} if desc else {},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1871,15 +1879,12 @@ def write_ladder_sheet_v2(
         last_data_col, def_row=def_row,
     )
     add_navigate_link(ws)
-    auto_column_width(
-        ws,
-        min_param_width=_min_param_width,
-        non_param_width=_non_param_width,
-        def_col_width=_def_col_width,
-        index_col_width=_index_col_width,
-        header_row=def_row, def_col=def_col,
-        index_cols=index_col_positions,
-        last_data_col=last_data_col,
+    ladder_desc = _get_param_description(pname, spec.entity_classes, db_contents)
+    finish_standard_sheet(
+        ws, def_row=def_row, def_col=def_col, last_data_col=last_data_col,
+        notes={def_col + 1 + i: (f"{pname}: {facet}", ladder_desc) for i, facet in enumerate(facet_columns)}
+        if ladder_desc else {},
+        label_only_cols={2} if n_dims > 1 else set(),
     )
 
 
@@ -2061,10 +2066,18 @@ def _write_navigate_flat(
 # Data type overrides from settings, set by export_to_excel before writing.
 # Maps (layout, param_name) -> override string.
 _data_type_overrides: dict[str, dict[str, str]] = {}
-_min_param_width: float = 10
-_non_param_width: float = 22
-_def_col_width: float = 11
-_index_col_width: float = 12
+
+
+def _param_notes(
+    spec: SheetSpec, db_contents: DatabaseContents, col_to_param: dict[int, str],
+) -> dict[int, tuple[str, str]]:
+    """Column -> (parameter name, description) for the parameters that have a description."""
+    notes: dict[int, tuple[str, str]] = {}
+    for col, pname in col_to_param.items():
+        desc = spec.descriptions.get(pname) or _get_param_description(pname, spec.entity_classes, db_contents)
+        if desc:
+            notes[col] = (pname, desc)
+    return notes
 
 
 def _get_param_data_type(
@@ -2445,6 +2458,7 @@ def _write_param_reference(
     ws.cell(row=conv_row, column=ref_col + 2).fill = FILL_PARAM_HEADER
 
     max_name_len = len("Parameter")
+    max_dtype_len = len("Data type")
     for i, pdef in enumerate(pdefs):
         row = conv_row + 1 + i
         name = pdef["name"]
@@ -2453,6 +2467,7 @@ def _write_param_reference(
             max_name_len = len(name)
         dtype = _get_param_data_type(name, spec.entity_classes, db_contents, layout=layout)
         ws.cell(row=row, column=ref_col + 1, value=dtype)
+        max_dtype_len = max(max_dtype_len, len(dtype))
         desc = pdef.get("description")
         if desc:
             ws.cell(row=row, column=ref_col + 2, value=desc)
@@ -2461,9 +2476,7 @@ def _write_param_reference(
     from openpyxl.utils import get_column_letter
     col_letter = get_column_letter(ref_col)
     ws.column_dimensions[col_letter].width = max_name_len + 2
-    # Data type column: 50% wider than param name column
-    dt_col_letter = get_column_letter(ref_col + 1)
-    ws.column_dimensions[dt_col_letter].width = int((max_name_len + 2) * 1.5)
+    ws.column_dimensions[get_column_letter(ref_col + 1)].width = max_dtype_len + 2
 
 
 def _lock_metadata_cells(
@@ -2728,13 +2741,14 @@ def write_constant_sheet_v2(
         dv_filter.sqref = f"{cl}{data_start_row}:{cl}{last_row}"
         ws.add_data_validation(dv_filter)
 
-    auto_column_width(ws, min_param_width=_min_param_width,
-                      non_param_width=_non_param_width,
-                      def_col_width=_def_col_width,
-                      index_col_width=_index_col_width,
-                      header_row=def_row, def_col=def_col,
-                      index_cols=index_col_positions,
-                      last_data_col=last_data_col)
+    label_only_cols = {2} if n_dims > 1 else set()
+    if filter_col_pos is not None:
+        label_only_cols.add(filter_col_pos)
+    finish_standard_sheet(
+        ws, def_row=def_row, def_col=def_col, last_data_col=last_data_col,
+        notes=_param_notes(spec, db_contents, {c: p for p, c in param_col_map.items()}),
+        label_only_cols=label_only_cols,
+    )
 
     # --- Lock metadata ---
     _lock_metadata_cells(
@@ -3232,13 +3246,15 @@ def write_periodic_sheet_v2(
         last_data_col, def_row=def_row,
     )
     add_navigate_link(ws)
-    auto_column_width(ws, min_param_width=_min_param_width,
-                      non_param_width=_non_param_width,
-                      def_col_width=_def_col_width,
-                      index_col_width=_index_col_width,
-                      header_row=def_row, def_col=def_col,
-                      index_cols={index_col_pos},
-                      last_data_col=last_data_col)
+    label_only_cols = {2} if n_dims > 1 else set()
+    if filter_label:
+        label_only_cols.add(index_col_pos - 1)
+    finish_standard_sheet(
+        ws, def_row=def_row, def_col=def_col, last_data_col=last_data_col,
+        notes=_param_notes(spec, db_contents,
+                           {def_col + 1 + i: p for i, p in enumerate(spec.parameter_names)}),
+        label_only_cols=label_only_cols,
+    )
 
     # --- Lock metadata ---
     _lock_metadata_cells(
@@ -3492,12 +3508,27 @@ def write_timeseries_sheet_v2(
         CellIsRule(operator="notEqual", formula=['"§§§NEVER§§§"'], fill=FILL_DEF_COL),
     )
 
-    auto_column_width(ws, min_param_width=_min_param_width,
-                      non_param_width=_non_param_width,
-                      def_col_width=_def_col_width,
-                      index_col_width=_index_col_width,
-                      header_row=n_header_rows, def_col=3,
-                      last_data_col=last_data_col)
+    if single_param:
+        ts_notes = {}
+        for r, rtype in row_types.items():
+            if rtype == "param_info":
+                pname0 = spec.parameter_names[0]
+                desc0 = _get_param_description(pname0, spec.entity_classes, db_contents)
+                if desc0:
+                    ts_notes[(r, 2)] = (pname0, desc0)
+    else:
+        first_col_of: dict[str, int] = {}
+        for col_idx, (_ec, _bn, pname, _alt, _m) in enumerate(columns, start=3):
+            first_col_of.setdefault(pname, col_idx)
+        ts_notes = {
+            (param_row_num, col): note
+            for col, note in _param_notes(spec, db_contents, {c: p for p, c in first_col_of.items()}).items()
+        }
+    finish_transposed_sheet(
+        ws, n_header_rows=n_header_rows, def_col=2, last_data_col=last_data_col,
+        skip_rows={r for r, t in row_types.items() if t in ("data type", "description")},
+        notes=ts_notes,
+    )
 
     _lock_metadata_cells(
         ws, meta_rows=n_header_rows, meta_cols=2,
@@ -3536,9 +3567,7 @@ def write_link_sheet_v2(
     if not entity_class:
         format_link_sheet_v2(ws)
         add_navigate_link(ws)
-        auto_column_width(ws, non_param_width=_non_param_width,
-                      def_col_width=_def_col_width,
-                      index_col_width=_index_col_width)
+        finish_link_sheet(ws, len(spec.entity_columns))
         return
 
     # Collect and sort entity rows
@@ -3556,9 +3585,7 @@ def write_link_sheet_v2(
 
     format_link_sheet_v2(ws)
     add_navigate_link(ws)
-    auto_column_width(ws, non_param_width=_non_param_width,
-                      def_col_width=_def_col_width,
-                      index_col_width=_index_col_width)
+    finish_link_sheet(ws, len(spec.entity_columns))
 
     # --- Lock metadata ---
     _lock_metadata_cells(

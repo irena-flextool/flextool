@@ -520,6 +520,7 @@
  "tests/test_env_check.py": 4.5,
  "tests/test_env_knob_registry.py": 5.1,
  "tests/test_export_to_tabular.py": 20.5,
+ "tests/test_export_workbook_layout.py": 9.0,
  "tests/test_extend_tests_fixture.py": 4.0,
  "tests/test_flowgroup_indicators.py": 0.1,
  "tests/test_force_include.py": 0.0,
