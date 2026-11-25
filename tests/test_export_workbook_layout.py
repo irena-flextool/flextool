@@ -328,3 +328,20 @@ def test_floats_survive_the_workbook_exactly(tmp_path: Path) -> None:
               for sheet in read_self_describing_excel(str(out)) if sheet.sheet_name == "unit_c"
               for rec in sheet.records if rec.get("param_name") in ("existing", "efficiency")}
     assert values == {"existing": exact, "efficiency": third}
+
+
+def test_array_parameters_are_labelled_string_array(wb: openpyxl.Workbook) -> None:
+    # solve.contains_solves and model.solves are Arrays of solve names (schema type list: array only).
+    ws = wb["solve"]
+    def_row = int(ws.freeze_panes.lstrip("ABCDEFGHIJ")) - 1
+    def_col = _column_of(ws, def_row, "parameter")
+    type_row = next(r for r in range(1, def_row) if ws.cell(row=r, column=def_col).value == "data type")
+    assert ws.cell(row=type_row, column=_column_of(ws, def_row, "contains_solves")).value == "string (array)"
+    assert "data type: string (array)" in wb["model_solve_sequence"]["B2"].value
+    # No sheet offers a TRUE / FALSE dropdown on an array column.
+    for sheet in wb.worksheets:
+        for dv in sheet.data_validations.dataValidation:
+            if "TRUE" in (dv.formula1 or ""):
+                first = str(dv.sqref).split()[0]
+                c0, r0, _c1, _r1 = range_boundaries(first)
+                assert sheet.cell(row=r0 - 1, column=c0).value == "entity existence", (sheet.title, first)

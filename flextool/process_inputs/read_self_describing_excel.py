@@ -505,7 +505,8 @@ def parse_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
                 dt = _cell_value(ws, r, c)
                 # NOTE: ``.lower()`` is defensive — the exporter already
                 # emits all data-type labels lowercase ("float", "string",
-                # "boolean (array)", "string (array)", "*-1d-map", ...).
+                # "string (array)", "*-1d-map", ...; "boolean (array)" in
+                # workbooks from FlexTool 4.7.0 and earlier).
                 # Kept in case a hand-edited sheet uses mixed case so the
                 # downstream dtype dispatch (``_convert_value``) keeps
                 # matching its lowercase ``elif`` branches.
@@ -1220,7 +1221,8 @@ def _extract_transposed(ws: Worksheet, meta: SheetMetadata) -> SheetData:
 
     # On single-param transposed sheets (timeseries, array-transposed)
     # the parameter triplet in row 1 / col B carries the canonical data
-    # type — e.g. ``"parameter: solves | data type: boolean (array)"``.
+    # type — e.g. ``"parameter: solves | data type: string (array)"``
+    # (``boolean (array)`` in workbooks from FlexTool 4.7.0 and earlier).
     # We extract it once and attach it to every emitted record so the
     # writer can decide whether to reconstruct an ``Array`` or a ``Map``.
     triplet_dtype: str | None = None
@@ -1292,8 +1294,8 @@ def _parse_strict_bool(
     """Strict TRUE / FALSE parse, case-insensitive, mirroring the exporter.
 
     The exporter only ever writes the literal strings ``"TRUE"`` / ``"FALSE"``
-    for entity-existence and boolean-array cells (excel_writer.py:2272 and
-    :2773 — the dropdown validation also enforces those exact tokens).  A
+    for entity-existence cells (the dropdown validation also enforces those
+    exact tokens).  A
     cell holding anything else (``"yes"``, ``"1"``, ``"Y"``, a typo) is a
     data error: raise so the user sees the offending sheet / cell rather
     than silently importing ``False``.

@@ -1204,7 +1204,7 @@ def write_array_transposed_sheet_v2(
     combinations, rows are array index positions.
 
     Layout:
-        Row 1: navigate | parameter: solves | data type: boolean (array) | description: ...
+        Row 1: navigate | parameter: solves | data type: string (array) | description: ...
         Row 2: INFO: ... (optional, from _info_rows setting)
         Row N:          | entity: model | flexTool  | flexTool  | ...
         Row N+1:        | alternative   | init      | 5weeks    | ...
@@ -2101,6 +2101,20 @@ def _param_notes(
     return notes
 
 
+def _is_pure_array(types: set[str]) -> bool:
+    """Whether a parameter type list allows an Array and no float or Map."""
+    return "array" in types and not (types & {"float", "1d_map", "2d_map", "3d_map", "4d_map"})
+
+
+def is_pure_array_param(param_name: str, entity_classes: list[str], db_contents: DatabaseContents) -> bool:
+    """Whether the parameter is an Array-only parameter (it gets the transposed array sheet)."""
+    for entity_class in entity_classes:
+        for pdef in db_contents.parameter_definitions.get(entity_class, []):
+            if pdef["name"] == param_name:
+                return _is_pure_array(set(pdef.get("parameter_type_list") or ()))
+    return False
+
+
 def _get_param_data_type(
     param_name: str,
     entity_classes: list[str],
@@ -2113,7 +2127,7 @@ def _get_param_data_type(
     interpret values correctly.
 
     Returns labels like:
-        "float", "string", "boolean (array)",
+        "float", "string", "string (array)",
         "float (1d-map)", "string (1d-map)", "string/float (1d-map)"
     """
     # Check overrides first (e.g. nested_periodic convention for 2d-maps)
@@ -2129,9 +2143,10 @@ def _get_param_data_type(
                     return "float"
                 types = set(type_list)
 
-                # Pure array parameters — entered as boolean values
-                if "array" in types and not (types & {"float", "1d_map", "2d_map", "3d_map", "4d_map"}):
-                    return "boolean (array)"
+                # Pure array parameters hold names (solves, periods): one name per cell.  Workbooks from
+                # FlexTool 4.7.0 and earlier say "boolean (array)"; the reader takes both.
+                if _is_pure_array(types):
+                    return "string (array)"
 
                 # On constant sheets: report the scalar type
                 if layout == "constant":
@@ -2329,11 +2344,6 @@ def _add_data_validation(
     for i, pname in enumerate(param_names):
         col = def_col + 1 + ea_offset + i
         values = _get_param_value_list(pname, spec.entity_classes, db_contents)
-
-        # Boolean (array) params get TRUE/FALSE dropdown
-        dtype = _get_param_data_type(pname, spec.entity_classes, db_contents, layout="constant")
-        if dtype == "boolean (array)" and not values:
-            values = ["TRUE", "FALSE"]
 
         if not values:
             continue

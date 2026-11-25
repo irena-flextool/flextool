@@ -56,6 +56,9 @@
 
 ### Fixes
 
+- **Excel export: array parameters labelled `string (array)`.** `model.solves`, `solve.contains_solves` and the other
+  parameters that hold a list of names were labelled `boolean (array)`; such a column on a constant sheet also
+  offered a TRUE / FALSE dropdown that refused the names. Workbooks with the old label still read.
 - **Excel export: numbers kept exactly.** The export wrote numbers with 16 significant digits, so a value such as
   0.30000000000000004 came back from the workbook as 0.3. It now writes the shortest form that reads back to the
   same number.

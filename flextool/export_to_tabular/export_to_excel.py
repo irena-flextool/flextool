@@ -231,10 +231,7 @@ def export_to_excel(
                 # Check if this is a pure-array sheet (model_solve_sequence etc.)
                 _is_array_sheet = (
                     len(spec.parameter_names) == 1
-                    and _ew._get_param_data_type(
-                        spec.parameter_names[0], spec.entity_classes,
-                        db_contents, layout="constant",
-                    ) == "boolean (array)"
+                    and _ew.is_pure_array_param(spec.parameter_names[0], spec.entity_classes, db_contents)
                 )
                 if _is_array_sheet:
                     write_array_transposed_sheet_v2(ws, spec, db_contents)
