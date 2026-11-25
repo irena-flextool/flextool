@@ -1162,8 +1162,27 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
             "**How to fix:** remove `dispatch_realization_method` from the solve. To dispatch in two steps, put a "
             "dispatch solve after it in `model.solves`: no `invest_periods`, `realized_periods` = the periods to "
             "dispatch, `stochastic_branches` with a `realized: yes` branch, `dispatch_realization_method` "
-            "`separate_dispatch`; leave those periods out of the `realized_periods` of the investment solve. The "
-            "dispatch solve starts from the capacity the investment solve realized."
+            "`separate_dispatch`; leave those periods out of the `realized_periods` of the investment solve, but keep "
+            "them in its `realized_invest_periods`: a solve dispatches a period only after the period's investments "
+            "are realized, otherwise the run stops with an error (with `investments_after_reveal_period` these are "
+            "the periods up to the reveal period, with `investments_at_reveal_period` those before it). The dispatch "
+            "solve starts from the investments the investment solve realized."
+        ),
+    ),
+    WarningSpec(
+        code="W-0641",
+        message="solve '{solve}' dispatches {periods} on investments it does not realize",
+        title="Dispatch on investments that are not realized",
+        topic=_SOLVES,
+        entityless=True,
+        body=(
+            "The solve realizes the dispatch of the named periods (`realized_periods`) and decides their "
+            "investments itself (`invest_periods`), but does not realize those investments: the periods are not in "
+            "its `realized_invest_periods` (and no earlier solve realizes them). The reported dispatch of these "
+            "periods ran on investments that are not reported as realized: the investment results and costs leave "
+            "them out, and a later solve does not start from them.\n\n"
+            "**How to fix:** add the periods to the solve's `realized_invest_periods` to report the investments the "
+            "dispatch used, or leave them out of its `realized_periods` if they are look-ahead only."
         ),
     ),
     WarningSpec(

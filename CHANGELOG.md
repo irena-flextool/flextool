@@ -134,9 +134,25 @@ W-0636, W-0637) name what changed.
 - **`dispatch_realization_method` `separate_dispatch` is ignored on an investment solve.** Warning W-0640 names
   the solve and points to the structure that works: the investment solve followed in `model.solves` by a dispatch
   solve (no `invest_periods`, the periods to dispatch in `realized_periods`, its own `stochastic_branches` with a
-  `realized: yes` branch, `separate_dispatch`) that starts from the capacity the investment solve realized. With a
+  `realized: yes` branch, `separate_dispatch`) that starts from the investments the investment solve realized (keep
+  the dispatched periods in its `realized_invest_periods`, see the next entry). With a
   `realized: yes` branch such an investment solve gets the realization dispatch of an investment solve. Results
   change: the first solve no longer ties the `_fix_in_uc` units online or the free storage start.
+- **A period is dispatched only after its investments are realized.** When another solve lists a period in
+  `invest_periods`, a solve that realizes the period's dispatch (`realized_periods`) now needs an investment solve,
+  itself or one before it in the run, that realizes the period's investments (`realized_invest_periods`, or without
+  it the `realized_periods` that are also `invest_periods`). Otherwise the run stops, before anything solves, with
+  an error naming the solve, the periods and the investment solves that list them. Before, such a solve dispatched
+  the period on the capacity that existed before the period's investments, without a message: for example a
+  dispatch solve after a stochastic investment solve whose investments of that period are per forecast
+  (`investments_after_reveal_period` after the reveal period, `investments_at_reveal_period` from it on), or after
+  an investment solve that left the period out of its `realized_invest_periods`. Fix: add the period to the
+  `realized_invest_periods` of an investment solve that runs no later, or leave it out of the `realized_periods`.
+  A solve's own `invest_periods` count as decided for its own dispatch (the same solve decides both): a solve that
+  dispatches a period whose investments it decides but does not realize runs as before, with the new warning
+  W-0641 (the investments that dispatch used are not reported or handed on). The example scenario
+  `y2020_2029_2x5y` shows it. Models without investments and a chain where each solve realizes its own period are
+  not affected.
 - **A rolling `within_solve` solve realizes each jump in one solve.** Each roll of a rolling stochastic solve with
   `dispatch_realization_method` `within_solve` is now solved once: over its jump it dispatches the data of the
   `realized: yes` branch (one path, the same decisions in every forecast, reported under the period's own name),

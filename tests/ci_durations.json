@@ -203,6 +203,7 @@
  "tests/engine/test_derived_branch_lineage.py": 6.2,
  "tests/engine/test_deterministic_realization.py": 152.2,
  "tests/engine/test_direct_params_delta4.py": 29.0,
+ "tests/engine/test_dispatch_after_investments.py": 22.0,
  "tests/engine/test_down_reserve_floor.py": 32.4,
  "tests/engine/test_dump_csvs_writes.py": 0.0,
  "tests/engine/test_dump_stamp.py": 16.4,

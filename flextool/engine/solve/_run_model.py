@@ -69,6 +69,7 @@ from flextool.engine.preprocess.params._run_calendar import (
     run_calendar_from_frame,
 )
 from flextool.engine.solve._realized_overlap import (
+    check_dispatch_after_investments,
     effective_realized_invest_periods,
     find_realized_invest_overlaps,
     resolve_realized_dispatch_overlap,
@@ -1655,6 +1656,9 @@ def native_run_model(state, solver) -> int:
                     _emitted.add(_dp)
             all_solves = _rebuilt
 
+    # The periods of each sub-solve, before the stochastic pass names the periods of a fan by their branches.
+    _sub_solve_periods = {_s: list(active_time_lists.get(_s) or {}) for _s in all_solves}
+
     # NOTE: the realized-dispatch overlap resolution (last-wins) runs
     # AFTER the stochastic pass below (step 3.5), where
     # ``realized_time_lists`` is authoritative — the stochastic pass
@@ -1851,6 +1855,10 @@ def native_run_model(state, solver) -> int:
             realized_periods=state.solve.realized_periods,
         )))
     warn_realized_invest_overlaps(find_realized_invest_overlaps(_invest_claims))
+    # A period is dispatched only after its investments are realized (D11), per sub-solve (a nested solve renamed
+    # for one period has that period): an error before anything solves.
+    check_dispatch_after_investments(state.solve, [
+        (re.sub(r"_roll_\d+$", "", _s), complete_solve[_s], _sub_solve_periods.get(_s, [])) for _s in all_solves])
 
     # ------------------------------------------------------------------
     # 3.6 W4c — project each stochastic parameter onto the REALIZED branch
