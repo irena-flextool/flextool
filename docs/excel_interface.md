@@ -116,6 +116,9 @@ A few practical notes:
 
 - The header rows and the key columns (alternative, entity, index) stay in view while you scroll; the
   definition column scrolls away. Every other parameter column has a slightly different background.
+- The parameter columns are ordered by parameter group; the name of each parameter has its group's colour.
+  Every group after the first is an Excel outline group (the +/- buttons above the column letters). A group
+  with no value on the sheet starts collapsed; open it with +.
 - The description row shows the first four lines of each parameter's description. The full text is in the note
   (comment) on the parameter name: hover over the name to read it.
 

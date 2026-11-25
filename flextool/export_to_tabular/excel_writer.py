@@ -31,6 +31,8 @@ from flextool.export_to_tabular.formatting import (
     format_timeseries_sheet_v2,
     finish_link_sheet,
     finish_standard_sheet,
+    group_header_fill,
+    outline_column_groups,
     finish_transposed_sheet,
     fit_column_widths,
     freeze_panes_at,
@@ -2054,6 +2056,33 @@ def _write_metadata_rows(
     return row
 
 
+def _outline_parameter_groups(
+    ws: Worksheet, spec: SheetSpec, db_contents: DatabaseContents, col_to_param: dict[int, str], def_row: int,
+) -> None:
+    """Colour each parameter name by its parameter group and put every group after the first in an outline group.
+
+    The columns arrive ordered by group (``order_parameters(group_first=True)``).  A group starts collapsed only
+    when none of its columns holds a value on this sheet, so no value is hidden.
+    """
+    runs: list[list[Any]] = []  # [group, first column, last column]
+    for col in sorted(col_to_param):
+        pname = col_to_param[col]
+        group = next((db_contents.param_to_group[(cls, pname)] for cls in spec.entity_classes
+                      if (cls, pname) in db_contents.param_to_group), None)
+        color = (db_contents.parameter_groups.get(group) or {}).get("color") if group else None
+        if color:
+            ws.cell(row=def_row, column=col).fill = group_header_fill(str(color).lstrip("#"))
+        if runs and runs[-1][0] == group and runs[-1][2] == col - 1:
+            runs[-1][2] = col
+        else:
+            runs.append([group, col, col])
+    cols_with_values = {c for (r, c), cell in ws._cells.items() if r > def_row and cell.value is not None}
+    outline_column_groups(ws, [
+        (first, last, not any(c in cols_with_values for c in range(first, last + 1)))
+        for _group, first, last in runs[1:]
+    ])
+
+
 def _param_notes(
     spec: SheetSpec, db_contents: DatabaseContents, col_to_param: dict[int, str],
 ) -> dict[int, tuple[str, str]]:
@@ -2704,6 +2733,7 @@ def write_constant_sheet_v2(
         notes=_param_notes(spec, db_contents, {c: p for p, c in param_col_map.items()}),
         label_only_cols=label_only_cols,
     )
+    _outline_parameter_groups(ws, spec, db_contents, {c: p for p, c in param_col_map.items()}, def_row)
 
     # --- Lock metadata ---
     _lock_metadata_cells(
@@ -3182,6 +3212,8 @@ def write_periodic_sheet_v2(
                            {def_col + 1 + i: p for i, p in enumerate(spec.parameter_names)}),
         label_only_cols=label_only_cols,
     )
+    _outline_parameter_groups(ws, spec, db_contents,
+                              {def_col + 1 + i: p for i, p in enumerate(spec.parameter_names)}, def_row)
 
     # --- Lock metadata ---
     _lock_metadata_cells(

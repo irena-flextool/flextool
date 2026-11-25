@@ -112,6 +112,7 @@ def export_to_excel(
         db_contents,
         settings,
         include_groups=set(include_groups) if include_groups else None,
+        group_first=use_new_format,
     )
     navigate_groups: list[dict[str, Any]] = settings.get("navigate_groups", [])
     tab_color_map = _build_tab_color_map(navigate_groups) if navigate_groups else {}

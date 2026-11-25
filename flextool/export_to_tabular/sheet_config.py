@@ -190,12 +190,24 @@ def order_parameters(
     param_names: list[str],
     entity_class: str,
     db_contents: DatabaseContents,
+    group_first: bool = False,
 ) -> list[str]:
     """Sort parameters: string-typed first, then numeric, each by group priority and name.
 
     This ensures the string/float column-type boundary in the import spec
-    lines up correctly for roundtrip xlsx compatibility.
+    lines up correctly for roundtrip xlsx compatibility (v1 format).
+
+    With *group_first* (the v2 format, whose reader takes any column order) the parameters of one group stay
+    together, so each group can be one outline group: by group priority (ungrouped last), then string-typed
+    first, then name.
     """
+    if group_first:
+        def group_key(pname: str) -> tuple[int, bool, str]:
+            group_name = db_contents.param_to_group.get((entity_class, pname))
+            group = db_contents.parameter_groups.get(group_name) if group_name else None
+            priority = (group or {}).get("priority") or 999
+            return (priority, not _is_string_param(pname, entity_class, db_contents), pname)
+        return sorted(param_names, key=group_key)
     {
         p["name"]: p for p in db_contents.parameter_definitions.get(entity_class, [])
     }
@@ -269,6 +281,7 @@ def build_sheet_specs(
     db_contents: DatabaseContents,
     settings: dict | None = None,
     include_groups: set[str] | None = None,
+    group_first: bool = False,
 ) -> list[SheetSpec]:
     """Build the ordered list of SheetSpec objects for all Excel sheets.
 
@@ -280,6 +293,8 @@ def build_sheet_specs(
             group are dropped.  Sheets whose column set goes empty are
             dropped, unless listed under a selected group in
             ``always_include_with_groups``.
+        group_first: Order each sheet's parameters by parameter group first (v2 format), see
+            :func:`order_parameters`.
 
     Returns:
         Ordered list of :class:`SheetSpec` objects.
@@ -733,7 +748,7 @@ def build_sheet_specs(
         if raw_params is None:
             continue
         primary_class: str = getattr(spec, "_primary_class", "")
-        spec.parameter_names = order_parameters(raw_params, primary_class, db_contents)
+        spec.parameter_names = order_parameters(raw_params, primary_class, db_contents, group_first=group_first)
 
         # Move pre-EA params out of parameter_names into pre_ea_params
         if spec.has_entity_alternative and spec.layout == "constant":

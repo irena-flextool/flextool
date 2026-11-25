@@ -7,6 +7,7 @@ that fixture: a column is ``clamp(longest + 2, lo, hi)`` over its definition-row
 """
 from __future__ import annotations
 
+import zipfile
 from pathlib import Path
 
 import openpyxl
@@ -217,3 +218,46 @@ def test_without_description_row_needs_the_v2_format(examples_db: Path, tmp_path
     with pytest.raises(ValueError, match="v2"):
         export_to_excel(f"sqlite:///{examples_db}", str(tmp_path / "v1.xlsx"), use_new_format=False,
                         description_row=False)
+
+
+RAMP_JSON = package_data_path("schemas/canonical_databases/howto_ramp_and_start_up.json")
+
+
+def test_empty_parameter_groups_start_collapsed(tmp_path: Path) -> None:
+    # howto_ramp_and_start_up: units have values only in the basics and tech_advanced groups.  On unit_c the
+    # columns are ordered by group (basics, investment, retirement, tech_advanced); every group after the first is
+    # an outline group, collapsed (hidden, with ``collapsed`` on the column to its left) when it has no value.
+    db = tmp_path / "ramp.sqlite"
+    initialize_database(str(RAMP_JSON), str(db))
+    out = tmp_path / "ramp.xlsx"
+    export_to_excel(f"sqlite:///{db}", str(out))
+    with DatabaseMapping(f"sqlite:///{db}") as mapping:
+        group_of = {d["name"]: d["parameter_group_name"]
+                    for d in mapping.get_parameter_definition_items(entity_class_name="unit")}
+    book = openpyxl.load_workbook(out)
+    try:
+        ws = book["unit_c"]
+        groups: dict[str, list[int]] = {}
+        for col in range(5, ws.max_column + 1):  # D is entity existence
+            name = ws.cell(row=4, column=col).value
+            if not name:
+                break
+            groups.setdefault(group_of[name], []).append(col)
+        assert list(groups) == ["basics", "investment", "retirement", "tech_advanced"]
+        for group, cols in groups.items():
+            assert cols == list(range(cols[0], cols[-1] + 1)), group  # one block per group
+            dims = [ws.column_dimensions[get_column_letter(c)] for c in cols]
+            if group == "basics":
+                assert all(d.outlineLevel == 0 and not d.hidden for d in dims)
+            elif group == "tech_advanced":
+                assert all(d.outlineLevel == 1 and not d.hidden for d in dims)
+            else:
+                assert all(d.outlineLevel == 1 and d.hidden for d in dims)
+                assert ws.column_dimensions[get_column_letter(cols[0] - 1)].collapsed
+        assert ws.sheet_properties.outlinePr.summaryRight is False
+    finally:
+        book.close()
+    with zipfile.ZipFile(out) as archive:
+        # openpyxl's own reader drops outlineLevelCol, so look at the sheet XML (sheets are written in order).
+        sheet_xml = archive.read(f"xl/worksheets/sheet{book.sheetnames.index('unit_c') + 1}.xml").decode("utf-8")
+        assert 'outlineLevelCol="1"' in sheet_xml

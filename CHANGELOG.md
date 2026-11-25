@@ -36,7 +36,9 @@
   background. Columns are as wide as their names, defaults and values, so long names are no longer cut off and
   short columns are no longer wide. The description row wraps to four lines in its own colour, and a note on each
   parameter name holds its full description. The workbook reads back the same as before. The new export flag
-  `--no-description-row` leaves the description row out (the notes keep the descriptions).
+  `--no-description-row` leaves the description row out (the notes keep the descriptions). The parameter
+  columns are ordered by parameter group, with each parameter name in its group's colour; every group after the
+  first is an outline group that you can collapse, and a group with no value on the sheet starts collapsed.
 - **Stochastic examples.** `stochastics.sqlite` has new scenarios, with a new how-to page "Stochastic examples": one
   small rolling dispatch run with each `dispatch_realization_method` and with a perfect forecast
   (`rolling_deterministic`, `rolling_within_solve`, `rolling_separate_dispatch`, `rolling_perfect_within_solve`,
