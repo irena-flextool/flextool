@@ -438,25 +438,17 @@ BEHAVIOUR_TEXTS: dict[str, tuple[str, str, str, str]] = {
         _delete_marker("separate_dispatch_realization_looks_ahead"),
     ),
     "stochastic_invest_controls_rewritten": (
-        "W-0637", "stochastic investment settings replaced",
+        "W-0637", "old stochastic settings: check invest_solve_branching_method",
         ("stochastic_invest_method, shared_invest_periods and shared_operation_periods are replaced by "
          "invest_solve_branching_method, read on investment solves only (not rolling, with invest_periods or "
-         "realized_invest_periods). The upgrade wrote investments_after_reveal_period where stochastic_invest_method "
-         "was recourse: the investment of the period where the forecasts start is one decision of all branches, and "
-         "the later periods invest per branch. Listed here: solves converted from recourse whose "
-         "shared_invest_periods tied no period from the one where the forecasts start (unset, empty or only earlier "
-         "periods; before, every branch invested on its own from that period; investments_at_reveal_period keeps "
-         "that); solves converted from recourse that have a realized: yes branch (they may now get a realization "
-         "dispatch, <solve>__realized_dispatch; recourse got none); solves the upgrade could not convert, with what "
-         "to set (nothing was written, so they run operations_only, the default); investment solves whose storage, "
-         "units online and reserve were tied across the branches (shared_operation_periods unset or a list; now "
-         "each branch operates on its own from the period where the forecasts start); dispatch solves with "
-         "shared_operation_periods (no longer read: their forecasts are tied over their realized_periods again); "
-         "dispatch solves (rolling, or without investments) whose stochastic_invest_method recourse the upgrade dropped "
-         "(no investments to branch; their forecasts are now realized as on any dispatch solve); and "
-         "investment solves whose dispatch_realization_method separate_dispatch the upgrade removed (refused on an "
-         "investment solve; with a realized: yes branch the solve gets a realization dispatch of its own). Results "
-         "change."),
+         "realized_invest_periods, and stochastic_branches). The upgrade wrote investments_after_reveal_period where "
+         "stochastic_invest_method was recourse on a solve that is not rolling and has investments and "
+         "stochastic_branches (the investment of the period where the forecasts start is now one decision of all "
+         "branches; investments_at_reveal_period lets each branch invest on its own from that period), and "
+         "operations_only (the default: the investments of every period are one plan) everywhere else. The "
+         "operations of an investment solve's branches are no longer tied: each branch operates on its own from "
+         "the period where the forecasts start. Listed: the solves that had any of the old settings. Results may "
+         "change: check invest_solve_branching_method on them."),
         _delete_marker("stochastic_invest_controls_rewritten"),
     ),
 }

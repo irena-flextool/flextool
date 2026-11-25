@@ -81,11 +81,11 @@ W-0636, W-0637) name what changed.
   were infeasible before change, or that had to invest to keep a ramp-down limit an outage voided.
 - **`deterministic` is the new default of `dispatch_realization_method` for dispatch solves.** A dispatch solve
   with stochastic branches and no method uses the `realized: yes` branch only, as a deterministic solve (warning
-  W-0593 names it): the forecasts and the realization solve are ignored. The method governs the dispatch model: an
-  investment solve (not rolling, with `invest_periods` or `realized_invest_periods`) without a method solves its
-  forecasts as before, under its `invest_solve_branching_method` (next entries). An explicit `deterministic` on an
-  investment solve makes it a perfect-foresight benchmark on the `realized: yes` branch (warning W-0638 names it;
-  the forecasts and `invest_solve_branching_method` are ignored). The realized series of the
+  W-0593 names it): the forecasts and the realization solve are ignored. The method governs dispatch solves only:
+  an investment solve (not rolling, with `invest_periods` or `realized_invest_periods`) does not read it,
+  `deterministic` included, and solves its forecasts as before, under its `invest_solve_branching_method` (next
+  entries). A perfect-foresight benchmark of an investment solve is a scenario without `stochastic_branches`. The
+  realized series of the
   analysis times are read as one timeline (where they overlap, the one made nearest to the solve's or roll's
   start is used). Without a `realized: yes` branch, or at a time step no realized series covers, the run stops
   with an error naming the solve. Upgraded databases get `within_solve` written on the stochastic
@@ -101,15 +101,13 @@ W-0636, W-0637) name what changed.
   The setting is read on investment solves with `stochastic_branches` only; on a rolling solve, a solve without
   investments or one without `stochastic_branches` the run stops with an error naming the solve. A period whose
   investments are per forecast cannot be realized: in `realized_periods` or `realized_invest_periods` it stops the
-  run with an error. The upgrade to data version 84 writes `investments_after_reveal_period` for `recourse` and
-  `operations_only` for a `none` row that would otherwise let it win, each in its own alternative. It never writes
-  a value the run would stop on: where `recourse` came with a `shared_invest_periods` that ties a period after
-  the reveal period, or where the written value would be refused in some scenario (for example a solve that
-  realizes a period after the reveal period), it writes nothing and prints the solve with what to set. Such a solve
-  then runs `operations_only`, the default, and note W-0637 names it. `recourse` that had no effect (on a rolling
-  solve, one without investments, one without forecasts or one that runs `deterministic`) is dropped. Note W-0637
-  lists the solves whose results may change (the next entries). Tools and scripts that write the old parameters must write
-  `invest_solve_branching_method`.
+  run with an error. The upgrade to data version 84 writes `investments_after_reveal_period` for `recourse` on a
+  solve that is not rolling and has investments and `stochastic_branches` (and `operations_only` for its other
+  rows, each in its own alternative); everywhere else the default `operations_only` applies. It prints, and note
+  W-0637 names at each run, the solves that had any of the old settings: check their
+  `invest_solve_branching_method` (their results may change, the next entries). A written value that does not fit
+  a scenario (for example a solve that realizes a period after the reveal period) stops that run with an error
+  naming the solve. Tools and scripts that write the old parameters must write `invest_solve_branching_method`.
 - **`recourse` becomes `investments_after_reveal_period`.** The investment of the period where the forecasts start
   is now one decision of all the forecasts, reported under its own period name. Before, with
   `shared_invest_periods` unset, empty or naming only earlier periods, each forecast invested on its own from that
@@ -118,14 +116,12 @@ W-0636, W-0637) name what changed.
   `investments_at_reveal_period` shares nothing: the solve gets no realization dispatch, the normal results hold
   no investment or operation of the forecasts (only the `model.output_horizon` dump has them), and warning W-0639
   names the solve at each run. A converted solve whose `shared_invest_periods` named the reveal period keeps its
-  investments; with a `realized: yes` branch it may now get a realization dispatch (next entries but one), and note
-  W-0637 names it.
+  investments; with a `realized: yes` branch it may now get a realization dispatch (next entries but one).
 - **The forecasts of an investment solve operate on their own from the reveal period.** Before, with
   `shared_operation_periods` unset (the default) or a list, an investment solve tied the storage, units online and
   reserves of its forecasts over its realized periods (or the listed ones). Now nothing operational is tied, as
   with `shared_operation_periods = []` before; there is no setting for the old tie. A dispatch solve no
-  longer reads `shared_operation_periods`: it ties its forecasts over its realized periods again. Note W-0637 names
-  both kinds of solve.
+  longer reads `shared_operation_periods`: it ties its forecasts over its realized periods again.
 - **The realization dispatch of an investment solve starts at the reveal period.** An investment solve with a
   `realized: yes` branch whose investments branch after the reveal period (old `recourse`) now gets a realization
   dispatch, as a solve with shared investments does (before, a warning said it got none). The realization of an
@@ -135,14 +131,12 @@ W-0636, W-0637) name what changed.
   reveal period continues that period in time, its units online, ramps and minimum up and down time history).
   Results change in the realized operation of such solves. A realization solve you configure yourself keeps the
   periods you give it.
-- **`dispatch_realization_method` `separate_dispatch` is refused on an investment solve.** The run stops with an
-  error that points to the structure that works: the investment solve followed in `model.solves` by a dispatch solve
-  (no `invest_periods`, the periods to dispatch in `realized_periods`, its own `stochastic_branches` with a
-  `realized: yes` branch, `separate_dispatch`) that starts from the capacity the investment solve realized. The
-  upgrade removes the value from investment solves (or writes `within_solve`, which reads as no value, where removing
-  it would let a lower-ranked `deterministic` win) and lists them in note W-0637: with a `realized: yes` branch they
-  now get the realization dispatch of an investment solve. Results change: the first solve no longer ties the
-  `_fix_in_uc` units online or the free storage start.
+- **`dispatch_realization_method` `separate_dispatch` is ignored on an investment solve.** Warning W-0640 names
+  the solve and points to the structure that works: the investment solve followed in `model.solves` by a dispatch
+  solve (no `invest_periods`, the periods to dispatch in `realized_periods`, its own `stochastic_branches` with a
+  `realized: yes` branch, `separate_dispatch`) that starts from the capacity the investment solve realized. With a
+  `realized: yes` branch such an investment solve gets the realization dispatch of an investment solve. Results
+  change: the first solve no longer ties the `_fix_in_uc` units online or the free storage start.
 - **A rolling `within_solve` solve realizes each jump in one solve.** Each roll of a rolling stochastic solve with
   `dispatch_realization_method` `within_solve` is now solved once: over its jump it dispatches the data of the
   `realized: yes` branch (one path, the same decisions in every forecast, reported under the period's own name),

@@ -193,18 +193,15 @@ def announce_realization_notices(solve_cfg: Any) -> None:
     if hasattr(solve_cfg, "solves_in_run"):
         from flextool.engine.solve import _realization
         _realization.warn_investments_branch_at_first_period(solve_cfg)
-    # W-0637: the solves whose stochastic investment settings the v84 upgrade rewrote, with the reason it listed.
+    # W-0637: the solves that had a stochastic investment setting the v84 upgrade replaced.
     change = "stochastic_invest_controls_rewritten"
-    marker = _behaviour_changes.marker_json(change)
-    listed = set(marker.get("solves") or [])
+    listed = set(_behaviour_changes.marker_json(change).get("solves") or [])
     if listed:
-        reasons = marker.get("reasons") or {}
         copies = getattr(solve_cfg, "map2d_duplicate_of", None) or {}
         in_run = solve_cfg.solves_in_run() if hasattr(solve_cfg, "solves_in_run") else _top_level_solves(solve_cfg)
-        for solve in dict.fromkeys(copies.get(s, (s,))[0] for s in in_run):
-            if solve in listed:
-                reason = reasons.get(solve) if isinstance(reasons, dict) else None
-                _behaviour_changes.notice(change, "solves", [solve], str(reason or ""))
+        names = [s for s in dict.fromkeys(copies.get(s, (s,))[0] for s in in_run) if s in listed]
+        if names:
+            _behaviour_changes.notice(change, "solves", names)
 
 
 def realization_rolls(
