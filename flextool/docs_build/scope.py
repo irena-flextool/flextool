@@ -31,6 +31,7 @@ USER_DOCS: tuple[str, ...] = (
     "how_to/investment.md",
     "how_to/solve_sequences.md",
     "how_to/stochastics.md",
+    "how_to/stochastic_examples.md",
     "how_to/emissions.md",
     "how_to/outputs.md",
     "how_to/performance.md",

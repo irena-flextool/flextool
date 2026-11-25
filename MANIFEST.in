@@ -26,6 +26,7 @@ include docs/how_to/thermal_chp.md
 include docs/how_to/investment.md
 include docs/how_to/solve_sequences.md
 include docs/how_to/stochastics.md
+include docs/how_to/stochastic_examples.md
 include docs/how_to/emissions.md
 include docs/how_to/outputs.md
 include docs/how_to/performance.md
