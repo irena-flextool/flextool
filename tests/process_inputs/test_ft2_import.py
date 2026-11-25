@@ -1095,8 +1095,9 @@ def test_min_time_unit_gets_its_method_and_use_online_off_switches_it_off(
     at t0002 (100 · x MW more unmet), so it stays online there too: v_online 1 at every step.  Without the
     method it could go off at t0001.  The ``use_online`` 0 sensitivity writes ``no_startup`` and ``none`` (without the none the method
     would make it linear again): no online variables.  The battery discharger with a start-up cost gets
-    ``no_startup`` there too; the ``min_load_efficiency`` coal keeps the linear start-ups it needs (no value there,
-    as with ``use online`` 0 in the base; ``no_startup`` stopped the run with an error)."""
+    ``no_startup`` there too, and so does the coal with its min load and eff at min load, with
+    ``constant_efficiency``: without ``use_online`` FT2 has no min load and ignores ``eff at min load``
+    (flexModel.mod 103, 187-189)."""
     import polars as pl
 
     from flextool.engine import run_chain_from_db
@@ -1113,7 +1114,8 @@ def test_min_time_unit_gets_its_method_and_use_online_off_switches_it_off(
     assert method == {(("steam_nodeA",), "base"): "min_downtime", (("steam_nodeA",), "NoOnline"): "none"}
     assert startup[(("steam_nodeA",), "NoOnline")] == "no_startup"
     assert startup[(("battery_nodeA_discharger",), "NoOnline")] == "no_startup"
-    assert (("coal_nodeA",), "NoOnline") not in startup
+    assert startup[(("coal_nodeA",), "NoOnline")] == "no_startup"
+    assert _values(url, "unit", "conversion_method")[(("coal_nodeA",), "NoOnline")] == "constant_efficiency"
 
     monkeypatch.setenv("FLEXTOOL_AUTOSCALE_STRICT", "1")
     monkeypatch.chdir(tmp_path)
@@ -1139,9 +1141,10 @@ def test_use_online_off_in_the_base_writes_an_explicit_none(
 ) -> None:
     """The T5 workbook with ``use online`` 0 in the master sheet and a min uptime of 2 h on ``coal``.  FT2 gives no
     unit online variables, so the min up / down times have no effect there.  The import still writes the times,
-    and with them ``minimum_time_method none`` in ``base``: ``steam`` (min downtime, no online variables) and the
-    ``min_load_efficiency`` ``coal`` (linear start-ups for its min load, min uptime switched off).  Without the
-    explicit none every run of the imported model names both units in W-0231 (time and method unset)."""
+    and with them ``minimum_time_method none`` in ``base``: ``steam`` (min downtime) and ``coal`` (min uptime).
+    Neither has online variables: FT2 also ignores coal's min load and eff at min load without ``use_online``
+    (flexModel.mod 103, 187-189), so coal is ``constant_efficiency`` without start-ups or ``min_load``.  Without
+    the explicit none every run of the imported model names both units in W-0231 (time and method unset)."""
     from flextool.engine import run_chain_from_db
     from tests._support.coded_warnings import capture_coded
 
@@ -1162,7 +1165,9 @@ def test_use_online_off_in_the_base_writes_an_explicit_none(
     assert _values(url, "unit", "min_uptime")[(("coal_nodeA",), "base")] == 2
     startup = _values(url, "unit", "startup_method")
     assert (("steam_nodeA",), "base") not in startup
-    assert startup[(("coal_nodeA",), "base")] == "linear"
+    assert (("coal_nodeA",), "base") not in startup
+    assert (("coal_nodeA",), "base") not in _values(url, "unit", "min_load")
+    assert _values(url, "unit", "conversion_method")[(("coal_nodeA",), "base")] == "constant_efficiency"
 
     monkeypatch.setenv("FLEXTOOL_AUTOSCALE_STRICT", "1")
     monkeypatch.chdir(tmp_path)
@@ -1174,3 +1179,275 @@ def test_use_online_off_in_the_base_writes_an_explicit_none(
     (step,) = steps.values()
     assert step.solution.optimal
     assert got.names("W-0231") == []
+
+
+def _dispatch_sheets(demand: list[float], cf: list[float], unit_types: list[list], units: list[list],
+                     ts_unit: list[list] | None = None) -> dict[str, list[list]]:
+    """A dispatch-only workbook of ``len(demand)`` hourly steps: elec/nodeA with ``demand``, profile ``pv`` with
+    ``cf``, the given unit types and units; no heat, no other units."""
+    steps = [f"t{i:04d}" for i in range(len(demand))]
+    sheets = ft2_sheets()
+    for row in sheets["master"]:
+        if row[0] == "mode_invest":
+            row[1] = 0
+        if row[0] == "time_in_years":
+            row[1] = len(steps) / 8760
+    sheets["gridNode"] = sheets["gridNode"][:2]
+    sheets["unit_type"] = [UNIT_TYPE_HEADER, *unit_types]
+    sheets["units"] = [UNITS_HEADER, *units]
+    sheets["ts_cf"] = [[None, "cf_profile", "pv"], ["Time"]] + [[t, None, v] for t, v in zip(steps, cf)]
+    sheets["ts_energy"] = [[None, "grid", "elec"], [None, "node", "nodeA"], ["time"]] + [
+        [t, None, d] for t, d in zip(steps, demand)]
+    sheets["ts_unit"] = ts_unit or [[None, "grid"], [None, "node"], [None, "unit"], [None, "unit_ts_param"],
+                                    ["Time"]]
+    sheets["ts_time"] = sheets["ts_time"][:1] + [[t, 1, 1, 1, 1] for t in steps]
+    return sheets
+
+
+_PV_TYPE = _unit_type("pv", efficiency=1, availability=1)
+_PV_UNIT = _unit(**{"unit type": "pv", "cf profile": "pv", "output grid": "elec", "output node": "nodeA",
+                    "capacity (MW)": 100})
+
+
+@pytest.mark.solver
+def test_min_load_without_its_own_efficiency_is_kept(
+    test_solver_config_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FT2 (flexModel.mod 187-189, 461) gives a unit with ``min load`` a minimum load whenever ``use online`` is 1,
+    whatever its ``eff at min load``.  Demand 100 / 20 / 100 MW; coal 100 MW at 10 / 0.4 = 25 per MWh, min load
+    0.6, start-up cost 100 per MW, ``eff at min load`` empty; pv 100 MW with cf 0 / 1 / 0.  At t0001 online x
+    needs coal >= 0.6 x, and more coal than the 20 MW demand is excess at 10 000 per MWh, so x <= 33.3; restarting
+    100 - x MW at t0002 costs 100 per MW, so x = 33.3 and coal makes the whole 20 MW, pv 0.  Without the min
+    load (before): coal stays online at no cost, makes 0 MW, and pv the 20 MW."""
+    import polars as pl
+
+    sheets = _dispatch_sheets(
+        [100, 20, 100], [0, 1, 0],
+        [_unit_type("coal", **{"efficiency": 0.4, "min load": 0.6, "availability": 1, "startup cost": 100}),
+         _PV_TYPE],
+        [_unit(**{"unit type": "coal", "fuel": "coal", "output grid": "elec", "output node": "nodeA",
+                  "capacity (MW)": 100}), _PV_UNIT])
+    xlsm = write_workbook(tmp_path / "model.xlsx", sheets)
+    url = f"sqlite:///{tmp_path / 'model.sqlite'}"
+    import_old_flextool_xlsm(str(xlsm), url, strict=True)
+    assert _values(url, "unit", "min_load")[(("coal_nodeA",), "base")] == 0.6
+    assert _values(url, "unit", "startup_method")[(("coal_nodeA",), "base")] == "linear"
+    assert _values(url, "unit", "conversion_method")[(("coal_nodeA",), "base")] == "constant_efficiency"
+    work = tmp_path / "run"
+    work.mkdir()
+    raw = _solve(url, test_solver_config_dir, work, monkeypatch)
+    flow = pl.read_parquet(raw / "v_flow__dispatch.parquet")
+    coal = flow["('coal_nodeA', 'coal_market', 'nodeA')"] * 100
+    pv = flow["('pv_nodeA', 'pv_nodeA', 'nodeA')"] * 100
+    assert coal.to_list() == pytest.approx([100.0, 20.0, 100.0], abs=1e-6)
+    assert pv.to_list() == pytest.approx([0.0, 0.0, 0.0], abs=1e-6)
+
+
+def test_use_online_off_gives_no_min_load_or_min_load_efficiency(tmp_path: Path) -> None:
+    """FT2 has no online variables with ``use online`` 0 (flexModel.mod 187-189) and then ignores ``eff at min
+    load`` too (103): the coal with min load 0.3 and eff at min load 0.35 gets ``constant_efficiency``, no
+    ``min_load``, no ``efficiency_at_min_load`` and no ``startup_method``."""
+    sheets = ft2_sheets()
+    for row in sheets["master"]:
+        if row[0] == "use_online":
+            row[1] = 0
+    xlsm = write_workbook(tmp_path / "model.xlsx", sheets)
+    url = f"sqlite:///{tmp_path / 'model.sqlite'}"
+    import_old_flextool_xlsm(str(xlsm), url, strict=True)
+    assert _values(url, "unit", "conversion_method")[(("coal_nodeA",), "base")] == "constant_efficiency"
+    for param in ("min_load", "efficiency_at_min_load", "startup_method", "startup_cost"):
+        assert (("coal_nodeA",), "base") not in _values(url, "unit", param), param
+
+
+@pytest.mark.solver
+def test_storage_without_inflow_cannot_dump_energy(
+    test_solver_config_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FT2 spills only from a storage with an inflow (flexModel.mod 212 ``gnu_spill``).  Demand 20 MW for 3 h, a
+    must-run unit fixed at 50 MW, a battery of 100 MW / 100 MWh with efficiency 1 both ways and no inflow; the
+    storage wraps, so over the 3 h it absorbs no net energy.  The 30 MW surplus, 90 MWh, therefore ends as excess
+    (downward slack at 10 000 per MWh) at nodeA or the storage node.  Before: the storage node had penalty_down 0,
+    so the battery charged the surplus and the storage dumped it free (no excess)."""
+    import polars as pl
+
+    sheets = _dispatch_sheets(
+        [20, 20, 20], [0, 0, 0],
+        [_unit_type("nuke", efficiency=0.5, availability=1),
+         _unit_type("battery", **{"efficiency": 1, "eff charge": 1, "availability": 1})],
+        [_unit(**{"unit type": "nuke", "fuel": "gas", "output grid": "elec", "output node": "nodeA",
+                  "capacity (MW)": 50, "fix unit generation": 1}),
+         _unit(**{"unit type": "battery", "output grid": "elec", "output node": "nodeA",
+                  "capacity (MW)": 100, "storage (MWh)": 100})],
+        ts_unit=[[None, "grid", "elec"], [None, "node", "nodeA"], [None, "unit", "nuke"],
+                 [None, "unit_ts_param", "fix_generation"], ["Time"]] + [[f"t{i:04d}", None, 1] for i in range(3)])
+    xlsm = write_workbook(tmp_path / "model.xlsx", sheets)
+    url = f"sqlite:///{tmp_path / 'model.sqlite'}"
+    import_old_flextool_xlsm(str(xlsm), url, strict=True)
+    assert _values(url, "node", "penalty_down")[(("battery_nodeA_storage",), "base")] == 10000
+    work = tmp_path / "run"
+    work.mkdir()
+    raw = _solve(url, test_solver_config_dir, work, monkeypatch)
+    excess = pl.read_parquet(raw / "vq_state_down__dispatch.parquet")
+    penalty = pl.read_parquet(raw / "node_penalty_down__dispatch.parquet")
+    nodes = ("nodeA", "battery_nodeA_storage")
+    assert sum(excess[n].sum() for n in nodes) == pytest.approx(90.0, abs=1e-6)
+    assert sum((excess[n] * penalty[n]).sum() for n in nodes) == pytest.approx(90.0 * 10000, rel=1e-9)
+
+
+def test_storage_with_inflow_keeps_its_free_spill(tmp_path: Path) -> None:
+    """FT2 spills from a storage with an inflow (flexModel.mod 212, 572): a pumped hydro unit with an inflow series
+    keeps penalty_down 0 on its storage node; the battery (no inflow) gets the loss of load penalty."""
+    sheets = ft2_sheets()
+    sheets["unit_type"].append(_unit_type("pumped", **{"efficiency": 0.9, "eff charge": 0.8, "availability": 1}))
+    sheets["units"].append(_unit(**{"unit type": "pumped", "inflow": "river", "output grid": "elec",
+                                    "output node": "nodeA", "capacity (MW)": 20, "storage (MWh)": 500}))
+    sheets["ts_inflow"] = [[None, "inflow", "river"], ["time"]] + [[t, None, 5] for t in STEPS]
+    xlsm = write_workbook(tmp_path / "model.xlsx", sheets)
+    url = f"sqlite:///{tmp_path / 'model.sqlite'}"
+    import_old_flextool_xlsm(str(xlsm), url, strict=True)
+    penalty = _values(url, "node", "penalty_down")
+    assert penalty[(("pumped_nodeA_storage",), "base")] == 0.0
+    assert penalty[(("battery_nodeA_storage",), "base")] == 10000
+
+
+@pytest.mark.solver
+def test_charging_is_limited_on_the_grid_side(
+    test_solver_config_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FT2 limits the grid-side charge to the unit capacity (flexModel.mod 639-645, v_charge <= capacity).  Demand
+    10 MW for 2 h; pv 100 MW with cf 1 / 0; gas 50 MW at 20 per MWh; battery 10 MW / 100 MWh, eff charge 0.5,
+    efficiency 1.  At t0000 the battery charges 10 MW from the grid, 5 MWh into the storage; at t0001 it gives 5 MW
+    and gas the other 5 MW.  Before: the capacity was on the storage side, so it drew 20 MW, stored 10 MWh and gas
+    made nothing."""
+    import polars as pl
+
+    sheets = _dispatch_sheets(
+        [10, 10], [1, 0],
+        [_PV_TYPE, _unit_type("gas", efficiency=1, availability=1),
+         _unit_type("battery", **{"efficiency": 1, "eff charge": 0.5, "availability": 1})],
+        [_PV_UNIT, _unit(**{"unit type": "gas", "fuel": "gas", "output grid": "elec", "output node": "nodeA",
+                            "capacity (MW)": 50}),
+         _unit(**{"unit type": "battery", "output grid": "elec", "output node": "nodeA",
+                  "capacity (MW)": 10, "storage (MWh)": 100})])
+    xlsm = write_workbook(tmp_path / "model.xlsx", sheets)
+    url = f"sqlite:///{tmp_path / 'model.sqlite'}"
+    import_old_flextool_xlsm(str(xlsm), url, strict=True)
+    work = tmp_path / "run"
+    work.mkdir()
+    raw = _solve(url, test_solver_config_dir, work, monkeypatch)
+    flow = pl.read_parquet(raw / "v_flow__dispatch.parquet")
+    # v_flow per unitsize (the existing capacity); the charger's flow is its storage-side output.
+    stored = flow["('battery_nodeA_charger', 'nodeA', 'battery_nodeA_storage')"] * 10
+    discharged = flow["('battery_nodeA_discharger', 'battery_nodeA_storage', 'nodeA')"] * 10
+    pv = flow["('pv_nodeA', 'pv_nodeA', 'nodeA')"] * 100
+    gas = flow["('gas_nodeA', 'gas_market', 'nodeA')"] * 50
+    assert stored.to_list() == pytest.approx([5.0, 0.0], abs=1e-6)
+    assert pv.to_list() == pytest.approx([20.0, 0.0], abs=1e-6)
+    assert discharged.to_list() == pytest.approx([0.0, 5.0], abs=1e-6)
+    assert gas.to_list() == pytest.approx([0.0, 5.0], abs=1e-6)
+
+
+def test_storage_fixed_cost_goes_to_the_discharger(tmp_path: Path) -> None:
+    """FT2 charges ``fixed cost/kW/year`` per kW of the unit's capacity and investment (flexModel.mod 393-394);
+    the FT4 discharger carries that capacity and investment, so it gets the cost (12), the charger and the
+    storage node none."""
+    sheets = ft2_sheets()
+    for i, row in enumerate(sheets["unit_type"]):
+        if row[0] == "battery":
+            row[UNIT_TYPE_HEADER.index("fixed cost/kW/year")] = 12
+    xlsm = write_workbook(tmp_path / "model.xlsx", sheets)
+    url = f"sqlite:///{tmp_path / 'model.sqlite'}"
+    import_old_flextool_xlsm(str(xlsm), url, strict=True)
+    assert {k: v for k, v in _values(url, "unit", "fixed_cost").items() if "battery" in k[0][0]} == {
+        (("battery_nodeA_discharger",), "base"): 12}
+    assert _values(url, "node", "fixed_cost") == {}
+
+
+def test_node_level_capacity_margin_and_non_synchronous_share(tmp_path: Path) -> None:
+    """FT2's node-level capacityMarginNode / non_synchronousLimit (flexModel.mod 780, 944) are its nodeGroup
+    equations (802, 966) over one node: nodeA's margin 50 MW and share 0.7 become group ``nodeA_group`` with the
+    one node.  A gridNode sensitivity of the margin (80) lands on that group, not on nodeA's nodeGroup (10)."""
+    sheets = _sheets_with_margin()
+    for row in sheets["master"]:
+        if row[0] in ("use_capacity_margin", "use_non_synchronous"):
+            row[1] = 1
+    header = sheets["gridNode"][0]
+    sheets["gridNode"][1][header.index("capacity margin (MW)")] = 50
+    sheets["gridNode"][1][header.index("non synchronous share")] = 0.7
+    xlsm = write_workbook(tmp_path / "model.xlsx", sheets)
+    master = write_workbook(tmp_path / "flexTool.xlsx", {"Sensitivity definitions": [
+        ["Scenario definitions gridNode:", "Sheet", "grid", "node", "capacity margin (MW)"],
+        ["NodeMargin", "gridNode", "elec", "nodeA", 80], []]})
+    url = f"sqlite:///{tmp_path / 'model.sqlite'}"
+    report = import_old_flextool_xlsm(str(xlsm), url, master=str(master), strict=True)
+    assert not report.failed
+    with DatabaseMapping(url) as db:
+        members = {tuple(e["entity_byname"]) for e in db.get_items("entity", entity_class_name="group__node")}
+    assert ("nodeA_group", "nodeA") in members
+    assert _values(url, "group", "capacity_margin_method")[(("nodeA_group",), "base")] == "absolute"
+    absolute = _values(url, "group", "capacity_margin_absolute")
+    assert absolute[(("nodeA_group",), "base")] == 50
+    assert absolute[(("nodeA_group",), "NodeMargin")] == 80
+    assert (("margin_group",), "NodeMargin") not in absolute
+    assert _values(url, "group", "has_non_synchronous")[(("nodeA_group",), "base")] == "yes"
+    assert _values(url, "group", "non_synchronous_limit")[(("nodeA_group",), "base")] == 0.7
+
+
+def test_min_load_sensitivity_gives_the_unit_its_online_parameters(tmp_path: Path) -> None:
+    """FT2 (flexModel.mod 187-189) gives a unit_type with a ``min load`` online variables under ``use online`` 1,
+    so a sensitivity min load 0.5 on ``engine`` (no min load in the base) gives it, in that alternative, min_load
+    0.5, linear start-ups and constant_efficiency (no eff at min load).  A sensitivity ``use online`` 0 takes them
+    from the coal (min load 0.3, eff at min load 0.35): no_startup and constant_efficiency."""
+    sheets = ft2_sheets()
+    xlsm = write_workbook(tmp_path / "model.xlsx", sheets)
+    master = write_workbook(tmp_path / "flexTool.xlsx", {"Sensitivity definitions": [
+        ["Scenario definitions unit_type:", "Sheet", "unit type", "min load"],
+        ["EngineMinLoad", "unit_type", "engine", 0.5], [],
+        ["Scenario definitions master:", "Sheet", "use_online"], ["NoOnline", "master", 0], []]})
+    url = f"sqlite:///{tmp_path / 'model.sqlite'}"
+    report = import_old_flextool_xlsm(str(xlsm), url, master=str(master), strict=True)
+    assert not report.failed
+    key = (("engine_nodeA",), "EngineMinLoad")
+    assert _values(url, "unit", "min_load")[key] == 0.5
+    assert _values(url, "unit", "startup_method")[key] == "linear"
+    assert _values(url, "unit", "conversion_method")[key] == "constant_efficiency"
+    coal = (("coal_nodeA",), "NoOnline")
+    assert _values(url, "unit", "startup_method")[coal] == "no_startup"
+    assert _values(url, "unit", "conversion_method")[coal] == "constant_efficiency"
+
+
+#: FT2's template formula of the annuity (row 2: lifetime in U, interest in V).
+_ANNUITY_FORMULA = '=IF(AND(ISNUMBER(U{r}),ISNUMBER(V{r})),-PMT(V{r},U{r},1),"")'
+
+
+def test_formulas_without_a_stored_value(tmp_path: Path) -> None:
+    """openpyxl writes formulas without a stored value, as a script-made workbook has.  coal's annuity is FT2's
+    template formula of its own interest and lifetime: it is that annuity, so no mismatch line.  nodeA's
+    ``demand (MWh)`` is a user formula: not evaluated, read as empty (no annual_flow), and the report names the
+    cell and the formula."""
+    sheets = ft2_sheets()
+    col = UNIT_TYPE_HEADER.index
+    assert (col("lifetime"), col("interest")) == (20, 21)  # columns U and V
+    for r, row in enumerate(sheets["unit_type"][1:], start=2):
+        if row[0] == "coal":
+            row[col("annuity")] = _ANNUITY_FORMULA.format(r=r)
+    header = sheets["gridNode"][0]
+    assert header.index("demand (MWh)") == 5  # column F
+    sheets["gridNode"][1][5] = "=1000*8.76"
+    xlsm = write_workbook(tmp_path / "model.xlsx", sheets)
+    url = f"sqlite:///{tmp_path / 'model.sqlite'}"
+    report = import_old_flextool_xlsm(str(xlsm), url, strict=True)
+    found = {(u.sheet, u.column): u for u in report.unmapped}
+    assert ("unit_type", "annuity") not in found
+    item = found[("gridNode", "demand (MWh)")]
+    assert item.entities == ["F2 (=1000*8.76)"]
+    assert "without a stored value" in item.reason
+    assert _values(url, "node", "annual_flow") == {}
+
+
+def test_report_says_online_stays_in_the_investment_solve(tmp_path: Path) -> None:
+    """D27: FT2 leaves online variables out of its investment run (flexModel.mod 187-189 ``not mode_invest``);
+    FT4 keeps them in the investment solve, and the report says so (mode invest 1, coal with a min load)."""
+    xlsm = write_workbook(tmp_path / "model.xlsx", ft2_sheets())
+    report = import_old_flextool_xlsm(str(xlsm), f"sqlite:///{tmp_path / 'm.sqlite'}", strict=True)
+    assert any("investment solve" in note and "coal_nodeA" in note for note in report.assumptions)

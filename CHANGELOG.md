@@ -1,5 +1,31 @@
 ## Unreleased (4.7.1)
 
+### Behaviour changes
+
+- **FlexTool 2 import: minimum load without its own efficiency.** A unit with a `min load` whose `eff at min load` is
+  empty or equals `efficiency` lost its minimum load and start-ups; it now gets `min_load`, `startup_method` linear
+  and `constant_efficiency` (with `use online` 1, as FlexTool 2). With `use online` 0 a unit no longer gets a
+  minimum load, start-ups or `min_load_efficiency`: FlexTool 2 has no online variables then and ignores `eff at min
+  load`. A sensitivity of `min load`, `eff at min load`, `efficiency`, `startup cost`, `min uptime (h)`, `min
+  downtime (h)` or `use online` now sets the unit's online parameters to match (before, a `min load` sensitivity on
+  a unit without a base min load had no effect, and min up / down time sensitivities were not translated).
+- **FlexTool 2 import: online variables in the investment solve.** FlexTool 2 leaves online variables, minimum
+  load, start-ups and reserves out of its investment run; FlexTool 4 keeps them in the investment solve, so the
+  investments take them into account. The import report now says so and names the units and reserves.
+- **FlexTool 2 import: storage spill.** Only a storage with an inflow series may now spill (`penalty_down` 0), as in
+  FlexTool 2; other storage nodes get the loss of load penalty, so a battery can no longer dump energy for free.
+- **FlexTool 2 import: storage fixed cost.** A storage unit's `fixed cost/kW/year` was dropped; it now goes to the
+  discharger, which carries the unit's capacity and investment.
+- **FlexTool 2 import: charging capacity.** The charger could draw capacity / `eff charge` from the grid; its output
+  now has `capacity_max_coeff` = `eff charge`, so the grid-side charge is limited to the capacity, as in FlexTool 2.
+- **FlexTool 2 import: node-level capacity margin and non-synchronous share.** The gridNode `capacity margin (MW)`
+  and `non synchronous share` were dropped; they now go to a group `<node>_group` with that node. A gridNode
+  sensitivity of either now lands on that group; before, it overwrote the values of the node's nodeGroups.
+- **FlexTool 2 import: formulas without a stored value.** A workbook saved without Excel calculating its formulas
+  (for example written by a script) gives empty cells. The import report now names each such cell with its formula.
+  FlexTool 2's own annuity formula and the time jump columns are not listed: the import does not need their
+  values.
+
 ### New features
 
 - **Stochastic examples.** `stochastics.sqlite` has new scenarios, with a new how-to page "Stochastic examples": one

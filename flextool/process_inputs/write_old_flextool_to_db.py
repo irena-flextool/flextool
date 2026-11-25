@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from collections.abc import Callable
 from typing import Any
 
 import spinedb_api as api
@@ -29,6 +30,7 @@ from flextool.process_inputs.read_old_flextool import (
     OldFlexToolData,
     SensitivityOverride,
     TimeSeriesData,
+    UncachedFormula,
     UnitInstance,
     UnitTimeSeries,
     UnitType,
@@ -537,9 +539,10 @@ def _write_generation_limits(
 
 
 def _unit_has_online(data: OldFlexToolData, unit: UnitInstance) -> bool:
-    """FT2 ``unit_online`` (``flexModel.mod``): master ``use_online`` and a
-    min load, min up / down time or ``use min online`` on the unit (dispatch
-    runs only, which is where FT2 has online variables)."""
+    """FT2 ``unit_online`` (``flexModel.mod`` 189): master ``use_online`` and a min load, min up / down time or
+    ``use min online`` on the unit.  FT2 also leaves them out of its investment run (``not mode_invest``); the
+    import keeps them in the investment solve too (FlexTool 4 invests more accurately with them), and the report
+    says so (:func:`_online_in_invest_note`)."""
     if _get_master_param(data, "use online") != 1:
         return False
     return any(
@@ -548,38 +551,78 @@ def _unit_has_online(data: OldFlexToolData, unit: UnitInstance) -> bool:
     ) or bool(_unit_flag(unit, "use min online"))
 
 
-def _has_min_load_efficiency(data: OldFlexToolData, unit: UnitInstance) -> bool:
-    """The unit is imported with ``conversion_method min_load_efficiency`` (a min load with its own efficiency)."""
-    min_load = _get_unit_type_param(data, unit, "min load")
-    eff = _get_unit_type_param(data, unit, "efficiency")
-    eff_at_min = _get_unit_type_param(data, unit, "eff at min load")
-    return (min_load is not None and min_load > 0 and eff is not None and eff_at_min is not None
-            and eff_at_min != eff)
+def _online_in_invest_note(data: OldFlexToolData, scenarios: list[str] | None) -> list[str]:
+    """FT2 leaves online variables, min load, start-ups (``flexModel.mod`` 187-189) and reserves (131-132, 233) out
+    of its investment run; the import keeps them in the investment solve (owner decision).  One note naming the
+    units and reserve groups this concerns, none when there are none; ``scenarios`` are the sensitivities that
+    turn the investment on (None: the base does)."""
+    use_online = _get_master_param(data, "use online") == 1
+    units = sorted({_get_unit_name(u) for u in data.units if u.output_node and use_online and (
+        _unit_has_online(data, u) or (_get_unit_type_param(data, u, "startup cost") or 0) > 0)})
+    reserves = sorted({g.name for g in data.node_groups
+                       if _get_reserve_method(g.use_ts_reserve, g.use_dynamic_reserve) is not None}
+                      | {g.node for g in data.grid_nodes
+                         if _get_reserve_method(g.use_ts_reserve, g.use_dynamic_reserve) is not None})
+    if not units and not reserves:
+        return []
+    where = "" if scenarios is None else f" (scenarios {', '.join(scenarios)})"
+    what = "; ".join(part for part in (
+        f"online variables, minimum load or start-ups of {', '.join(units)}" if units else "",
+        f"reserves of {', '.join(reserves)}" if reserves else "") if part)
+    return [f"The investment solve{where} keeps the {what}. FlexTool 2 leaves them out of its investment run; "
+            "FlexTool 4 keeps them, so the investments take them into account and can differ from FlexTool 2."]
 
 
-def _min_time_method(data: OldFlexToolData, unit: UnitInstance) -> str | None:
-    """The ``minimum_time_method`` that enables the unit's FT2 min up / down times (``both``, ``min_uptime`` or
-    ``min_downtime`` by which are above 0); None without a time."""
-    up = (_get_unit_type_param(data, unit, "min uptime (h)") or 0) > 0
-    down = (_get_unit_type_param(data, unit, "min downtime (h)") or 0) > 0
-    return "both" if up and down else "min_uptime" if up else "min_downtime" if down else None
+#: unit_type columns that decide a unit's online parameters (``flexModel.mod`` 103, 187-189).
+_ONLINE_COLUMNS = frozenset({"min load", "eff at min load", "efficiency", "startup cost", "min uptime (h)",
+                             "min downtime (h)"})
 
 
-def _write_min_time_method(db: DatabaseMapping, data: OldFlexToolData, unit: UnitInstance, name: str,
-                           alt_name: str, counters: _Counters, startup_written: bool) -> None:
-    """FT2 gives a unit with online variables (:func:`_unit_has_online`) its min up / down times; FlexTool applies
-    a time only when ``minimum_time_method`` includes it, so the unit gets that method and, unless already
-    written, ``startup_method linear``.  A unit FT2 gives no online variables (``use online`` 0) keeps its times
-    switched off with an explicit ``minimum_time_method none``, so they give no W-0231 at every run."""
-    method = _min_time_method(data, unit)
-    if method is None:
-        return
-    if not _unit_has_online(data, unit):
-        _add_param(db, "unit", (name,), "minimum_time_method", "none", alt_name, counters)
-        return
-    if not startup_written:
-        _add_param(db, "unit", (name,), "startup_method", "linear", alt_name, counters)
-    _add_param(db, "unit", (name,), "minimum_time_method", method, alt_name, counters)
+def _write_online_params(db: DatabaseMapping, name: str, alt_name: str, counters: _Counters,
+                         param: Callable[[str], Any], *, use_online: bool, has_cf: bool,
+                         base: Callable[[str], Any] | None = None) -> None:
+    """A unit's FT2 online variables (``flexModel.mod`` 187-189: ``use_online`` and a min load, start-up cost or
+    min up / down time) as FT4 parameters of unit ``name``; ``param(column)`` gives the unit_type value.
+
+    Online: ``startup_method linear``, its ``startup_cost``, ``min_load`` (whatever ``eff at min load`` is) and
+    ``minimum_time_method``; ``conversion_method min_load_efficiency`` with ``efficiency_at_min_load`` only for an
+    ``eff at min load`` other than ``efficiency`` (103: FT2's fuel use then has a section), else
+    ``constant_efficiency`` (``none`` stays the caller's for a cf unit).  Without ``use_online`` FT2 has none of
+    these and ignores ``eff at min load`` (103), so neither does the unit; its min up / down times get an explicit
+    ``minimum_time_method none`` (no W-0231 at every run).  ``base`` (a sensitivity's base values) makes every
+    choice explicit, so the alternative overrides what the base wrote: ``no_startup``, ``min_load`` /
+    ``startup_cost`` 0 and ``minimum_time_method none`` where the base has them."""
+    def positive(column: str) -> bool:
+        value = param(column)
+        return isinstance(value, (int, float)) and value > 0
+
+    up, down = positive("min uptime (h)"), positive("min downtime (h)")
+    times = "both" if up and down else "min_uptime" if up else "min_downtime" if down else None
+    online = use_online and (positive("min load") or positive("startup cost") or times is not None)
+    eff, eff_at_min = param("efficiency"), param("eff at min load")
+    curve = (online and positive("min load") and isinstance(eff, (int, float)) and isinstance(eff_at_min, (int, float))
+             and eff_at_min > 0 and eff_at_min != eff)
+    write = lambda key, value: _add_param(db, "unit", (name,), key, value, alt_name, counters)  # noqa: E731
+    if not has_cf:
+        write("conversion_method", "min_load_efficiency" if curve else "constant_efficiency")
+    if online:
+        write("startup_method", "linear")
+    elif base is not None:
+        write("startup_method", "no_startup")
+    for column, key in (("min load", "min_load"), ("startup cost", "startup_cost")):
+        if online and positive(column):
+            write(key, param(column))
+        elif base is not None and (base(column) or 0) > 0:
+            write(key, 0.0)
+    if curve:
+        write("efficiency_at_min_load", eff_at_min)
+    for column, key in (("min uptime (h)", "min_uptime"), ("min downtime (h)", "min_downtime")):
+        if positive(column):
+            write(key, param(column))
+    if times is not None:
+        write("minimum_time_method", times if online else "none")
+    elif base is not None and any((base(column) or 0) > 0 for column in ("min uptime (h)", "min downtime (h)")):
+        write("minimum_time_method", "none")
 
 
 #: The generation-limit columns on a conversion unit (input from a node):
@@ -869,6 +912,26 @@ def _annuity_mismatch_items(data: OldFlexToolData) -> list[UnmappedItem]:
     return items
 
 
+_UNCACHED_FORMULA_REASON = (
+    "these cells hold a formula without a stored value: the workbook was saved without Excel calculating it "
+    "(for example written by a script), so the import read them as empty. Open the workbook in Excel, save it, "
+    "and import again."
+)
+
+
+def uncached_formula_items(found: list[UncachedFormula]) -> list[UnmappedItem]:
+    """One report line per sheet and column of formula cells without a stored value, naming each cell and its
+    formula (:func:`~flextool.process_inputs.read_old_flextool.uncached_formulas`)."""
+    by_column: dict[tuple[str, str], list[str]] = {}
+    for cell in found:
+        # The sensitivity sheet's first row is a section header, not the column's.
+        header = None if cell.sheet == "Sensitivity definitions" else cell.header
+        by_column.setdefault((cell.sheet, header or f"column {cell.cell.rstrip('0123456789')}"),
+                             []).append(f"{cell.cell} ({cell.formula})")
+    return [UnmappedItem(sheet, column, cells, _UNCACHED_FORMULA_REASON)
+            for (sheet, column), cells in by_column.items()]
+
+
 def _positive(value: Any) -> bool:
     return isinstance(value, (int, float)) and value > 0
 
@@ -1019,6 +1082,7 @@ def _collect_unmapped(data: OldFlexToolData) -> list[UnmappedItem]:
     items.extend(_profile_scaling_items(data))
     items.extend(_invested_capacity_items(data))
     items.extend(_annuity_mismatch_items(data))
+    items.extend(uncached_formula_items(data.uncached_formulas))
     # time_in_years first: it changes the balance of every cost.
     tiy = _time_in_years_item(data)
     return ([tiy] if tiy is not None else []) + items
@@ -1176,6 +1240,19 @@ def _needs_charger_discharger(unit: UnitInstance, data: OldFlexToolData) -> bool
     return _has_eff_charge(unit, data)
 
 
+def _write_charge_limit(db: DatabaseMapping, charger: str, storage_node: str, eff_charge: Any, alt_name: str,
+                        counters: _Counters, *, sensitivity: bool = False) -> None:
+    """FT2 limits the grid-side charge to the unit capacity (``flexModel.mod`` 639-645, ``v_charge <= capacity``); a
+    FlexTool unit's capacity is on its output (storage) side, so the charger's output gets ``capacity_max_coeff`` =
+    ``eff charge``: storage-side flow <= eff charge x capacity, grid-side <= capacity.  Its ramp limit is then on
+    the grid side too, as FT2's (680-698).  A ``sensitivity`` writes 1 for an ``eff charge`` of 1 or more, over
+    the base's coefficient."""
+    below_one = isinstance(eff_charge, (int, float)) and 0 < eff_charge < 1
+    if below_one or sensitivity:
+        _add_param(db, "unit__outputNode", (charger, storage_node), "capacity_max_coeff",
+                   float(eff_charge) if below_one else 1.0, alt_name, counters)
+
+
 def _write_storage_units(
     data: OldFlexToolData,
     db: DatabaseMapping,
@@ -1225,11 +1302,17 @@ def _write_storage_units(
                           alt_name, counters, skip_zero=False)
         _write_storage_start_end(db, storage_node, unit, alt_name, counters)
 
+        # FT2 spills only from a storage with an inflow (flexModel.mod 212
+        # gnu_spill): penalty_down 0 there (below), else the penalty of the
+        # balance nodes.
+        inflow_ts = _find_inflow_profile(data, unit.inflow_profile) if unit.inflow_profile else None
+        has_inflow = inflow_ts is not None and bool(inflow_ts.data)
         if lolp > 0:
             _add_param(db, "node", (storage_node,), "penalty_up", lolp,
                        alt_name, counters)
-        _add_param(db, "node", (storage_node,), "penalty_down", 0.0,
-                   alt_name, counters)
+        if has_inflow or lolp > 0:
+            _add_param(db, "node", (storage_node,), "penalty_down",
+                       0.0 if has_inflow else lolp, alt_name, counters)
 
         self_discharge = _get_unit_type_param(data, unit, "self discharge loss")
         _add_param_if_set(db, "node", (storage_node,), "self_discharge_loss",
@@ -1244,17 +1327,15 @@ def _write_storage_units(
         # existing, see _ft2_capacity).
 
         # Inflow on storage node (pumped hydro pattern)
-        if unit.inflow_profile:
-            inflow_ts = _find_inflow_profile(data, unit.inflow_profile)
-            if inflow_ts and inflow_ts.data:
-                ts_data = inflow_ts.data
-                if unit.inflow_multiplier is not None and unit.inflow_multiplier != 0:
-                    ts_data = {k: v * unit.inflow_multiplier for k, v in ts_data.items()}
-                inflow_map = _make_time_map(ts_data)
-                _add_param(db, "node", (storage_node,), "inflow",
-                           inflow_map, alt_name, counters)
-                _add_param(db, "node", (storage_node,), "inflow_method",
-                           "use_original", alt_name, counters)
+        if has_inflow:
+            ts_data = inflow_ts.data
+            if unit.inflow_multiplier is not None and unit.inflow_multiplier != 0:
+                ts_data = {k: v * unit.inflow_multiplier for k, v in ts_data.items()}
+            inflow_map = _make_time_map(ts_data)
+            _add_param(db, "node", (storage_node,), "inflow",
+                       inflow_map, alt_name, counters)
+            _add_param(db, "node", (storage_node,), "inflow_method",
+                       "use_original", alt_name, counters)
 
         # ── Charger unit ──────────────────────────────────────────
         _add_entity(db, "unit", charger_name, alt_name, counters,
@@ -1276,6 +1357,7 @@ def _write_storage_units(
                           alt_name, counters, entities_added, entity_alts_added)
         _add_relationship(db, "unit__outputNode", (charger_name, storage_node),
                           alt_name, counters, entities_added, entity_alts_added)
+        _write_charge_limit(db, charger_name, storage_node, eff_charge, alt_name, counters)
 
         # Charger ramps
         if use_ramps:
@@ -1310,44 +1392,13 @@ def _write_storage_units(
         _add_param(db, "unit", (discharger_name,), "existing", capacity,
                    alt_name, counters)
 
-        # Discharger conversion method — use min_load_efficiency when applicable
         eff_val = _get_unit_type_param(data, unit, "efficiency")
-        eff_at_min = _get_unit_type_param(data, unit, "eff at min load")
-        min_load_val = _get_unit_type_param(data, unit, "min load")
-        has_min_load = _has_min_load_efficiency(data, unit)
-        if has_min_load:
-            _add_param(db, "unit", (discharger_name,), "conversion_method",
-                       "min_load_efficiency", alt_name, counters)
-            _add_param(db, "unit", (discharger_name,), "startup_method",
-                       "linear", alt_name, counters)
-            _add_param(db, "unit", (discharger_name,), "min_load",
-                       min_load_val, alt_name, counters)
-            _add_param(db, "unit", (discharger_name,), "efficiency_at_min_load",
-                       eff_at_min, alt_name, counters)
-        else:
-            _add_param(db, "unit", (discharger_name,), "conversion_method",
-                       "constant_efficiency", alt_name, counters)
-
         _add_param(db, "unit", (discharger_name,), "efficiency",
                    eff_val if eff_val is not None else 1.0, alt_name, counters)
-
-        # Discharger startup (only on discharger)
-        startup_cost = _get_unit_type_param(data, unit, "startup cost")
-        has_startup_cost = use_online and startup_cost is not None and startup_cost > 0
-        if has_startup_cost:
-            _add_param(db, "unit", (discharger_name,), "startup_cost",
-                       startup_cost, alt_name, counters)
-            _add_param(db, "unit", (discharger_name,), "startup_method",
-                       "linear", alt_name, counters)
-        _write_min_time_method(db, data, unit, discharger_name, alt_name, counters,
-                               startup_written=has_min_load or has_startup_cost)
-
-        min_uptime = _get_unit_type_param(data, unit, "min uptime (h)")
-        _add_param_if_set(db, "unit", (discharger_name,), "min_uptime",
-                          min_uptime, alt_name, counters)
-        min_downtime = _get_unit_type_param(data, unit, "min downtime (h)")
-        _add_param_if_set(db, "unit", (discharger_name,), "min_downtime",
-                          min_downtime, alt_name, counters)
+        # Online variables, min load and start-ups only on the discharger.
+        _write_online_params(db, discharger_name, alt_name, counters,
+                             lambda column, unit=unit: _get_unit_type_param(data, unit, column),
+                             use_online=use_online, has_cf=False)
 
         # Discharger relationships
         _add_relationship(db, "unit__inputNode", (discharger_name, storage_node),
@@ -1399,6 +1450,11 @@ def _write_storage_units(
         # annuity), while no value is the 5 % default.
         _add_param_if_set(db, "unit", (discharger_name,), "invest_cost",
                           inv_cost_kw, alt_name, counters)
+        # FT2 charges the fixed cost per kW of the unit's capacity and v_invest
+        # (flexModel.mod 393-394): the discharger's existing and investment.
+        _add_param_if_set(db, "unit", (discharger_name,), "fixed_cost",
+                          _get_unit_type_param(data, unit, "fixed cost/kw/year"),
+                          alt_name, counters)
         _add_param_if_set(db, "unit", (discharger_name,), "lifetime",
                           lifetime, alt_name, counters)
         _add_param_if_set(db, "unit", (discharger_name,), "discount_rate",
@@ -1499,28 +1555,16 @@ def _write_units(
             continue
 
         unit_name = _get_unit_name(unit)
-        ut = _get_unit_type(data, unit)
 
         # Create unit entity
         _add_entity(db, "unit", unit_name, alt_name, counters,
                      entities_added, entity_alts_added)
 
-        # -- Determine conversion_method --
+        # -- conversion_method: none for a cf unit, else with the online parameters below --
         has_cf = unit.cf_profile is not None
-        min_load_val = ut.params.get("min load") if ut else None
-        eff_val = ut.params.get("efficiency") if ut else None
-        eff_at_min = ut.params.get("eff at min load") if ut else None
-        has_min_load = _has_min_load_efficiency(data, unit)
-
         if has_cf:
-            conversion_method = "none"
-        elif has_min_load:
-            conversion_method = "min_load_efficiency"
-        else:
-            conversion_method = "constant_efficiency"
-
-        _add_param(db, "unit", (unit_name,), "conversion_method",
-                   conversion_method, alt_name, counters)
+            _add_param(db, "unit", (unit_name,), "conversion_method", "none",
+                       alt_name, counters)
 
         # -- existing capacity: ``capacity (MW)`` + ``invested capacity (MW)``
         # (see _ft2_capacity); ``max invest (MW)`` is the investment below. --
@@ -1540,41 +1584,15 @@ def _write_units(
             _add_param_if_set(db, "unit", (unit_name,), "efficiency", eff_val,
                               alt_name, counters)
 
-        # -- min_load and efficiency_at_min_load --
-        if has_min_load:
-            _add_param(db, "unit", (unit_name,), "min_load", min_load_val,
-                       alt_name, counters)
-            eff_at_min = _get_unit_type_param(data, unit, "eff at min load")
-            _add_param_if_set(db, "unit", (unit_name,), "efficiency_at_min_load",
-                              eff_at_min, alt_name, counters)
-
         # -- availability: FT2 uses it only in the capacity margin
         # (flexModel.mod capacityMarginNode / ...NodeGroup); FT4
         # unit.availability would derate dispatch, so it is reported instead
         # (_availability_item). --
 
-        # -- startup parameters --
-        startup_cost = _get_unit_type_param(data, unit, "startup cost")
-        # min_load_efficiency always requires startup_method = "linear"
-        needs_startup = (
-            has_min_load
-            or (use_online and startup_cost is not None and startup_cost > 0)
-        )
-        if needs_startup:
-            if startup_cost is not None and startup_cost > 0:
-                _add_param(db, "unit", (unit_name,), "startup_cost", startup_cost,
-                           alt_name, counters)
-            _add_param(db, "unit", (unit_name,), "startup_method", "linear",
-                       alt_name, counters)
-        _write_min_time_method(db, data, unit, unit_name, alt_name, counters, startup_written=needs_startup)
-
-        # -- min_uptime / min_downtime --
-        min_uptime = _get_unit_type_param(data, unit, "min uptime (h)")
-        _add_param_if_set(db, "unit", (unit_name,), "min_uptime", min_uptime,
-                          alt_name, counters)
-        min_downtime = _get_unit_type_param(data, unit, "min downtime (h)")
-        _add_param_if_set(db, "unit", (unit_name,), "min_downtime", min_downtime,
-                          alt_name, counters)
+        # -- online variables: min load, start-ups, min up / down times --
+        _write_online_params(db, unit_name, alt_name, counters,
+                             lambda column, unit=unit: _get_unit_type_param(data, unit, column),
+                             use_online=use_online, has_cf=has_cf)
 
         # -- fixed_cost, invest_cost, lifetime, interest_rate --
         fixed_cost = _get_unit_type_param(data, unit, "fixed cost/kw/year")
@@ -1907,6 +1925,52 @@ def _write_connections(
     logger.info("Wrote %d connections.", len(data.connections))
 
 
+@dataclass
+class _ConstraintGroup:
+    """A FlexTool group with FT2's capacity margin / non-synchronous share / inertia limit."""
+    name: str
+    nodes: list[str]
+    capacity_margin: float | None
+    non_synchronous_share: float | None
+    inertia_limit: float | None
+
+
+def _node_group_name(node: str) -> str:
+    """The group of an FT2 node-level capacity margin / non-synchronous share."""
+    return f"{node}_group"
+
+
+def _constraint_groups(data: OldFlexToolData, counters: _Counters | None = None) -> list[_ConstraintGroup]:
+    """The nodeGroups with a capacity margin, non-synchronous share or inertia limit, and a one-node group
+    (:func:`_node_group_name`) for each gridNode with its own margin or share: FT2's node equations
+    (``flexModel.mod`` 780, 944) are its nodeGroup equations (802, 966) over that one node.  A node group whose
+    name is taken by a grid or nodeGroup is left out, and reported (with ``counters``)."""
+    members: dict[str, list[str]] = {}
+    for gn in data.grid_nodes:
+        for ng_name in gn.node_groups:
+            members.setdefault(ng_name, []).append(gn.node)
+    groups = [_ConstraintGroup(ng.name, members.get(ng.name, []), ng.capacity_margin_mw, ng.non_synchronous_share,
+                               ng.inertia_limit_mws)
+              for ng in data.node_groups
+              if _positive(ng.capacity_margin_mw) or _positive(ng.non_synchronous_share)
+              or _positive(ng.inertia_limit_mws)]
+    taken = {ng.name for ng in data.node_groups} | {gn.grid for gn in data.grid_nodes}
+    for gn in data.grid_nodes:
+        if not (_positive(gn.capacity_margin_mw) or _positive(gn.non_synchronous_share)):
+            continue
+        name = _node_group_name(gn.node)
+        if name in taken:
+            if counters is not None:
+                counters.unmapped.append(UnmappedItem(
+                    "gridNode", "capacity margin (MW) / non synchronous share", [gn.node],
+                    f"FlexTool 4 gives these to a group '{name}' of the node, but the workbook already has a "
+                    "grid or nodeGroup of that name, so they were not carried over. Rename that nodeGroup and "
+                    "import again, or set them on a group of the node by hand."))
+            continue
+        groups.append(_ConstraintGroup(name, [gn.node], gn.capacity_margin_mw, gn.non_synchronous_share, None))
+    return groups
+
+
 def _write_groups(
     data: OldFlexToolData,
     db: DatabaseMapping,
@@ -1941,55 +2005,40 @@ def _write_groups(
 
     logger.info("Wrote %d grid groups.", len(grids))
 
-    # -- Node groups --
-    # Build a lookup: node_group_name -> list of node names (from gridNode)
-    ng_nodes: dict[str, list[str]] = {}
-    for gn in data.grid_nodes:
-        for ng_name in gn.node_groups:
-            ng_nodes.setdefault(ng_name, []).append(gn.node)
-
-    for ng in data.node_groups:
-        has_constraints = (
-            (ng.capacity_margin_mw is not None and ng.capacity_margin_mw > 0)
-            or (ng.non_synchronous_share is not None and ng.non_synchronous_share > 0)
-            or (ng.inertia_limit_mws is not None and ng.inertia_limit_mws > 0)
-        )
-        if not has_constraints:
-            continue
-
-        _add_entity(db, "group", ng.name, alt_name, counters,
+    # -- Node groups, and one group per node with a node-level margin or share --
+    for group in _constraint_groups(data, counters):
+        _add_entity(db, "group", group.name, alt_name, counters,
                      entities_added, entity_alts_added)
 
-        if use_cap_margin and ng.capacity_margin_mw is not None and ng.capacity_margin_mw > 0:
-            _add_param(db, "group", (ng.name,), "capacity_margin",
-                       ng.capacity_margin_mw, alt_name, counters)
-            _add_param(db, "group", (ng.name,), "has_capacity_margin", "yes",
+        if use_cap_margin and _positive(group.capacity_margin):
+            _add_param(db, "group", (group.name,), "capacity_margin",
+                       group.capacity_margin, alt_name, counters)
+            _add_param(db, "group", (group.name,), "has_capacity_margin", "yes",
                        alt_name, counters)
             if lack_cap_penalty > 0:
-                _add_param(db, "group", (ng.name,), "penalty_capacity_margin",
+                _add_param(db, "group", (group.name,), "penalty_capacity_margin",
                            lack_cap_penalty, alt_name, counters)
 
-        if use_non_sync and ng.non_synchronous_share is not None and ng.non_synchronous_share > 0:
-            _add_param(db, "group", (ng.name,), "non_synchronous_limit",
-                       ng.non_synchronous_share, alt_name, counters)
-            _add_param(db, "group", (ng.name,), "has_non_synchronous", "yes",
+        if use_non_sync and _positive(group.non_synchronous_share):
+            _add_param(db, "group", (group.name,), "non_synchronous_limit",
+                       group.non_synchronous_share, alt_name, counters)
+            _add_param(db, "group", (group.name,), "has_non_synchronous", "yes",
                        alt_name, counters)
             if loss_reserves_penalty > 0:
-                _add_param(db, "group", (ng.name,), "penalty_non_synchronous",
+                _add_param(db, "group", (group.name,), "penalty_non_synchronous",
                            loss_reserves_penalty, alt_name, counters)
 
-        if use_inertia and ng.inertia_limit_mws is not None and ng.inertia_limit_mws > 0:
-            _add_param(db, "group", (ng.name,), "inertia_limit",
-                       ng.inertia_limit_mws, alt_name, counters)
-            _add_param(db, "group", (ng.name,), "has_inertia", "yes",
+        if use_inertia and _positive(group.inertia_limit):
+            _add_param(db, "group", (group.name,), "inertia_limit",
+                       group.inertia_limit, alt_name, counters)
+            _add_param(db, "group", (group.name,), "has_inertia", "yes",
                        alt_name, counters)
             if lack_inertia_penalty > 0:
-                _add_param(db, "group", (ng.name,), "penalty_inertia",
+                _add_param(db, "group", (group.name,), "penalty_inertia",
                            lack_inertia_penalty, alt_name, counters)
 
-        # Link nodes to this group
-        for node_name in ng_nodes.get(ng.name, []):
-            _add_relationship(db, "group__node", (ng.name, node_name),
+        for node_name in group.nodes:
+            _add_relationship(db, "group__node", (group.name, node_name),
                               alt_name, counters, entities_added, entity_alts_added)
 
     logger.info("Wrote %d node groups.", len(data.node_groups))
@@ -2684,6 +2733,8 @@ def write_old_flextool_to_db(
         entity_alts_added: set[tuple[str, tuple[str, ...], str]] = set()
         counters = _Counters(strict=strict)
         counters.unmapped.extend(_collect_unmapped(data))
+        if _get_master_param(data, "mode invest") == 1:
+            counters.assumptions.extend(_online_in_invest_note(data, None))
 
         # Add the alternative
         try:
@@ -2866,53 +2917,28 @@ def _apply_master_override(
                                value, alt_name, counters)
 
     elif "lack of capacity penalty" in param or "lack_of_capacity_penalty" in ov.param_name.lower():
-        for ng in data.node_groups:
-            if ng.capacity_margin_mw is not None and ng.capacity_margin_mw > 0:
-                if _entity_exists(existing_entities, "group", (ng.name,)):
-                    _add_param(db, "group", (ng.name,), "penalty_capacity_margin",
+        for group in _constraint_groups(data):
+            if _positive(group.capacity_margin):
+                if _entity_exists(existing_entities, "group", (group.name,)):
+                    _add_param(db, "group", (group.name,), "penalty_capacity_margin",
                                value, alt_name, counters)
 
     elif "use capacity margin" in param or "use_capacity_margin" in ov.param_name.lower():
         enabled = float(value) == 1 if isinstance(value, (int, float)) else False
-        for ng in data.node_groups:
-            if ng.capacity_margin_mw is not None and ng.capacity_margin_mw > 0:
-                if _entity_exists(existing_entities, "group", (ng.name,)):
+        for group in _constraint_groups(data):
+            if _positive(group.capacity_margin):
+                if _entity_exists(existing_entities, "group", (group.name,)):
                     if enabled:
-                        _add_param(db, "group", (ng.name,), "has_capacity_margin",
+                        _add_param(db, "group", (group.name,), "has_capacity_margin",
                                    "yes", alt_name, counters)
-                        _add_param(db, "group", (ng.name,), "capacity_margin",
-                                   ng.capacity_margin_mw, alt_name, counters)
+                        _add_param(db, "group", (group.name,), "capacity_margin",
+                                   group.capacity_margin, alt_name, counters)
                     else:
-                        _add_param(db, "group", (ng.name,), "has_capacity_margin",
+                        _add_param(db, "group", (group.name,), "has_capacity_margin",
                                    "no", alt_name, counters)
 
     elif "use online" in param or "use_online" in ov.param_name.lower():
-        # Online variables of the units (and storage dischargers) with a start-up cost or a min up / down time.
-        # Disabled, a time needs minimum_time_method none too: a method would promote no_startup back to linear.
-        enabled = float(value) == 1 if isinstance(value, (int, float)) else False
-        for unit in data.units:
-            if unit.output_node is None:
-                continue
-            startup_cost = _get_unit_type_param(data, unit, "startup cost")
-            has_startup_cost = startup_cost is not None and startup_cost > 0
-            method = _min_time_method(data, unit)
-            if not has_startup_cost and method is None:
-                continue
-            unit_name = _get_unit_name(unit)
-            if _needs_charger_discharger(unit, data):
-                unit_name = f"{unit_name}_discharger"
-            if not _entity_exists(existing_entities, "unit", (unit_name,)):
-                continue
-            if enabled:
-                _add_param(db, "unit", (unit_name,), "startup_method", "linear", alt_name, counters)
-                if has_startup_cost:
-                    _add_param(db, "unit", (unit_name,), "startup_cost", startup_cost, alt_name, counters)
-            elif not _has_min_load_efficiency(data, unit):
-                # A min_load_efficiency unit keeps the linear start-ups it needs, as under use online 0 in the base.
-                _add_param(db, "unit", (unit_name,), "startup_method", "no_startup", alt_name, counters)
-            if method is not None:
-                _add_param(db, "unit", (unit_name,), "minimum_time_method", method if enabled else "none",
-                           alt_name, counters)
+        pass  # with the units' online parameters, in _apply_online_overrides
 
     elif "use ramps" in param or "use_ramps" in ov.param_name.lower():
         enabled = float(value) == 1 if isinstance(value, (int, float)) else False
@@ -2935,16 +2961,16 @@ def _apply_master_override(
 
     elif "use non synchronous" in param or "use_non_synchronous" in ov.param_name.lower():
         enabled = float(value) == 1 if isinstance(value, (int, float)) else False
-        for ng in data.node_groups:
-            if ng.non_synchronous_share is not None and ng.non_synchronous_share > 0:
-                if _entity_exists(existing_entities, "group", (ng.name,)):
+        for group in _constraint_groups(data):
+            if _positive(group.non_synchronous_share):
+                if _entity_exists(existing_entities, "group", (group.name,)):
                     if enabled:
-                        _add_param(db, "group", (ng.name,), "has_non_synchronous",
+                        _add_param(db, "group", (group.name,), "has_non_synchronous",
                                    "yes", alt_name, counters)
-                        _add_param(db, "group", (ng.name,), "non_synchronous_limit",
-                                   ng.non_synchronous_share, alt_name, counters)
+                        _add_param(db, "group", (group.name,), "non_synchronous_limit",
+                                   group.non_synchronous_share, alt_name, counters)
                     else:
-                        _add_param(db, "group", (ng.name,), "has_non_synchronous",
+                        _add_param(db, "group", (group.name,), "has_non_synchronous",
                                    "no", alt_name, counters)
 
     elif "use inertia limit" in param or "use_inertia_limit" in ov.param_name.lower():
@@ -3052,6 +3078,53 @@ def _apply_node_group_override(
                              ov.entity_ids.get("nodeGroup"))
 
 
+def _apply_online_overrides(
+    overrides: list[SensitivityOverride],
+    data: OldFlexToolData,
+    effective_master: dict[str, float],
+    db: DatabaseMapping,
+    alt_name: str,
+    counters: _Counters,
+    existing_entities: set[tuple[str, tuple[str, ...]]],
+) -> None:
+    """A scenario's ``use online`` and unit_type :data:`_ONLINE_COLUMNS` overrides (and the units-section ``min
+    load`` / ``efficiency``, which the import gives the unit) → the online parameters of each unit they touch,
+    from the scenario's values (units, else unit_type, else base) and its ``use online``
+    (:func:`_write_online_params` with the base values, so every choice is explicit)."""
+    # The last 'use online' key wins: an override's key follows the base's.
+    use_online = [value for key, value in effective_master.items() if _norm_key(key) == "use online"][-1:] == [1]
+    touches_all = any(ov.section == "master" and _norm_key(ov.param_name) == "use online" for ov in overrides)
+    for unit in data.units:
+        if unit.output_node is None:
+            continue
+        typed = {_norm_key(ov.param_name): ov.value for ov in overrides
+                 if ov.section == "unit_type" and ov.entity_ids.get("unit type") == unit.unit_type
+                 and _norm_key(ov.param_name) in _ONLINE_COLUMNS}
+        own = {_norm_key(ov.param_name): ov.value for ov in overrides
+               if ov.section == "units" and ov.entity_ids.get("unittype") == unit.unit_type
+               and ov.entity_ids.get("output node") == unit.output_node
+               and _norm_key(ov.param_name) in ("min load", "efficiency")}
+        if not (touches_all or typed or own):
+            continue
+        name = _get_unit_name(unit)
+        if _needs_charger_discharger(unit, data):
+            name = f"{name}_discharger"
+        if not _entity_exists(existing_entities, "unit", (name,)):
+            continue
+
+        def base(column: str, unit: UnitInstance = unit) -> Any:
+            return _get_unit_type_param(data, unit, column)
+
+        def scenario(column: str, typed: dict = typed, own: dict = own, base=base) -> Any:
+            return own.get(column, typed.get(column, base(column)))
+
+        if not any(isinstance(get(column), (int, float)) and get(column) > 0 for get in (base, scenario)
+                   for column in ("min load", "startup cost", "min uptime (h)", "min downtime (h)")):
+            continue  # no online variables in the base or the scenario: nothing to write
+        _write_online_params(db, name, alt_name, counters, scenario, use_online=use_online,
+                             has_cf=unit.cf_profile is not None, base=base)
+
+
 def _apply_unit_type_override(
     ov: SensitivityOverride,
     data: OldFlexToolData,
@@ -3099,12 +3172,10 @@ def _apply_unit_type_override(
         elif "eff charge" in param_lower:
             if is_storage:
                 _add_param(db, "unit", (charger,), "efficiency", value, alt_name, counters)
-        elif "eff at min load" in param_lower:
-            target = discharger if is_storage else unit_name
-            _add_param(db, "unit", (target,), "efficiency_at_min_load", value, alt_name, counters)
-        elif "min load" == param_lower:
-            target = discharger if is_storage else unit_name
-            _add_param(db, "unit", (target,), "min_load", value, alt_name, counters)
+                _write_charge_limit(db, charger, f"{unit_name}_storage", value, alt_name, counters,
+                                    sensitivity=True)
+        elif _norm_key(param_lower) in _ONLINE_COLUMNS:
+            pass  # min load, eff at min load, start-up cost, min times: _apply_online_overrides
         elif "availability" == param_lower:
             # Capacity margin only in FT2; not FT4 unit.availability.
             counters.unmapped.append(UnmappedItem(
@@ -3132,9 +3203,6 @@ def _apply_unit_type_override(
         elif "interest" == param_lower:
             target = discharger if is_storage else unit_name
             _add_param(db, "unit", (target,), "discount_rate", value, alt_name, counters)
-        elif "startup cost" in param_lower:
-            target = discharger if is_storage else unit_name
-            _add_param(db, "unit", (target,), "startup_cost", value, alt_name, counters)
         elif "o&m cost" in param_lower:
             if is_storage:
                 rel = (discharger, unit.output_node)
@@ -3478,9 +3546,9 @@ def _apply_units_override(
     elif "eff charge" in param_lower:
         if is_storage:
             _add_param(db, "unit", (charger,), "efficiency", value, alt_name, counters)
+            _write_charge_limit(db, charger, storage_node, value, alt_name, counters, sensitivity=True)
     elif "min load" in param_lower:
-        target = discharger if is_storage else unit_name
-        _add_param(db, "unit", (target,), "min_load", value, alt_name, counters)
+        pass  # with the unit's other online parameters, in _apply_online_overrides
     elif "inflow multiplier" in param_lower:
         # Re-read the original inflow profile, apply the new multiplier,
         # and write to the unit's inflow node under this alternative
@@ -3537,25 +3605,22 @@ def _apply_grid_node_override(
 
     if "demand" in param_lower:
         _add_param(db, "node", (node_name,), "annual_flow", value, alt_name, counters)
-    elif "capacity margin" in param_lower:
-        # This applies to the node's group, find the group
-        for gn in data.grid_nodes:
-            if gn.node == node_name:
-                for ng_name in gn.node_groups:
-                    if _entity_exists(existing_entities, "group", (ng_name,)):
-                        _add_param(db, "group", (ng_name,), "capacity_margin",
-                                   value, alt_name, counters)
-                        _add_param(db, "group", (ng_name,), "has_capacity_margin",
-                                   "yes", alt_name, counters)
-    elif "non synchronous" in param_lower:
-        for gn in data.grid_nodes:
-            if gn.node == node_name:
-                for ng_name in gn.node_groups:
-                    if _entity_exists(existing_entities, "group", (ng_name,)):
-                        _add_param(db, "group", (ng_name,), "non_synchronous_limit",
-                                   value, alt_name, counters)
-                        _add_param(db, "group", (ng_name,), "has_non_synchronous",
-                                   "yes", alt_name, counters)
+    elif "capacity margin" in param_lower or "non synchronous" in param_lower:
+        # FT2's node-level margin / share: the node's own group (_constraint_groups).
+        group = _node_group_name(node_name)
+        margin = "capacity margin" in param_lower
+        if _entity_exists(existing_entities, "group", (group,)):
+            _add_param(db, "group", (group,), "capacity_margin" if margin else "non_synchronous_limit",
+                       value, alt_name, counters)
+            _add_param(db, "group", (group,), "has_capacity_margin" if margin else "has_non_synchronous",
+                       "yes", alt_name, counters)
+        else:
+            counters.unmapped.append(UnmappedItem(
+                "Sensitivity definitions / gridNode", ov.param_name, [f"{node_name} [{alt_name}]"],
+                f"FlexTool 4 gives a node's own {'capacity margin' if margin else 'non-synchronous share'} to a "
+                f"group '{group}' of the node, which the import makes only for a node with a value in the "
+                f"workbook. Not carried over: add the group (with the node) by hand and set the value in "
+                f"alternative '{alt_name}'."))
     elif "use ts_reserve" in param_lower or "use dynamic reserve" in param_lower:
         use_ts = None
         use_dyn = None
@@ -3776,6 +3841,10 @@ def write_sensitivities_to_db(
                     _unknown_sensitivity(counters, scenario_name, ov.section,
                                          ov.param_name, None)
 
+            # 4b. The online parameters of the units the scenario changes
+            _apply_online_overrides(overrides, data, effective_master, db, scenario_name,
+                                    counters, existing_entities)
+
             # 5. Apply mode overrides if present
             if has_mode_override:
                 _apply_mode_overrides(
@@ -3809,6 +3878,12 @@ def write_sensitivities_to_db(
 
         counters.unmapped.extend(
             _sensitivity_invested_capacity_items(sensitivities, data))
+        if _get_master_param(data, "mode invest") != 1:
+            invest_scenarios = [name for name, overrides in sensitivities.items()
+                                if any(ov.section == "master" and _norm_key(ov.param_name) == "mode invest"
+                                       and ov.value == 1 for ov in overrides)]
+            if invest_scenarios:
+                counters.assumptions.extend(_online_in_invest_note(data, invest_scenarios))
 
         # Commit everything
         try:
@@ -3985,6 +4060,7 @@ def import_old_flextool_xlsm(
     from flextool.process_inputs.read_old_flextool import (
         read_old_flextool,
         read_old_flextool_sensitivities,
+        uncached_formulas,
     )
     from flextool.update_flextool.db_migration import (
         BEHAVIOUR_CHANGE_MARKER_PREFIX,
@@ -4003,6 +4079,7 @@ def import_old_flextool_xlsm(
     if master:
         _require_master_workbook(master)
         sensitivities = read_old_flextool_sensitivities(master)
+        master_uncached = uncached_formulas(master, ["Sensitivity definitions"])
 
     initialised_here = False
     sqlite_path = _sqlite_path_from_url(target_db_url)
@@ -4030,10 +4107,12 @@ def import_old_flextool_xlsm(
             strict=strict,
         ))
         if master:
-            report.add("sensitivities", write_sensitivities_to_db(
+            counters = write_sensitivities_to_db(
                 sensitivities, data, target_db_url,
                 base_alternative=alternative_name, strict=strict,
-            ))
+            )
+            counters.unmapped.extend(uncached_formula_items(master_uncached))
+            report.add("sensitivities", counters)
 
         if migrate:
             logger.info("Migrating %s to the current schema version", target_db_url)
