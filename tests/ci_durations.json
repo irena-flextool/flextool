@@ -148,6 +148,7 @@
  "tests/engine/test_block_layout.py": 5.6,
  "tests/engine/test_block_preprocessing_invariants.py": 1.4,
  "tests/engine/test_branch_weight_applied.py": 8.6,
+ "tests/engine/test_branched_invest_realization.py": 32.6,
  "tests/engine/test_broadcast_null_cast_fix.py": 0.0,
  "tests/engine/test_capacity_coefficients.py": 56.5,
  "tests/engine/test_capacity_existing_baseline.py": 9.4,

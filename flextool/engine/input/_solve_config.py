@@ -1471,9 +1471,14 @@ class SolveConfig:
         ``solver_arguments``, ``solver_mip_gap`` and ``scaling``."""
         parent_mode = self.solve_modes.get(parent, "single_solve")
         mode = "rolling_window" if parent_mode == "rolling_window" else "single_solve"
+        realized = copy.deepcopy(self.realized_periods.get(parent, []))
+        if mode == "single_solve":
+            # The realization of an investment solve starts at its reveal: the periods before it are the parent's.
+            window = {str(p) for p, _ts in SolveConfig.realization_window(self, parent)[0]}
+            realized = [t for t in realized if str(t[1]) in window]
         overrides: dict[str, Any] = {
             "solve_modes": mode,
-            "realized_periods": copy.deepcopy(self.realized_periods.get(parent, [])),
+            "realized_periods": realized,
         }
         if mode == "single_solve":
             # Only the committed periods: a look-ahead period dispatched with the realized data would let the
@@ -1492,16 +1497,25 @@ class SolveConfig:
     def realization_window(self, parent: str) -> "tuple[list, list]":
         """The ``timesets_used_by_solves`` and ``solve_period_years_represented`` entries of the realization solve
         of the single solve *parent*: the parent's entries from its first to its last realized period, in the
-        parent's order (item 255: the realization dispatches the committed periods, not the look-ahead).
+        parent's order (item 255: the realization dispatches the committed periods, not the look-ahead).  For an
+        investment solve (:func:`is_investment_solve`) the window starts at the later of its first realized period
+        and its reveal period (:meth:`reveal_period`): the investment solve realizes the operations before the
+        reveal itself, so its realization does not dispatch them again, and starts from the storage they end with
+        (``_carry_routing``).
 
         A period the parent does not realize between two it realizes is dispatched too, so storage runs through
-        it as in the parent, but not reported: the realization solve's ``realized_periods`` are the parent's.  It
-        lies before the last committed period, so dispatching it with the realized data uses no later actuals.
+        it as in the parent, but not reported: the realization solve's ``realized_periods`` are the parent's in the
+        window.  It lies before the last committed period, so dispatching it with the realized data uses no later
+        actuals.
         """
         realized = {str(t[1]) for t in (getattr(self, "realized_periods", None) or {}).get(parent, [])}
         timesets = (getattr(self, "timesets_used_by_solves", None) or {}).get(parent, [])
         order = list(dict.fromkeys(str(p) for p, _ts in timesets))
         positions = [i for i, p in enumerate(order) if p in realized]
+        if positions and is_investment_solve(self, parent):
+            reveal = SolveConfig.reveal_period(self, parent)
+            if reveal in order:
+                positions = [i for i in positions if i >= order.index(reveal)]
         span = set(order[positions[0]:positions[-1] + 1]) if positions else set()
         return ([copy.deepcopy(row) for row in timesets if str(row[0]) in span],
                 [copy.deepcopy(row) for row in

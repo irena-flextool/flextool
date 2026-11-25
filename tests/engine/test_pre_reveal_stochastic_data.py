@@ -108,11 +108,14 @@ def _base_col(df):
 
 
 def _outputs(run, scenario: str):
-    """The pre-reveal ``v_flow`` rows (of the realization dispatch when there is a realized branch: it holds the
-    realized operational results) and the stochastic solve's ``v_invest``."""
+    """The pre-reveal ``v_flow`` rows and the stochastic solve's ``v_invest``.  The stochastic solve is an investment
+    solve, so it dispatches the period before the reveal itself; with a realized branch its realization dispatch
+    starts at the reveal (p2040) and holds no p2035 row."""
     wf = run.work_folder
-    flow_solve = f"{SOLVE}__realized_dispatch" if scenario == "midhorizon_realized" else SOLVE
-    v_flow = pl.read_parquet(wf / "output_raw" / f"v_flow__{flow_solve}.parquet")
+    if scenario == "midhorizon_realized":
+        realization = pl.read_parquet(wf / "output_raw" / f"v_flow__{SOLVE}__realized_dispatch.parquet")
+        assert set(realization["period"].to_list()) == {"p2040"}, realization
+    v_flow = pl.read_parquet(wf / "output_raw" / f"v_flow__{SOLVE}.parquet")
     v_invest = pl.read_parquet(wf / "output_raw" / f"v_invest__{SOLVE}.parquet")
     return v_flow.filter(pl.col("period") == PRE_REVEAL_PERIOD), v_invest
 
@@ -138,8 +141,8 @@ def test_pre_reveal_period_reads_plain_or_realized_data(midhorizon_run):
     assert pre.height == 3
     assert pre[_wind_col(pre)].to_list() == pytest.approx([EXPECTED_PRE_REVEAL_WIND] * 3)
     assert pre[_base_col(pre)].to_list() == pytest.approx([EXPECTED_PRE_REVEAL_BASE_DISPATCH] * 3)
-    # Item 258: with a realized branch the realization dispatch solve holds the dispatch of every period, so the
-    # stochastic solve has no dispatch axis; its here-and-now investment at p2035 still has its row.
+    # Item 258: the stochastic solve's here-and-now investment at p2035 has its row (also with a realized branch,
+    # whose realization dispatch solve holds the later periods).
     assert v_invest["period"].to_list() == [PRE_REVEAL_PERIOD, "p2040"], v_invest
     assert v_invest["base"].to_list() == pytest.approx([EXPECTED_PRE_REVEAL_INVEST, 0.0])
 

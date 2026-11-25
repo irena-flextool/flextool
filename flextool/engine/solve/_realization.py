@@ -17,7 +17,6 @@ module holds the config-time predicates that decide the registration and the per
 """
 from __future__ import annotations
 
-import logging
 import re
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
@@ -28,7 +27,6 @@ from flextool.engine.input._solve_state import FlexToolConfigError
 
 from flextool.engine.preprocess.params._branch import fan_period_labels
 
-_MODULE_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -187,18 +185,25 @@ def lookahead_in_configured_realization(solve_cfg: Any, realization_solve: str, 
             f"'{realization_solve}' unless this is intended.")
 
 
-def warn_recourse_designation(solve: str) -> None:
-    """Warn that a ``realized: yes`` designation of a solve whose investments branch gets no realization solve.
+def warn_investments_branch_at_first_period(solve_cfg: Any) -> None:
+    """Warn (W-0639, once per database solve) for each solve the model runs (``solves_in_run``) whose
+    ``invest_solve_branching_method`` is ``investments_at_reveal_period`` with the reveal at the solve's first
+    period (``SolveConfig.reveal_period``): every forecast invests and operates on its own, the normal results hold
+    none of it.  A later reveal is the "act, then learn" structure and gets no warning."""
+    from flextool import run_warnings
 
-    Under recourse every forecast branch invests on its own after the reveal, so there is no realized post-reveal
-    investment to fix in a realization solve.  The designation still selects the branch a deterministic solve
-    reads stochastic data from.
-    """
-    _MODULE_LOGGER.warning(
-        "Solve '%s' has a realized: yes designation in stochastic_branches, but its investments branch "
-        "(invest_solve_branching_method): no realization solve is added (there is no realized post-reveal "
-        "investment to fix).  The designation only selects the branch deterministic solves read stochastic data "
-        "from.", solve)
+    copies = getattr(solve_cfg, "map2d_duplicate_of", None) or {}
+    named: set[str] = set()
+    for solve in solve_cfg.solves_in_run():
+        if solve_cfg.invest_branching_method_for(solve) != "investments_at_reveal_period":
+            continue
+        order = _period_order(solve_cfg, solve)
+        if not order or solve_cfg.reveal_period(solve) != order[0]:
+            continue
+        name = copies.get(solve, (solve,))[0]
+        if name not in named:
+            named.add(name)
+            run_warnings.warn("W-0639", solve=name)
 
 
 def _utf8(frame):

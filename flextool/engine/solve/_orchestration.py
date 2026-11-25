@@ -2209,12 +2209,13 @@ def _spawn_realized_dispatch_siblings(
     * otherwise a solve followed in ``model.solves`` by an author-declared
       realization solve (``configured_realization_solve``) has that solve
       registered (``SolveConfig.register_realization_solve``);
-    * otherwise a single_solve / rolling_window solve with
-      investments that do not branch (``invest_solve_branching_method``
-      ``operations_only``) whose ``realized: yes``
+    * otherwise a single_solve / rolling_window solve whose ``realized: yes``
       designation reaches its committed window
-      (``designation_reaches_committed_window``) gets the sibling too.  A
-      designated recourse solve gets a warning and no sibling; a designated
+      (``designation_reaches_committed_window``) gets the sibling too, unless
+      every forecast invests on its own there (``invest_solve_branching_method``
+      ``investments_at_reveal_period``): under ``operations_only`` and
+      ``investments_after_reveal_period`` the realized investments are one
+      decision of every forecast, which the sibling keeps.  A designated
       solve that contains solves, or is nested in another solve, raises.
 
     ════════════════════════════════════════════════════════════════════
@@ -2392,8 +2393,9 @@ def _spawn_realized_dispatch_siblings(
             continue
         if not _realization.designation_reaches_committed_window(solve_cfg, p):
             continue
-        if solve_cfg.recourse_invest(p):
-            _realization.warn_recourse_designation(p)
+        if solve_cfg.invest_branching_method_for(p) == "investments_at_reveal_period":
+            # Every forecast invests on its own from the reveal period on: no realized investment to fix (refusal 3
+            # keeps the reveal period and later out of its realized periods, so a run never gets here).
             continue
         if contains_solves.get(p) and _is_rolling(p):
             raise _rolling_containing_error(p)
@@ -2408,6 +2410,7 @@ def _spawn_realized_dispatch_siblings(
             )
         _add(p, "a realized: yes designation in stochastic_branches")
     for c in sorted(contained):
+        # A nested solve whose investments branch is refused later, with its own message.
         if (_realization.designation_reaches_committed_window(solve_cfg, c)
                 and not solve_cfg.recourse_invest(c)):
             if _is_rolling(c):

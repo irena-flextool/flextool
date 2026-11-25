@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import base64
 import json
-import logging
 import os
 import sys
 from pathlib import Path
@@ -520,15 +519,19 @@ def test_configured_solve_missing_the_fan_period_is_not_registered() -> None:
     assert cfg.model_solve["m"] == ["p", "p__realized_dispatch", "q"]
 
 
-def test_branched_investment_designation_warns_and_adds_nothing(caplog) -> None:
-    """Under ``investments_at_reveal_period`` with the reveal at the solve's first period (d1) every forecast
-    invests on its own: there is no realized investment to fix, so a warning and no realization solve."""
+@pytest.mark.parametrize("method, spawned", [("investments_at_reveal_period", False),
+                                             ("investments_after_reveal_period", True)])
+def test_branched_investment_designation(method, spawned) -> None:
+    """Under ``investments_at_reveal_period`` every forecast invests on its own from the reveal (d1): there is no
+    realized investment to fix, so no realization solve (the run gives W-0639 for a reveal at the first period,
+    ``test_branched_invest_realization``).  Under ``investments_after_reveal_period`` the reveal period's investment
+    is one decision of every forecast, and the designation adds the realization solve."""
     from flextool.engine.solve._orchestration import _spawn_realized_dispatch_siblings
-    cfg = _config(invest_solve_branching_method={"p": "investments_at_reveal_period"})
-    with caplog.at_level(logging.WARNING, logger="flextool.engine.solve._realization"):
-        _spawn_realized_dispatch_siblings(cfg, _Reader(), logger=None)
-    assert cfg.realized_dispatch_parent == {}
-    assert any("invest_solve_branching_method" in r.getMessage() for r in caplog.records)
+    cfg = _config(invest_solve_branching_method={"p": method})
+    reader = _Reader()
+    _spawn_realized_dispatch_siblings(cfg, reader, logger=None)
+    assert cfg.realized_dispatch_parent == ({"p__realized_dispatch": "p"} if spawned else {})
+    assert reader.registered == ([("p", "p__realized_dispatch")] if spawned else [])
 
 
 @pytest.mark.parametrize("nesting", ["parent", "child"])

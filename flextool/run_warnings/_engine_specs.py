@@ -1151,6 +1151,24 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
         ),
     ),
     WarningSpec(
+        code="W-0639",
+        message="investment solve '{solve}': investments branch at its first period (expert option)",
+        title="Investments branch at the first period",
+        topic=_SOLVES,
+        entityless=True,
+        body=(
+            "The solve is an investment solve with `invest_solve_branching_method` "
+            "`investments_at_reveal_period`, and its forecasts start at its first period. Every forecast then "
+            "invests and operates on its own from the start, as one deterministic solve per forecast weighted "
+            "together (the wait-and-see value of the forecasts). No decision is shared, so nothing can be "
+            "realized: the solve gets no realization dispatch, and the normal results hold no investment or "
+            "operation of the forecasts. They are written only by the `model.output_horizon` dump.\n\n"
+            "**How to fix:** nothing, if the wait-and-see value is intended. To decide one investment for every "
+            "forecast at the first period, set `investments_after_reveal_period` (or leave the setting out: "
+            "`operations_only`); to learn after a first period, start the forecasts at a later period."
+        ),
+    ),
+    WarningSpec(
         code="W-0594",
         message="solve '{solve}' has delayed units: each jump is realized without look-ahead",
         title="Realization without look-ahead: delayed units",

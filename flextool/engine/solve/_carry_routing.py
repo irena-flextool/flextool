@@ -16,7 +16,9 @@ or a deeper one (owner decision Q-c15e-B, with the nested clarification of 2026-
 
 A node with no realised state yet starts from ``fix_start`` (or free).  ``nesting_level`` counts the
 ``contains_solve`` hops above a sub-solve.  An auto-spawned realised-dispatch sibling is at its parent's level and
-starts where its parent starts: it never sees the state its parent realised in the same window.
+starts where its parent starts: it never sees the state its parent realised in the same window.  A sibling that
+starts later than the dispatch its parent realised (the realization of an investment solve starts at the reveal,
+``SolveConfig.realization_window``) continues from that dispatch, as a later solve does.
 
 The same rule routes the other carriers tied to the realised end step (:data:`STEP_FIELDS`: the committed online
 state, the ramp-limited flows and the step itself, the min up / down time history), taken whole from the latest
@@ -131,7 +133,12 @@ class CarryRouter:
         cutoff = self._cutoff.get(solve, len(self._entries))
         first = self._position(*first_step) if first_step is not None else None
         out = []
-        for entry in self._entries[:cutoff]:
+        # A sibling's parent realised its dispatch in the same window, so its entry (recorded after the cutoff) is
+        # taken only when it ends before the sibling's first step: the sibling starts after it.
+        parent = self._siblings.get(solve)
+        later = ([e for e in self._entries[cutoff:] if e.solve == parent and e.end is not None and e.end < first]
+                 if parent is not None and parent != solve and first is not None else [])
+        for entry in self._entries[:cutoff] + later:
             if entry.level < level:
                 continue
             if first is not None and entry.end is not None and not entry.end < first:

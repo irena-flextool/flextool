@@ -7030,6 +7030,48 @@ def _roll_end_flow(sol, flex_data: "FlexData | None", last: "tuple[str, str] | N
                        pl.lit(last[0]).alias("period"), pl.lit(last[1]).alias("step"), "duration", "value")
 
 
+def _tied_copy_labels(flex_data: "FlexData | None") -> tuple[dict[str, str], dict[str, str]]:
+    """``({reference copy: period label}, {branch copy: period label})``.  The first holds the branch copies whose
+    investment, retirement and extension decisions are one decision of every forecast (``pd_non_anticipativity``:
+    ``d`` the reference copy of each forecast star, ``_branch.forecast_star_pairs``); the second every branch copy
+    (``period_branch_full`` ``(label, copy)``, label ≠ copy).  Both empty when nothing is tied."""
+    na = getattr(flex_data, "pd_non_anticipativity", None)
+    pbf = getattr(flex_data, "period_branch_full", None)
+    if na is None or na.height == 0 or pbf is None:
+        return {}, {}
+    refs = set(na["d"].cast(pl.Utf8).to_list())
+    label_of = {copy: label for label, copy in
+                pbf.select(pl.col("d").cast(pl.Utf8), pl.col("b").cast(pl.Utf8)).iter_rows()
+                if copy is not None and label != copy}
+    return {copy: label for copy, label in label_of.items() if copy in refs}, label_of
+
+
+def _label_tied_cohorts(cohort: "pl.DataFrame | None", tied: dict[str, str],
+                        label_of: dict[str, str]) -> "pl.DataFrame | None":
+    """*cohort* (the solve's cohort table, Utf8 or axis labels) with, for each tied reference copy of *tied*, a copy
+    of the rows whose cohort name holds it (its investment, the generations of it, its life extensions) under the
+    label: the reference copy replaced by its label in ``cohort`` / ``root`` / ``parent``, and every branch copy of
+    *label_of* by its label in the period columns (``d_build``, ``d_on``, ``d_eol``).  The tied decision is then
+    realized under the real period name the later solves know."""
+    if cohort is None or not tied:
+        return cohort
+    names = [c for c in ("cohort", "root", "parent") if c in cohort.columns]
+    periods = [c for c in ("d_build", "d_on", "d_eol") if c in cohort.columns]
+    utf8 = cohort.with_columns(pl.col(c).cast(pl.Utf8) for c in names + periods)
+
+    def _rename(name: "str | None") -> "str | None":
+        return None if name is None else ":".join(tied.get(tok, tok) for tok in name.split(":"))
+
+    rows = []
+    for row in utf8.iter_rows(named=True):
+        if any(tok in tied for tok in str(row["cohort"]).split(":")):
+            rows.append({**row, **{c: _rename(row[c]) for c in names},
+                         **{c: label_of.get(row[c], row[c]) for c in periods}})
+    if not rows:
+        return cohort
+    return pl.concat([utf8, pl.DataFrame(rows, schema=utf8.schema, orient="row")], how="vertical")
+
+
 def build_handoff_from_solution(
     sol, work_folder: Path, solve_name: str,
     prior_handoff=None,
@@ -7155,6 +7197,19 @@ def build_handoff_from_solution(
                     key = (str(e), str(c), str(dd))
                     extend_by_ecd[key] = extend_by_ecd.get(key, 0.0) + float(v)
 
+    # ---- the decisions tied across the forecasts (``invest_solve_branching_method``
+    # ``investments_after_reveal_period``): one decision of every branch copy of the reveal period, the label has
+    # none.  It is realized under the label (its real period name), taken from the reference copy. ----
+    _tied, _label_of = _tied_copy_labels(flex_data)
+    for _ref, _label in _tied.items():
+        for _by in (invest_by_ed, divest_by_ed):
+            for (_e, _d), _v in [kv for kv in _by.items() if kv[0][1] == _ref]:
+                _by[(_e, _label)] = _v
+        for _by3 in (divest_built_by_ecd, extend_by_ecd):
+            for (_e, _c, _d), _v in [kv for kv in _by3.items() if kv[0][2] == _ref]:
+                # A cohort the reference copy built is the label's (``_label_tied_cohorts``).
+                _by3[(_e, ":".join(_label if tok == _ref else tok for tok in _c.split(":")), _label)] = _v
+
     # ---- Slice D (H, §10.1): EXPLICIT non-realized invest drop ----
     # ``invest_by_ed`` collects every solved v_invest row, including
     # branch-named (non-realized-scenario) ones fanned in under recourse.
@@ -7268,7 +7323,8 @@ def build_handoff_from_solution(
     # ---- realized_cohort / realized_retire: the realized investments as cohorts (their rows of the cohort table,
     # placed once by this solve) and the retirements per cohort, chain-cumulative ----
     from flextool.engine.preprocess.params._cohort_handoff import realized_cohorts
-    _cohort_table = getattr(flex_data, "cohort", None) if flex_data is not None else cohort
+    _cohort_table = _label_tied_cohorts(getattr(flex_data, "cohort", None) if flex_data is not None else cohort,
+                                        _tied, _label_of)
     realized_cohort_df, realized_retire_df = realized_cohorts(
         getattr(prior_handoff, "realized_cohort", None) if prior_handoff is not None else None,
         getattr(prior_handoff, "realized_retire", None) if prior_handoff is not None else None,

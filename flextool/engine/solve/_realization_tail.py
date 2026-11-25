@@ -154,8 +154,10 @@ def delay_gated_units(solve_cfg: Any, solve: str) -> list[str]:
 
 def announce_realization_notices(solve_cfg: Any) -> None:
     """Notes W-0635 / W-0636 for the solves that the database upgrade listed (v83 part 3) and that run with the new
-    realization, and W-0637 for the solves the v84 upgrade listed that run.  Called by ``native_run_model`` once the plans and the stochastic expansion have passed their
-    checks: a solve stopped by a configuration error never gets the notice (its error explains the change).
+    realization, W-0637 for the solves the v84 upgrade listed that run, and W-0639 (every run) for investments that
+    branch at a solve's first period (``_realization.warn_investments_branch_at_first_period``).  Called by
+    ``native_run_model`` once the plans and the stochastic expansion have passed their checks: a solve stopped by a
+    configuration error never gets the notice (its error explains the change).
 
     W-0635: a solve with ``within_solve`` realization rolls.  W-0636: a ``separate_dispatch`` solve with an
     engine-added realization solve: its solve (1) changed, and with ``separate_dispatch`` realization rolls its
@@ -187,6 +189,10 @@ def announce_realization_notices(solve_cfg: Any) -> None:
             continue
         if solve in (_behaviour_changes.marker_json(change).get("solves") or []):
             _behaviour_changes.notice(change, "solves", [solve], detail)
+    # W-0639 (every run): investments that branch at the solve's first period get no realization dispatch.
+    if hasattr(solve_cfg, "solves_in_run"):
+        from flextool.engine.solve import _realization
+        _realization.warn_investments_branch_at_first_period(solve_cfg)
     # W-0637: the solves whose stochastic investment settings the v84 upgrade rewrote, with the reason it listed.
     change = "stochastic_invest_controls_rewritten"
     marker = _behaviour_changes.marker_json(change)

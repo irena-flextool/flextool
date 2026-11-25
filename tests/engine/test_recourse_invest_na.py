@@ -40,7 +40,8 @@ def _built(na_run):
     from polar_high import Problem
     from flextool.engine import build_flextool
 
-    data = load_scenario(na_run)
+    # The investment solve itself: its realized: yes branch adds the realization solve after it (the last step).
+    data = load_scenario(na_run, step=SOLVE)
     pb = Problem()
     build_flextool(pb, data)
     sol = pb.solve()

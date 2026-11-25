@@ -294,17 +294,16 @@ def test_investment_solve_without_method_solves_its_forecasts(tmp_path_factory, 
     """The method governs the dispatch model: an investment solve (single, ``invest_periods`` [p1]) without
     ``dispatch_realization_method`` builds the LPs of the same solve with ``within_solve`` byte for byte, as it did
     before ``deterministic`` became the default.  It keeps its forecasts (the branch periods p1_high / p1_low) and
-    gives no W-0593 or W-0638.  Under ``invest_solve_branching_method`` ``operations_only`` (absent) the
-    ``realized: yes`` branch adds the realization solve; under ``investments_after_reveal_period`` (p1 is the
-    reveal period, its investment shared, so it may be realized) the engine adds none today."""
+    gives no W-0593 or W-0638.  The ``realized: yes`` branch adds the realization solve under
+    ``invest_solve_branching_method`` ``operations_only`` (absent) and under ``investments_after_reveal_period``
+    (p1 is the reveal period, its investment one decision of both forecasts, so it is realized)."""
     caplog.set_level(logging.WARNING)
     case, _ = scm.run_spec(_spec(stochastic=True, invest=True, invest_method=invest_method),
                            tmp_path_factory.mktemp("case"))
     lines = _w0593(caplog) + _w0638(caplog)
     twin, _ = scm.run_spec(_spec(stochastic=True, invest=True, invest_method=invest_method, method="within_solve"),
                            tmp_path_factory.mktemp("twin"))
-    expected = ["st"] if invest_method == "investments_after_reveal_period" else ["st", "st__realized_dispatch"]
-    assert [s for s, _, _ in case] == expected
+    assert [s for s, _, _ in case] == ["st", "st__realized_dispatch"]
     assert _has_forecast_columns(case[0][1])
     _assert_same_lp(case, twin)
     assert lines == [], lines
