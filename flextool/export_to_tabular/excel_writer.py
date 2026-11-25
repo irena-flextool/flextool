@@ -38,11 +38,7 @@ from flextool.export_to_tabular.formatting import (
     FILL_ENTITY_HEADER,
     FILL_INDEX_DATA,
     FILL_INDEX_HEADER,
-    FILL_DESC_ROW,
-    FILL_DESC_DATA,
     FILL_PARAM_HEADER,
-    FONT_DESC_ROW,
-    FONT_DESC_DATA,
     FONT_NAVIGATE_LINK,
 )
 from flextool.export_to_tabular.sheet_config import SheetSpec
@@ -845,50 +841,12 @@ def write_nested_periodic_sheet_v2(
     right_cols: list[str] = ["parameter"]
     right_cols.extend(nested_params)
 
-    # --- Row 1: descriptions ---
-    ws.cell(row=1, column=def_col, value="description")
-    ws.cell(row=1, column=def_col).fill = FILL_DESC_ROW
-    ws.cell(row=1, column=def_col).font = FONT_DESC_ROW
-    for i, pname in enumerate(nested_params):
-        col = def_col + 1 + i
-        desc = _get_param_description(pname, spec.entity_classes, db_contents)
-        if desc:
-            ws.cell(row=1, column=col, value=desc)
-            ws.cell(row=1, column=col).fill = FILL_DESC_DATA
-            ws.cell(row=1, column=col).font = FONT_DESC_DATA
-
-    # --- Row 2: data types ---
-    ws.cell(row=2, column=def_col, value="data type")
-    ws.cell(row=2, column=def_col).fill = FILL_DESC_ROW
-    ws.cell(row=2, column=def_col).font = FONT_DESC_ROW
-    for i, pname in enumerate(nested_params):
-        col = def_col + 1 + i
-        dtype = _get_param_data_type(pname, spec.entity_classes, db_contents, layout="nested_periodic")
-        ws.cell(row=2, column=col, value=dtype)
-        ws.cell(row=2, column=col).fill = FILL_DESC_DATA
-        ws.cell(row=2, column=col).font = FONT_DESC_DATA
-
-    # --- Optional row 3: defaults (only when at least one param has one) ---
-    param_defaults = {
-        pname: _get_param_default_string(pname, spec.entity_classes, db_contents)
+    def_row = _write_metadata_rows(ws, def_col, [
+        (_param_description(spec, db_contents, pname),
+         _get_param_data_type(pname, spec.entity_classes, db_contents, layout="nested_periodic"),
+         _get_param_default_string(pname, spec.entity_classes, db_contents))
         for pname in nested_params
-    }
-    has_default_row = any(v is not None for v in param_defaults.values())
-    if has_default_row:
-        default_row = 3
-        ws.cell(row=default_row, column=def_col, value="default")
-        ws.cell(row=default_row, column=def_col).fill = FILL_DESC_ROW
-        ws.cell(row=default_row, column=def_col).font = FONT_DESC_ROW
-        for i, pname in enumerate(nested_params):
-            col = def_col + 1 + i
-            dv = param_defaults[pname]
-            if dv is not None:
-                ws.cell(row=default_row, column=col, value=dv)
-                ws.cell(row=default_row, column=col).fill = FILL_DESC_DATA
-                ws.cell(row=default_row, column=col).font = FONT_DESC_DATA
-        def_row = 4
-    else:
-        def_row = 3
+    ])
     data_start_row = def_row + 1
 
     # --- Definition row ---
@@ -1820,15 +1778,7 @@ def write_ladder_sheet_v2(
     #   Row 2, def_col+1..      "float" per facet column
     desc = _get_param_description(pname, spec.entity_classes, db_contents)
     ws.cell(row=1, column=1, value="navigate")
-    ws.cell(row=1, column=def_col, value="description")
-    for i, _facet in enumerate(facet_columns):
-        if desc:
-            ws.cell(row=1, column=def_col + 1 + i, value=desc)
-    ws.cell(row=2, column=def_col, value="data type")
-    for i, _facet in enumerate(facet_columns):
-        ws.cell(row=2, column=def_col + 1 + i, value="float")
-
-    def_row = 3
+    def_row = _write_metadata_rows(ws, def_col, [(desc, "float", None) for _facet in facet_columns])
     data_start_row = def_row + 1
 
     # ── Definition row ─────────────────────────────────────────────
@@ -2066,6 +2016,42 @@ def _write_navigate_flat(
 # Data type overrides from settings, set by export_to_excel before writing.
 # Maps (layout, param_name) -> override string.
 _data_type_overrides: dict[str, dict[str, str]] = {}
+# Whether standard sheets carry the description row (``--no-description-row`` leaves it out), set by export_to_excel.
+_description_row: bool = True
+
+
+def _param_description(spec: SheetSpec, db_contents: DatabaseContents, pname: str) -> str | None:
+    """The description shown for a parameter: the sheet's own, else the database definition's."""
+    return spec.descriptions.get(pname) or _get_param_description(pname, spec.entity_classes, db_contents)
+
+
+def _write_metadata_rows(
+    ws: Worksheet, def_col: int, columns: list[tuple[str | None, str, str | None]],
+) -> int:
+    """Write the metadata rows of a standard v2 sheet and return the definition row.
+
+    *columns* holds (description, data type, default) of each column right of the definition column.  The rows
+    are ``description`` (unless the export leaves it out), ``data type`` and, when any column has a default,
+    ``default``; the definition column labels them.
+    """
+    row = 1
+    if _description_row:
+        ws.cell(row=row, column=def_col, value="description")
+        for i, (desc, _dtype, _default) in enumerate(columns):
+            if desc:
+                ws.cell(row=row, column=def_col + 1 + i, value=desc)
+        row += 1
+    ws.cell(row=row, column=def_col, value="data type")
+    for i, (_desc, dtype, _default) in enumerate(columns):
+        ws.cell(row=row, column=def_col + 1 + i, value=dtype)
+    row += 1
+    if any(default is not None for _desc, _dtype, default in columns):
+        ws.cell(row=row, column=def_col, value="default")
+        for i, (_desc, _dtype, default) in enumerate(columns):
+            if default is not None:
+                ws.cell(row=row, column=def_col + 1 + i, value=default)
+        row += 1
+    return row
 
 
 def _param_notes(
@@ -2074,7 +2060,7 @@ def _param_notes(
     """Column -> (parameter name, description) for the parameters that have a description."""
     notes: dict[int, tuple[str, str]] = {}
     for col, pname in col_to_param.items():
-        desc = spec.descriptions.get(pname) or _get_param_description(pname, spec.entity_classes, db_contents)
+        desc = _param_description(spec, db_contents, pname)
         if desc:
             notes[col] = (pname, desc)
     return notes
@@ -2571,46 +2557,15 @@ def write_constant_sheet_v2(
     all_params = list(spec.pre_ea_params) + list(spec.parameter_names)
     right_cols.extend(all_params)
 
-    # --- Row 1: navigate + descriptions (from def_col onward) ---
     ws.cell(row=1, column=1, value="navigate")
-    ws.cell(row=1, column=def_col, value="description")
     ea_offset = 1 if spec.has_entity_alternative else 0
-    if spec.has_entity_alternative:
-        ws.cell(row=1, column=def_col + 1, value="Entity existence")
-    for i, pname in enumerate(all_params):
-        col = def_col + 1 + ea_offset + i
-        desc = spec.descriptions.get(pname)
-        if not desc:
-            desc = _get_param_description(pname, spec.entity_classes, db_contents)
-        if desc:
-            ws.cell(row=1, column=col, value=desc)
-
-    # --- Row 2: data types (from def_col onward) ---
-    ws.cell(row=2, column=def_col, value="data type")
-    if spec.has_entity_alternative:
-        ws.cell(row=2, column=def_col + 1, value="string")
-    for i, pname in enumerate(all_params):
-        col = def_col + 1 + ea_offset + i
-        dtype = _get_param_data_type(pname, spec.entity_classes, db_contents, layout="constant")
-        ws.cell(row=2, column=col, value=dtype)
-
-    # --- Optional row 3: defaults (only when at least one param has one) ---
-    param_defaults = {
-        pname: _get_param_default_string(pname, spec.entity_classes, db_contents)
+    ea_meta = [("Entity existence", "string", None)] if spec.has_entity_alternative else []
+    def_row = _write_metadata_rows(ws, def_col, ea_meta + [
+        (_param_description(spec, db_contents, pname),
+         _get_param_data_type(pname, spec.entity_classes, db_contents, layout="constant"),
+         _get_param_default_string(pname, spec.entity_classes, db_contents))
         for pname in all_params
-    }
-    has_default_row = any(v is not None for v in param_defaults.values())
-    if has_default_row:
-        default_row = 3
-        ws.cell(row=default_row, column=def_col, value="default")
-        for i, pname in enumerate(all_params):
-            col = def_col + 1 + ea_offset + i
-            dv = param_defaults[pname]
-            if dv is not None:
-                ws.cell(row=default_row, column=col, value=dv)
-        def_row = 4
-    else:
-        def_row = 3
+    ])
     data_start_row = def_row + 1
 
     # --- Definition row ---
@@ -3000,41 +2955,13 @@ def write_periodic_sheet_v2(
     right_cols: list[str] = ["parameter"]
     right_cols.extend(spec.parameter_names)
 
-    # --- Row 1: navigate + descriptions ---
     ws.cell(row=1, column=1, value="navigate")
-    ws.cell(row=1, column=def_col, value="description")
-    for i, pname in enumerate(spec.parameter_names):
-        col = def_col + 1 + i
-        desc = spec.descriptions.get(pname)
-        if not desc:
-            desc = _get_param_description(pname, spec.entity_classes, db_contents)
-        if desc:
-            ws.cell(row=1, column=col, value=desc)
-
-    # --- Row 2: data types ---
-    ws.cell(row=2, column=def_col, value="data type")
-    for i, pname in enumerate(spec.parameter_names):
-        col = def_col + 1 + i
-        dtype = _get_param_data_type(pname, spec.entity_classes, db_contents, layout="periodic")
-        ws.cell(row=2, column=col, value=dtype)
-
-    # --- Optional row 3: defaults (only when at least one param has one) ---
-    param_defaults = {
-        pname: _get_param_default_string(pname, spec.entity_classes, db_contents)
+    def_row = _write_metadata_rows(ws, def_col, [
+        (_param_description(spec, db_contents, pname),
+         _get_param_data_type(pname, spec.entity_classes, db_contents, layout="periodic"),
+         _get_param_default_string(pname, spec.entity_classes, db_contents))
         for pname in spec.parameter_names
-    }
-    has_default_row = any(v is not None for v in param_defaults.values())
-    if has_default_row:
-        default_row = 3
-        ws.cell(row=default_row, column=def_col, value="default")
-        for i, pname in enumerate(spec.parameter_names):
-            col = def_col + 1 + i
-            dv = param_defaults[pname]
-            if dv is not None:
-                ws.cell(row=default_row, column=col, value=dv)
-        def_row = 4
-    else:
-        def_row = 3
+    ])
     data_start_row = def_row + 1
 
     # --- Definition row ---

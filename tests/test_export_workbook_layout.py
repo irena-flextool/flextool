@@ -183,3 +183,37 @@ def test_round_trip_reads_back_the_database(
     assert values.keys() == src_values.keys()
     differing = {k for k in src_values if values[k] != src_values[k]}
     assert differing == KNOWN_ROUND_TRIP_DEFECTS
+
+
+def _reader_records(path: Path) -> dict[str, list[str]]:
+    """The reader's records per sheet, as sorted reprs (formatting and column order must not change them)."""
+    out = {}
+    for sheet in read_self_describing_excel(str(path), skip_sheets={"navigate", "version"}):
+        rows = [repr(sorted((k, repr(v)) for k, v in rec.items())) for rec in sheet.records]
+        out[sheet.sheet_name] = sorted(rows) + sorted(repr(e) for e in sheet.link_entities)
+    return out
+
+
+def test_without_description_row_reads_back_the_same(
+    examples_db: Path, workbook_path: Path, tmp_path: Path,
+) -> None:
+    out = tmp_path / "no_description.xlsx"
+    export_to_excel(f"sqlite:///{examples_db}", str(out), include_advanced=True, description_row=False)
+    book = openpyxl.load_workbook(out)
+    try:
+        ws = book["unit_c"]
+        # Rows: data type, default, definition row 3; the key columns stay frozen.
+        assert [ws.cell(row=r, column=3).value for r in (1, 2, 3)] == ["data type", "default", "parameter"]
+        assert ws.freeze_panes == "C4"
+        assert ws.cell(row=1, column=1).value == "navigate"
+        col = _column_of(ws, 3, "conversion_method")
+        assert ws.cell(row=3, column=col).comment is not None  # the description is still in the note
+    finally:
+        book.close()
+    assert _reader_records(out) == _reader_records(workbook_path)
+
+
+def test_without_description_row_needs_the_v2_format(examples_db: Path, tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="v2"):
+        export_to_excel(f"sqlite:///{examples_db}", str(tmp_path / "v1.xlsx"), use_new_format=False,
+                        description_row=False)

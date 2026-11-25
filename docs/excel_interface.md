@@ -88,6 +88,7 @@ Useful flags:
 | `--groups timeline,model,solve_basics,basics` | Restrict to the listed parameter groups (same semantics as the GUI picker). Sheets that lose all their columns are dropped, unless listed in `always_include_with_groups` in `export_settings.yaml`. |
 | `--include-advanced` | Include advanced sheets (solve sequences, periods available, stochastic data) even when empty. |
 | `--old-format` | Emit the legacy v1 layout instead of v2 self-describing — only needed for tooling pinned to the older format. |
+| `--no-description-row` | Leave out the description row of the parameter sheets. The description of each parameter stays in the note on its name. Not with `--old-format`. |
 
 A realistic minimal-template export:
 
@@ -112,6 +113,11 @@ embeds its own header describing what it contains:
   as the header keywords stay intact.
 
 A few practical notes:
+
+- The header rows and the key columns (alternative, entity, index) stay in view while you scroll; the
+  definition column scrolls away. Every other parameter column has a slightly different background.
+- The description row shows the first four lines of each parameter's description. The full text is in the note
+  (comment) on the parameter name: hover over the name to read it.
 
 - Sheets whose parameter group was not selected at export time are simply
   absent. Re-export later if you decide to start editing them.

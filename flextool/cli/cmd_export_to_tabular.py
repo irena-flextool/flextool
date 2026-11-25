@@ -37,7 +37,17 @@ def main() -> None:
             "columns are removed unless listed in always_include_with_groups."
         ),
     )
+    parser.add_argument(
+        "--no-description-row",
+        action="store_true",
+        help=(
+            "Leave out the description row of the parameter sheets; each parameter's description stays in the "
+            "note on its name (self-describing format only)"
+        ),
+    )
     args = parser.parse_args()
+    if args.old_format and args.no_description_row:
+        parser.error("--no-description-row needs the self-describing format (not --old-format)")
     include_groups = (
         [g.strip() for g in args.groups.split(",") if g.strip()]
         if args.groups
@@ -49,6 +59,7 @@ def main() -> None:
         include_advanced=args.include_advanced,
         use_new_format=not args.old_format,
         include_groups=include_groups,
+        description_row=not args.no_description_row,
     )
 
 
