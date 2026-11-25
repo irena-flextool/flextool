@@ -164,15 +164,27 @@ def _snapshot(url: str) -> tuple[dict, set, dict]:
     return values, entities, activity
 
 
-# Values that do not survive the workbook today, for reasons outside the layout (reported, not fixed here):
-# - a multi-parameter time-series sheet with a ``default`` row: the reader takes that row for a time step
-#   (an extra ``index: time`` step carrying the default 1.0);
-# - a Map with float indexes comes back with string indexes ('2.0').
+# Values that do not survive the workbook today, for reasons outside the layout:
+# - a Map with float indexes comes back with string indexes ('2.0') (item 1039).
 # The test fails when one of them is fixed (remove it here) or when a new difference appears.
 KNOWN_ROUND_TRIP_DEFECTS = {
-    ("unit", ("coal_plant",), "availability", "availability"),
     ("unit", ("water_pump",), "delay", "water_pump_delayed"),
 }
+
+
+def test_time_series_default_row_is_not_a_time_step(wb: openpyxl.Workbook, workbook_path: Path) -> None:
+    # unit_t carries several parameters, so it has a parameter row and, because availability has a default (1.0),
+    # a ``default`` row under it with ``index: time`` in column A.  In templates_examples.json coal_plant's
+    # availability in alternative ``availability`` is a map over t0001..t0072 (72 steps); the default row must not
+    # add a 73rd step.
+    ws = wb["unit_t"]
+    labels = [ws.cell(row=r, column=2).value for r in range(1, 8)]
+    assert "default" in labels
+    steps = [rec["index_value"]
+             for sheet in read_self_describing_excel(str(workbook_path)) if sheet.sheet_name == "unit_t"
+             for rec in sheet.records
+             if rec["entity_byname"] == ("coal_plant",) and rec["alternative"] == "availability"]
+    assert steps == [f"t{i:04d}" for i in range(1, 73)]
 
 
 def test_round_trip_reads_back_the_database(

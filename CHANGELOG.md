@@ -56,6 +56,10 @@
 
 ### Fixes
 
+- **Excel import: time-series sheets with a default row.** On a time-series sheet with several parameters
+  (`unit_t`, `node_t`, ...), the `default` row under the parameter row was read as one more time step: each column's
+  series got an extra step named `index: time` carrying the default value. It is now read as a header row. This
+  affected a workbook used as an input source and a workbook imported into a database.
 - **Excel import: scenario ranks from 1.** Importing a self-describing workbook numbered each scenario's alternatives
   from 0; they are now numbered from 1, as in the Spine database editor and the other importers. The order was
   and is the same. The help text of the import's `--keep-entities` option now says what it does.

@@ -568,6 +568,7 @@ def parse_transposed_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
     # Scan column B for row role definitions (skip INFO rows)
     label_col = 1  # column B
     datatype_row: int | None = None
+    default_row: int | None = None
     for r in range(min(10, max_row)):
         val_a = _cell_value(ws, r, 0)
         if _is_info_row(val_a):
@@ -592,6 +593,10 @@ def parse_transposed_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
             meta.param_row = r
             if default_val:
                 meta.default_parameter = default_val
+        elif kw_lower == "default":
+            # Multi-param _t sheets show each column's default under the
+            # parameter row.  It is a header row, not a time step.
+            default_row = r
         elif vl.startswith("entity"):
             meta.entity_row = r
             meta.entity_classes = _parse_entity_def(val)
@@ -606,7 +611,7 @@ def parse_transposed_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
 
     # Determine data start row (row after last metadata row)
     metadata_rows = [
-        r for r in [meta.alt_row, meta.param_row, meta.entity_row, datatype_row]
+        r for r in [meta.alt_row, meta.param_row, meta.entity_row, datatype_row, default_row]
         if r is not None
     ]
     if metadata_rows:
