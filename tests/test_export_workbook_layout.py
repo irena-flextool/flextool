@@ -144,6 +144,11 @@ def _plain(value: object) -> object:
     return value
 
 
+def _scenario_ranks(url: str) -> dict[tuple[str, str], int]:
+    with DatabaseMapping(url) as db:
+        return {(s["scenario_name"], s["alternative_name"]): s["rank"] for s in db.get_scenario_alternative_items()}
+
+
 def _snapshot(url: str) -> tuple[dict, set, dict]:
     with DatabaseMapping(url) as db:
         values = {}
@@ -184,6 +189,8 @@ def test_round_trip_reads_back_the_database(
     assert values.keys() == src_values.keys()
     differing = {k for k in src_values if values[k] != src_values[k]}
     assert differing == KNOWN_ROUND_TRIP_DEFECTS
+    # Scenario alternatives come back with the database's ranks (numbered from 1).
+    assert _scenario_ranks(f"sqlite:///{target}") == _scenario_ranks(f"sqlite:///{examples_db}")
 
 
 def _reader_records(path: Path) -> dict[str, list[str]]:

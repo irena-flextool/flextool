@@ -56,6 +56,9 @@
 
 ### Fixes
 
+- **Excel import: scenario ranks from 1.** Importing a self-describing workbook numbered each scenario's alternatives
+  from 0; they are now numbered from 1, as in the Spine database editor and the other importers. The order was
+  and is the same. The help text of the import's `--keep-entities` option now says what it does.
 - **Excel export: array parameters labelled `string (array)`.** `model.solves`, `solve.contains_solves` and the other
   parameters that hold a list of names were labelled `boolean (array)`; such a column on a constant sheet also
   offered a TRUE / FALSE dropdown that refused the names. Workbooks with the old label still read.

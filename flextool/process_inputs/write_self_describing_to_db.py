@@ -825,7 +825,8 @@ def _write_scenarios(
 
         # Sort by rank before adding
         alt_ranks.sort(key=lambda x: x[1])
-        for rank, (alt_name, _original_rank) in enumerate(alt_ranks):
+        # Ranks from 1, as the Spine DB editor and the other importers number them.
+        for rank, (alt_name, _original_rank) in enumerate(alt_ranks, start=1):
             # Ensure the alternative exists
             if alt_name not in alternatives_added:
                 alternatives_added.add(alt_name)
