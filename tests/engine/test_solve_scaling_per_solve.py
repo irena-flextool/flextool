@@ -67,11 +67,18 @@ def test_benders_solve_uses_its_scaling(tmp_path, monkeypatch, no_scaling_env) -
 
 
 def test_benders_solve_does_not_inherit_the_previous_solves_scaling(tmp_path, monkeypatch, no_scaling_env) -> None:
-    """A monolithic solve with ``scaling = off`` runs first; the Benders solve sets no scaling, so it gets ``full``."""
+    """A monolithic solve with ``scaling = off`` runs first; the Benders solve sets no scaling, so it gets ``full``.
+
+    The monolithic solve is a screening run: it invests in y2030 and realizes nothing, so the Benders solve that runs
+    after it realizes y2030's investments and dispatch.  (Realizing y2030's dispatch in the first solve would dispatch
+    it before its investments are realized, which the run refuses.)
+    """
     url = _db(tmp_path, [
         ["model", "flexTool", "solves", {"type": "array", "value_type": "str",
                                          "data": [MONOLITHIC_SOLVE, BENDERS_SOLVE]}],
         ["solve", MONOLITHIC_SOLVE, "scaling", "off"],
+        ["solve", MONOLITHIC_SOLVE, "invest_periods", {"type": "array", "value_type": "str", "data": ["y2030"]}],
+        ["solve", MONOLITHIC_SOLVE, "realized_periods", {"type": "array", "value_type": "str", "data": []}],
     ])
     assert _region_scaling_mode(url, tmp_path, monkeypatch) is ScalingMode.FULL
     assert "FLEXTOOL_SCALING" not in os.environ
