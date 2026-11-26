@@ -7,6 +7,7 @@ default colour theme shipped with openpyxl workbooks.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Collection
 
 from openpyxl.comments import Comment
@@ -529,25 +530,49 @@ WIDTH_BOUNDS: dict[str, tuple[float, float]] = {
     "data": (8, 30),         # parameter columns and the data columns of transposed sheets
     "scenario": (10, 32),    # scenario sheet columns
 }
-_WIDTH_PADDING = 2
+# Advance width of each printable ASCII character in the workbook's font (Calibri 11, the openpyxl default; no cell
+# is bold), in widths of "0" -- Excel's column-width unit.  Read from the hmtx table of Carlito, which
+# LibreOffice uses for Calibri and which has Calibri's metrics (units per em 2048, "0" = 1038).  Any other
+# character counts as one "0".
+CHAR_WIDTHS: dict[str, float] = {
+    " ": 0.446, "!": 0.643, '"': 0.791, "#": 0.983, "$": 1.0, "%": 1.41, "&": 1.346, "'": 0.435, "(": 0.598,
+    ")": 0.598, "*": 0.983, "+": 0.983, ",": 0.492, "-": 0.604, ".": 0.498, "/": 0.762, "0": 1.0, "1": 1.0,
+    "2": 1.0, "3": 1.0, "4": 1.0, "5": 1.0, "6": 1.0, "7": 1.0, "8": 1.0, "9": 1.0, ":": 0.528, ";": 0.528,
+    "<": 0.983, "=": 0.983, ">": 0.983, "?": 0.914, "@": 1.764, "A": 1.142, "B": 1.073, "C": 1.052, "D": 1.214,
+    "E": 0.963, "F": 0.907, "G": 1.245, "H": 1.229, "I": 0.497, "J": 0.629, "K": 1.025, "L": 0.829, "M": 1.687,
+    "N": 1.274, "O": 1.306, "P": 1.019, "Q": 1.328, "R": 1.071, "S": 0.907, "T": 0.961, "U": 1.266, "V": 1.119,
+    "W": 1.755, "X": 1.024, "Y": 0.961, "Z": 0.924, "[": 0.605, "\\": 0.762, "]": 0.605, "^": 0.983, "_": 0.983,
+    "`": 0.574, "a": 0.945, "b": 1.037, "c": 0.834, "d": 1.037, "e": 0.982, "f": 0.602, "g": 0.929, "h": 1.037,
+    "i": 0.453, "j": 0.472, "k": 0.897, "l": 0.453, "m": 1.576, "n": 1.037, "o": 1.04, "p": 1.037, "q": 1.037,
+    "r": 0.688, "s": 0.772, "t": 0.661, "u": 1.037, "v": 0.891, "w": 1.41, "x": 0.855, "y": 0.893, "z": 0.779,
+    "{": 0.62, "|": 0.908, "}": 0.62, "~": 0.983,
+}
+# Added to a column's widest text and then rounded up to a whole "0": Excel's 5-pixel cell margin is part of
+# the width (about 0.7 of a "0" at 100 % zoom), the rest keeps a rendered text from touching the border.
+WIDTH_PADDING = 1.0
 # Excel's General number format shows at most 11 characters.
 _NUMBER_DISPLAY_CHARS = 11
 
 
-def _display_len(value: object) -> int:
-    """Characters a value needs on screen; 0 for texts meant to run over into the next cells."""
+def text_width(text: str) -> float:
+    """Width of *text* in the workbook's font, in widths of "0" (:data:`CHAR_WIDTHS`)."""
+    return sum(CHAR_WIDTHS.get(ch, 1.0) for ch in text)
+
+
+def _display_width(value: object) -> float:
+    """Width a value needs on screen, in widths of "0"; 0 for texts meant to run over into the next cells."""
     if value is None:
-        return 0
+        return 0.0
     if isinstance(value, bool):
-        return 5
+        return text_width("FALSE" if not value else "TRUE")
     if isinstance(value, (int, float)):
-        return min(len(repr(value)), _NUMBER_DISPLAY_CHARS)
+        return text_width(repr(value)[:_NUMBER_DISPLAY_CHARS])
     text = str(value)
     lowered = text.lower()
     # INFO rows and single-parameter ``parameter: x | data type: y | ...`` triplets are long reader labels.
     if lowered.startswith("info:") or lowered.startswith("parameter:"):
-        return 0
-    return max(len(line) for line in text.split("\n"))
+        return 0.0
+    return max(text_width(line) for line in text.split("\n"))
 
 
 def fit_column_widths(
@@ -556,7 +581,8 @@ def fit_column_widths(
     skip_rows: Collection[int] = (),
     skip_cells: Collection[tuple[int, int]] = (),
 ) -> None:
-    """Size columns to their content: ``clamp(longest + 2, lo, hi)`` with the bounds of the column's role.
+    """Size columns to their content: ``clamp(ceil(widest + WIDTH_PADDING), lo, hi)`` with the bounds of the
+    column's role; *widest* is the widest text in widths of "0" (:func:`text_width`).
 
     Args:
         columns: 1-based column -> (role in WIDTH_BOUNDS, first row whose cells count).
@@ -565,16 +591,17 @@ def fit_column_widths(
     """
     skip_rows = set(skip_rows)
     skip_cells = set(skip_cells)
-    longest: dict[int, int] = dict.fromkeys(columns, 0)
+    longest: dict[int, float] = dict.fromkeys(columns, 0.0)
     # ``_cells`` holds only the written cells (ws.cell would create the empty ones).
     for (row, col), cell in ws._cells.items():
         spec = columns.get(col)
         if spec is None or row < spec[1] or row in skip_rows or (row, col) in skip_cells:
             continue
-        longest[col] = max(longest[col], _display_len(cell.value))
+        longest[col] = max(longest[col], _display_width(cell.value))
     for col, (role, _first_row) in columns.items():
         lo, hi = WIDTH_BOUNDS[role]
-        ws.column_dimensions[get_column_letter(col)].width = max(lo, min(hi, longest[col] + _WIDTH_PADDING))
+        width = math.ceil(longest[col] + WIDTH_PADDING)
+        ws.column_dimensions[get_column_letter(col)].width = max(lo, min(hi, width))
 
 
 def freeze_panes_at(ws: Worksheet, first_scrolling_row: int, first_scrolling_col: int) -> None:

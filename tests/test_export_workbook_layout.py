@@ -103,20 +103,44 @@ def test_transposed_data_columns_alternate_shade(wb: openpyxl.Workbook) -> None:
     assert _cf_colours(ws, 6, 4) == {"EEF1F6"}
 
 
+def test_text_width_in_zero_widths() -> None:
+    from flextool.export_to_tabular.formatting import text_width
+    # Calibri / Carlito advance widths in widths of "0" (CHAR_WIDTHS): e .982 x .855 i .453 s .772 t .661 n 1.037
+    # g .929 -> existing = .982 + .855 + .453 + .772 + .661 + .453 + 1.037 + .929 = 6.142
+    assert text_width("existing") == pytest.approx(6.142)
+    assert text_width("p2020") == pytest.approx(1.037 + 4 * 1.0)
+    assert text_width("é") == pytest.approx(1.0)  # outside the table: one "0"
+
+
 def test_column_widths_fit_content(wb: openpyxl.Workbook) -> None:
+    # width = clamp(ceil(widest text in widths of "0" + 1.0), lo, hi); text widths from CHAR_WIDTHS.
     unit_c = wb["unit_c"]
-    assert _width(unit_c, 1) == 29  # alternative invest_solveSequence_5weeks (27)
-    assert _width(unit_c, 2) == 20  # unit dr_decrease_demand (18)
-    assert _width(unit_c, _column_of(unit_c, 4, "conversion_method")) == 21  # default constant_efficiency (19)
-    assert _width(unit_c, _column_of(unit_c, 4, "existing")) == 10  # name existing (8), values up to 4
+    assert _width(unit_c, 1) == 26  # alternative invest_solveSequence_5weeks: 24.741 -> ceil(25.741)
+    assert _width(unit_c, 2) == 19  # unit dr_decrease_demand: 17.527 -> 19
+    # conversion_method (16.090) under its default constant_efficiency (15.642) -> 18
+    assert _width(unit_c, _column_of(unit_c, 4, "conversion_method")) == 18
+    assert _width(unit_c, _column_of(unit_c, 4, "existing")) == 8  # existing 6.142 -> 8, the lower bound
     unit_node_c = wb["unit_node_c"]
     assert _width(unit_node_c, 2) == 8  # entity: (...) reader label, no data
-    assert _width(unit_node_c, 5) == 8  # filter column: input / output (6); the filter: {...} label does not count
+    assert _width(unit_node_c, 5) == 8  # filter column: output 5.473 -> 7, lower bound 8
     node_t = wb["node_t"]
-    assert _width(node_t, 1) == 13  # index: time (11)
-    assert _width(node_t, 2) == 14  # entity: node (12); the INFO text does not count
-    assert _width(node_t, 3) == 21  # alternative desal_water_storage (19)
-    assert _width(node_t, 4) == 12  # entity ev_battery (10); the data type row does not count
+    assert _width(node_t, 1) == 11  # index: time 9.010 -> 11
+    assert _width(node_t, 2) == 11  # entity: node 9.757 -> 11; the INFO text does not count
+    assert _width(node_t, 3) == 18  # alternative desal_water_storage 16.858 -> 18
+    assert _width(node_t, 4) == 10  # entity ev_battery 8.723 -> 10; the data type row does not count
+
+
+def test_columns_never_narrower_than_their_names(wb: openpyxl.Workbook) -> None:
+    from flextool.export_to_tabular.formatting import WIDTH_BOUNDS, text_width
+    # Excel draws a cell's text inside a margin of 5 pixels (about 0.7 of a "0"); below the upper bound a column
+    # leaves room for its parameter name and that margin.
+    hi = WIDTH_BOUNDS["data"][1]
+    for sheet in ("unit_c", "node_c", "connection_c", "unit_node_c"):
+        ws = wb[sheet]
+        def_row = _definition_row(ws)
+        for name, col in _parameter_columns(ws, def_row).items():
+            if text_width(name) + 0.7 < hi:
+                assert _width(ws, col) >= text_width(name) + 0.7, (sheet, name)
 
 
 def test_description_row_and_notes(wb: openpyxl.Workbook, examples_db: Path) -> None:

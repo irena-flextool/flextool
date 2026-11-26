@@ -70,7 +70,8 @@
 - **Easier to read input workbooks (Excel export).** On every input sheet the header rows and the key columns
   (alternative, entity, index) stay in view while you scroll. Every other parameter column has a slightly different
   background. Columns are as wide as their names, defaults and values, so long names are no longer cut off and
-  short columns are no longer wide. The description row wraps to four lines in its own colour, and a note on each
+  short columns are no longer wide (widths are measured in the workbook's font, Calibri / Carlito, so names in
+  lower case get narrower columns than their character count). The description row wraps to four lines in its own colour, and a note on each
   parameter name holds its full description. The workbook reads back the same as before. The new export flag
   `--units-row` shows only each parameter's unit in that row (the notes keep the descriptions); workbooks made
   in the GUI (new input Excel, conversion of a database, version update of a workbook) use it. The parameter

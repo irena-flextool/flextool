@@ -7,6 +7,7 @@ navigate).
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import numpy as np
@@ -29,6 +30,7 @@ from flextool.export_to_tabular.formatting import (
     format_periodic_sheet_v2,
     format_timeseries_sheet,
     format_timeseries_sheet_v2,
+    WIDTH_PADDING,
     finish_link_sheet,
     finish_standard_sheet,
     group_header_fill,
@@ -36,6 +38,7 @@ from flextool.export_to_tabular.formatting import (
     finish_transposed_sheet,
     fit_column_widths,
     freeze_panes_at,
+    text_width,
     FILL_DEF_COL,
     FILL_ENTITY_HEADER,
     FILL_INDEX_DATA,
@@ -2537,17 +2540,16 @@ def _write_param_reference(
     ws.cell(row=conv_row, column=ref_col + 2, value="Description")
     ws.cell(row=conv_row, column=ref_col + 2).fill = FILL_PARAM_HEADER
 
-    max_name_len = len("Parameter")
-    max_dtype_len = len("Data type")
+    max_name_len = text_width("Parameter")
+    max_dtype_len = text_width("Data type")
     for i, pdef in enumerate(pdefs):
         row = conv_row + 1 + i
         name = pdef["name"]
         ws.cell(row=row, column=ref_col, value=name)
-        if len(name) > max_name_len:
-            max_name_len = len(name)
+        max_name_len = max(max_name_len, text_width(name))
         dtype = _get_param_data_type(name, spec.entity_classes, db_contents, layout=layout)
         ws.cell(row=row, column=ref_col + 1, value=dtype)
-        max_dtype_len = max(max_dtype_len, len(dtype))
+        max_dtype_len = max(max_dtype_len, text_width(dtype))
         desc = pdef.get("description")
         if desc:
             ws.cell(row=row, column=ref_col + 2, value=desc)
@@ -2555,8 +2557,8 @@ def _write_param_reference(
     # Size the parameter name column and data type column
     from openpyxl.utils import get_column_letter
     col_letter = get_column_letter(ref_col)
-    ws.column_dimensions[col_letter].width = max_name_len + 2
-    ws.column_dimensions[get_column_letter(ref_col + 1)].width = max_dtype_len + 2
+    ws.column_dimensions[col_letter].width = math.ceil(max_name_len + WIDTH_PADDING)
+    ws.column_dimensions[get_column_letter(ref_col + 1)].width = math.ceil(max_dtype_len + WIDTH_PADDING)
 
 
 def _lock_metadata_cells(
