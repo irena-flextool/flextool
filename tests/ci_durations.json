@@ -569,6 +569,7 @@
  "tests/test_simple_bar_entity_color.py": 0.2,
  "tests/test_solve_config.py": 0.0,
  "tests/test_solve_reader.py": 2.1,
+ "tests/test_split_check.py": 0.1,
  "tests/test_support_load.py": 111.5,
  "tests/test_synthesize_invest_dual.py": 0.1,
  "tests/test_timeline_breaks.py": 0.1,
