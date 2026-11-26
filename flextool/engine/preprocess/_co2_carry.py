@@ -17,10 +17,8 @@ import polars as pl
 from polar_high import Param
 
 from flextool.engine.input._axis_enums import join_aligned, rename_to_axis
+from flextool.engine.input._constants import HOURS_PER_YEAR
 from flextool.engine.preprocess.params._branch import fan_period_labels, period_branch_pairs_lf
-
-#: Hours of a year: share = hours / 8760.
-_HOURS_PER_YEAR = 8760.0
 
 
 def _hours_before_solve(provider) -> "Param | None":
@@ -39,7 +37,7 @@ def split_share(period_share: pl.DataFrame, before: pl.DataFrame) -> pl.DataFram
     periods)."""
     return (join_aligned(period_share.select("d", share="value"), before.select("d", hours="value"),
                          on="d", how="inner")
-            .select("d", value=pl.col("share") + pl.col("hours") / _HOURS_PER_YEAR))
+            .select("d", value=pl.col("share") + pl.col("hours") / HOURS_PER_YEAR))
 
 
 def split_f_d_k(fdk: pl.DataFrame, before: pl.DataFrame, provider) -> pl.DataFrame:

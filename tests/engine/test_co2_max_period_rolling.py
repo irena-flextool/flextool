@@ -695,5 +695,5 @@ def test_chained_solves_with_their_own_periods_refuse_a_total_cap(tmp_path_facto
         run_chain_from_db(url, scen, keep_solutions=True, work_folder=tmp_path_factory.mktemp("co2tot_chain_w"))
     message = str(err.value)
     assert message.startswith(f"co2_max_total of group(s) 'co2_limit' limits the emissions over all the periods of "
-                              f"the model, but solve '{SOLVE}' (and 1 more solves) does not have period(s) 'p2025'")
+                              f"the model, but solve '{SOLVE}' (and 1 more solve) does not have period(s) 'p2025'")
     assert "Use co2_max_period" in message

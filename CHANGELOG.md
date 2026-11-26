@@ -72,20 +72,37 @@
   (for example written by a script) gives empty cells. The import report now names each such cell with its formula.
   FlexTool 2's own annuity formula and the time jump columns are not listed: the import does not need their
   values.
+- **A node without `node_type` is a balance node.** In a database whose `node_type` default is empty, a node
+  without a `node_type` of its own was left out of the energy balance, although the input checks treated it as a
+  balance node. It is now a balance node, FlexTool's default, so restoring the empty default with
+  `flextool-repair-value-list` changes no result. A database with the default set gets the same model as before.
+- **CO2 total limit in a chain that splits a period.** When the solves of a chain each hold a part of one period
+  (for example 3 h and then 1 h), `co2_max_total` gave each part the budget of the whole period and weighed the
+  parts' emissions differently: the first solve could use up the period's budget, and the chain emitted less than
+  the limit allows (0.75 t of 1 t in the 3 h + 1 h example, or 0.25 t when the first part emitted nothing). The
+  budget is now shared by the hours of each part, so the chain emits up to the limit. This holds also when a later
+  part is a rolling solve, which before could stop the run as infeasible in its first roll. Rolling and single
+  solves that hold their periods alone do not change.
+- **Capacity tables under `investments_after_reveal_period`.** The investment and the retirement of the reveal period
+  were missing from the `invested` and `divested` columns of `unit_capacity__d`, `connection_capacity__d` and
+  `node_capacity__d`, and in a solve without a realization solve `total` left them out too; they are now reported
+  under the period label, as the costs already were. The `solve` column of the capacity, cohort capacity, retirement
+  and capacity-margin tables now names the investment solve, as for the other settings, instead of the dispatch
+  solve. The model and its solution are unchanged.
 
 ### New features
 
 - **Easier to read input workbooks (Excel export).** On every input sheet the header rows and the key columns
   (alternative, entity, index) stay in view while you scroll. Every other parameter column has a slightly different
-  background. Columns are as wide as their names, defaults and values, so long names are no longer cut off and
-  short columns are no longer wide (widths are measured in the workbook's font, Calibri / Carlito, so names in
-  lower case get narrower columns than their character count). The description row wraps to four lines in its own colour, and a note on each
-  parameter name holds its full description. The workbook reads back the same as before. The new export flag
-  `--units-row` shows only each parameter's unit in that row (the notes keep the descriptions); workbooks made
-  in the GUI (new input Excel, conversion of a database, version update of a workbook) use it. The parameter
-  columns are ordered by parameter group, with each parameter name in its group's colour; every group after the
-  first is an outline group that you can collapse, and a group with no value on the sheet starts collapsed.
-  The new export flag `--omit-empty-columns` leaves out the parameter columns that have no value on their sheet.
+  background. Columns are as wide as their names, defaults and values, so long names are no longer cut off and short
+  columns are no longer wide (widths are measured in the workbook's font, Calibri / Carlito, so names in lower case
+  get narrower columns than their character count). The description row wraps to four lines in its own colour, and a
+  note on each parameter name holds its full description. The workbook reads back the same as before. The new export
+  flag `--units-row` shows only each parameter's unit in that row (the notes keep the descriptions); workbooks made
+  in the GUI (new input Excel, conversion of a database, version update of a workbook) use it. The parameter columns
+  are ordered by parameter group, with each parameter name in its group's colour; every group after the first is an
+  outline group that you can collapse, and a group with no value on the sheet starts collapsed. The new export flag
+  `--omit-empty-columns` leaves out the parameter columns that have no value on their sheet.
 - **Stochastic examples.** `stochastics.sqlite` has new scenarios, with a new how-to page "Stochastic examples": one
   small rolling dispatch run with each `dispatch_realization_method` and with a perfect forecast
   (`rolling_deterministic`, `rolling_within_solve`, `rolling_separate_dispatch`, `rolling_perfect_within_solve`,
@@ -123,22 +140,11 @@
   (`period`, `time`, `argument` for `solver_arguments`, `duration` for `timeset_duration`, `hours` for `delay`,
   `sequence_index` for arrays), except on profile maps, which keep `x`. A sheet whose parameters have different
   index names gets an `index name` row under the data types.
-- **A node without `node_type` is a balance node.** In a database whose `node_type` default is empty, a node
-  without a `node_type` of its own was left out of the energy balance, although the input checks treated it as a
-  balance node. It is now a balance node, FlexTool's default, so restoring the empty default with
-  `flextool-repair-value-list` changes no result. A database with the default set gets the same model as before.
-- **CO2 total limit in a chain that splits a period.** When the solves of a chain each hold a part of one period
-  (for example 3 h and then 1 h), `co2_max_total` gave each part the budget of the whole period and weighed the
-  parts' emissions differently: the first solve could use up the period's budget, and the chain emitted less than
-  the limit allows (0.75 t of 1 t in the 3 h + 1 h example, or 0.25 t when the first part emitted nothing). The
-  budget is now shared by the hours of each part, so the chain emits up to the limit. This holds also when a later
-  part is a rolling solve, which before could stop the run as infeasible in its first roll. Rolling and single
-  solves that hold their periods alone do not change.
-- **Benders: a master without a balance node.** With every node in a region, the Benders master holds only the
-  flows between regions and has no balance node.  When every balance node was the end of a flow between regions,
-  the run stopped with "No node has an energy balance … every node resolved to node_type = 'commodity'"; it now
-  solves.  The master no longer carries the other region nodes as empty balance rows.  A model with no balance node
-  at all still gets that error, now when it is loaded.
+- **Benders: a master without a balance node.** With every node in a region, the Benders master holds only the flows
+  between regions and has no balance node. When every balance node was the end of a flow between regions, the run
+  stopped with "No node has an energy balance … every node resolved to node_type = 'commodity'"; it now solves. The
+  master no longer carries the other region nodes as empty balance rows. A model with no balance node at all still
+  gets that error, now when it is loaded.
 - **Capacity tables: retired existing capacity counted twice.** After an investment solve that retires existing
   capacity, a later solve that dispatches the same periods (a realization solve, or a dispatch solve after an
   investment solve) reported `existing` with the retirement already subtracted, next to the same retirement in
@@ -158,12 +164,6 @@
   0.30000000000000004 came back from the workbook as 0.3. It now writes the shortest form that reads back to the
   same number. LibreOffice keeps only 15 significant digits when it saves an xlsx again, so this holds for a
   workbook that is not re-saved in LibreOffice.
-- **Capacity tables under `investments_after_reveal_period`.** The investment and the retirement of the reveal
-  period were missing from the `invested` and `divested` columns of `unit_capacity__d`, `connection_capacity__d`
-  and `node_capacity__d`, and in a solve without a realization solve `total` left them out too; they are now
-  reported under the period label, as the costs already were. The `solve` column of the capacity, cohort capacity, retirement and capacity-margin tables now names the
-  investment solve, as for the other settings, instead of the dispatch solve. The model and its solution are
-  unchanged.
 - **Upgrading databases from FlexTool 3.0.0-3.5.1: constraints and reserves kept on.** Migrating a database made
   with FlexTool 3.0.0-3.5.1 could leave `constraint`, `reserve__upDown__unit__node` or
   `reserve__upDown__connection__node` inactive by default, so the constraints or reserve provisions were off in
