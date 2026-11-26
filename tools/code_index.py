@@ -1,6 +1,6 @@
 """Line-range index of Python modules, so a reader can open just the part it needs.
 
-Large engine modules (``preprocess/params/_derived.py``, ``preprocess/flex_data.py``,
+Large engine modules (``preprocess/params/_derived.py``, ``preprocess/flex_data/``,
 ``solve/_orchestration.py`` …) run to thousands of lines.  This tool lists every
 top-level function and class (and class methods) with its line range and the first
 line of its docstring, so an agent or a person can read a single range instead of
@@ -8,7 +8,7 @@ the whole file.
 
 Usage::
 
-    python tools/code_index.py flextool/engine/preprocess/flex_data.py
+    python tools/code_index.py flextool/engine/preprocess/flex_data/_load.py
     python tools/code_index.py flextool/engine/preprocess/params/            # every .py below
     python tools/code_index.py --find apply_derived_a                       # search the package
     python tools/code_index.py --find _load_ --root flextool/engine          # substring match

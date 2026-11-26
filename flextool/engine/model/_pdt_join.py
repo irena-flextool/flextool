@@ -106,7 +106,7 @@ def compute_nodeState_first_dt(flex_data: "FlexData") -> pl.DataFrame | None:
     ``state_start`` / ``roll_continue`` boundary constraints.
 
     Mirrors the pre-E.3 eager build in
-    :func:`flextool.engine.preprocess.flex_data._load_storage` (which sometimes
+    :func:`flextool.engine.preprocess.flex_data._load_storage._load_storage` (which sometimes
     sourced ``first_period`` from
     ``solve_data/period_first_of_solve.csv`` / ``period_first.csv``).
     Here we take the lexicographically smallest ``d`` in ``dt`` — the

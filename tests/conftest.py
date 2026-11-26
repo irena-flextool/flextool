@@ -1082,8 +1082,8 @@ def _reset_global_axis_enums() -> None:
     """Reset the cascade-wide axis_enums ContextVar before every test.
 
     ``flextool.engine.preprocess.flex_data.load_flextool`` sets the global
-    ``axis_enums`` ContextVar on success (flex_data.py finally block
-    ~line 4216).  The ContextVar persists into the next test in the
+    ``axis_enums`` ContextVar on success (the ``finally`` block of
+    ``flex_data/_load.py::load_flextool``).  The ContextVar persists into the next test in the
     same pytest worker, pinning Enum dtypes that may differ from the
     next test's fixture vocabulary — surfacing as "enum on left does
     not match enum on right" SchemaError in joins, OR (more subtly)

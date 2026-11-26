@@ -1026,7 +1026,7 @@ def read_sets(
     #
     # Walk every storage_bind_* projection exposed by FlexData.  The four
     # frames below mirror the entries in ``_projection.py:1858-1861``
-    # and the FlexData declarations in ``flex_data.py:579-582``.  Pre-fix this
+    # and the FlexData declarations in ``flex_data/_container.py``.  Pre-fix this
     # block walked only ``storage_bind_within_solve`` and
     # ``storage_bind_forward_only`` (audit §5.2), which silently dropped the
     # ``bind_within_timeblock`` and ``bind_within_solve_blended_weights`` methods and
@@ -1082,7 +1082,7 @@ def read_sets(
     # The collapsed process_source_sink includes reverse arcs for 2-way
     # connections AND intermediate (p, p) arcs for indirect units, so it
     # cannot be projected directly.  Use the pre-computed canonical fields
-    # (populated in flex_data.py from the raw entity tables) when available; fall
+    # (populated in preprocess/flex_data/ from the raw entity tables) when available; fall
     # back to a pss-based derivation that filters out process-as-node arcs.
     if (flex_data.process_source_canonical is not None
             and flex_data.process_source_canonical.height > 0):

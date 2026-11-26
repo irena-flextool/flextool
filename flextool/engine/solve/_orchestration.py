@@ -5924,7 +5924,7 @@ def run_chain_from_db(
         )
     else:
         _memrec = _MemoryRecorder(csv_path=None, enabled=False)
-    # Publish so deeper modules (flex_data.py's _apply_db_overrides) emit
+    # Publish so deeper modules (flex_data/_db_overrides.py's _apply_db_overrides) emit
     # in the unified [mem] format.
     set_phase_recorder(_memrec)
     _memrec.checkpoint("cascade_start", logger,

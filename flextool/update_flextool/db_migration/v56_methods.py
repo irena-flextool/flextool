@@ -232,7 +232,7 @@ def _migrate_v56(db) -> None:
     # ``solver_arguments['solver']`` (HiGHS' own name for
     # the LP-method selection option, verified against
     # ``DETERMINISM_OPTIONS`` and the
-    # ``flex_data.py:_HIGHS_PARAM_MAP`` table) and drop the
+    # the former ``_HIGHS_PARAM_MAP`` table of the flex_data loader) and drop the
     # shortcut parameter.  Existing ``solver_arguments``
     # entries for ``solver`` win on collision (logged).
     _migrate_v56_fold_highs_method_into_solver_arguments(db)

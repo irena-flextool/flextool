@@ -236,7 +236,7 @@ def state_links(d, *, has_rp: bool, has_nsb: bool) -> list[StateLink]:
 
 def _seam_split(link: StateLink) -> list[StateLink]:
     """``link`` (a within-period lag) as it is, or, when some of its rows continue from another period (the seam rows
-    of a split realization roll, ``flex_data._within_period_lag``: a branch period's first step from the label's
+    of a split realization roll, ``flex_data._readers._within_period_lag``: a branch period's first step from the label's
     last jump step, the label's first step from the last step of d*), its same-period rows plus a cross-period
     link ``<key>_seam`` of those rows."""
     lag = link.lag

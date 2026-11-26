@@ -508,13 +508,13 @@ def pdt_branch_weight_lf(
             AND (b, t) ∈ dt
             AND (d2, d) ∈ period__branch
 
-    The output is dense over ``dt`` (the ``flex_data.py`` cascade
+    The output is dense over ``dt`` (the flex_data loaders' cascade
     overrides any helper output with a dt × value left-join, so we
     must supply at least every (d, t) in dt).  When no
     ``period__branch`` rows are present, defaults to 1.0 per (d, t).
 
     The denominator-zero rows fall through to 1.0 so dense semantics
-    are preserved (matching ``flex_data.py``'s coalesce default).
+    are preserved (matching the flex_data loaders' coalesce default).
 
     Returns a lazy ``(d, t, value)`` frame.
     """
@@ -1997,10 +1997,10 @@ def apply_branch_cluster(
     pdt_bw = pdt_branch_weight_param(workdir, source, active_solve, dt,
                                           ctx=ctx, provider=provider)
     if pdt_bw is not None and dt is not None and dt.height > 0:
-        # Match flex_data.py's dense-dt semantics: when dt is supplied,
+        # Match the flex_data loaders' dense-dt semantics: when dt is supplied,
         # build a (d, t)-dense Param via left-join + coalesce default
         # of 1.0.  This mirrors the previous CSV-cascade behaviour at
-        # flex_data.py:2845-2870 (preserves exact frame shape).
+        # the flex_data loaders (preserves exact frame shape).
         # Defensive re-cast: cast d/t to canonical Enum so the left-join
         # against ``pdt_bw.lazy`` (Enum d/t) composes cleanly even when
         # ``dt`` arrives with Utf8 columns.

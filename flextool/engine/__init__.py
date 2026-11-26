@@ -1,7 +1,7 @@
 """flextool integration with the polar_high LP eDSL.
 
 This subpackage is **flextool-specific** — it knows the on-disk layout
-of flextool's ``input/`` + ``solve_data/`` CSVs (``flex_data.py``) and the
+of flextool's ``input/`` + ``solve_data/`` CSVs (``preprocess/flex_data/``) and the
 shape of flextool's optimization model (``model/core/``). The
 ``polar_high`` package itself knows nothing of flextool.
 """

@@ -5,7 +5,7 @@ solve-side writer that normalizes per-timestep weights so the
 period-sum equals ``n_active_steps`` (so a uniform input reproduces
 weight=1 per step).  polar_high doesn't have an equivalent writer; it
 *consumes* the canonical ``solve_data/timestep_weight`` frame (from its
-provider) via :func:`flextool.engine.preprocess.flex_data._load_time`.
+provider) via :func:`flextool.engine.preprocess.flex_data._load_topology._load_time`.
 
 Porting strategy (loader-side instead of writer-side, per gap-B6
 guidance "polar_high's loader already handles the inputs but should
@@ -141,7 +141,7 @@ class TestLoadTimestepWeight:
         """Mirrors the loader-side analogue of
         ``test_missing_steps_are_treated_as_zero``.  polar_high's loader has
         a different convention from flextool's writer here: the .mod
-        spec is ``param p_rp_cost_weight ... default 1`` (flex_data.py:575),
+        spec is ``param p_rp_cost_weight ... default 1`` (``flex_data/_load_topology.py::_load_time``),
         so unlisted (d, t) rows fall back to 1.0 — NOT 0.0.  The writer
         would have produced explicit 0.0 / 2.0 entries; polar_high's loader
         only honors what's on disk and defaults the rest to 1.0.

@@ -1,7 +1,7 @@
 """A run reads only its in-memory provider, never CSV files left in a reused work folder (item 160).
 
 A ``--csv-dump`` (or any earlier run) leaves ``input/*.csv`` and ``solve_data/*.csv`` in the work folder. The
-loader's provider helpers in ``preprocess/flex_data.py`` used to fall back to such a file whenever the provider
+loader's provider helpers in ``preprocess/flex_data/_readers.py`` used to fall back to such a file whenever the provider
 lacked the key, so a stale ``solve_data/process_exact.csv`` from an ``exact``-transfer model turned a
 ``regular`` connection of the next model into an exact one (extra ``v_exact_forward`` columns and
 ``maxFlow_exact_*`` rows).

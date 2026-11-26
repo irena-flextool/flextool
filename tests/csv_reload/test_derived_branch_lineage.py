@@ -38,7 +38,7 @@ def test_t12_stoch_dump_reload_roundtrip(stoch_data, stoch_wf, tmp_path):
     Path note (design §5 implementation note): a CSV-only reload
     (dumped dir carries no Spine DB) skips the ENTIRE derived cascade
     (``_apply_db_overrides`` gates on ``db_reader is not None``,
-    ``flex_data.py:4679``), so every cascade-produced field — the lineage
+    ``flex_data/_load.py::load_flextool``), so every cascade-produced field — the lineage
     frames, like their cousins ``period_branch_full`` /
     ``dt_non_anticipativity`` — is None after ``load_from_dump`` of a
     dumped tree.  The F2 substance ("the rebuild inputs all survive a

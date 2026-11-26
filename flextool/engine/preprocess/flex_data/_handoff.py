@@ -389,7 +389,7 @@ def build_handoff_from_solution(
     # (period, step) v_state per nodeState node.  The carrier exists as
     # a distinct SolveHandoff field so the parent storage's consumer
     # can prefer it explicitly over the sequential-prior fallback (see
-    # flex_data.py:2810-2819).  In the current sequential-prior orchestration,
+    # _provider_translators).  In the current sequential-prior orchestration,
     # the last completed solve before the parent's next roll IS the
     # child dispatch sub-solve, so sequential prior already fans the
     # dispatch's roll_end_state into the parent's provider key — but

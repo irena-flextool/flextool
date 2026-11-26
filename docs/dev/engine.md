@@ -131,10 +131,14 @@ Which `has_*` flags each level turns off is listed under [Feature flags](#featur
 
 ## FlexData — the central data carrier
 
-`FlexData` (`preprocess/flex_data.py`) is a `@dataclass` of about 400
+`FlexData` (`preprocess/flex_data/_container.py`) is a `@dataclass` of about 400
 fields. Nine are positional and always present (the time / weighting / node
 floor); every other field defaults to `None` and is filled in only when
-the scenario exercises the corresponding feature.
+the scenario exercises the corresponding feature.  The package
+`preprocess/flex_data/` re-exports the public names; its modules are the
+container, the shared readers (`_readers`), the feature loaders (`_load_*`,
+`_coarse`), `load_flextool` (`_load`), the DB-direct passes (`_db_overrides`)
+and `build_handoff_from_solution` with its helpers (`_handoff*`).
 
 The naming convention is documented on the class:
 
@@ -712,7 +716,7 @@ from `_period_params`; `_fixed_costs` reads
 in `_arc_unions`.
 
 The runner does not compute the order. It is encoded in the call
-order of `_apply_db_overrides` (in `flex_data.py`) and the load sequence
+order of `_apply_db_overrides` (in `flex_data/_db_overrides.py`) and the load sequence
 in `load_flextool`. Adding a new derived field typically means appending
 one call to the right phase.
 
@@ -1044,12 +1048,12 @@ The other attributes are not carriers: `unit_detail` / `online_left_out`
 `realised_storage_usage`, which the cascade (`solve/_run_model.py`) reads
 for cyclic scopes, nested starts and the per-roll usage cap.
 
-**Producer and transport.** `build_handoff_from_solution` (`flex_data.py`)
+**Producer and transport.** `build_handoff_from_solution` (`flex_data/_handoff.py`)
 populates one `SolveHandoff` from the just-completed solve's `polar_high`
 Solution and the sub-solve's provider (which it requires). The cascade
 transports the carriers through the Provider's `HANDOFF_*` keys
 (`_provider_translators._FIELD_TO_KEY`) — zero disk round-trips — and the
-override translator + `_apply_db_overrides` chain in `flex_data.py`
+override translator + `_apply_db_overrides` chain in `flex_data/_db_overrides.py`
 translates each carrier into the next `FlexData`'s `p_entity_*` parameters
 and the corresponding `n_*` / `ndt_*` / `p_*` sets
 (`p_fix_storage_quantity`, `p_fix_storage_usage`,
@@ -1378,7 +1382,7 @@ Behaviours to know:
   operational is tied; unset for a dispatch solve, which ties its committed
   window).  Under `operations_only` the investments stay on the period labels.
   A per-branch investment is never realized; the handoff realizes the tied
-  reveal-period copy under its label (`flex_data._label_tied_cohorts`), and the
+  reveal-period copy under its label (`flex_data._handoff_inputs._label_tied_cohorts`), and the
   realization solve of an investment solve starts at the reveal
   (`SolveConfig.realization_window`).
 
@@ -1450,12 +1454,12 @@ API of the other packages is in architecture.md
 |---|---|---|
 | Add a constraint that uses only existing parameters | `model/core/_build.py` table of contents in `build_flextool` | Write an `_eq_<family>(b)` function: an early-return guard on its flag (`if not b.has_<x>: return`), then an `EQ. ─── <name>` header (formula, one to three lines on what it does) above the `m.add_cstr` call. Add it to the table of contents next to related families. A constraint of an optional feature goes into that feature's module (`add_constraints(b)`). Placement sets the LP row order: check the effect with `tools/lp_snapshot.py`. Register the constraint name in autoscale `CONSTRAINT_FAMILIES` (architecture.md [Layers](architecture.md#layers-bottom-up)), a period-level family also in `PERIOD_ROW_KINDS` / `REVIEWED_STEP_LEVEL` ([Realization rolls](#realization-rolls)), and list it in the `model/core/_build.py` module docstring. |
 | Add a new input parameter | `_param_shapes.py` `PARAM_ALLOWED_SHAPES` | Add the parameter's entry, then populate it in `_direct.py` (trivial DB read) or a new module in `preprocess/params/` (computed). Add the field to `FlexData` and to the relevant feature's required-field tuple in `model/core/`. Register it in autoscale `PARAMETER_TYPES`; a time series also needs its `TIME_AGGREGATION` kind (architecture.md [Solve-step aggregation](architecture.md#solve-step-aggregation-new_stepduration-of-a-solve)). A parameter that takes several shapes needs a constant-vs-equivalent-map test (CONTRIBUTING.md "Shape-equivalence tests"). |
-| Add a new pre-solve set / index | `_per_solve_sets.py` if it's per-active-solve; a new module in `preprocess/emit/` otherwise | Wire the new function into `_apply_db_overrides` in `flex_data.py`. A frame that links two steps goes in `STEP_RELATIONS`. |
+| Add a new pre-solve set / index | `_per_solve_sets.py` if it's per-active-solve; a new module in `preprocess/emit/` otherwise | Wire the new function into `_apply_db_overrides` in `flex_data/_db_overrides.py`. A frame that links two steps goes in `STEP_RELATIONS`. |
 | Add a new optional feature | A new module next to `_reserve.py` / `_group_slack.py` | Give it `add_variables(b)` (variables with `VAR.` headers, set on `b`), `add_constraints(b)` and `objective_terms(b) -> Expr \| None`, each with an early-return guard on the feature's flag. Add the flag (and any variable fields) to `_Build`; set the flag in `_prepare`, with a `MY_FEATURE = (...)` required-field tuple and a `_check(d, MY_FEATURE, "my_feature")` call if it needs one. Call `add_variables` from `_declare_variables` and put `add_constraints` / `objective_terms` in the `build_flextool` table of contents. Register every new variable and constraint in autoscale `VARIABLE_FAMILIES` / `CONSTRAINT_FAMILIES`, add them to the `model/core/` module docstring, and check the LP with `tools/lp_snapshot.py`. |
 | Trace a numerical issue | `solve_data/autoscale_<solve>.yaml` | The Layer 1 ranges + Layer 2/3 plans show which families are wide and which scalers fired. [scaling.md](scaling.md), architecture.md [Numerical scaling](architecture.md#numerical-scaling). |
 | Trace a feasibility issue | `vq_*` outputs in `output_parquet/` | Slack activity localises the infeasibility to a row family. [slack_convention.md](slack_convention.md). |
 | Add a new decomposition mode | `_benders.py` (+ `_region_filter.py`) for spatial, `_warm.py` + `_orchestration.py` `_drive_cascade` for temporal | Each carries the FlexTool-side glue around a `polar_high` driver. Read [decomposition.md](decomposition.md) first. |
-| Trace a wrong-period bug in rolling horizon | `_apply_db_overrides` in `flex_data.py` | The handoff translation site. Cross-check against the `SolveHandoff` fields populated by `build_handoff_from_solution` and the routing in `solve/_carry_routing.py`. |
+| Trace a wrong-period bug in rolling horizon | `_apply_db_overrides` in `flex_data/_db_overrides.py` | The handoff translation site. Cross-check against the `SolveHandoff` fields populated by `build_handoff_from_solution` and the routing in `solve/_carry_routing.py`. |
 | Trace a warm-LP divergence | `_warm._reuse_blocker`, `_orchestration` `solver_key` | A reuse requires every `FlexData` field and the solver configuration to be identical; the INFO line "warm reuse fell back to COLD REBUILD" names the blocker. A warm/cold divergence on a reused sub-solve means something that shapes the LP lives outside `FlexData` and the solver key: add it to the comparison. |
 | Add a new variable / dual to the parquet output | `flextool/process_outputs/read_highs_solution.VARIABLE_SPECS` | Append one `VariableSpec` (architecture.md [Solution extraction](architecture.md#solution-extraction)). |
 

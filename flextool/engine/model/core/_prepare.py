@@ -272,7 +272,7 @@ def _no_balance_dt(d) -> pl.DataFrame:
     flows between regions, or a model with only ``balance_within_period`` nodes): the balance slacks and
     ``nodeBalance_eq`` are then built with no columns and rows.  Keeps the axis dtypes of ``nodeBalance`` and
     ``dt``.  A user's model without any balance node is refused when it is loaded
-    (``flex_data._validate_has_balance``)."""
+    (``flex_data._load._validate_has_balance``)."""
     nb = d.nodeBalance
     n = (nb.select("n").head(0) if nb is not None
          else pl.DataFrame(schema={"n": schema_dtype(getattr(d, "_axis_enums", None), "n")}))
@@ -458,7 +458,7 @@ def _check_storage_accounting(b: _Build) -> None:
 def _warn_reference_start_mismatch(b: _Build, share: dict) -> None:
     """Warn about use_reference_value nodes whose fix_start share differs from the reference value at their first
     step (owner decision, Phase 5): fix_start wins.  A node without fix_start starts from the reference
-    (``preprocess.flex_data._reference_start_as_fix_start``), so the two agree there."""
+    (``preprocess.flex_data._load._reference_start_as_fix_start``), so the two agree there."""
     from flextool.engine.preprocess.flex_data import reference_start_shares
     ref = reference_start_shares(b.d)
     off = sorted(n for n, v in ref.items() if n in share and abs(share[n] - v) > 1e-9)

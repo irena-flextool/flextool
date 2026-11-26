@@ -1032,7 +1032,7 @@ def _migrate_v56_fold_highs_method_into_solver_arguments(db) -> None:
     """Fold ``solve.highs_method`` values into
     ``solver_arguments['solver']`` (HiGHS' name for the method-
     selection option, per ``DETERMINISM_OPTIONS`` and the
-    ``flex_data.py:_HIGHS_PARAM_MAP`` table).
+    the former ``_HIGHS_PARAM_MAP`` table of the flex_data loader).
 
     Batch C.3 — first of the three ``highs_*`` shortcut folds.  The
     parameter values in flextool fixtures (``"simplex"``,
@@ -1080,7 +1080,7 @@ def _migrate_v56_fold_highs_parallel_into_solver_arguments(db) -> None:
     """Fold ``solve.highs_parallel`` values into
     ``solver_arguments['parallel']`` (HiGHS' own option name for
     parallelism control, per ``DETERMINISM_OPTIONS`` and the
-    ``flex_data.py:_HIGHS_PARAM_MAP`` table).
+    the former ``_HIGHS_PARAM_MAP`` table of the flex_data loader).
 
     Batch C.4 — second of the three ``highs_*`` shortcut folds.
     Fixture values (``"on"``, ``"off"``) are HiGHS-canonical so no
@@ -1123,7 +1123,7 @@ def _migrate_v56_fold_highs_presolve_into_solver_arguments(db) -> None:
     """Fold ``solve.highs_presolve`` values into
     ``solver_arguments['presolve']`` (HiGHS' own option name for
     presolve control, per ``DETERMINISM_OPTIONS`` and the
-    ``flex_data.py:_HIGHS_PARAM_MAP`` table).
+    the former ``_HIGHS_PARAM_MAP`` table of the flex_data loader).
 
     Batch C.5 — third (and last) of the ``highs_*`` shortcut folds.
     Fixture values (``"on"``, ``"off"``, ``"choose"``) are

@@ -1,7 +1,7 @@
 """Surface A.8 (variable / fixed operating-cost loader) and A.9 (CO2 cap
 loader) tests.
 
-A.8 covers ``flextool.engine.preprocess.flex_data._load_varcost`` — the helper
+A.8 covers ``flextool.engine.preprocess.flex_data._load_features._load_varcost`` — the helper
 that reads the three wide ``pdt*`` Param files and returns the three per-side
 variable-cost Params (``p_pdt_varCost_{source,sink,process}``).  Each leg
 returns ``None`` independently, so a single source-only / sink-only /
@@ -12,7 +12,7 @@ the loader: the DB overlay builds them (``_direct.apply_varcost_params``,
 seeds them in ``flextool.engine._csv_reload._field_seeds``; the A8 checks of
 those reads are with the reload hook (``tests/csv_reload/test_dump_seeds.py``).
 
-A.9 covers ``flextool.engine.preprocess.flex_data._load_co2_cap`` — the loader
+A.9 covers ``flextool.engine.preprocess.flex_data._load_co2._load_co2_cap`` — the loader
 behind the per-period CO2-cap constraint family.  Tests focus on the
 short-circuit gates (no-pss, missing CSV, empty CSV, no priced-node
 intersection) that decide whether the constraint family fires at all;

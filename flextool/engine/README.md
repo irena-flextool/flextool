@@ -31,7 +31,7 @@ entry point.
 | Folder | What |
 |---|---|
 | `input/` | Database and in-memory readers, solve settings, timeline, `RunnerState`, parameter shapes, constants |
-| `preprocess/` | `FlexData` (`flex_data.py`), the Provider and its keys, input writer, per-solve context |
+| `preprocess/` | `FlexData` (the `flex_data/` package), the Provider and its keys, input writer, per-solve context |
 | `preprocess/params/` | Parameter cascade: direct, projected and derived parameters |
 | `preprocess/emit/` | Per-solve sets and parameters written into the Provider |
 | `model/` | The LP: `core/` plus one module per optional feature; `_capacity.py` the capacity in service |
@@ -44,7 +44,7 @@ entry point.
 
 Imports point down the pipeline: solve → model → preprocess → input
 (`output/` and `autoscale/` are used by `solve/`). Known exceptions:
-`preprocess/flex_data.py` imports model feature modules at top level and,
+`preprocess/flex_data/` imports model feature modules at top level and,
 inside functions, `solve/_orchestration`, `solve/_handoff` and
 `output/_dump_csvs`; `input/_timeline.py` imports `preprocess/_provider_io`;
 several modules import `SolveHandoff` from `solve/_handoff` inside functions.

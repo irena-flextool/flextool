@@ -244,7 +244,7 @@ def with_solve_column(frame_pl: "pl.DataFrame", solve_name: str) -> "pl.DataFram
     """Return ``frame_pl`` with a leading ``solve`` column = ``solve_name``.
 
     FlexData fields drop the ``solve`` column at load time (see
-    ``flex_data.py:_read_long`` family).  The legacy pandas namespace
+    ``flex_data/_readers.py:_read_long`` family).  The legacy pandas namespace
     keeps it as the leftmost index level.  Inject it back in so the
     pivoted DataFrame's row MultiIndex starts with ``solve``.
     """

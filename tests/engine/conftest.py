@@ -47,8 +47,8 @@ from _parity_sweep import PARITY_SWEEP_CASES  # noqa: F401,E402
 def _reset_global_axis_enums():
     """Reset the cascade-wide axis_enums ContextVar before each test.
 
-    ``load_flextool`` sets the global ContextVar on success (flex_data.py
-    finally block ~line 4089) so ``build_flextool`` and other
+    ``load_flextool`` sets the global ContextVar on success (the ``finally``
+    block of ``flex_data/_load.py::load_flextool``) so ``build_flextool`` and other
     post-load consumers see the live vocabulary.  But the
     ContextVar persists into the next test in the same pytest worker,
     pinning Enum dtypes that may differ from the next test's
@@ -72,7 +72,7 @@ def _reset_recourse_walk_scope():
     and the boundary-scoped walker Provider + workdir of a solve with branch
     periods.  A real
     stochastic solve leaves them ARMED when it finishes; in production the next
-    solve's cascade clears them (``flex_data._apply_db_overrides`` calls
+    solve's cascade clears them (``flex_data._db_overrides._apply_db_overrides`` calls
     :func:`._derived._reset_recourse_scope` first — the F1 guarantee).
 
     A solver-free unit test that calls ``period_walk_iterator`` /

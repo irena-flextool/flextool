@@ -1551,7 +1551,7 @@ def run_one_solve(
     which spawns the solver's CLI binary against an MPS written by
     ``Problem.write_mps``, streams its log and reads the result file back
     into a duck-typed ``_SolHighsShim`` handle.  Downstream consumers
-    (``flex_data.py``, ``_co2_accumulators.py``,
+    (``flex_data/_handoff.py``, ``_co2_accumulators.py``,
     ``process_outputs/read_parameters.py``) see a uniform
     :class:`polar_high.Solution` shape regardless of which solver ran.
 

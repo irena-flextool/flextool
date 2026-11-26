@@ -295,7 +295,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
 
     # Workdir-CSV seeds for the invest/divest cascade live in
     # ``_invest_seeds.py`` — keeps the synthetic-solve fallback I/O off
-    # ``flex_data.py`` so the override chain stays the dominant data path.
+    # the flex_data loaders so the override chain stays the dominant data path.
     from flextool.engine.preprocess._invest_seeds import (
         read_invest_set as _seed_invest_set,
         read_forbidden_no_investment as _seed_forbidden_ni,

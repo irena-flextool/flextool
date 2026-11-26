@@ -89,7 +89,7 @@ def _names(items: Iterable[str]) -> str:
 def co2_total_groups(provider, source) -> list[str]:
     """The groups that get a ``co2_max_total`` row: a ``co2_method`` that caps the total, a finite non-zero
     ``co2_max_total``, and an emitter: an eff / noEff arc drawing from a node of the group that carries a CO2-bearing
-    commodity, or a start-up draw at such a node.  The gate of the row's loader (``flex_data._load_co2_cap_total``
+    commodity, or a start-up draw at such a node.  The gate of the row's loader (``flex_data._load_co2._load_co2_cap_total``
     with :func:`~flextool.engine.preprocess.flex_data.co2_capped_emitter_arcs` and ``_startup_co2_sets``), over the
     model's processes (the run's input frames and its input database reader *source*)."""
     if provider is None or source is None or not provider.has("solve_data/group_co2_max_total"):

@@ -147,7 +147,7 @@ class SolveHandoff:
     # End-of-roll flow for the ramp carry-in: v_flow (units of unitsize) of every ramp-limited arc at the
     # roll's last realized step, with that step and its duration.  The next roll's first step of a period
     # ramps from it when that step precedes it, adjacent, in the un-rolled solve (``_load_ramp_carry``).
-    # Producer: ``flex_data._roll_end_flow``.  Consumer: next roll's ``p_roll_continue_flow`` /
+    # Producer: ``flex_data._handoff_inputs._roll_end_flow``.  Consumer: next roll's ``p_roll_continue_flow`` /
     # ``dt_ramp_carry`` (``model.core._ramp._eq_ramp``).  In-memory only.
     # The carry is keyed on ``roll_end_step``: an override of ``roll_end_flow`` without ``roll_end_step`` is
     # ignored, and one whose step differs from ``roll_end_step`` raises (``params._ramp_links.ramp_roll_carry``).
@@ -155,7 +155,7 @@ class SolveHandoff:
 
     # The roll's last realized step in time (with its duration): the step the next roll's first step ramps
     # from (``_load_ramp_carry`` → ``dt_ramp_carry``, also read by the ramp output without ramp limits).
-    # Producer: ``flex_data._last_realized_step``.  In-memory only.  The carry routing
+    # Producer: ``flex_data._handoff_inputs._last_realized_step``.  In-memory only.  The carry routing
     # (``solve._carry_routing.with_end_position``) adds where the step ends on the base timeline (``end_rank``,
     # ``end_root``, ``end_index``, ``end_branch``), so a solve with other step lengths continues it by position; an
     # override without those columns is matched by the step name only.

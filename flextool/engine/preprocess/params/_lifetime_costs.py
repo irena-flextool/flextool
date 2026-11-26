@@ -208,7 +208,7 @@ def apply_npv(flex_data: object,
 
     # 3-6. NPV / lifetime cascade family.  Mirrors the "no_invest"
     # short-circuit in :mod:`._derived.ed_entity_annual_family_from_source`
-    # and :func:`flextool.engine.preprocess.flex_data._load_invest`: when
+    # and :func:`flextool.engine.preprocess.flex_data._load_features._load_invest`: when
     # neither ed_invest nor ed_divest carries any row, the cluster
     # outputs are all None (the LP has no v_invest / v_divest
     # variables that would consume them).

@@ -281,7 +281,7 @@ def process_source_sink_collapsed(source: "InputSource",
     :func:`process_source_sink_canonical` minus the ``method`` column.
     Schema: ``[p, source, sink]``.
 
-    Δ.17b Gap B closure.  Prior to this, ``flex_data.py:_load_process_topology``
+    Δ.17b Gap B closure.  Prior to this, ``flex_data/_load_topology.py:_load_process_topology``
     had to read the three preprocessed ``process_source_sink*.csv`` files
     from disk because the canonical helper produced the *expanded*
     ``process_source_sink`` shape (``unit__inputNode`` ∪ ``unit__outputNode``
@@ -2060,7 +2060,7 @@ SIMPLE_PROJECTIONS: dict[str, callable] = {
     "process_online_fix_in_uc": process_online_fix_in_uc,
     "process_delayed": process_delayed,
     # Every storage_bind_* set (plain and blended) is derived authoritatively in
-    # ``flex_data._load_storage`` from the per-solve
+    # ``flex_data._load_storage._load_storage`` from the per-solve
     # ``solve_data/node__storage_binding_method`` frame, so that the
     # cascade-applied silent downgrade
     # (``_run_model._downgrade_rp_methods_for_non_rp_solve``) is honoured.

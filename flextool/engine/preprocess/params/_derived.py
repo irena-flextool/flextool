@@ -296,7 +296,7 @@ def _reset_recourse_scope() -> None:
     """Clear all three recourse process-globals to ``None``.
 
     Defensive per-solve reset: called once at the top of the cascade
-    entry (:func:`flex_data._apply_db_overrides`) BEFORE any pass runs, so a
+    entry (:func:`flex_data._db_overrides._apply_db_overrides`) BEFORE any pass runs, so a
     future per-period producer wired into an EARLIER cascade step cannot
     inherit a stale anchor-pairs holder / walker Provider from a prior
     flag-on solve in a chained flag-on→flag-off multi-solve.  The three
@@ -1111,7 +1111,7 @@ def p_timestep_weight_from_source(
       (:func:`._solve_writers._compute_rp_frames`,
       ``w_r[rep]=Σ_base·n_rp/n_base``) and loaded into
       ``flex_data.p_timestep_weight`` by the CSV loader
-      (``flex_data.py`` ``_load_time``).  When the ACTIVE solve's
+      (``flex_data/_load_topology.py`` ``_load_time``).  When the ACTIVE solve's
       ``period_timeset`` references a timeset carrying
       ``representative_period_weights``, this helper returns ``None`` so
       the call site (guarded) PRESERVES that folded CSV value instead of
@@ -2146,7 +2146,7 @@ def _zero_flow_coef_pairs(source: "InputSource",
     ``unit__outputNode.conversion_flow_coeff`` (kind='sink') and return
     the ``(p, source)`` / ``(p, sink)`` pairs whose coefficient is zero.
     flextool drops these from the conversion_indirect LHS / RHS
-    (``flex_data.py:_load_indirect`` lines 942-944 / 968-970).
+    (``flex_data/_load_features.py:_load_indirect``).
     """
     if kind == "source":
         ec = "unit__inputNode"
@@ -2180,7 +2180,7 @@ def process_input_flows(source: "InputSource",
 
     pss filtered to ``sink == p AND p ∈ process_indirect``.  Drops arcs
     whose ``conversion_flow_coeff == 0`` (mirrors
-    ``flex_data.py:_load_indirect:942-944``).  Schema ``[p, source, sink]``.
+    ``flex_data/_load_features.py:_load_indirect``).  Schema ``[p, source, sink]``.
     """
     pi = process_indirect_set(source, classified)
     if pss is None or pss.height == 0 or pi.height == 0:
@@ -2205,7 +2205,7 @@ def process_output_flows(source: "InputSource",
     """Indirect-process output arcs (mirror of input).
 
     Drops arcs whose ``conversion_flow_coeff == 0`` (mirror of
-    ``flex_data.py:_load_indirect:968-970``).
+    ``flex_data/_load_features.py:_load_indirect``).
     """
     pi = process_indirect_set(source, classified)
     if pss is None or pss.height == 0 or pi.height == 0:
@@ -2416,7 +2416,7 @@ def p_flow_constraint_coef_from_source(source: "InputSource",
     with the commodity axis — see the c_collision review note in
     ``schemas/flextool_axis_contract.json``.
 
-    Algorithm (audit §3.5.1, flex_data.py:1005-1019):
+    Algorithm (audit §3.5.1, ``flex_data/_load_features.py::_load_user_constraints``):
       1. Pull unit__inputNode / unit__outputNode /
          connection__node.constraint_flow_coeff.  Each row carries
          ``(process, node, constraint, coef)``.
@@ -2900,7 +2900,7 @@ def apply_derived_b(
     classified = _classify_process_method(source)
 
     # Topology — already-computed CSV-side process_source_sink (a plain
-    # DataFrame on FlexData; see flex_data.py:252).
+    # DataFrame on FlexData; see ``flex_data/_load_topology.py::_load_process_topology``).
     pss_frame = getattr(flex_data, "process_source_sink", None)
     dt_csv = getattr(flex_data, "dt", None)
 
@@ -2950,7 +2950,7 @@ def apply_derived_b(
 
         # ─── Δ.27 flow_from_nodeBalance_{eff,noEff} ─────────────────
         # Source-side nodeBalance topology — native port of the
-        # inline derivation in ``flex_data.py::_load_storage`` lines
+        # inline derivation in ``flex_data/_load_storage.py::_load_storage`` lines
         # 1658-1705.  Without these, source-side flows from
         # nodeBalance nodes (e.g. transmission discharge into a
         # balance node) don't appear in nodeBalance_eq and the LP
@@ -2963,7 +2963,7 @@ def apply_derived_b(
         # else the period balance is vacuous and the source draws for free.
         # Pass the dtype-safe union to the seed (which filters ``pss.source ∈
         # n``).  Both frames come from the same ``rename_to_axis({"node":"n"})``
-        # in ``flex_data.py:_load_node`` so the ``n`` Enum aligns.  When the period
+        # in ``flex_data/_load_topology.py:_load_node`` so the ``n`` Enum aligns.  When the period
         # set is empty/None the union collapses to exactly ``nb_for_ffnb``
         # (no concat/unique/reorder) → byte-identical legacy behavior.
         nb_for_ffnb = getattr(flex_data, "nodeBalance", None)
@@ -3033,7 +3033,7 @@ def apply_derived_b(
 
     # ─── §F.1 p_unitsize  (Δ.10 cluster F) ─────────────────────────────
     # Per-process unitsize cascade restricted to processes appearing in
-    # ``pss``.  Mirrors ``flex_data.py:800-825``'s
+    # ``pss``.  Mirrors ``flex_data/_load_topology.py::_load_process_topology``'s
     # ``unitsize_long.filter(p ∈ pss["p"].unique())``.
     # Δ.12b: unconditional when pss is non-empty.
     if pss_frame is not None and pss_frame.height > 0:
@@ -3070,7 +3070,7 @@ def apply_derived_b(
 
     # ─── §F.4 p_process_source_conversion_flow_coeff /
     # p_process_sink_conversion_flow_coeff ─────────────────────────────
-    # (Δ.10 cluster F).  Mirrors ``flex_data.py:_load_indirect`` lines
+    # (Δ.10 cluster F).  Mirrors ``flex_data/_load_features.py:_load_indirect`` lines
     # 950-1002.  Anti-joins zero-coef rows out of the indirect-process
     # input/output flow sets and emits a Param keyed on (p, source) /
     # (p, sink) when any non-default, non-zero coef remains.
@@ -3122,7 +3122,7 @@ def apply_derived_b(
 # corrupted by a simple-path approximation.
 #
 # Integration: ``apply_derived_c`` runs after Γ.3.A + Γ.3.B; see
-# ``flex_data.py::load_flextool``.
+# ``flex_data/_load.py::load_flextool``.
 
 # ---------------------------------------------------------------------------
 # §3.7.0 — Helpers (active-solve scope, period_invest, p_years_d, etc.)
@@ -4191,7 +4191,7 @@ def p_section_from_source(source: "InputSource",
 # limit of :func:`_indirect_input_cap_lf` (``input_share_max`` × the
 # full-load fuel per unit of capacity) times the capacity count.
 #
-# Slow-path consumer: ``flex_data.py::_load_process_topology`` reads
+# Slow-path consumer: ``flex_data/_load_topology.py::_load_process_topology`` reads
 # ``solve_data/p_flow_max.csv`` (preprocessed CSV).  Δ.26 ports the
 # derivation natively as a polars-lazy helper, wired into
 # :func:`apply_derived_c` so the fast single-solve path produces the
@@ -5996,7 +5996,7 @@ def apply_derived_c(
     carried_cohort, carried_retire = _carried_cohorts(provider)
 
     # Dispatch-only gate: when neither ed_invest nor ed_divest carries
-    # any (e, d) row, mirror ``flex_data.py::_load_invest`` blank-out by
+    # any (e, d) row, mirror ``flex_data/_load_features.py::_load_invest`` blank-out by
     # nulling every invest-cascade Param.
     #
     # Δ.18 — gate must consult the *effective* invest/divest sets (the
@@ -6206,7 +6206,7 @@ def _entity_unitsizes(flex_data: object) -> "dict[str, float]":
 # Storage / lifetime cascade / handoff state / ladder / delay / multi-
 # branch Params are deferred to Γ.3.E; their algorithms either depend
 # on per-solve state not in Spine, or require a fully-faithful port of
-# flextool preprocessing's coarse-block synthesis (flex_data.py:1985-2126)
+# flextool preprocessing's coarse-block synthesis (the flex_data loaders)
 # whose risk profile exceeds the time budget for this batch.  See
 # ``progress.md`` for the deferred-list bookkeeping.
 # =============================================================================
@@ -7747,7 +7747,7 @@ def p_state_upper_from_source(source: "InputSource",
     """``p_state_upper[n, d] = state_existing_capacity[n, d] /
     p_entity_unitsize[n]``, with the unitsize fallback chain
     ``virtual_unitsize OR existing OR 1000``.  Mirrors
-    ``entity_period_calc_params.py:186-202`` and ``flex_data.py:1755-1772``.
+    ``entity_period_calc_params.py:186-202`` and ``flex_data/_load_storage.py::_load_storage``.
     """
     if (state_existing_capacity is None
             or state_existing_capacity.frame.height == 0
@@ -7782,7 +7782,7 @@ def storage_use_reference_value_from_source(source: "InputSource",
     """``storage_use_reference_value`` — nodes with horizon method
     ``use_reference_value`` after multi-method exclusion.
 
-    Mirror of flex_data.py:1880-1899.  Filter
+    Mirror of ``flex_data/_load_storage.py::_load_storage``.  Filter
     ``node.storage_solve_horizon_method == 'use_reference_value'``, then
     anti-join against:
 
@@ -8119,7 +8119,7 @@ def dtttdt_block_lag_from_dtttdt(dtttdt: pl.DataFrame | None,
 
     The blocks of a period form a loop: inside the period the previous step (across block boundaries too), and the
     period's first step continues from the period's own last step (the within-period lag of
-    ``flex_data._within_period_lag``).  The periods of *chained* ``(d)`` (in a rolling solve, the periods the roll
+    ``flex_data._readers._within_period_lag``).  The periods of *chained* ``(d)`` (in a rolling solve, the periods the roll
     holds only in part) chain forward instead: their rows are the bind_forward_only lag
     (:func:`dtttdt_forward_only_from_dtttdt`), so a period's first step continues from the previous step of the
     solve and the solve's first step has no row (its start is the fix_start state or the roll carry).  Restricted to
@@ -8246,7 +8246,7 @@ def apply_derived_e(
     dtttdt_db = None if dtttdt_jump is None else dtttdt_jump.drop("jump")
     if dtttdt_db is not None:
         # A split realization roll: the placeholders at its label's and branch periods' first steps are null
-        # (before the 1b frames below are derived from dtttdt), as in the seed (flex_data._read_step_previous).
+        # (before the 1b frames below are derived from dtttdt), as in the seed (flex_data._readers._read_step_previous).
         from flextool.engine.preprocess._step_relations import null_split_dtttdt
         from flextool.engine.preprocess.params._branch import period_branch_full_df
         split_pb = period_branch_full_df(workdir, provider=provider) if workdir is not None else None
@@ -8294,7 +8294,7 @@ def apply_derived_e(
                 flex_data.dtttdt_forward_only = fwd
         # bind_within_solve: the first step of each root of a fan in the solve's first period continues from the
         # last step of its own path (the state-change lag of the bind_within_solve nodes).  This value is
-        # authoritative: it overwrites the seed value of flex_data._load_storage, which uses the same function and
+        # authoritative: it overwrites the seed value of flex_data._load_storage._load_storage, which uses the same function and
         # must agree with it.
         ws_nodes = getattr(flex_data, "storage_bind_within_solve", None)
         flex_data.dtttdt_within_solve = (
@@ -8366,7 +8366,7 @@ def apply_derived_e(
         flex_data.storage_use_reference_value = use_ref if use_ref is not None and use_ref.height > 0 else None
 
     # 7. rolling-handoff (storage-only — read-from-disk handoff) ------
-    # Path B Cat A: ``_load_storage`` (flex_data.py:2083-2104, 2106-2133)
+    # Path B Cat A: ``_load_storage`` (``flex_data/_load_storage.py``)
     # already reads ``p_roll_continue_state.csv`` and
     # ``fix_storage_quantity.csv`` and assigns the resulting Params to
     # ``flex_data.p_roll_continue_state`` / ``p_fix_storage_quantity``
@@ -8718,7 +8718,7 @@ def _read_handoff_e_d_from_workdir(workdir: Path,
                                        provider: "object | None" = None,
                                        ) -> "Param | None":
     """Read a (entity, period, value) handoff CSV; mirror the loader's
-    zero-filter (flex_data.py:1316-1328).  Returns None when the file is
+    zero-filter (the flex_data loaders).  Returns None when the file is
     absent / empty / all-zero.
     """
     p = Path(workdir) / "solve_data" / f"{name}.csv"
@@ -8808,7 +8808,7 @@ def p_entity_divested_from_handoff(
     ``[entity, value]``).  The translator populates this key from
     :pyattr:`SolveHandoff.divest_cumulative` at iteration start;
     absent / header-only / all-zero collapses to ``None``.  Mirrors
-    the overlay logic at ``flex_data.py:5478-5487``.
+    the overlay logic of ``flex_data/_load.py::_overlay_handoff``.
     """
     from flextool.engine.preprocess import _provider_keys as K
     from flextool.engine.preprocess._provider_translators import read_handoff_frame
@@ -9521,7 +9521,7 @@ def apply_delay_params(flex_data: object, source: "InputSource") -> None:
     is ignored).
 
     Solve-agnostic: :func:`apply_derived_g` calls it, and so does the
-    synthetic (rolling) sub-solve path in ``flex_data._apply_db_overrides``,
+    synthetic (rolling) sub-solve path in ``flex_data._db_overrides._apply_db_overrides``,
     which skips the derived passes.  Producing all three together keeps
     the ``td`` labels identical across them.
     """
@@ -9930,7 +9930,7 @@ def apply_derived_g(
     # Δ.8 consolidation: delegate the full cluster D port to
     # ``_branch.apply_branch_cluster``.  The helper covers
     # ``pd_branch_weight``, ``pdt_branch_weight``, and (already
-    # CSV-loaded by ``flex_data.py``) ``period_branch_full``,
+    # CSV-loaded by the flex_data loaders) ``period_branch_full``,
     # ``period_in_use_set``, ``dt_non_anticipativity`` — the latter
     # three are kept as overrides so the lazy port becomes the single
     # producer once the CSV cascade retires (Δ.12).  R-O6: the helper

@@ -282,7 +282,7 @@ def _slice_param(path: Path, entity_col: str, param_value: str,
     # p_process_availability`` in ``model._max_flow_rhs``) raise
     # ``InvalidOperationError: arithmetic on string and numeric``.
     # ``strict=False`` mirrors the casts in ``_read_long`` / pdtNode
-    # path (flex_data.py:958) — non-parseable values become null and the
+    # path (``_load_node``) — non-parseable values become null and the
     # downstream consumer's ``fill_null(0.0)`` handles them.
     if "value" in out.columns and out.schema["value"] == pl.Utf8:
         out = out.with_columns(
