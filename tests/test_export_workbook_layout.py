@@ -531,3 +531,54 @@ def test_entity_activity_of_every_class_survives_the_workbook(tmp_path: Path) ->
         links = {tuple(e["entity_byname"]) for e in mapping.get_entity_items(entity_class_name="group__node")}
     assert got == rows
     assert links == {("g", "n"), ("g", "m")}
+
+
+def test_sheet_names_fit_excel(tmp_path: Path) -> None:
+    # Two stochastic unit parameters give one sheet each, named unit_s_<parameter>: unit_s_availability (19) and
+    # unit_s_piecewise_linear_efficiency (34 characters; Excel allows 31) -> unit_s_piecewise_linear_efficie.
+    db = tmp_path / "long_names.sqlite"
+    initialize_database(str(SCHEMA_JSON), str(db))
+    url = f"sqlite:///{db}"
+    values = {
+        "piecewise_linear_efficiency": Map(["p2020"], [Map([0.25, 1.0], [0.3, 0.4])]),
+        "availability": Map(["f1"], [Map(["t0001"], [Map(["t0001"], [0.9])])]),
+    }
+    with DatabaseMapping(url) as mapping:
+        mapping.add_entity(entity_class_name="unit", entity_byname=("u",))
+        for name, value in values.items():
+            v, t = to_database(value)
+            mapping.add_parameter_value(entity_class_name="unit", entity_byname=("u",),
+                                        parameter_definition_name=name, alternative_name="base", value=v, type=t)
+        mapping.commit_session("long names")
+    out = tmp_path / "long_names.xlsx"
+    export_to_excel(url, str(out), include_advanced=True)
+    book = openpyxl.load_workbook(out)
+    try:
+        names = book.sheetnames
+    finally:
+        book.close()
+    assert max(len(n) for n in names) <= 31
+    assert "unit_s_piecewise_linear_efficie" in names and "unit_s_availability" in names
+    target = tmp_path / "round_trip.sqlite"
+    initialize_database(str(SCHEMA_JSON), str(target))
+    write_sheet_data_to_db(read_self_describing_excel(str(out)), f"sqlite:///{target}", purge_first=True,
+                           keep_entities=True)
+    with DatabaseMapping(f"sqlite:///{target}") as mapping:
+        got = {p["parameter_definition_name"]: _plain(from_database(p["value"], p["type"]))
+               for p in mapping.get_parameter_value_items(entity_class_name="unit")}
+    assert got == {name: _plain(value) for name, value in values.items()}
+
+
+def test_fit_sheet_names_keeps_every_candidate_unique_and_short() -> None:
+    import json
+
+    from flextool.export_to_tabular.sheet_config import fit_sheet_names
+    schema = json.loads(SCHEMA_JSON.read_text(encoding="utf-8"))
+    # Every <class>_s_<parameter> a stochastic sheet could be named, plus two that cut to the same 31 characters.
+    candidates = sorted({f"{cls.replace('__', '_')}_s_{name}" for cls, name, *_ in schema["parameter_types"]})
+    candidates += ["x" * 31 + "_a", "x" * 31 + "_b"]
+    fitted = fit_sheet_names(candidates)
+    assert max(len(n) for n in fitted) <= 31
+    assert len(set(fitted)) == len(fitted)
+    assert [f for c, f in zip(candidates, fitted) if len(c) <= 31] == [c for c in candidates if len(c) <= 31]
+    assert fitted[-2:] == ["x" * 31, "x" * 29 + "~2"]

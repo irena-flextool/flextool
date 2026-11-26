@@ -807,7 +807,38 @@ def build_sheet_specs(
             specs, db_contents, include_groups, always_include_cfg,
         )
 
+    # ---- 11. Sheet names Excel accepts (at most 31 characters) ----
+    for spec, name in zip(specs, fit_sheet_names([spec.sheet_name for spec in specs])):
+        spec.sheet_name = name
+
     return specs
+
+
+# Excel refuses (or repairs) a workbook with a sheet name longer than this.
+MAX_SHEET_NAME = 31
+
+
+def fit_sheet_names(names: list[str]) -> list[str]:
+    """*names* with every name longer than 31 characters cut to 31, unique.
+
+    A cut name that collides with a name already taken ends in ``~2``, ``~3``, ... instead.  Shorter names stay
+    as they are.  The reader does not identify a parameter by its sheet name (the sheet's own definition row and
+    column name it), so the cut needs no way back.
+    """
+    taken = {n for n in names if len(n) <= MAX_SHEET_NAME}
+    out: list[str] = []
+    for name in names:
+        if len(name) > MAX_SHEET_NAME:
+            fitted = name[:MAX_SHEET_NAME]
+            n = 2
+            while fitted in taken:
+                suffix = f"~{n}"
+                fitted = name[:MAX_SHEET_NAME - len(suffix)] + suffix
+                n += 1
+            taken.add(fitted)
+            name = fitted
+        out.append(name)
+    return out
 
 
 def _filter_specs_by_groups(

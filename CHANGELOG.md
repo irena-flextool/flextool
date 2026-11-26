@@ -92,6 +92,10 @@
 
 ### Fixes
 
+- **Excel export: sheet names fit Excel.** A stochastic sheet of a class with several stochastic parameters is
+  named `<class>_s_<parameter>`, which can exceed Excel's 31 characters (`unit_s_piecewise_linear_efficiency`), so
+  Excel refused or repaired the workbook. Such names are now cut to 31 characters (`~2`, `~3` added on a clash);
+  the import reads the parameter from the sheet itself, so the cut changes nothing in the data.
 - **Excel export: entity activity of every class.** Only nodes, units and connections had an `entity existence`
   column, so the activity of other entities was lost on a round trip through a workbook: a reserve, constraint
   or group membership switched off in an alternative came back switched on. Every class now has the column, on
