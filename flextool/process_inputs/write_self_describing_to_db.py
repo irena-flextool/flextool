@@ -63,6 +63,28 @@ def _is_multidimensional(sheet: SheetData) -> bool:
     return False
 
 
+# Map parameters whose index is a number, not a name: a workbook carries every index as text, so their indexes
+# are turned back into floats (``unit.delay`` {2.0: 0.2, 3.0: 0.5}).  The part-load curve's load level is the
+# other float index; it comes from the shape registry (_float_index_parameters).
+_FLOAT_INDEX_PARAMETERS: frozenset[tuple[str, str]] = frozenset({("unit", "delay"), ("connection", "delay")})
+
+
+def _float_index_parameters() -> frozenset[tuple[str, str]]:
+    """The (class, parameter) pairs whose 1-level Map index is a float: delay, and the load level of the shapes."""
+    from flextool.engine.input._param_shapes import PARAM_ALLOWED_SHAPES, AxisName, shape_to_axes
+    load = {key for key, shapes in PARAM_ALLOWED_SHAPES.items()
+            if any(shape_to_axes(s).map_levels == (AxisName.L,) for s in shapes)}
+    return _FLOAT_INDEX_PARAMETERS | frozenset(load)
+
+
+def _float_index(value: Any) -> Any:
+    """An index read from a workbook as a float when it is a number; anything else stays as it is."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return value
+
+
 def _registry_facet_targets() -> "dict[tuple[str, str], list[tuple[str, tuple[str, ...], frozenset[str]]]]":
     """Return the registry's facet-target map.
 
@@ -493,8 +515,11 @@ def _group_map_records(
 
     # Build collapsed Map records
     collapsed: list[dict[str, Any]] = []
+    float_index = _float_index_parameters()
     for key, entries in map_groups.items():
         indexes = [e[0] for e in entries]
+        if (key[0], key[2]) in float_index:
+            indexes = [_float_index(i) for i in indexes]
         values = [e[1] for e in entries]
         index_name = map_templates[key].get("index_name") or "index"
         rec = dict(map_templates[key])

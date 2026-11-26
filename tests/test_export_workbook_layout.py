@@ -164,14 +164,6 @@ def _snapshot(url: str) -> tuple[dict, set, dict]:
     return values, entities, activity
 
 
-# Values that do not survive the workbook today, for reasons outside the layout:
-# - a Map with float indexes comes back with string indexes ('2.0') (item 1039).
-# The test fails when one of them is fixed (remove it here) or when a new difference appears.
-KNOWN_ROUND_TRIP_DEFECTS = {
-    ("unit", ("water_pump",), "delay", "water_pump_delayed"),
-}
-
-
 def test_time_series_default_row_is_not_a_time_step(wb: openpyxl.Workbook, workbook_path: Path) -> None:
     # unit_t carries several parameters, so it has a parameter row and, because availability has a default (1.0),
     # a ``default`` row under it with ``index: time`` in column A.  In templates_examples.json coal_plant's
@@ -198,9 +190,8 @@ def test_round_trip_reads_back_the_database(
     src_values, src_entities, src_activity = _snapshot(f"sqlite:///{examples_db}")
     assert entities == src_entities
     assert activity == src_activity
-    assert values.keys() == src_values.keys()
-    differing = {k for k in src_values if values[k] != src_values[k]}
-    assert differing == KNOWN_ROUND_TRIP_DEFECTS
+    # Every value comes back (water_pump's delay included: its float indexes stay numbers).
+    assert values == src_values
     # Scenario alternatives come back with the database's ranks (numbered from 1).
     assert _scenario_ranks(f"sqlite:///{target}") == _scenario_ranks(f"sqlite:///{examples_db}")
 
@@ -482,9 +473,13 @@ def test_index_names_survive_the_workbook(tmp_path: Path) -> None:
     write_sheet_data_to_db(read_self_describing_excel(str(out)), f"sqlite:///{target}", purge_first=True,
                            keep_entities=True)
     with DatabaseMapping(f"sqlite:///{target}") as mapping:
-        got = {(p["entity_class_name"], tuple(p["entity_byname"]), p["parameter_definition_name"]):
-               _index_name_path(from_database(p["value"], p["type"])) for p in mapping.get_parameter_value_items()}
+        parsed = {(p["entity_class_name"], tuple(p["entity_byname"]), p["parameter_definition_name"]):
+                  from_database(p["value"], p["type"]) for p in mapping.get_parameter_value_items()}
+    got = {k: _index_name_path(v) for k, v in parsed.items()}
+    delay_indexes = list(parsed[("unit", ("u",), "delay")].indexes)
     assert {k: got.get(k) for k in expected} == expected
+    # The delay's indexes are numbers (hours), not text.
+    assert delay_indexes == [2.0, 3.0] and all(isinstance(i, float) for i in delay_indexes)
     book = openpyxl.load_workbook(out)
     try:
         ws = book["unit_p"]
