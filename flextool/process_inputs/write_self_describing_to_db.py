@@ -602,7 +602,9 @@ def _write_sheet(
                             "Could not add link entity %s (%s): %s",
                             byname, ec.class_name, exc,
                         )
-        return
+        if not sheet.records:
+            return
+        # A link sheet's records are its entity existence rows: written below like any sheet's.
 
     if not sheet.records:
         return

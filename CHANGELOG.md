@@ -92,6 +92,10 @@
 
 ### Fixes
 
+- **Excel export: entity activity of every class.** Only nodes, units and connections had an `entity existence`
+  column, so the activity of other entities was lost on a round trip through a workbook: a reserve, constraint
+  or group membership switched off in an alternative came back switched on. Every class now has the column, on
+  its constant sheet or, for a class without parameters (such as `group__node`), on its link sheet.
 - **Excel import: number indexes stay numbers.** A `delay` map ({2: 0.2, 3: 0.5}, index in hours) and a
   part-load curve (`piecewise_linear_efficiency`, index the load share) came back from a workbook with text
   indexes ('2.0'); their indexes are numbers again.

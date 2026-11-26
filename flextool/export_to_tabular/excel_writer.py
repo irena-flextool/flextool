@@ -3636,10 +3636,18 @@ def write_link_sheet_v2(
 
     Layout:
         Row 1: navigate
-        Row 2: 'entity: X, Y' | dim1_name | dim2_name
-        Row 3+: (empty)       | dim1_val  | dim2_val
+        Row 2: 'entity: X, Y' | dim1_name | dim2_name [| alternative | entity existence]
+        Row 3+: (empty)       | dim1_val  | dim2_val  [| alt       | TRUE / FALSE]
+
+    With the entity existence columns, an entity whose activity is set in some alternatives has one row per such
+    alternative; any other entity has one row without them.
     """
+    from openpyxl.utils import get_column_letter
+    from openpyxl.worksheet.datavalidation import DataValidation
+
     entity_class = spec.entity_classes[0] if spec.entity_classes else None
+    n_dims = len(spec.entity_columns)
+    n_cols = n_dims + (2 if spec.has_entity_alternative else 0)
 
     # Row 1: navigate
     ws.cell(row=1, column=1, value="navigate")
@@ -3649,19 +3657,32 @@ def write_link_sheet_v2(
     ws.cell(row=2, column=1, value=entity_label)
     for col_idx, col_name in enumerate(spec.entity_columns, start=2):
         ws.cell(row=2, column=col_idx, value=col_name)
+    if spec.has_entity_alternative:
+        ws.cell(row=2, column=2 + n_dims, value="alternative")
+        ws.cell(row=2, column=3 + n_dims, value="entity existence")
 
     if not entity_class:
         format_link_sheet_v2(ws)
         add_navigate_link(ws)
-        finish_link_sheet(ws, len(spec.entity_columns))
+        finish_link_sheet(ws, n_cols)
         return
 
+    activity: dict[tuple, list[tuple[str, bool]]] = {}
+    if spec.has_entity_alternative:
+        for (cls, byname, alt), active in db_contents.entity_alternatives.items():
+            if cls == entity_class:
+                activity.setdefault(tuple(byname), []).append((alt, active))
+
     # Collect and sort entity rows
-    entities = db_contents.entities.get(entity_class, [])
     rows: list[tuple] = []
-    for entity in entities:
-        byname = entity["entity_byname"]
-        rows.append(tuple(str(_to_native(v)) for v in byname))
+    for entity in db_contents.entities.get(entity_class, []):
+        byname = tuple(entity["entity_byname"])
+        names = tuple(str(_to_native(v)) for v in byname)
+        alts = sorted(activity.get(byname, []))
+        if alts:
+            rows.extend(names + (alt, "TRUE" if active else "FALSE") for alt, active in alts)
+        else:
+            rows.append(names)
 
     rows.sort()
 
@@ -3671,7 +3692,14 @@ def write_link_sheet_v2(
 
     format_link_sheet_v2(ws)
     add_navigate_link(ws)
-    finish_link_sheet(ws, len(spec.entity_columns))
+    finish_link_sheet(ws, n_cols)
+    if spec.has_entity_alternative:
+        letter = get_column_letter(3 + n_dims)
+        dv = DataValidation(type="list", formula1='",TRUE,FALSE"', allow_blank=True, showDropDown=False)
+        dv.error = "Select TRUE or FALSE"
+        dv.errorTitle = "Entity existence"
+        dv.sqref = f"{letter}3:{letter}{len(rows) + 500}"
+        ws.add_data_validation(dv)
 
     # --- Lock metadata ---
     _lock_metadata_cells(

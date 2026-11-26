@@ -157,10 +157,8 @@ def _snapshot(url: str) -> tuple[dict, set, dict]:
             values[(p["entity_class_name"], tuple(p["entity_byname"]), p["parameter_definition_name"],
                     p["alternative_name"])] = value
         entities = {(e["entity_class_name"], tuple(e["entity_byname"])) for e in db.get_entity_items()}
-        # Only node / unit / connection carry an entity existence column (separate item for the others).
         activity = {(e["entity_class_name"], tuple(e["entity_byname"]), e["alternative_name"]): e["active"]
-                    for e in db.get_entity_alternative_items()
-                    if e["entity_class_name"] in ("node", "unit", "connection")}
+                    for e in db.get_entity_alternative_items()}
     return values, entities, activity
 
 
@@ -489,3 +487,39 @@ def test_index_names_survive_the_workbook(tmp_path: Path) -> None:
         assert "index name" in labels  # invest_cost (period) and delay (lag) share the sheet
     finally:
         book.close()
+
+
+def test_entity_activity_of_every_class_survives_the_workbook(tmp_path: Path) -> None:
+    # Activity rows (entity_alternative) of a reserve, a constraint (classes with a constant sheet: entity existence
+    # column there) and a group__node link (a link-only class: entity existence column on the link sheet), all
+    # switched off in alternative "off"; a second group__node link has no activity row.  All come back as written.
+    db = tmp_path / "activity.sqlite"
+    initialize_database(str(SCHEMA_JSON), str(db))
+    url = f"sqlite:///{db}"
+    rows = {
+        ("reserve__upDown__group", ("r", "up", "g")): False,
+        ("constraint", ("c1",)): False,
+        ("group__node", ("g", "n")): False,
+    }
+    with DatabaseMapping(url) as mapping:
+        mapping.add_alternative(name="off")
+        for cls, byname in (("reserve", ("r",)), ("group", ("g",)), ("node", ("n",)), ("node", ("m",)),
+                            ("constraint", ("c1",)), ("reserve__upDown__group", ("r", "up", "g")),
+                            ("group__node", ("g", "n")), ("group__node", ("g", "m"))):
+            mapping.add_entity(entity_class_name=cls, entity_byname=byname)
+        for (cls, byname), active in rows.items():
+            mapping.add_entity_alternative(entity_class_name=cls, entity_byname=byname, alternative_name="off",
+                                           active=active)
+        mapping.commit_session("activity")
+    out = tmp_path / "activity.xlsx"
+    export_to_excel(url, str(out), include_advanced=True)
+    target = tmp_path / "round_trip.sqlite"
+    initialize_database(str(SCHEMA_JSON), str(target))
+    write_sheet_data_to_db(read_self_describing_excel(str(out)), f"sqlite:///{target}", purge_first=True,
+                           keep_entities=True)
+    with DatabaseMapping(f"sqlite:///{target}") as mapping:
+        got = {(e["entity_class_name"], tuple(e["entity_byname"])): e["active"]
+               for e in mapping.get_entity_alternative_items() if e["alternative_name"] == "off"}
+        links = {tuple(e["entity_byname"]) for e in mapping.get_entity_items(entity_class_name="group__node")}
+    assert got == rows
+    assert links == {("g", "n"), ("g", "m")}

@@ -697,10 +697,13 @@ def finish_transposed_sheet(
         add_description_note(ws, row, col, name, desc)
 
 
-def finish_link_sheet(ws: Worksheet, n_dims: int) -> None:
-    """Widths and freeze panes of a link sheet: row 2 is the header; column A holds only reader labels."""
+def finish_link_sheet(ws: Worksheet, n_cols: int) -> None:
+    """Widths and freeze panes of a link sheet: row 2 is the header; column A holds only reader labels.
+
+    *n_cols*: the columns right of A (the dimensions, and the alternative and entity existence columns).
+    """
     columns: dict[int, tuple[str, int]] = {1: ("key", 1)}
-    for c in range(2, 2 + n_dims):
+    for c in range(2, 2 + n_cols):
         columns[c] = ("key", 2)
     fit_column_widths(ws, columns, skip_cells={(2, 1)})
     freeze_panes_at(ws, 3, 1)

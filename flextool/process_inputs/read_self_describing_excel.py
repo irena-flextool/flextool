@@ -537,7 +537,8 @@ def parse_link_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
 
     Link sheets have a simpler format:
         Row 1: navigate link
-        Row 2: entity definition in col A, dimension names in cols B+
+        Row 2: entity definition in col A, dimension names in cols B+, optionally then ``alternative`` and
+               ``entity existence``
         Row 3+: data
     """
     meta = SheetMetadata(sheet_name=ws.title)
@@ -549,6 +550,12 @@ def parse_link_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
             meta.entity_classes = _parse_entity_def(val)
             meta.def_row = r
             meta.data_start_row = r + 1
+            for c in range(1, ws.max_column or 1):
+                label = _cell_value(ws, r, c).lower()
+                if label == "alternative":
+                    meta.alt_col = c
+                elif label == ENTITY_EXISTENCE:
+                    meta.entity_existence_col = c
             return meta
 
     return None
@@ -1223,15 +1230,31 @@ def _extract_link(ws: Worksheet, meta: SheetMetadata) -> SheetData:
     data = SheetData(sheet_name=meta.sheet_name, metadata=meta)
     max_row = _actual_max_row(ws)
     max_col = ws.max_column or 1
+    activity_cols = {c for c in (meta.alt_col, meta.entity_existence_col) if c is not None}
+    entity_class = meta.entity_classes[0].class_name if meta.entity_classes else None
 
     for r in range(meta.data_start_row, max_row):
         elements = []
         for c in range(max_col):
+            if c in activity_cols:
+                continue
             val = _cell_value(ws, r, c)
             if val:
                 elements.append(val)
-        if elements:
-            data.link_entities.append(tuple(elements))
+        if not elements:
+            continue
+        byname = tuple(elements)
+        if byname not in data.link_entities:  # an entity has one row per alternative that sets its activity
+            data.link_entities.append(byname)
+        if meta.alt_col is not None and meta.entity_existence_col is not None and entity_class:
+            alt = _cell_value(ws, r, meta.alt_col)
+            existence = _cell_value(ws, r, meta.entity_existence_col)
+            if alt and existence:
+                active = _parse_strict_bool(existence, sheet_name=meta.sheet_name, row_1based=r + 1,
+                                            col_1based=meta.entity_existence_col + 1, field_name="entity existence")
+                data.records.append({"alternative": alt, "entity_class": entity_class, "entity_byname": byname,
+                                     "param_name": ENTITY_EXISTENCE, "value": active, "index_value": None,
+                                     "index_name": None})
 
     return data
 

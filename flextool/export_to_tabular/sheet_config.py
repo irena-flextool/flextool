@@ -312,7 +312,9 @@ def build_sheet_specs(
     sheet_order: list[str] = settings.get("sheet_order", [])
     drop_dims: list[str] = settings.get("drop_dimensions", [])
     rename_sheets: dict[str, str] = settings.get("rename_sheets", {})
-    ea_classes: set[str] = set(settings.get("entity_alternative_classes", []))
+    # Every class gets one "entity existence" column, on its (first) constant sheet; a class with only a link sheet
+    # gets it there (write_link_sheet_v2).
+    ea_assigned: set[str] = set()
     pre_ea_rules: dict[str, list[str]] = settings.get("pre_entity_alternative_params", {})
     index_name_defaults: dict[str, str] = settings.get("index_name_defaults", {})
 
@@ -410,9 +412,7 @@ def build_sheet_specs(
                     suffix = "_c"
 
             sheet_nm = f"{group_name}{suffix}"
-            has_ea = layout_key == "constant" and any(
-                c in ea_classes for c in class_names
-            )
+            has_ea = layout_key == "constant"
 
             spec = SheetSpec(
                 sheet_name=sheet_nm,
@@ -476,8 +476,10 @@ def build_sheet_specs(
                 layout=layout,
                 entity_classes=[entity_class],
                 entity_columns=entity_cols,
-                has_entity_alternative=(layout == "constant" and entity_class in ea_classes),
+                has_entity_alternative=(layout == "constant" and entity_class not in ea_assigned),
             )
+            if layout == "constant":
+                ea_assigned.add(entity_class)
             # Only include params that actually exist in the DB schema
             existing_params = [p for p in sub_params if p in class_pdefs]
             spec._raw_params = existing_params  # type: ignore[attr-defined]
@@ -578,13 +580,13 @@ def build_sheet_specs(
             if not dims:
                 # Zero-dim class with no params — skip (upDown, reserve, etc.)
                 continue
-            # Multi-dim relationship class -> link sheet
+            # Multi-dim relationship class -> link sheet (its entity existence column is there)
             spec = SheetSpec(
                 sheet_name=base_name,
                 layout="link",
                 entity_classes=[cls_name],
                 entity_columns=entity_cols,
-                has_entity_alternative=False,
+                has_entity_alternative=True,
             )
             specs.append(spec)
             continue
@@ -654,7 +656,7 @@ def build_sheet_specs(
                     suffix = layout_to_suffix[layout_key]
 
             sheet_nm = f"{display_name}{suffix}"
-            has_ea = layout_key == "constant" and cls_name in ea_classes
+            has_ea = layout_key == "constant"
 
             spec = SheetSpec(
                 sheet_name=sheet_nm,

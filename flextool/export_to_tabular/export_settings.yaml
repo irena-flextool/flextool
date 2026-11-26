@@ -1,9 +1,3 @@
-# Entity classes that need an Entity Alternative column (active_by_default=False).
-entity_alternative_classes:
-  - node
-  - unit
-  - connection
-
 # Parameters that must appear before the Entity Alternative column.
 # Ensures roundtrip compatibility with the position-based importer.
 pre_entity_alternative_params:
