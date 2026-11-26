@@ -39,7 +39,7 @@ carriers, named metric columns for multi-value):
     cumulative_co2         [group, period, value, represented]
     cumulative_commodity   [commodity, tier, period, p_ladder_cum_realized_mwh]
     cum_sim_hours          [period, p_ladder_cum_sim_hours]
-    cumulative_flowgroup   [group, period, flow, hours, flow_represented, hours_represented]
+    cumulative_flowgroup   [group, period, flow, hours, weight]
 
 Phase 4.1a moved ``cumulative_commodity`` and ``cum_sim_hours`` to their
 canonical column names (matching the ``solve_data/`` Provider key
@@ -225,7 +225,7 @@ class SolveHandoff:
 
     # Running realized net flow and hours per (flow group, period) for the max/min_cumulative_flow carry:
     # ``flow`` = Σ F·step_duration·timestep_weight and ``hours`` = Σ step_duration·timestep_weight over the realized
-    # steps; ``*_represented`` the same × years_represented / period_share of the realizing solve.
+    # steps; ``weight`` years_represented / period_share of the latest solve that realized steps of the period.
     # Producer: ``preprocess/emit/_flowgroup_accumulators.py``.
     cumulative_flowgroup: pl.DataFrame | None = None
 

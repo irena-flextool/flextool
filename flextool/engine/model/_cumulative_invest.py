@@ -878,19 +878,24 @@ def _period_carry(d, cap: Param) -> pl.DataFrame | None:
             .select("g", "d", value=pl.col("value") * pl.col("H") - pl.col("R")))
 
 
-def _solve_carry(d, cap: Param, r_max: float) -> pl.DataFrame | None:
-    """``[g, value]`` = (limit[g]·Σ_d H_rep[g,d] − Σ_d R_rep[g,d]) / r_max for the groups of *cap* with a realized
-    history (the {max,min}Cumulative_flow_solve carry, D19; ``flowgroup_realized`` columns ``flow_represented`` and
-    ``hours_represented``); None without one.  The history of every period of the run counts once (no copy to
-    forecast branch periods)."""
+def _solve_carry(d, cap: Param, ratio: pl.DataFrame, r_max: float) -> pl.DataFrame | None:
+    """``[g, value]`` = Σ_d w_d·(limit[g]·H[g,d] − R[g,d]) / r_max for the groups of *cap* with a realized history
+    (the {max,min}Cumulative_flow_solve carry, D19; ``flowgroup_realized`` columns ``flow``, ``hours`` and
+    ``weight``); None without one.  w_d = this solve's years_represented / period_share of d (*ratio*) for a period it
+    holds, else the carried weight of the solve that last realized d: one weight per period, so the row is the
+    weighted sum of the period rows also when the solves of a chain hold unequal parts of a period.  The history of
+    every period of the run counts once (no copy to forecast branch periods)."""
     hist = getattr(d, "flowgroup_realized", None)
     if hist is None or hist.height == 0:
         return None
-    hist = (hist.select("g", "d", R="flow_represented", H="hours_represented")
+    own = ratio.select("d", own=pl.col("ratio"))
+    hist = (join_aligned(hist.select("g", "d", "flow", "hours", "weight"), own, on="d", how="left")
+            .with_columns(w=pl.col("own").fill_null(pl.col("weight"))))
+    hist = (join_aligned(hist, cap.frame.select("g", L="value"), on="g", how="inner")
             .sort("g", "d")  # fixed summation order over the periods
-            .group_by("g", maintain_order=True).agg(pl.col("R").sum(), pl.col("H").sum()))
-    return (join_aligned(cap.frame.select("g", "value"), hist, on="g", how="inner")
-            .select("g", value=(pl.col("value") * pl.col("H") - pl.col("R")) / r_max))
+            .group_by("g", maintain_order=True)
+            .agg((pl.col("w") * (pl.col("L") * pl.col("hours") - pl.col("flow"))).sum().alias("carry")))
+    return hist.select("g", value=pl.col("carry") / r_max)
 
 
 def _eq_cumulative_flow_solve(b: _Build) -> None:
@@ -938,10 +943,11 @@ def _eq_cumulative_flow_solve(b: _Build) -> None:
     #   F = net flow into the group (_group_flow; a one-variable connection by v_flow − v_flow_back)
     #   w_y[d,t] = step_duration[d,t]·timestep_weight[d,t]·r[d]
     #   r[d] = (years_represented[d]/period_share[d]) / r_max,  r_max = max_d′(years_represented[d′]/period_share[d′])
-    #   carry[g] = (limit[g] · Σ_d H_rep[g,d] − Σ_d R_rep[g,d]) / r_max   (no term without history)
-    #   R_rep[g,d] / H_rep[g,d] = Σ F·step_duration·timestep_weight / Σ step_duration·timestep_weight over the
-    #   realized steps of d in earlier rolls and solves of the run, × years_represented[d] / period_share[d] of the
-    #   solve that realized them (flowgroup_realized, *_represented), summed over every period of the run
+    #   carry[g] = Σ_d w[d] · (limit[g] · H[g,d] − R[g,d]) / r_max   (no term without history), Σ over every period
+    #   of the run;  R[g,d] / H[g,d] = Σ F·step_duration·timestep_weight / Σ step_duration·timestep_weight over the
+    #   realized steps of d in earlier rolls and solves of the run (flowgroup_realized: flow, hours)
+    #   w[d] = years_represented[d]/period_share[d] of this solve for a period it holds, else of the solve that last
+    #   realized d (flowgroup_realized: weight): one weight per period, so the row is Σ_d w[d]·(period row d)
     # Limits the energy flowing into a flow group over the solve to an average power times the
     # weighted hours of the solve — the same weighting every operational cost term already
     # carries (op_factor), so a representative period or an unequal roll window does not
@@ -967,7 +973,7 @@ def _eq_cumulative_flow_solve(b: _Build) -> None:
             cap.frame.select("g", "value").rename({"value": "cap_v"})
                .join(rhs_hours, on="g", how="inner")
                .with_columns(value=pl.col("cap_v") * pl.col("value"))
-               .pipe(_with_carry, _solve_carry(d, cap, r_max), ["g"])
+               .pipe(_with_carry, _solve_carry(d, cap, ratio, r_max), ["g"])
                .select(*leaf_cols, "value"))
         b.m.add_cstr(
             row_name,

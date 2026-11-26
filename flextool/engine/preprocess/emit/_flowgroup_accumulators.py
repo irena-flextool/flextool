@@ -15,9 +15,11 @@ The net flow F[g,d,t] is the one of ``_cumulative_invest._group_flow``, evaluate
       + Σ v_flow_back·us·σ                           at its source (σ = slope on an eff arc, else 1)
 
 each at the (g, p, n) of ``group_process_node``.  The carrier columns are ``flow`` = Σ_t F·sd·tw and ``hours`` =
-Σ_t sd·tw over the realized steps of each period (the period rows' measure), and ``flow_represented`` /
-``hours_represented`` = the same × years_represented[d] / period_share[d] of the realizing solve (the solve row's
-raw weight, before its normalisation r_max).  Every period the solve realizes gets a row for every group, also with
+Σ_t sd·tw over the realized steps of each period (the period rows' measure), and ``weight`` =
+years_represented[d] / period_share[d] of the latest solve that realized steps of d (the solve row's raw weight,
+before its normalisation r_max).  One weight per period: the solve row weighs every hour of a period alike, also when
+the solves of a chain hold unequal parts of it (each solve's period_share is its own part), so it stays the
+weighted sum of the period rows.  Every period the solve realizes gets a row for every group, also with
 no flow, so the hours count.
 
 ``realized_dispatch`` holds no cell of a stochastic fan: only the jump is carried, and the jump of a split
@@ -32,8 +34,9 @@ from flextool.engine.input._axis_enums import alias_to_axis, join_aligned, renam
 from flextool.engine.preprocess.emit._co2_accumulators import _with_represented
 
 #: The carrier's columns (``SolveHandoff.cumulative_flowgroup``).
-CARRIER_COLUMNS = ("group", "period", "flow", "hours", "flow_represented", "hours_represented")
+CARRIER_COLUMNS = ("group", "period", "flow", "hours", "weight")
 _VALUE_COLUMNS = CARRIER_COLUMNS[2:]
+_SUMMED = ("flow", "hours")
 _ARC = ["p", "source", "sink"]
 
 
@@ -188,16 +191,15 @@ def compute_flowgroup_rolling_accumulator(flex_data, sol, *, prior: pl.DataFrame
         this = this.with_columns(flow=pl.lit(None, dtype=pl.Float64))
     this = this.select(alias_to_axis("g", "group"), alias_to_axis("d", "period"),
                        value=pl.col("flow").fill_null(0.0), hours="hours")
-    flow_rep = _with_represented(this.select("group", "period", "value"), flex_data)
-    hours_rep = _with_represented(this.select("group", "period", value="hours"), flex_data)
-    if flow_rep["represented"].is_null().any() or hours_rep["represented"].is_null().any():
+    weight = _with_represented(this.select("group", "period", value=pl.lit(1.0)), flex_data)["represented"]
+    if weight.is_null().any():
         raise ValueError("cumulative_flowgroup: a realized period of the solve has no period_share; the carried "
                          "flow-group history cannot be weighted for max/min_cumulative_flow.")
-    this = this.select("group", "period", flow="value", hours="hours",
-                       flow_represented=flow_rep["represented"], hours_represented=hours_rep["represented"])
+    this = this.select("group", "period", flow="value", hours="hours", weight=weight)
+    # A period this solve realized takes its weight; the prior weight stays for the other periods.
     combined = (pl.concat([prior_f, this], how="vertical")
                 .group_by(["group", "period"], maintain_order=True)
-                .agg(pl.col(c).sum() for c in _VALUE_COLUMNS))
+                .agg(*(pl.col(c).sum() for c in _SUMMED), pl.col("weight").last()))
     return combined.sort("group", "period").select(*CARRIER_COLUMNS)
 
 
@@ -215,7 +217,7 @@ def flowgroup_handoff(flex_data, sol, prior_handoff, is_dispatch_sibling_parent:
 
 def load_flowgroup_rolling_carry(provider) -> pl.DataFrame | None:
     """``FlexData.flowgroup_realized``: the ``cumulative_flowgroup`` handoff carrier the solve consumes, as
-    ``[g, d, flow, hours, flow_represented, hours_represented]`` (Float64 values); None without a prior carrier (the
+    ``[g, d, flow, hours, weight]`` (Float64 values); None without a prior carrier (the
     first solve of a chain, or no flow group with a cumulative limit).  The consumers are the carry terms of
     ``{max,min}Cumulative_flow_{period,solve}`` (``model/_cumulative_invest.py``)."""
     if provider is None:

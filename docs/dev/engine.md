@@ -1030,7 +1030,7 @@ columns are those of the module docstring:
 | `cumulative_co2` | `[group, period, value, represented]` | Running CO2 totals across rolls (`value` tonnes; `represented` the tonnes × years represented / period share of the realizing solve). |
 | `cumulative_commodity` | `[commodity, tier, period, p_ladder_cum_realized_mwh]` | Per-tier commodity consumption (ladder pricing). |
 | `cum_sim_hours` | `[period, p_ladder_cum_sim_hours]` | Running simulated-hour total per period (ladder and CO2 cap). |
-| `cumulative_flowgroup` | `[group, period, flow, hours, flow_represented, hours_represented]` | Running realized net flow and hours (Σ step_duration · timestep_weight) per flow group with a cumulative flow limit (`_flowgroup_accumulators`); `*_represented` the same × years represented / period share of the realizing solve.  Read as `flowgroup_realized` into the carry of `{max,min}Cumulative_flow_{period,solve}`. |
+| `cumulative_flowgroup` | `[group, period, flow, hours, weight]` | Running realized net flow and hours (Σ step_duration · timestep_weight) per flow group with a cumulative flow limit (`_flowgroup_accumulators`); `weight` the years represented / period share of the latest solve that realized steps of the period (one weight per period, for the solve row).  Read as `flowgroup_realized` into the carry of `{max,min}Cumulative_flow_{period,solve}`. |
 
 The other attributes are not carriers: `unit_detail` / `online_left_out`
 ([Solve-level detail reduction](#solve-level-detail-reduction)), and

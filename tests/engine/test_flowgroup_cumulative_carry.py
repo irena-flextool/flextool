@@ -34,10 +34,10 @@ def _unit(name: str, cost, efficiency: float = 1.0) -> list:
 
 
 def _spec(*, gas, coal, limits: list, two_periods: bool = False, chain: bool = False,
-          fuel_arc: bool = False) -> dict:
+          fuel_arc: bool = False, split: float = 2.0) -> dict:
     """The model above.  *limits*: ``(parameter, packed value)`` on ``fg``.  *two_periods*: p1 on t01-t02 and p2 on
     t03-t04 (else p1 on t01-t04).  *chain*: two single solves ``s1`` (p1 on t01-t02) and ``s2`` (p1 on t03-t04)
-    instead of the rolling solve.  *fuel_arc*: coal_u (efficiency 0.5) draws from commodity node ``coal_n`` (price 0)
+    instead of the rolling solve, ``s1`` on the first *split* hours (ts_a) and ``s2`` on the rest (ts_b).  *fuel_arc*: coal_u (efficiency 0.5) draws from commodity node ``coal_n`` (price 0)
     and ``fg`` = (coal_u, coal_n)."""
     from flextool.update_flextool.fixture_schema import schema_sections
 
@@ -58,7 +58,7 @@ def _spec(*, gas, coal, limits: list, two_periods: bool = False, chain: bool = F
         ["timeline", "tl", "timestep_duration", pack(pmap([(t, 1.0) for t in STEPS], index_name="time"), "map"),
          "init"],
         *(["timeset", name, par, val, "init"] for name, start, hours in
-          (("ts", "t01", 4.0), ("ts_a", "t01", 2.0), ("ts_b", "t03", 2.0))
+          (("ts", "t01", 4.0), ("ts_a", "t01", split), ("ts_b", STEPS[int(split)], 4.0 - split))
           for par, val in (("timeline", pack("tl", "str")),
                            ("timeset_duration", pack(pmap([(start, hours)], index_name="time"), "map")))),
         ["node", "elec", "node_type", pack("balance", "str"), "init"],
@@ -129,7 +129,7 @@ def test_max_constant_carries_across_rolls(tmp_path):
     R0 coal <= 0.5 x 2 = 1 -> t01 1: 10 + 35 = 45.  R1 <= 0.5 x (1 + 2) - 1 = 0.5 -> t02 0.5: 5 + 17.5 + 30 = 52.5.
     R2 <= 0.5 x 4 - 1.5 = 0.5 -> t03 0.5: 5 + 15 + 25 = 45.  R3 <= 0.5 x 4 - 2 = 0: 25.  Realized 2 MWh (before:
     1 + 1 + 1 + 0.5 = 3.5, objectives 45, 40, 35, 17.5).  The history read by R1-R3: flow 1, 1.5, 2 over 1, 2, 3 h;
-    the represented columns x years / period share = x 2190."""
+    the weight years / period share = 2190."""
     steps = _run(_spec(gas=DECREASING, coal=10.0, limits=[("max_cumulative_flow", pack(0.5, "float"))]), tmp_path)
     assert len(steps) == 4
     assert _objectives(steps, 2190.0) == pytest.approx([45.0, 52.5, 45.0, 25.0], rel=1e-9)
@@ -141,10 +141,7 @@ def test_max_constant_carries_across_rolls(tmp_path):
         pytest.approx({"p1": v}) for v in (1.0, 1.5, 2.0)]
     assert [_carried(s, "hours") for s in steps[1:]] == [
         pytest.approx({"p1": v}) for v in (1.0, 2.0, 3.0)]
-    assert [_carried(s, "flow_represented") for s in steps[1:]] == [
-        pytest.approx({"p1": 2190.0 * v}) for v in (1.0, 1.5, 2.0)]
-    assert [_carried(s, "hours_represented") for s in steps[1:]] == [
-        pytest.approx({"p1": 2190.0 * v}) for v in (1.0, 2.0, 3.0)]
+    assert [_carried(s, "weight") for s in steps[1:]] == [pytest.approx({"p1": 2190.0})] * 3
 
 
 def test_min_constant_carries_and_the_last_roll_is_feasible(tmp_path):
@@ -198,3 +195,25 @@ def test_constant_carries_across_the_solves_of_a_chain(tmp_path):
     assert len(steps) == 2
     assert _objectives(steps, 4380.0) == pytest.approx([10.0, 20.0], rel=1e-9)
     assert _carried(steps[1], "hours") == pytest.approx({"p1": 2.0})
+
+
+def test_constant_carries_across_unequal_parts_of_a_period(tmp_path):
+    """F: as E with p1 split 3 h + 1 h (``s1`` t01-t03, share 3 / 8760, factor 2920; ``s2`` t04, share 1 / 8760,
+    factor 8760); ``max_cumulative_flow`` 0.2 MW; coal 10, gas 5 in s1 and 40 in s2.  s1: gas is cheaper, coal 0:
+    3 x 5 = 15.  s2: the period row allows 0.2 x (3 + 1) - 0 = 0.8, and so does the solve row: its history weighs
+    s1's 3 h by s2's own years / share (8760), carry 8760 x (0.2 x 3 - 0) / r_max 8760 = 0.6, RHS 0.2 x 1 + 0.6.
+    Coal 0.8: 8 + 0.2 x 40 = 16.  (Weighing s1's hours by s1's share, 2920, the solve row allowed 0.2 + 0.2 = 0.4:
+    4 + 24 = 28.)"""
+    from tests.engine._lp_rows import row_bounds
+    from tests.engine._unit_db import build
+
+    gas = {"t01": 5.0, "t02": 5.0, "t03": 5.0, "t04": 40.0}
+    steps = _run(_spec(gas=gas, coal=10.0, limits=[("max_cumulative_flow", pack(0.2, "float"))], chain=True,
+                       split=3.0), tmp_path)
+    assert len(steps) == 2
+    assert [s.solution.obj for s in steps] == pytest.approx([15.0 * 2920.0, 16.0 * 8760.0], rel=1e-9)
+    lp = build(steps[1].flex_data)
+    assert row_bounds(lp, "maxCumulative_flow_solve", "fg")["maxCumulative_flow_solve[fg]"][1] == pytest.approx(
+        0.8, rel=1e-12)
+    assert row_bounds(lp, "maxCumulative_flow_period", "fg")["maxCumulative_flow_period[fg,p1]"][1] == pytest.approx(
+        0.8, rel=1e-12)
