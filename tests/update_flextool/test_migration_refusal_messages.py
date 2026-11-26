@@ -21,10 +21,10 @@ import pytest
 
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool import db_migration as m
-from tests.update_flextool._rerun import patch_migration
 from flextool.update_flextool import migration_backup as mb
 from flextool.update_flextool.frozen import read_db_version_ro
 from tests.db_utils import json_to_db
+from tests.update_flextool._rerun import patch_migration
 
 REPO = Path(__file__).resolve().parents[2]
 SEED = Path(__file__).resolve().parent / "data" / "v75_seed_stoch_two_period.json"

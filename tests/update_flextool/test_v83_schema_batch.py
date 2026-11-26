@@ -26,8 +26,7 @@ from spinedb_api import DatabaseMapping, import_data, to_database
 from spinedb_api.exception import NothingToCommit
 
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
-from flextool.update_flextool import db_migration as m
-from flextool.update_flextool.db_migration import v83
+from flextool.update_flextool.db_migration import head, runner, v83
 from flextool.update_flextool import list_default_restore as ldr
 from flextool.update_flextool.db_migration import migrate_database
 from flextool.update_flextool.fixture_schema import unpack_value
@@ -117,7 +116,7 @@ def _assert_second_refresh_commits_nothing(url: str, values_before: dict) -> Non
     with DatabaseMapping(url) as db:
         assert _values(db) == values_before
         with pytest.raises(NothingToCommit):
-            m._refresh_head_schema(db)
+            head._refresh_head_schema(db)
             db.commit_session("rerun")
     commits = _commit_count(url)
     assert f"already up-to-date at version {FLEXTOOL_DB_VERSION}" in _migrate(url)
@@ -143,7 +142,7 @@ def test_v25_to_83_lists_defaults_and_texts(v82_schema_db_url: str, tmp_path: Pa
         assert _definition(db, "unit", "startup_method")["parsed_value"] == "no_startup"
         for key, text in NEW.items():
             assert _definition(db, *key)["description"] == text, key
-    assert m._current_version_ro(_path(url), None) == FLEXTOOL_DB_VERSION
+    assert runner._current_version_ro(_path(url), None) == FLEXTOOL_DB_VERSION
 
 
 @pytest.mark.parametrize("default", ["null", "binary"])
@@ -221,8 +220,8 @@ def test_old_texts_at_83_are_refreshed_once(schema_db_url: str, tmp_path: Path, 
     _raw(url, "UPDATE parameter_definition SET default_value = NULL, default_type = NULL WHERE name = "
               "'startup_method' AND entity_class_id = (SELECT id FROM entity_class WHERE name = 'unit')")
     path = _path(url)
-    assert m._head_defaults_stale_ro(path)
-    assert m._current_version_ro(path, None) is None
+    assert head._head_defaults_stale_ro(path)
+    assert runner._current_version_ro(path, None) is None
     _migrate(url)
     shipped = _shipped_texts()
     with DatabaseMapping(url) as db:
@@ -231,8 +230,8 @@ def test_old_texts_at_83_are_refreshed_once(schema_db_url: str, tmp_path: Path, 
         assert (_definition(db, "model", "discount_offset_operations")["description"]
                 == shipped[("model", "discount_offset_operations")] != DEV_V82_OPERATIONS_TEXT)
         assert _definition(db, "connection", "startup_method")["description"] == "my own text"
-    assert not m._head_defaults_stale_ro(path)
-    assert m._current_version_ro(path, None) == FLEXTOOL_DB_VERSION
+    assert not head._head_defaults_stale_ro(path)
+    assert runner._current_version_ro(path, None) == FLEXTOOL_DB_VERSION
 
     def no_lock(*_args, **_kwargs):
         raise AssertionError("a current database took the migration lock")
@@ -262,15 +261,15 @@ def test_missing_member_at_83_is_not_current(schema_db_url: str, tmp_path: Path,
         db.commit_session(f"no {member}")
         values_before = _values(db)
     path = _path(url)
-    assert m._head_schema_missing_ro(path)
-    assert m._current_version_ro(path, None) is None
+    assert head._head_schema_missing_ro(path)
+    assert runner._current_version_ro(path, None) is None
     _migrate(url)
     with DatabaseMapping(url) as db:
         assert _members(db, name) == [x for x in before if x != member] + [member]
         if name == "dispatch_realization_methods":
             assert _definition(db, "solve", "dispatch_realization_method")["parsed_value"] == "within_solve"
-    assert not m._head_schema_missing_ro(path)
-    assert m._current_version_ro(path, None) == FLEXTOOL_DB_VERSION
+    assert not head._head_schema_missing_ro(path)
+    assert runner._current_version_ro(path, None) == FLEXTOOL_DB_VERSION
     _assert_second_refresh_commits_nothing(url, values_before)
 
 
@@ -287,7 +286,7 @@ def test_missing_v82_definition_at_83_is_added(schema_db_url: str, tmp_path: Pat
         db.update_parameter_definition(id=_definition(db, "node", "life_extension_cost")["id"],
                                        description="my own text")
         db.commit_session("an older v83 database")
-    assert m._head_schema_missing_ro(path) and _stale_version(path) == FLEXTOOL_DB_VERSION
+    assert head._head_schema_missing_ro(path) and _stale_version(path) == FLEXTOOL_DB_VERSION
     _migrate(url)
     with DatabaseMapping(url) as db:
         unit = _definition(db, "unit", "life_extension_cost")
@@ -295,7 +294,7 @@ def test_missing_v82_definition_at_83_is_added(schema_db_url: str, tmp_path: Pat
                 unit["default_value"]) == (_shipped_texts()[("unit", "life_extension_cost")], ("float", "1d_map"),
                                            "investment", None)
         assert _definition(db, "node", "life_extension_cost")["description"] == "my own text"
-    assert m._current_version_ro(path, None) == FLEXTOOL_DB_VERSION and _stale_version(path) is None
+    assert runner._current_version_ro(path, None) == FLEXTOOL_DB_VERSION and _stale_version(path) is None
 
 
 # ─── repair part B across the upgrade ────────────────────────────────────

@@ -33,9 +33,7 @@ from spinedb_api import DatabaseMapping, Map, to_database
 from spinedb_api.exception import NothingToCommit
 
 from flextool.update_flextool import db_migration as m
-from flextool.update_flextool.db_migration import v83
-from flextool.update_flextool.db_migration import v77
-from flextool.update_flextool.db_migration import common
+from flextool.update_flextool.db_migration import common, v77, v83
 from tests.update_flextool._rerun import patch_migration
 
 MARKER = m.BEHAVIOUR_CHANGE_MARKER_PREFIX + v83.V83_MIN_TIME_MARKER

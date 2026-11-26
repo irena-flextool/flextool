@@ -531,7 +531,7 @@ def derive_node_storage_binding_method(input_dir: Path,
     )
     # Single-valued contract (v54 migration): each node must appear at most
     # once.  A duplicate here means either a v52-era DB slipped past the
-    # v54 migration in update_flextool/db_migration.py, or a multi-row
+    # v54 migration in update_flextool/db_migration/, or a multi-row
     # record was manually inserted into node__storage_binding_method.csv.
     # Compare heights rather than silently dedup so the contract violation
     # surfaces as an explicit error.

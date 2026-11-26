@@ -86,7 +86,7 @@ def _stale_version(sqlite_abs: Path) -> int | None:
     file, or one whose version or marker cannot be read, is never stale: it is left as it is.
     """
     from flextool.update_flextool import FLEXTOOL_DB_VERSION
-    from flextool.update_flextool.db_migration import _head_defaults_stale_ro, _head_schema_missing_ro
+    from flextool.update_flextool.db_migration.head import _head_defaults_stale_ro, _head_schema_missing_ro
     from flextool.update_flextool.frozen import FrozenCheckError, read_db_version_ro, read_frozen
 
     version = read_db_version_ro(sqlite_abs)

@@ -58,10 +58,10 @@ from spinedb_api.exception import NothingToCommit
 
 from flextool._resources import package_data_path
 from flextool.update_flextool.db_migration import v81, v82
-from tests.update_flextool._rerun import patch_migration
 from flextool.update_flextool.db_migration import migrate_database
 from tests.db_utils import json_to_db
 from tests.update_flextool._rerun import v75b_url
+from tests.update_flextool._rerun import patch_migration
 
 TESTS_JSON = Path(__file__).resolve().parents[1] / "fixtures" / "tests.json"
 CLASSES = ("unit", "connection", "node")

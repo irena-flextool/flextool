@@ -43,8 +43,9 @@ Output-side databases use a parallel set of templates:
 
 ## Migrations
 
-`flextool/update_flextool/db_migration.py` walks a user's database
-forward through versioned steps. Each step either:
+`flextool/update_flextool/db_migration/` walks a user's database
+forward through versioned steps (`runner.py`; one module per step, e.g.
+`v79.py`, shared helpers in `common.py`). Each step either:
 
 - imports a small `flextool_template_v<N>.json` snapshot (e.g.
   `flextool_template_rolling_window.json`,
@@ -88,12 +89,12 @@ one clean run gives (reruns compare equal in
     was already applied by an earlier partial run is treated as a
     no-op rather than a fatal abort, so later steps run normally.
 
-Skim `migrate_database` in `db_migration.py` to see the full chain and
-the per-version diffs.
+Skim `_migrate_open` in `db_migration/runner.py` to see the full chain;
+each step is in its version's module.
 
 ### Recent schema versions
 
-A few recent steps worth knowing about (the chain in `db_migration.py`
+A few recent steps worth knowing about (the chain in `db_migration/runner.py`
 is the authoritative inventory):
 
 - **v52 — multi-solver selection parameters.** Adds the
@@ -183,9 +184,10 @@ A typical workflow when introducing a new parameter or entity class:
    that imports cleanly via `spinedb_api.import_data`, or write a
    hand-coded `add_parameters_manual` / `remove_parameters_manual` /
    `add_value_list_manual` / `add_relationships_manual` step. Recent
-   steps in `db_migration.py` are good templates.
+   steps in `db_migration/` (e.g. `v83.py`) are good templates; put the
+   step in a new module `db_migration/v<N>.py`.
 3. Append the new step to the `while next_version <= new_version:`
-   chain in `migrate_database`.
+   chain in `db_migration/runner.py` (`_migrate_open`).
 4. Bump `FLEXTOOL_DB_VERSION` in
    `flextool/update_flextool/__init__.py`.
 5. Mirror the change into `schemas/spinedb_schema.json` so freshly

@@ -14,8 +14,7 @@ from pathlib import Path
 
 from flextool.engine._behaviour_changes import BEHAVIOUR_CHANGES, MARKER_PREFIX, BehaviourChange
 from flextool.update_flextool import db_migration
-from flextool.update_flextool.db_migration import v83
-from flextool.update_flextool.db_migration import v77
+from flextool.update_flextool.db_migration import v77, v83
 
 CHANGELOG = Path(__file__).resolve().parents[2] / "CHANGELOG.md"
 RELEASE = re.compile(r"^## Release (\S+) \((\d{1,2}\.\d{1,2}\.\d{4})\)")

@@ -30,12 +30,11 @@ from spinedb_api.exception import NothingToCommit
 
 from flextool._resources import package_data_path
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
-from flextool.update_flextool import db_migration as m
-from flextool.update_flextool.db_migration import v81, v82
-from tests.update_flextool._rerun import patch_migration
+from flextool.update_flextool.db_migration import head, v81, v82
 from flextool.update_flextool.db_migration import migrate_database
 
 from tests.update_flextool._rerun import v75b_url
+from tests.update_flextool._rerun import patch_migration
 
 OLD = tuple(v82.V82_PARAMETER_RENAMES)
 NEW = tuple(v82.V82_PARAMETER_RENAMES.values())
@@ -203,7 +202,7 @@ def _no_commit(db, step, monkeypatch) -> None:
                                   "_refresh_head_schema"])
 def test_rerun_commits_nothing(renamed, part, monkeypatch) -> None:
     with DatabaseMapping(renamed["url"]) as db:
-        _no_commit(db, getattr(m if part == "_refresh_head_schema" else v82, part), monkeypatch)
+        _no_commit(db, getattr(head if part == "_refresh_head_schema" else v82, part), monkeypatch)
     assert _state(renamed["url"]) == renamed["after"]
 
 
@@ -297,14 +296,14 @@ def test_head_refresh_writes_the_v82_text_for_a_superseded_pair(tmp_path_factory
             db.update_parameter_definition(id=pdef["id"], description=v82._v82_superseded()[(cls, "payback_time")][1])
         db.commit_session("a superseded payback_time text")
     path = Path(url.removeprefix("sqlite:///"))
-    assert m._head_defaults_stale_ro(path)
+    assert head._head_defaults_stale_ro(path)
     migrate_database(url)
     with DatabaseMapping(url) as db:
         for cls in ("unit", "connection", "node"):
             text = db.get_item("parameter_definition", entity_class_name=cls, name="payback_time")["description"]
             assert text == v82._v82_texts()[(cls, "payback_time")] == _shipped()[(cls, "payback_time")]
             assert "inflation_rate" not in text
-    assert not m._head_defaults_stale_ro(path)
+    assert not head._head_defaults_stale_ro(path)
 
 
 #: The ``discount_offset_operations`` description an earlier development build of v82 shipped (no 0-1 range).
@@ -325,7 +324,7 @@ def test_head_refresh_replaces_the_superseded_operations_offset_text(tmp_path_fa
         db.update_parameter_definition(id=pdef["id"], description=old)
         db.commit_session("the operations offset text of a development build")
     path = Path(url.removeprefix("sqlite:///"))
-    assert m._head_defaults_stale_ro(path) is not edited
+    assert head._head_defaults_stale_ro(path) is not edited
     migrate_database(url)
     with DatabaseMapping(url) as db:
         pdef = db.get_item("parameter_definition", entity_class_name="model", name="discount_offset_operations")
@@ -334,7 +333,7 @@ def test_head_refresh_replaces_the_superseded_operations_offset_text(tmp_path_fa
         else:
             assert pdef["description"] == _shipped()[("model", "discount_offset_operations")]
             assert "between 0 and 1" in pdef["description"]
-    assert not m._head_defaults_stale_ro(path)
+    assert not head._head_defaults_stale_ro(path)
 
 
 #: The definitions whose descriptions v82 rewrote for the replacement of reinvest_automatic capacity.
@@ -362,7 +361,7 @@ def test_head_refresh_writes_the_replacement_texts(tmp_path_factory, edited) -> 
                                            **fields)
         db.commit_session("a development build's texts and the shipped defaults")
     path = Path(url.removeprefix("sqlite:///"))
-    assert m._head_defaults_stale_ro(path)
+    assert head._head_defaults_stale_ro(path)
     migrate_database(url)
     with DatabaseMapping(url) as db:
         for (cls, name), text in old.items():
@@ -371,4 +370,4 @@ def test_head_refresh_writes_the_replacement_texts(tmp_path_factory, edited) -> 
                 assert got == text + " My note."
             else:
                 assert got == v82._v82_texts()[(cls, name)] == _shipped()[(cls, name)] != text
-    assert not m._head_defaults_stale_ro(path)
+    assert not head._head_defaults_stale_ro(path)

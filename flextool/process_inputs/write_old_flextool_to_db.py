@@ -3923,7 +3923,7 @@ def write_sensitivities_to_db(
 # result forward to whatever the current ``FLEXTOOL_DB_VERSION`` is.
 #
 # This is what removes the maintenance burden — a future schema rename is
-# handled by its migration step (``db_migration.py``), not by editing this
+# handled by its migration step (``db_migration``), not by editing this
 # importer.  Initialising from the *live* schema instead (the old behaviour)
 # would silently drop every value whose name a later rename had changed,
 # because ``_add_param`` skips unknown parameters.  The frozen template +

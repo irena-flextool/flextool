@@ -16,12 +16,9 @@ import pytest
 from spinedb_api import from_database, import_data
 
 from flextool.update_flextool import db_migration as m
-from flextool.update_flextool.db_migration import v81
-from flextool.update_flextool.db_migration import v70_v76
-from flextool.update_flextool.db_migration import v56_methods, v57_v69
-from flextool.update_flextool.db_migration import common
-from tests.update_flextool._rerun import patch_migration
+from flextool.update_flextool.db_migration import common, v56_methods, v57_v69, v70_v76, v81
 from flextool.update_flextool.db_handle import open_database_mapping
+from tests.update_flextool._rerun import patch_migration
 
 N = 8
 

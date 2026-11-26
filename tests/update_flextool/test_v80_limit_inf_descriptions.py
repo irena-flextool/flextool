@@ -32,13 +32,11 @@ from spinedb_api import DatabaseMapping, Map, from_database, to_database
 from spinedb_api.exception import NothingToCommit
 
 from flextool._resources import package_data_path
-from flextool.update_flextool.db_migration import v80, v83
-from flextool.update_flextool.db_migration import v79
-from flextool.update_flextool.db_migration import v57_v69
-from tests.update_flextool._rerun import patch_migration
+from flextool.update_flextool.db_migration import v57_v69, v79, v80, v83
 from flextool.update_flextool.db_migration import migrate_database
 from tests.db_utils import json_to_db
 from tests.update_flextool._rerun import v75b_url
+from tests.update_flextool._rerun import patch_migration
 
 RENAMED = {("group", old): ("group", new) for old, new in v80.V80_CAPACITY_MARGIN_RENAMES.items()}
 #: Stored before the step: (alternative index, parameter, value) on group stoch_g.

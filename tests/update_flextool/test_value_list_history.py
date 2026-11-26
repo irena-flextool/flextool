@@ -16,11 +16,11 @@ import pytest
 
 from flextool import run_warnings
 from flextool.update_flextool import db_migration
-from flextool.update_flextool.db_migration import common
-from tests.update_flextool._rerun import patch_migration
+from flextool.update_flextool.db_migration import common, runner
 from flextool.update_flextool import value_list_history as vlh
 from flextool.update_flextool.value_list_history import Finding
 from tests._support.coded_warnings import capture_coded
+from tests.update_flextool._rerun import patch_migration
 
 _PREFIX = "Updated Flextool data structure to version "
 
@@ -85,7 +85,7 @@ def test_an_unreadable_file_gives_no_finding(tmp_path: Path) -> None:
 def _step_blocks() -> dict[int, str]:
     """``{N: source of step N}``, the helper functions it calls included (four levels deep: step 82 reaches
     the member appends through ``_v81_refresh`` → ``_v81_value_lists`` → ``_append_list_members``)."""
-    parts = re.split(r"elif next_version == (\d+):", inspect.getsource(db_migration._migrate_open))
+    parts = re.split(r"elif next_version == (\d+):", inspect.getsource(runner._migrate_open))
 
     package = db_migration.__name__
 
@@ -97,7 +97,7 @@ def _step_blocks() -> dict[int, str]:
                 seen.add(name)
                 out += expand(inspect.getsource(func), func.__globals__, depth - 1, seen)
         return out
-    scope = db_migration._migrate_open.__globals__
+    scope = runner._migrate_open.__globals__
     return {int(parts[i]): expand(parts[i + 1], scope, 4, set()) for i in range(1, len(parts), 2)}
 
 

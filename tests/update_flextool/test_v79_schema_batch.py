@@ -57,14 +57,11 @@ from spinedb_api.exception import NothingToCommit
 
 from flextool._resources import package_data_path
 from flextool.update_flextool import db_migration as m
-from flextool.update_flextool.db_migration import v80, v81, v82, v83
-from flextool.update_flextool.db_migration import v78, v79 as dm_v79
-from flextool.update_flextool.db_migration import v57_v69
-from flextool.update_flextool.db_migration import common
-from tests.update_flextool._rerun import patch_migration
+from flextool.update_flextool.db_migration import common, v57_v69, v78, v79 as dm_v79, v80, v81, v82, v83
 from flextool.update_flextool.db_migration import migrate_database
 
 from tests.update_flextool._rerun import v75b_url
+from tests.update_flextool._rerun import patch_migration
 
 
 PREFIX = m.BEHAVIOUR_CHANGE_MARKER_PREFIX

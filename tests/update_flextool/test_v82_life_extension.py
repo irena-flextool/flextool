@@ -20,12 +20,11 @@ from spinedb_api.exception import NothingToCommit
 
 from flextool._resources import package_data_path
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
-from flextool.update_flextool import db_migration as m
-from flextool.update_flextool.db_migration import v82
-from tests.update_flextool._rerun import patch_migration
+from flextool.update_flextool.db_migration import head as dm_head, v82
 from flextool.update_flextool.db_migration import migrate_database
 
 from tests.update_flextool._rerun import v75b_url
+from tests.update_flextool._rerun import patch_migration
 
 NAMES = ("life_extension_cost", "life_extension_years")
 CLASSES = ("unit", "connection", "node")
@@ -82,7 +81,7 @@ def migrated(tmp_path_factory) -> dict:
         db.commit_session("an earlier build of v82: no life extension")
     without = _state(head)
     path = Path(head.removeprefix("sqlite:///"))
-    flagged = m._head_schema_missing_ro(path)
+    flagged = dm_head._head_schema_missing_ro(path)
     migrate_database(head)
     return {"url": url, "before": before, "after": _state(url), "head": head, "without": without,
             "flagged": flagged, "refreshed": _state(head), "path": path}
@@ -130,7 +129,7 @@ def test_a_database_at_82_without_them_is_flagged_and_completed(migrated) -> Non
     assert {k: v for k, v in refreshed["defs"].items() if k not in SIX} == without["defs"]
     assert refreshed["values"] == without["values"] and refreshed["groups"] == without["groups"]
     assert {k: refreshed["defs"][k] for k in SIX} == {k: migrated["after"]["defs"][k] for k in SIX}
-    assert not m._head_schema_missing_ro(migrated["path"])
+    assert not dm_head._head_schema_missing_ro(migrated["path"])
 
 
 def _no_commit(db, step, monkeypatch) -> None:
@@ -157,7 +156,7 @@ def _no_commit(db, step, monkeypatch) -> None:
 def test_rerun_commits_nothing(migrated, part, which, monkeypatch) -> None:
     before = _state(migrated[which])
     with DatabaseMapping(migrated[which]) as db:
-        _no_commit(db, getattr(m if part == "_refresh_head_schema" else v82, part), monkeypatch)
+        _no_commit(db, getattr(dm_head if part == "_refresh_head_schema" else v82, part), monkeypatch)
     assert _state(migrated[which]) == before
 
 
@@ -186,11 +185,11 @@ def test_head_refresh_replaces_the_superseded_extension_text(tmp_path_factory, e
             db.update_parameter_definition(id=pdef["id"], description=text)
         db.commit_session("a development build's life extension text")
     path = Path(url.removeprefix("sqlite:///"))
-    assert m._head_defaults_stale_ro(path) is not edited
+    assert dm_head._head_defaults_stale_ro(path) is not edited
     migrate_database(url)
     with DatabaseMapping(url) as db:
         for cls in CLASSES:
             got = db.get_item("parameter_definition", entity_class_name=cls, name="life_extension_cost")["description"]
             assert got == (old[cls] if edited else _shipped()[(cls, "life_extension_cost")][0]), cls
             assert edited or "Not with reinvest_automatic" in got
-    assert not m._head_defaults_stale_ro(path)
+    assert not dm_head._head_defaults_stale_ro(path)
