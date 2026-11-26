@@ -142,6 +142,7 @@
  "tests/engine/test_benders_phase2_loop.py": 7.2,
  "tests/engine/test_benders_phase3a_flextool_master.py": 14.1,
  "tests/engine/test_benders_phase3b_rp_loop.py": 13.0,
+ "tests/engine/test_benders_spanning_units.py": 50.0,
  "tests/engine/test_benders_stall_guard.py": 0.0,
  "tests/engine/test_benders_trajectory_pin.py": 6.4,
  "tests/engine/test_bind_within_period.py": 64.6,

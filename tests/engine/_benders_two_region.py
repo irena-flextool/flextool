@@ -3,7 +3,7 @@
 Nodes ``rA`` and ``rB`` (balance, VOLL ``penalty_up`` / ``penalty_down`` 1000): rA needs 200 MW in hours 1-24 and
 nothing after, rB nothing in hours 1-24 and 200 MW (``uom``: 100 t) in hours 25-48.  ``genA`` -> rA has 100 MW
 existing (no cost); ``genB`` -> rB has none and invests (``invest_period``, ``invest_cost`` 100 per kW, 20 years,
-``invest_max_period`` 1000).  Connection ``link`` rA -> rB, 200 MW existing.  Groups ``region_A`` {rA} and ``region_B``
+``invest_max_period`` 1000).  Connection ``link`` rA -> rB, 200 MW existing (``link_mw``).  Groups ``region_A`` {rA} and ``region_B``
 {rB} list nodes only (``group__node``), as the docs say; the units are not listed.  Both balance nodes are ends of
 the cross-region link, so the Benders master has no balance node.
 
@@ -45,7 +45,7 @@ def _time_map(f) -> list:
 
 
 def build(tmp_path_factory, *, transfer_method: str, efficiency: float = 1.0, uom: bool = False,
-          master_hosted_rB: bool = False, decomposition: str = "benders", alt: str | None = None,
+          link_mw: float = 200.0, master_hosted_rB: bool = False, decomposition: str = "benders", alt: str | None = None,
           extra_entities=(), extra_values=()) -> tuple[str, str]:
     """Build the toy database in a tmp folder; returns ``(url, scenario)``."""
     demand_b = 100.0 if uom else 200.0
@@ -70,7 +70,7 @@ def build(tmp_path_factory, *, transfer_method: str, efficiency: float = 1.0, uo
             ["unit", "genB", "invest_max_period",
              b64({"index_type": "str", "index_name": "period", "data": [["p2020", 1000.0]]}, "map")],
             ["connection", "link", "transfer_method", b64(transfer_method, "str")],
-            ["connection", "link", "existing", b64(200.0, "float")],
+            ["connection", "link", "existing", b64(link_mw, "float")],
             ["connection", "link", "efficiency", b64(efficiency, "float")],
             ["group", "region_A", "decomposition_method", benders_regional],
             ["solve", SOLVE, "invest_periods", b64({"value_type": "str", "data": ["p2020"]}, "array")],

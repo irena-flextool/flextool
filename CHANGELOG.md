@@ -2,6 +2,18 @@
 
 ### Behaviour changes
 
+- **Benders: a unit with nodes in more than one region is solved in the master.** A unit that converts through the
+  unit itself (several inputs or outputs, or a `piecewise_linear_efficiency` curve of two or more segments) and has
+  nodes in more than one region, or in a region and the master, is now part of the Benders master: its flows,
+  conversion, capacity, investment, costs and linear online variables, with the regions seeing its flows at their
+  nodes as imports and exports fixed by the master. Before, a unit listed in a region group kept only that region's
+  side: its flow to or from the other region's nodes was lost (free), so the Benders investments and costs of such
+  a model were wrong, and they change now. An unlisted such unit, and a unit between a region and a master-hosted
+  node, were errors and now run. A unit listed in a region group that has none of its nodes is now an error, and
+  so are a reserve, integer online variables, a start-up input or `min_load_efficiency` input at a region node, a
+  node in a capacity margin, inertia or non-synchronous group, or a flowGroup flow limit on such a unit; each error
+  names the unit and what to change. Each Benders solve prints one line `Benders master: N connections, N
+  unit__inputNode arcs, N unit__outputNode arcs`.
 - **Stochastic forecasts must cover the horizon.** A forecast that has no value for a time step that its solve or
   roll reads it for (the look-ahead included) now stops the run before that solve, with an error naming the
   forecast, the roll and the first time step without a value. Before, the step silently read 0, or in a forecast

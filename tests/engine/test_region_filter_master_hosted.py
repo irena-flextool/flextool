@@ -464,27 +464,30 @@ class TestUncapSentinel:
 
 
 class TestStraddleValidation:
-    def test_directly_straddling_unit_raises(self, lh2_data) -> None:
-        """Master-hosting lh2_B alone leaves liquefier_B with an arc
-        from a region node (h2_B) to a master node (lh2_B)."""
-        with pytest.raises(
-            RuntimeError,
-            match=r"liquefier_B.*straddles(.|\n)*handover",
-        ):
-            split(
-                lh2_data,
-                regions=REGIONS,
-                region_membership=_membership_without(
-                    lh2_data, frozenset({"lh2_B"})),
-                master_hosted_nodes=frozenset({"lh2_B"}),
-            )
+    def test_direct_unit_to_a_master_node_is_cut_like_a_connection(self, lh2_data) -> None:
+        """Master-hosting lh2_B alone leaves liquefier_B (one direct arc
+        h2_B -> lh2_B) between a region node and a master node: like a
+        connection, its arc is a region↔master coupling, one export
+        half-flow in region_B, the whole arc in the master."""
+        hosted = frozenset({"lh2_B"})
+        membership = _membership_without(lh2_data, hosted)
+        splits = split(lh2_data, regions=REGIONS, region_membership=membership,
+                       master_hosted_nodes=hosted)
+        sides = {s.region: {(h.side, h.in_region_node) for h in s.half_flows
+                            if h.original_p == "liquefier_B"} for s in splits}
+        assert sides == {"region_A": set(), "region_B": {("export", "h2_B")}, "region_C": set()}
+        md = master_network_data(lh2_data, REGIONS, region_membership=membership,
+                                 master_hosted_nodes=hosted)
+        arcs = {(r["p"], r["source"], r["sink"]) for r in md.process_source_sink.iter_rows(named=True)}
+        assert ("liquefier_B", "h2_B", "lh2_B") in arcs
 
-    def test_mixed_shape_unit_raises_via_entity_aggregation(
+    def test_unit_on_both_sides_goes_to_the_master(
         self, lh2_data
     ) -> None:
-        """A unit with one master-local arc plus one purely in-region
-        arc has NO individually straddling arc yet straddles as an
-        entity — the per-process aggregation must catch it."""
+        """A unit with an arc through itself at a region node (wind_C ->
+        elec_C) and an arc between master-hosted nodes is on both sides as
+        an entity: the master holds it whole, region_C sees its output as
+        one import half-flow, and no region carries its arcs."""
         pss = lh2_data.process_source_sink
         extra = pl.DataFrame(
             [{"p": "wind_C", "source": "lh2_A", "sink": "lh2_B"}],
@@ -497,16 +500,19 @@ class TestStraddleValidation:
         # wind_C's arcs straddles on its own.
         assert not ({"wind_C", "elec_C"} & MASTER_BIG)      # in-region arc
         assert {"lh2_A", "lh2_B"} <= MASTER_BIG             # master-local arc
-        with pytest.raises(
-            RuntimeError,
-            match=r"wind_C.*straddles(.|\n)*handover",
-        ):
-            split(
-                data2,
-                regions=REGIONS,
-                region_membership=_membership_without(data2, MASTER_BIG),
-                master_hosted_nodes=MASTER_BIG,
-            )
+        membership = _membership_without(data2, MASTER_BIG)
+        splits = split(data2, regions=REGIONS, region_membership=membership,
+                       master_hosted_nodes=MASTER_BIG)
+        for s in splits:
+            assert "wind_C" not in _col_values(s.data.process_source_sink, "p"), s.region
+        sides = {s.region: {(h.side, h.in_region_node) for h in s.half_flows if h.original_p == "wind_C"}
+                 for s in splits}
+        assert sides == {"region_A": set(), "region_B": set(), "region_C": {("import", "elec_C")}}
+        md = master_network_data(data2, REGIONS, region_membership=membership,
+                                 master_hosted_nodes=MASTER_BIG)
+        arcs = {(r["p"], r["source"], r["sink"]) for r in md.process_source_sink.iter_rows(named=True)}
+        assert {a for a in arcs if a[0] == "wind_C"} == {("wind_C", "wind_C", "elec_C"),
+                                                        ("wind_C", "lh2_A", "lh2_B")}
 
     def test_mixed_user_constraint_raises(self, lh2_data) -> None:
         """A user constraint referencing a master-hosted node AND a

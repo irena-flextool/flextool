@@ -744,26 +744,28 @@ class Coupling:
 def _identify_coupling_cols(
     splits: list[RegionSplit],
     warm: list[WarmProblem],
-    master_hosted_nodes: "frozenset[str] | set[str]" = frozenset(),
+    master_endpoints: "frozenset[str] | set[str]" = frozenset(),
 ) -> list[Coupling]:
     """Pair :class:`HalfFlow`s on ``(p, source, sink)`` and resolve the
     ``v_flow`` column ids per region.  Used by :func:`_build_arcs` and by
     the decomposition tests directly.
 
-    With a non-empty ``master_hosted_nodes`` the pair requirement relaxes
-    to SINGLE-SIDED for region↔master arcs: a half-flow whose off-region
-    terminal is master-hosted has no matching half-flow on the other side
-    (the master keeps the whole original arc), so it yields a Coupling
-    with the master side ``None``/empty.  With the default empty set the
-    behaviour is byte-identical to the historical pair-only path.
+    With a non-empty ``master_endpoints`` (the master-hosted nodes and the
+    units the master holds whole, :func:`_region_filter.master_units`) the
+    pair requirement relaxes to SINGLE-SIDED for region↔master arcs: a
+    half-flow whose off-region terminal is one of them has no matching
+    half-flow on the other side (the master keeps the whole original arc),
+    so it yields a Coupling with the master side ``None``/empty.  With the
+    default empty set the behaviour is byte-identical to the historical
+    pair-only path.
     """
     region_idx = {s.region: i for i, s in enumerate(splits)}
-    out = _couplings_of(splits, warm, region_idx, master_hosted_nodes, "v_flow")
+    out = _couplings_of(splits, warm, region_idx, master_endpoints, "v_flow")
     # The reverse direction of the one-variable connections: their v_flow_back columns, paired the same way.
-    return out + _couplings_of(splits, warm, region_idx, master_hosted_nodes, "v_flow_back")
+    return out + _couplings_of(splits, warm, region_idx, master_endpoints, "v_flow_back")
 
 
-def _couplings_of(splits, warm, region_idx, master_hosted_nodes, var: str) -> list[Coupling]:
+def _couplings_of(splits, warm, region_idx, master_endpoints, var: str) -> list[Coupling]:
     """The couplings of column family *var* (:func:`_identify_coupling_cols`): every half-flow for
     ``v_flow``, the ``one_var`` half-flows for ``v_flow_back``."""
     by_e: dict[tuple, tuple[str, list[HalfFlow]]] = {}
@@ -787,9 +789,9 @@ def _couplings_of(splits, warm, region_idx, master_hosted_nodes, var: str) -> li
     for key, (er, hfs_e) in by_e.items():
         if key not in by_i:
             # Single-sided EXPORT half-flow: a region node feeding a
-            # master-hosted sink (region↔master arc).  Anything else
-            # unpaired keeps today's silent skip.
-            if key[2] in master_hosted_nodes:
+            # master-hosted sink or a unit the master holds (region↔master
+            # arc).  Anything else unpaired keeps today's silent skip.
+            if key[2] in master_endpoints:
                 v_flow_e = warm[region_idx[er]]._p._vars[var]
                 e_cols = _cols(v_flow_e, hfs_e[0])
                 if e_cols.size == 0:
@@ -819,13 +821,13 @@ def _couplings_of(splits, warm, region_idx, master_hosted_nodes, var: str) -> li
             pipeline_key=key, export_region=er, import_region=ir,
             export_cols=e_cols, import_cols=i_cols, var=var,
         ))
-    # Single-sided IMPORT half-flows: a master-hosted source feeding a
-    # region node.  Every by_i key already paired above was handled in
-    # the by_e loop.
+    # Single-sided IMPORT half-flows: a master-hosted source (or a unit
+    # the master holds) feeding a region node.  Every by_i key already
+    # paired above was handled in the by_e loop.
     for key, (ir, hfs_i) in by_i.items():
         if key in by_e:
             continue
-        if key[1] not in master_hosted_nodes:
+        if key[1] not in master_endpoints:
             continue
         v_flow_i = warm[region_idx[ir]]._p._vars[var]
         i_cols = _cols(v_flow_i, hfs_i[0])
@@ -867,6 +869,10 @@ class _ArcMaster:
     # connection's reverse arc has), while ``dim_tuples`` keep the original ``(p, source, sink, d, t)``: the
     # master's v_flow_back index.
     var: str = "v_flow"
+    # False for an arc of a unit the master holds whole (_region_filter.master_units): its flow is not bounded by
+    # ``existing + invested`` per arc (a unit's input arc has no such bound), so the capacity clamp leaves it alone;
+    # the master LP's own rows keep it feasible.
+    capacity_bounded: bool = True
 
 
 @dataclass
@@ -945,6 +951,7 @@ class _BendersMaster:
                  regions: list[str], eta_floor: float,
                  *, master: str = "flextool", obj_scale: float = 1.0,
                  master_hosted_nodes: frozenset[str] = frozenset(),
+                 master_units: frozenset[str] = frozenset(),
                  region_membership: dict | None = None,
                  solver_options: dict | None = None, solve_name: str | None = None):
         self.arcs = arcs
@@ -962,11 +969,14 @@ class _BendersMaster:
         # ``master_network_data`` on the flextool path.  The hand path
         # cannot host nodes (it builds only the trade layer).
         self._master_hosted_nodes = frozenset(master_hosted_nodes)
+        # The units the master holds whole (_region_filter.master_units; master_network_data derives the same set).
+        self._master_units = frozenset(master_units)
         self._region_membership = region_membership
-        if master == "hand" and self._master_hosted_nodes:
+        if master == "hand" and (self._master_hosted_nodes or self._master_units):
             raise ValueError(
-                "_BendersMaster: master='hand' cannot host nodes "
-                f"(master_hosted_nodes={sorted(self._master_hosted_nodes)}); "
+                "_BendersMaster: master='hand' cannot host nodes or units "
+                f"(master_hosted_nodes={sorted(self._master_hosted_nodes)}, "
+                f"master_units={sorted(self._master_units)}); "
                 "use the flextool master path."
             )
         # Objective scale ``s`` shared with the region subproblems.  The master
@@ -1633,15 +1643,16 @@ class _BendersMaster:
         overlay point (via :meth:`native_cost_at`) instead of the mixed
         ``native_cost(msol)`` sum.
 
-        True when the master hosts balance/storage nodes: those nodes'
-        balances are filled by the coupling flows, so the master's own cost
-        (their penalty slack + storage terms) is a genuine function of the
-        coupling flow.  The flag does not cover a coupling connection's own
+        True when the master hosts balance/storage nodes or holds units: those
+        nodes' balances are filled by the coupling flows, and a master unit's
+        flows are coupling flows, so the master's own cost (penalty slack,
+        storage terms, the unit's fuel and variable costs) is a genuine
+        function of the coupling flow.  The flag does not cover a coupling connection's own
         flow / online / startup cost, which also depends on the flows; with
         polar-high >= 3.10.0 that does not matter, because the in-out upper
         bound then always reads the cost at the overlay point via
         :meth:`native_cost_at` (this master implements it)."""
-        return bool(self._master_hosted_nodes)
+        return bool(self._master_hosted_nodes or self._master_units)
 
     def apply_coupling_box(self, center: dict[int, float], radius: float) -> None:
         """OPTIONAL coordinator protocol member (:meth:`polar_high.benders.
@@ -2047,15 +2058,18 @@ def _assemble_benders_invest_vars(
 def _build_arcs(
     splits, warm,
     master_hosted_nodes: "frozenset[str] | set[str]" = frozenset(),
+    master_units: "frozenset[str] | set[str]" = frozenset(),
 ) -> list[_ArcMaster]:
     """Discover the cross-region directed arcs + per-region pin columns.
 
-    ``master_hosted_nodes`` is forwarded to
-    :func:`_identify_coupling_cols`: non-empty, region↔master arcs come
-    back SINGLE-SIDED (one region side ``None``) and the ``(d, t)``
-    dim-tuples are recovered from whichever region side exists."""
+    ``master_hosted_nodes`` and ``master_units`` (the units the master holds
+    whole) are the master's endpoints for :func:`_identify_coupling_cols`:
+    non-empty, region↔master arcs come back SINGLE-SIDED (one region side
+    ``None``) and the ``(d, t)`` dim-tuples are recovered from whichever
+    region side exists.  An arc of a master unit is not capacity-clamped
+    (``_ArcMaster.capacity_bounded``)."""
     couplings = _identify_coupling_cols(
-        splits, warm, master_hosted_nodes=master_hosted_nodes
+        splits, warm, master_endpoints=frozenset(master_hosted_nodes) | frozenset(master_units)
     )
     region_idx = {s.region: i for i, s in enumerate(splits)}
     arcs: list[_ArcMaster] = []
@@ -2089,6 +2103,7 @@ def _build_arcs(
                 export_pin_cols=cpl.export_cols.astype(np.int64),
                 import_pin_cols=cpl.import_cols.astype(np.int64),
                 var=cpl.var,
+                capacity_bounded=p not in master_units,
             )
         )
     return arcs
@@ -2497,6 +2512,10 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
             "region group, hosted natively in the master: %s",
             len(master_hosted), sorted(master_hosted),
         )
+    # Units whose nodes are on more than one side (two regions, or a region and the master): the master holds
+    # them whole, and their arcs at region nodes are region↔master couplings.
+    in_master = _region_filter.master_units(
+        data, {r: m["nodes"] for r, m in region_membership.items()}, master_hosted)
 
     # --- split with the cross-region half-flows UNCAPPED so the master pin is
     # feasible (Phase-2 splitter Benders mode).
@@ -2604,7 +2623,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     for w in warm:
         w.solve()
 
-    arcs = _build_arcs(splits, warm, master_hosted_nodes=master_hosted)
+    arcs = _build_arcs(splits, warm, master_hosted_nodes=master_hosted, master_units=in_master)
     if not arcs:
         raise RuntimeError(
             "Benders: no cross-region coupling arcs found — nothing to "
@@ -2784,7 +2803,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
         data, arcs, [s.region for s in splits],
         eta_floor=-_ETA_FLOOR_MULT * 1e9 * obj_scale,
         master=master_kind, obj_scale=obj_scale,
-        master_hosted_nodes=master_hosted,
+        master_hosted_nodes=master_hosted, master_units=in_master,
         region_membership=region_membership,
         solver_options=master_options, solve_name=solve_name,
     )
@@ -3008,7 +3027,7 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     # the master pseudo-entry into the stall diagnostics (D-c/D-d).
     _master_autarky_holder: list[float] = []
     extra_reference_cost = None
-    if master_hosted:
+    if master_hosted or in_master:
         def extra_reference_cost() -> float:
             value = _master_autarky_cost(master)
             _master_autarky_holder.append(value)
@@ -3219,6 +3238,8 @@ def _clamp_flow_to_capacity(
     """
     max_clamp = 0.0
     for a in arcs:
+        if not a.capacity_bounded:
+            continue
         invested = C_by_conn.get(a.conn, 0.0)
         for cid in a.f_col_ids:
             cid = int(cid)

@@ -3276,16 +3276,25 @@ def _drive_cascade(
             from flextool.engine.solve._region_filter import (
                 compute_master_hosted_nodes,
                 load_region_membership,
+                master_arc_counts,
             )
 
-            _master_hosted = sorted(compute_master_hosted_nodes(
-                data, load_region_membership(data, regions)
-            ))
+            _membership = load_region_membership(data, regions)
+            _master_hosted = sorted(compute_master_hosted_nodes(data, _membership))
             if _master_hosted:
                 _emit(
                     f"{_tag} Benders: {len(_master_hosted)} master-hosted "
                     f"node(s): {_master_hosted}"
                 )
+            # What the master holds: the connections between regions (and at master-hosted nodes) and the units
+            # with nodes in more than one region (or in a region and the master), by their node relationships.
+            _n_conn, _n_in, _n_out = master_arc_counts(data, regions, _membership)
+
+            def _count(n: int, what: str) -> str:
+                return f"{n} {what}{'' if n == 1 else 's'}"
+
+            _emit(f"{_tag} Benders master: {_count(_n_conn, 'connection')}, "
+                  f"{_count(_n_in, 'unit__inputNode arc')}, {_count(_n_out, 'unit__outputNode arc')}")
 
             # Live per-iteration callback — one line as each outer Benders
             # iteration completes, reporting the valid LB/UB sandwich + gap
