@@ -41,7 +41,7 @@ connection and a node), ``salvage_value`` (a constant and a ``period`` map) and 
 
 Nothing else changes, and a rerun commits nothing.  Where a database already has a value under a new name, that
 value is kept (and printed).  A database migrated to 81 by a development build gets the v81 definitions and list
-members it lacks inside step 82 (:func:`db_migration._v81_refresh`); since data version 83 the refresh of a database
+members it lacks inside step 82 (:func:`db_migration.v81._v81_refresh`); since data version 83 the refresh of a database
 already at the current version no longer covers the v81 entries (``test_v83_schema_batch.py`` tests that refresh).
 """
 from __future__ import annotations

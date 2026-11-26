@@ -288,7 +288,7 @@ def test_empty_old_definition_back_at_82_is_removed(tmp_path_factory, renamed) -
 
 def test_head_refresh_writes_the_v82_text_for_a_superseded_pair(tmp_path_factory) -> None:
     """A database at the current version whose ``payback_time`` still has the description a development build of
-    v82 shipped gets the v82 description (at 83 by text alone, :func:`db_migration._head_superseded_texts`)."""
+    v82 shipped gets the v82 description (at 83 by text alone, :func:`db_migration.head._head_superseded_texts`)."""
     url = _seed(tmp_path_factory, "v82_head_superseded", FLEXTOOL_DB_VERSION)
     with DatabaseMapping(url) as db:
         for cls in ("unit", "connection", "node"):

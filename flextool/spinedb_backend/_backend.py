@@ -63,7 +63,7 @@ from flextool.sqlite_url import sqlite_url_string
 # gating.  The Backend post-filters entities/parameter_values of these
 # three classes against the resolved ``is_enabled`` value in the active
 # scenario.  See ``flextool.update_flextool.db_migration.
-# _migrate_v56_reactivate_is_enabled_parameter`` for the migration that
+# v56_methods._migrate_v56_reactivate_is_enabled_parameter`` for the migration that
 # materialises the parameter on legacy DBs.
 # ---------------------------------------------------------------------------
 

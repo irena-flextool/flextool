@@ -82,7 +82,7 @@ def _stale_version(sqlite_abs: Path) -> int | None:
 
     A file at the current version that lacks a definition or list member of the current version's schema step (made
     before that entry was added to the step), or that has a superseded shipped default and description pair of it
-    (``db_migration._head_defaults_stale_ro``, the test the refresh uses), is stale too.  Read read-only.  A frozen
+    (``db_migration.head._head_defaults_stale_ro``, the test the refresh uses), is stale too.  Read read-only.  A frozen
     file, or one whose version or marker cannot be read, is never stale: it is left as it is.
     """
     from flextool.update_flextool import FLEXTOOL_DB_VERSION

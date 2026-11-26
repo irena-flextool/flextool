@@ -30,7 +30,7 @@ only, matched by (class, entity name, alternative): "was X before the overwrite"
 - a carried v77 group value: information only.
 
 Members are translated forward (step 22 only): a group value ``not_allowed`` is ``not_active`` at data version 77
-and later (``db_migration._v77_group_invest_methods``); ``invest_methods`` members are otherwise unchanged.
+and later (``db_migration.v77._v77_group_invest_methods``); ``invest_methods`` members are otherwise unchanged.
 
 TODO(v5.0.0): remove with W-0490 (see ``value_list_history``).
 """
@@ -55,7 +55,7 @@ ARCHIVE_LEGACY = "archive: legacy member"
 NO_HISTORY_WARNING = ("the archive has no upgrade history, so its date cannot be checked: it is shown as evidence "
                       "only")
 _CLASSES = ("unit", "connection", "node", "group")
-#: The group member v77 renamed (``db_migration._v77_group_invest_methods``).
+#: The group member v77 renamed (``db_migration.v77._v77_group_invest_methods``).
 GROUP_RENAMES = {"not_allowed": "not_active"}
 
 

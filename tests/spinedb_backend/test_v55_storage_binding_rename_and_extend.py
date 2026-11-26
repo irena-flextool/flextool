@@ -5,7 +5,7 @@ v53 wired the ``storage_binding_methods`` parameter_value_list to
 to scalars.  This **v55 step** restructures the value_list itself:
 
 - Renames three legacy scalar names (per
-  :data:`flextool.update_flextool.db_migration._STORAGE_BINDING_RENAMES_V55`):
+  :data:`flextool.update_flextool.db_migration.v50_v55._STORAGE_BINDING_RENAMES_V55`):
 
     bind_within_timeset         -> bind_within_timeblock
     bind_using_blended_weights  -> bind_within_solve_blended_weights
