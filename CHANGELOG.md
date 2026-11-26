@@ -96,6 +96,10 @@
   every scenario. They now end active by default, and each one is on where its `is_active` was `yes`. A database
   from those versions that was migrated with FlexTool 4.7.0 or earlier is not repaired: check that these three
   classes are active by default and that your constraints and reserves have the `is_enabled` you expect.
+- **Example databases: no `node_type` in `Base`.** The examples (examples.sqlite, stochastics.sqlite) set
+  `node_type = commodity` for many nodes in the `Base` alternative, left over from an old migration step. A scenario
+  that ranked `Base` above an example's own alternatives made those nodes commodity nodes. The values are removed;
+  no example's results change.
 
 ## Release 4.7.0 (24.11.2026) — stochastic realization: rolling `within_solve` realizes each jump in one solve, `separate_dispatch` realization looks ahead, `deterministic` default; `startup_method` `_fix_in_uc` members; `minimum_time_method` gates min up / down times; outages end carried obligations; rounded carried units online; one branching setting for stochastic investment solves (schema v84)
 

@@ -7593,16 +7593,6 @@
         "ImNvbW1vZGl0eSI=",
         "str"
       ],
-      "Base"
-    ],
-    [
-      "node",
-      "coal_market",
-      "node_type",
-      [
-        "ImNvbW1vZGl0eSI=",
-        "str"
-      ],
       "system"
     ],
     [
@@ -7614,16 +7604,6 @@
         "float"
       ],
       "system"
-    ],
-    [
-      "node",
-      "demand_node",
-      "node_type",
-      [
-        "ImNvbW1vZGl0eSI=",
-        "str"
-      ],
-      "Base"
     ],
     [
       "node",
@@ -7670,16 +7650,6 @@
       "downriver",
       "node_type",
       [
-        "ImNvbW1vZGl0eSI=",
-        "str"
-      ],
-      "Base"
-    ],
-    [
-      "node",
-      "downriver",
-      "node_type",
-      [
         "ImJhbGFuY2Ui",
         "str"
       ],
@@ -7694,16 +7664,6 @@
         "float"
       ],
       "system"
-    ],
-    [
-      "node",
-      "gas_market",
-      "node_type",
-      [
-        "ImNvbW1vZGl0eSI=",
-        "str"
-      ],
-      "Base"
     ],
     [
       "node",
@@ -7734,16 +7694,6 @@
         "map"
       ],
       "system"
-    ],
-    [
-      "node",
-      "hydro_reservoir",
-      "node_type",
-      [
-        "ImNvbW1vZGl0eSI=",
-        "str"
-      ],
-      "Base"
     ],
     [
       "node",

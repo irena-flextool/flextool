@@ -7629,16 +7629,6 @@
         "\"commodity\"",
         "str"
       ],
-      "Base"
-    ],
-    [
-      "node",
-      "coal_market",
-      "node_type",
-      [
-        "\"commodity\"",
-        "str"
-      ],
       "system"
     ],
     [
@@ -7660,16 +7650,6 @@
         "float"
       ],
       "system"
-    ],
-    [
-      "node",
-      "demand_node",
-      "node_type",
-      [
-        "\"commodity\"",
-        "str"
-      ],
-      "Base"
     ],
     [
       "node",
@@ -7710,16 +7690,6 @@
         "float"
       ],
       "system"
-    ],
-    [
-      "node",
-      "downriver",
-      "node_type",
-      [
-        "\"commodity\"",
-        "str"
-      ],
-      "Base"
     ],
     [
       "node",
@@ -7789,16 +7759,6 @@
         "\"commodity\"",
         "str"
       ],
-      "Base"
-    ],
-    [
-      "node",
-      "gas_market",
-      "node_type",
-      [
-        "\"commodity\"",
-        "str"
-      ],
       "system"
     ],
     [
@@ -7830,16 +7790,6 @@
         "float"
       ],
       "system"
-    ],
-    [
-      "node",
-      "hydro_reservoir",
-      "node_type",
-      [
-        "\"commodity\"",
-        "str"
-      ],
-      "Base"
     ],
     [
       "node",
