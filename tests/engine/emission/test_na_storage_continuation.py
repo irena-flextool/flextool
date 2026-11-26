@@ -138,6 +138,16 @@ def storage_variant_run(tmp_path_factory, test_solver_config_dir):
             replaced = True
     assert replaced, "stoch_two_period.json has no stochastic_branches row"
 
+    # The realization dispatch that ``rlz: yes`` adds reads the wind profile of branch ``rlz``, which the
+    # fixture's ``wprof`` (forecasts ``high`` / ``low`` made at t0001) does not give: it read 0 at every step,
+    # an input error since item 307.  ``rlz`` gets the ``high`` series (the actual wind equals the high forecast).
+    (wprof,) = [row for row in spec["parameter_values"]
+                if row[:3] == ["profile", "wprof", "profile"] and row[4] == "stoch"]
+    wind = json.loads(base64.b64decode(wprof[3][0]))
+    (high,) = [series for branch, series in wind["data"] if branch == "high"]
+    wind["data"].append(["rlz", high])
+    wprof[3] = [base64.b64encode(json.dumps(wind).encode()).decode("ascii"), "map"]
+
     root = tmp_path_factory.mktemp("_root_na_storage_continuation")
     json_path = root / "stoch_two_period_storage.json"
     json_path.write_text(json.dumps(spec))
