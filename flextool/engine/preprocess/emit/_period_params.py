@@ -170,7 +170,7 @@ def _check_stochastic_inflow(pbt_inflow: dict[tuple[str, str, str, str], float],
     A node outside every ``include_stochastics`` group reads the realized branch's inflow on a fan's branch
     periods, so a forecasts-only fan cannot serve it; a node must author every active forecast of a fan, or
     none; before the reveal a period reads the forecast made when the solve or roll starts, which must cover it;
-    and the forecast made at the fan start must cover every later period of the solve or roll (item 255).
+    and the forecast made at the fan start must cover every step from the fan on (items 255, 307).
     Shared by :func:`derive_pdtNodeInflow` and :func:`derive_pdtNodeInflow_vectorized`; *steps* is the reader's
     ``(period, time)`` grid when it is not ``steps_in_use`` (the capacity margin's peak demand).
     """
@@ -199,7 +199,7 @@ def _check_profile_roll_coverage(pbt_profile: dict[tuple[str, str, str, str], fl
                                  *, provider: "object | None" = None) -> None:
     """Before the reveal, a period reads the forecast of a profile made when the solve or roll starts, which must
     cover it (:func:`_check_pre_reveal_reads_have_forecast`); the forecast made at the fan start must cover every
-    later period of the solve or roll (:func:`_check_forecast_covers_horizon`).  Shared by
+    step from the fan on (:func:`_check_forecast_covers_horizon`).  Shared by
     :func:`derive_pdtProfile` and :func:`derive_pdtProfile_vectorized`."""
     if not pbt_profile:
         return

@@ -599,7 +599,9 @@ def _two_period_rolling_ladder(tmp_path_factory, alt: str, quantity: float) -> d
     thermal unit burning ``fuel`` bought on a cumulative ladder (tier 1 at 5 up to ``quantity``, tier 2 at 7
     unlimited).  Since 4.7.0 the first solve of each roll of a rolling ``separate_dispatch`` solve fans out at the
     roll's start (a rolling ``within_solve`` roll whose horizon is its jump has no forecasts); its realization roll
-    reads the ``realized`` wind series, made at t0001 with the ``high`` values (0.6 in p2035, 0.5 in p2040)."""
+    reads the ``realized`` wind series, made at t0001 with the ``high`` values (0.6 in p2035, 0.5 in p2040).  Every
+    series is also made at t0004 over p2040 with the same values, so the fan of the p2040 roll reads a forecast made
+    at its own start for its whole horizon (item 307)."""
     def at(step: str, realized: str, weight: float) -> dict:
         return {"type": "map", "index_type": "str",
                 "data": [[step, {"type": "map", "index_type": "str", "data": [[realized, weight]]}]]}
@@ -611,8 +613,10 @@ def _two_period_rolling_ladder(tmp_path_factory, alt: str, quantity: float) -> d
     tiers = {k: v for k, v in _tiers(5.0, quantity, 7.0).items() if k != "type"}
 
     def series(p2035: float, p2040: float) -> dict:
-        return {"type": "map", "index_type": "str", "data": [["t0001", {"type": "map", "index_type": "str", "data": [
-            [f"t{i:04d}", p2035 if i <= 3 else p2040] for i in range(1, 7)]}]]}
+        return {"type": "map", "index_type": "str", "data": [
+            ["t0001", {"type": "map", "index_type": "str", "data": [
+                [f"t{i:04d}", p2035 if i <= 3 else p2040] for i in range(1, 7)]}],
+            ["t0004", {"type": "map", "index_type": "str", "data": [[f"t{i:04d}", p2040] for i in range(4, 7)]}]]}
 
     wind = {"index_type": "str", "data": [["high", series(0.6, 0.5)], ["low", series(0.2, 0.1)],
                                           ["realized", series(0.6, 0.5)]]}
@@ -733,17 +737,21 @@ def _single_reveal_branches() -> list:
     return ["solve", ROLL_SOLVE, "stochastic_branches", b64(branches, "map")]
 
 
-def _weekly_realized_wind() -> list:
-    """The fixture's ``wind`` profile (alternative 1week_rolling) with its ``realized`` series made at t0001, t0025,
-    ... joined into one series made at t0001 for the whole week."""
+def _weekly_wind() -> list:
+    """The fixture's ``wind`` profile (alternative 1week_rolling) with each branch's series made at t0001, t0025, ...
+    joined into one series made at t0001 for the whole week: each step from the earliest-made series that has it.
+    The ``realized`` series do not overlap; a forecast covers the week, as the fan made at t0001 reads it over the
+    whole horizon (item 307)."""
     raw = json.loads(STOCHASTICS_JSON.read_text(encoding="utf-8"))
     (value,) = [pv[3] for pv in raw["parameter_values"]
                 if pv[:3] == ["profile", "wind", "profile"] and pv[4] == ROLL_SOLVE]
     wind = json.loads(base64.b64decode(value[0]))
     for branch in wind["data"]:
-        if branch[0] == "realized":
-            week = [cell for _at, made in branch[1]["data"] for cell in made["data"]]
-            branch[1]["data"] = [["t0001", {"type": "map", "index_type": "str", "data": week}]]
+        week: dict = {}
+        for _at, made in branch[1]["data"]:
+            for t, v in made["data"]:
+                week.setdefault(t, v)
+        branch[1]["data"] = [["t0001", {"type": "map", "index_type": "str", "data": list(week.items())}]]
     return ["profile", "wind", "profile", b64(wind, "map")]
 
 
@@ -751,13 +759,13 @@ def test_one_roll_fan_equals_single_solve_fan(tmp_path_factory) -> None:
     """A rolling ``separate_dispatch`` solve of one roll (horizon = jump = 168 h): its first solve is that of the
     single ``separate_dispatch`` solve of the same week: the same scenario paths, and the same per-path cumulative
     tier cap and CO2 total cap rows.  (Since 4.7.0 a rolling ``within_solve`` roll whose horizon is its jump has no
-    forecasts.)  The realized wind is given as one series made at t0001 over the whole week (the fixture's daily
-    series, joined), the only analysis time of the fan's realized row, which the realization rolls read."""
+    forecasts.)  The wind of every branch is given as one series made at t0001 over the whole week (the fixture's
+    series, joined), the only analysis time of the fan, which the realization rolls read too."""
     from tests.engine._lp_rows import row_bounds
     from tests.engine._unit_db import last_stochastic, without_realization
 
     entities = [["group", "co2_limit", None], ["group__node", ["co2_limit", "gas_market"], None]]
-    values = (_gas_ladder("price_ladder_cumulative", 1.0e6) + [_single_reveal_branches(), _weekly_realized_wind()]
+    values = (_gas_ladder("price_ladder_cumulative", 1.0e6) + [_single_reveal_branches(), _weekly_wind()]
               + [["solve", ROLL_SOLVE, "dispatch_realization_method", b64("separate_dispatch", "str")]]
               + [["commodity", "gas", "co2_content", b64(0.2, "float")],
                  ["group", "co2_limit", "co2_method", b64("total", "str")],

@@ -130,11 +130,16 @@ def _augment_inflow(db_path: Path) -> None:
 # ``stochastics.json`` content added after this fixture was built: the
 # storage-drain alternative and its scenario, and the how-to examples of
 # ``build_stochastics_demo``.  Removed so a rebuild reproduces the committed
-# fixture.
-NOT_CARRIED_ALTERNATIVES = ("no_storage_override", *demo.ALTERNATIVES)
-NOT_CARRIED_SCENARIOS = ("2_day_stochastic_dispatch_no_storage", *demo.SCENARIOS)
+# fixture.  Also removed: the rolling week ``1_week_rolling_wind`` (its
+# alternative ``1week_rolling``, solve and timeset).  This fixture's inflow
+# forecasts are made at t0001 for the 48 steps of ``2_day_stochastic_dispatch``
+# only, so a roll of the week would read steps no forecast covers (an input
+# error, item 307).
+NOT_CARRIED_ALTERNATIVES = ("no_storage_override", "1week_rolling", *demo.ALTERNATIVES)
+NOT_CARRIED_SCENARIOS = ("2_day_stochastic_dispatch_no_storage", "1_week_rolling_wind", *demo.SCENARIOS)
 #: 1-D entities (their relationships go with them).
-NOT_CARRIED_ENTITIES = tuple((c, n) for c, n in demo.ENTITIES if isinstance(n, str))
+NOT_CARRIED_ENTITIES = (("solve", "1week_rolling"), ("timeset", "1week"),
+                        *((c, n) for c, n in demo.ENTITIES if isinstance(n, str)))
 
 
 def _realized_2day_branches() -> dict:

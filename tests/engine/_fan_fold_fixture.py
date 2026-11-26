@@ -16,7 +16,8 @@ Values (hand-derived from the rule "own first step, else the fan start, per valu
   ``d1_b/t1`` 1, ``d1_c/t1`` 10, ``d2_b/t3`` 2·300 = 600 (own, ``b`` twice), ``d2_b/t4`` 2·4 = 8 (fan),
   ``d2_c/t3`` 3000 (own), ``d2_c/t4`` 40 (fan).
 * ``Y`` (branch 2 over the anchor's ``r``): ``d2_*/t3`` 5 (fan; ``s2`` authors only ``t4``),
-  ``d2_*/t4`` 60 (own); ``d1_*/t1`` no fold value.
+  ``d2_*/t4`` 60 (own); ``d1_*/t1`` 0 (``r`` made at ``s1`` authors 0 there: the fan's forecast covers ``d1``, item
+  307).
 
 Fan-first variant (``fan_first``: ``read_first`` = ``fan``, as every solve and roll writes it: the fan start ``s1``
 -- the solve's analysis time -- and never a forecast made later, at the later period's own first step ``s2``).  It
@@ -43,7 +44,7 @@ PBT_ROWS: list[tuple[str, str, str, str, float]] = [
     ("X", "b", "s1", "t1", 1.0), ("X", "b", "s1", "t3", 3.0), ("X", "b", "s1", "t4", 4.0),
     ("X", "c", "s1", "t1", 10.0), ("X", "c", "s1", "t3", 30.0), ("X", "c", "s1", "t4", 40.0),
     ("X", "b", "s2", "t3", 300.0), ("X", "c", "s2", "t3", 3000.0),
-    ("Y", "r", "s1", "t3", 5.0), ("Y", "r", "s2", "t4", 60.0),
+    ("Y", "r", "s1", "t1", 0.0), ("Y", "r", "s1", "t3", 5.0), ("Y", "r", "s2", "t4", 60.0),
 ]
 
 # The fan-first variant: the fan-start forecast ``s1`` also covers ``Y`` at ``t4``.
@@ -52,7 +53,7 @@ PBT_ROWS_ROLLING: list[tuple[str, str, str, str, float]] = [*PBT_ROWS, ("Y", "r"
 # The solve (``solve_data/solve_current``, a roll) of the fan-first variants.
 ROLL = "sol_roll_1"
 
-# (entity, period, time) -> the fold value; a cell not listed has no fold value.
+# (entity, period, time) -> the fold value; a cell not listed reads 0.
 EXPECTED_FOLD: dict[tuple[str, str, str], float] = {
     ("X", "d1_b", "t1"): 1.0, ("X", "d1_c", "t1"): 10.0,
     ("X", "d2_b", "t3"): 600.0, ("X", "d2_b", "t4"): 8.0,

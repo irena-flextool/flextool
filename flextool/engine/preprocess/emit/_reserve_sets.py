@@ -380,7 +380,7 @@ def derive_pdtReserve_upDown_group(
         tb_for_d, ts_for_d, member_pos=2, fan_for_d=fan_for_d, kind="reserve",
     )
     _check_pbt_branch_coverage(pbt_in_use, 3, anchor_members, tb_for_d, ts_for_d, fan_for_d, kind="reserve")
-    # The forecast made at the fan start must cover every later period of the solve or roll (item 255).
+    # The forecast made at the fan start must cover every step from the fan on (items 255, 307).
     # Before the reveal, a period reads the forecast made when the solve or roll starts, and it must cover it.
     _check_pre_reveal_reads_have_forecast(pbt_in_use, 3, groups_stoch, tb_for_d, ts_for_d, pe_for_d, fan_for_d,
                                           solve_data_dir, provider=provider, member_pos=2, kind="reserve")

@@ -308,10 +308,11 @@ def _read_singles(path: Path,
 #   own first step.  A solve or roll decides at its fan's analysis time and must not see a forecast made later,
 #   so its later periods -- every row except the fan's own period, whose first step is the fan start -- read the
 #   fan's forecast before one made at their own first step (a later roll's or a later solve's analysis time).  A
-#   cell the fan-start forecast does not author but the own-step (later) forecast does is an input error, raised
-#   once per reader before its value loop (:func:`_check_forecast_covers_horizon`): the fan's forecast must cover
-#   the whole horizon.  The own tier therefore never supplies a value there; it stays in the tiers only so the
-#   check and the folds share one tier order.  The realization sibling reads its parent's rows and follows the
+#   cell the fan-start forecast does not author is an input error, raised once per reader before its value loop
+#   (:func:`_check_forecast_covers_horizon`, items 255 and 307): the fan's forecast must cover the whole horizon,
+#   whether the own-step (later) forecast authors the cell or nothing does (the reader would read the default
+#   value, or a forecast branch the realized branch's series).  The own tier therefore never supplies a value
+#   there; it stays in the tiers only so the check and the folds share one tier order.  The realization sibling reads its parent's rows and follows the
 #   same rule.  A frame that says ``read_first`` = ``own`` (or has no ``read_first`` column) reads the own
 #   step first; no solve writes one since item 255.
 # * a period before the reveal (no ``branch_time_start`` row) reads only the forecast authored at the solve's or
@@ -634,86 +635,118 @@ def _check_forecast_covers_horizon(
     member_pos: int = 0,
     kind: str,
 ) -> None:
-    """Raise when a solve or a roll of a rolling solve would read, in a period after its fan's period, a forecast
-    made later than its fan (owner decisions 2026-11-12, item 228, and 2026-11-13, item 255).
+    """Raise when a period from the fan's period on would read a value that the forecast made at the fan start does
+    not give (owner decisions 2026-11-12, item 228; 2026-11-13, item 255; 2026-11-25, item 307).
 
-    A period after the fan's period (``read_first`` = ``fan``, :func:`ts_tiers` ``[fan, own]``) reads the
-    forecast made at the fan start.  A value cell that forecast does not cover would otherwise fall back to the
-    forecast made at the period's own first step -- a later roll's or a later solve's analysis time -- so the
-    solve would decide on information it does not have yet.  That fallback is an input error: the fan's forecast
-    must cover the whole horizon.  A cell neither forecast covers reads the plain value as before.  Without a
-    ``fan_first`` period (no fan, or a frame that says ``read_first`` = ``own``) there is nothing to check and the
-    function returns at once.
+    A period with a ``branch_time_start`` row (the fan's period and every later one of the solve or roll) reads the
+    forecast made at the fan start (:func:`ts_tiers`: its first tier).  That forecast must cover every step the
+    period reads (``solve_data/steps_in_use``), look-ahead included.  Two input errors, raised once per reader
+    before its value loop:
 
-    The check mirrors the readers' folds exactly (branch 1, the stochastic fold over ``tb_for_d[d]``, when
-    ``key[member_pos]`` is in *stochastic_entities*; then branch 2, the parent-period fold over the parents'
-    branches) on every ``(d, t)`` of ``solve_data/steps_in_use``, so it runs once per reader, before the
-    reader's value loop.  *pbt* keys are ``(*entity, param, branch, ts, time)`` (``n_ent`` entity-key
-    columns); *kind* (as for :func:`_check_pbt_branch_coverage`) names the entity in the message.
+    * a step that only a forecast made later (at the period's own first step: a later roll's or a later solve's
+      analysis time) covers -- the solve would decide on information it does not have yet;
+    * a step that no forecast covers -- the reader would read the default value (the scenario gives one value per
+      entity and parameter, so there is no non-stochastic one), or, for an entity in an ``include_stochastics``
+      group, the realized branch's series (the actual data) in a forecast branch.
+
+    The fold mirrors the readers: an entity in *stochastic_entities* (tested on ``key[member_pos]``) whose own
+    branch (``tb_for_d[d]``) has a value at any of the period's analysis times reads that branch, and that branch
+    must cover the period; otherwise (outside every group, or a branch the entity gives no value) the period reads
+    the parents' branches (the parent-period fold).  A period with neither reads nothing and is skipped.  A frame
+    that says ``read_first`` = ``own`` (no solve writes one) may read any of its tiers.  Periods that read the
+    realized branch flattened (``fan_for_d.flat``) and periods before the reveal are checked by
+    :func:`_check_pre_reveal_reads_have_forecast`.  *pbt* keys are ``(*entity, param, branch, ts, time)``
+    (``n_ent`` entity-key columns); *kind* (as for :func:`_check_pbt_branch_coverage`) names the entity.
     """
+    if not pbt or not fan_for_d:
+        return
+    flat = getattr(fan_for_d, "flat", frozenset())
     fan_first = getattr(fan_for_d, "fan_first", frozenset())
-    if not fan_first or not pbt:
-        return
     times_by_d = _read_pairs_to_dict(solve_data_dir / "steps_in_use.csv", key_col=0, provider=provider)
-    tiers_by_d: dict[str, list[list[str]]] = {}
-    for d in times_by_d:
-        if d in fan_first:
-            tiers = ts_tiers(d, ts_for_d, fan_for_d)
-            if len(tiers) == 2:
-                tiers_by_d[d] = tiers
-    if not tiers_by_d:
+    periods = [d for d in times_by_d if d in fan_for_d and d not in flat and ts_for_d.get(d)]
+    if not periods:
         return
-    # Own (later) analysis time -> the look-ahead periods that would fall back to it.
-    d_by_own_ts: dict[str, list[str]] = {}
-    for d, (_fan, own) in tiers_by_d.items():
-        for ts in dict.fromkeys(own):
-            d_by_own_ts.setdefault(ts, []).append(d)
-    time_sets = {d: set(times_by_d[d]) for d in tiers_by_d}
-    candidates: dict[tuple, set[tuple[str, str]]] = {}
+    covered: dict[tuple, set[str]] = {}
     for key in pbt:
-        ts, t = key[n_ent + 2], key[n_ent + 3]
-        for d in d_by_own_ts.get(ts, ()):
-            if t in time_sets[d]:
-                candidates.setdefault(key[:n_ent + 1], set()).add((d, t))
-    uncovered: dict[tuple, list[tuple[str, str]]] = {}
-    for prefix, cells in candidates.items():
+        covered.setdefault((key[:n_ent + 1], key[n_ent + 1], key[n_ent + 2]), set()).add(key[n_ent + 3])
+    prefixes = sorted(dict.fromkeys(k[0] for k in covered))
+    tiers_by_d = {d: ts_tiers(d, ts_for_d, fan_for_d) for d in periods}
+
+    def steps_of(prefix: tuple, branches: "Iterable[str]", tier: "Iterable[str]") -> set[str]:
+        out: set[str] = set()
+        for tb in branches:
+            for ts in tier:
+                out |= covered.get((prefix, tb, ts), set())
+        return out
+
+    later: dict[tuple, list[tuple[str, str]]] = {}
+    missing: "tuple | None" = None  # (prefix, d, branches, fan tier, steps), the first found
+    for prefix in prefixes:
         stochastic = prefix[member_pos] in stochastic_entities
-        for d, t in cells:
-            fan, own = tiers_by_d[d]
-            folds = [[tb_for_d.get(d, ())]] if stochastic else []
-            pe_list = pe_for_d.get(d, ())
-            if pe_list:
-                folds.append([tb_for_d.get(pe, ()) for pe in pe_list])
-            for tb_groups in folds:
-                if _tier_has_value(pbt, prefix, tb_groups, fan, t):
-                    break
-                if _tier_has_value(pbt, prefix, tb_groups, own, t):
-                    uncovered.setdefault(prefix, []).append((d, t))
-                    break
-    if not uncovered:
-        return
-    prefix = min(uncovered)
-    ent, param = prefix[:n_ent], prefix[n_ent]
-    order = {dt: i for i, dt in enumerate((d, t) for d, ts_list in times_by_d.items() for t in ts_list)}
-    cells = sorted(uncovered[prefix], key=order.__getitem__)
-    steps = list(dict.fromkeys(t for _d, t in cells))
-    periods = list(dict.fromkeys(d for d, _t in cells))
-    shown = ", ".join(f"'{t}'" for t in steps[:_UNCOVERED_SHOWN])
-    if len(steps) > _UNCOVERED_SHOWN:
-        shown += f" and {len(steps) - _UNCOVERED_SHOWN} more"
-    fan_steps = ", ".join(f"'{ts}'" for ts in dict.fromkeys(ts for d in periods for ts in tiers_by_d[d][0]))
-    own_steps = ", ".join(f"'{ts}'" for ts in dict.fromkeys(ts for d in periods for ts in tiers_by_d[d][1]))
+        for d in periods:
+            tiers = tiers_by_d[d]
+            all_ts = [ts for tier in tiers for ts in tier]
+            own = list(tb_for_d.get(d, ())) if stochastic else []
+            if own and steps_of(prefix, own, all_ts):
+                branches = own
+            else:
+                branches = list(dict.fromkeys(tb for pe in pe_for_d.get(d, ()) for tb in tb_for_d.get(pe, ())))
+            if not branches:
+                continue
+            readable = tiers[0] if d in fan_first else all_ts
+            has = steps_of(prefix, branches, readable)
+            need = [t for t in times_by_d[d] if t not in has]
+            if not need:
+                continue
+            made_later = steps_of(prefix, branches, all_ts)
+            later_steps = [t for t in need if t in made_later]
+            if later_steps:
+                later.setdefault(prefix, []).extend((d, t) for t in later_steps)
+            no_value = [t for t in need if t not in made_later]
+            if no_value and missing is None:
+                missing = (prefix, d, branches, tiers[0], no_value)
     solve = next(iter(_read_singles(solve_data_dir / "solve_current.csv", provider=provider)), None)
     solve_name = f"solve '{solve}'" if solve else "this solve"
-    period_names = ", ".join(f"'{d}'" for d in periods)
+    if later:
+        prefix = min(later)
+        ent, param = prefix[:n_ent], prefix[n_ent]
+        order = {dt: i for i, dt in enumerate((d, t) for d, ts_list in times_by_d.items() for t in ts_list)}
+        cells = sorted(later[prefix], key=order.__getitem__)
+        steps = list(dict.fromkeys(t for _d, t in cells))
+        periods_hit = list(dict.fromkeys(d for d, _t in cells))
+        shown = ", ".join(f"'{t}'" for t in steps[:_UNCOVERED_SHOWN])
+        if len(steps) > _UNCOVERED_SHOWN:
+            shown += f" and {len(steps) - _UNCOVERED_SHOWN} more"
+        fan_steps = ", ".join(f"'{ts}'" for ts in dict.fromkeys(ts for d in periods_hit for ts in tiers_by_d[d][0]))
+        own_steps = ", ".join(f"'{ts}'" for ts in dict.fromkeys(ts for d in periods_hit for tier in tiers_by_d[d][1:]
+                                                                for ts in tier))
+        period_names = ", ".join(f"'{d}'" for d in periods_hit)
+        raise FlexToolConfigError(
+            f"{_subject(kind, ent)}, parameter '{param}': {solve_name} branches into its forecasts at time step "
+            f"{fan_steps} and reads the forecasts made then over its whole horizon, but those forecasts have no "
+            f"value at time step{'s' if len(steps) > 1 else ''} {shown} (period{'s' if len(periods_hit) > 1 else ''} "
+            f"{period_names}).  Only the forecasts made later, at "
+            f"{own_steps}, have values there, and a solve (or a roll of a rolling solve) must not use a forecast "
+            f"made after it branches.  Give the forecasts that start at {fan_steps} values for the whole horizon, "
+            "look-ahead included.  Check which alternative of the scenario gives this value."
+        )
+    if missing is None:
+        return
+    prefix, d, branches, fan_tier, steps = missing
+    ent, param = prefix[:n_ent], prefix[n_ent]
+    all_steps = [t for ts_list in times_by_d.values() for t in ts_list]
+    first, last = all_steps[0], all_steps[-1]
+    made = ", ".join(f"'{ts}'" for ts in fan_tier)
+    names = ", ".join(f"'{tb}'" for tb in branches)
+    at = f"'{steps[0]}'" if len(steps) == 1 else f"'{steps[0]}' and {len(steps) - 1} more up to '{steps[-1]}'"
     raise FlexToolConfigError(
-        f"{_subject(kind, ent)}, parameter '{param}': {solve_name} branches into its forecasts at time step "
-        f"{fan_steps} and reads the forecasts made then over its whole horizon, but those forecasts have no "
-        f"value at time step{'s' if len(steps) > 1 else ''} {shown} (period{'s' if len(periods) > 1 else ''} "
-        f"{period_names}).  Only the forecasts made later, at "
-        f"{own_steps}, have values there, and a solve (or a roll of a rolling solve) must not use a forecast "
-        f"made after it branches.  Give the forecasts that start at {fan_steps} values for the whole horizon, "
-        "look-ahead included.  Check which alternative of the scenario gives this value."
+        f"{_subject(kind, ent)}, parameter '{param}': {solve_name} (time steps '{first}' to '{last}') branches into "
+        f"its forecasts at time step {made} and reads the forecasts made then over its whole horizon, but "
+        f"forecast {names} made at analysis_time {made} has no value at time step{'s' if len(steps) > 1 else ''} "
+        f"{at} (period '{d}').  FlexTool does not fill a forecast with the default value or with the series of "
+        f"another branch.  Give every forecast made at analysis_time {made} values up to the end of the horizon "
+        f"('{last}'), or shorten the horizon (in a rolling solve, rolling_solve_horizon).  Check which alternative "
+        "of the scenario gives this value."
     )
 
 

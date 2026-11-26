@@ -2,6 +2,11 @@
 
 ### Behaviour changes
 
+- **Stochastic forecasts must cover the horizon.** A forecast that has no value for a time step that its solve or
+  roll reads it for (the look-ahead included) now stops the run before that solve, with an error naming the
+  forecast, the roll and the first time step without a value. Before, the step silently read 0, or in a forecast
+  branch the realized series. The example `1_week_rolling_wind` (stochastics.sqlite) now gives each forecast the
+  whole 96-hour horizon from its `analysis_time`; its results change in the roll that starts at t0097.
 - **Capacity tables in a chain of solves: existing before retirements.** In a rolling chain of investment solves,
   the `existing` column of `unit_capacity__d`, `connection_capacity__d` and `node_capacity__d` no longer drops the
   capacity that an earlier solve retired. It is the existing capacity in service before any retirement in every
