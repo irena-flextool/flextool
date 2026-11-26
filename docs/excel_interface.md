@@ -152,6 +152,12 @@ A few practical notes:
 
 ## Importing edited data back
 
+!!! note "Workbooks from FlexTool 4.7.1 need FlexTool 4.7.1 or later"
+    A link sheet (a relationship without parameters, such as `group_node`) has `alternative` and
+    `entity existence` columns when an entity is switched on or off in an alternative. FlexTool 4.7.0 reads those
+    cells as part of the entity names, so it loses the memberships and their activity. Import such a workbook
+    with FlexTool 4.7.1 or later.
+
 ### From the FlexTool GUI
 
 Add the edited `.xlsx` as an input source via the **Add input source**
