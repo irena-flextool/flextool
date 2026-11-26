@@ -243,6 +243,7 @@
  "tests/engine/test_flexdata_field_routes.py": 1.0,
  "tests/engine/test_flexdata_row_order.py": 234.1,
  "tests/engine/test_flowgroup_cumulative_accounting.py": 32.9,
+ "tests/engine/test_flowgroup_cumulative_carry.py": 50.0,
  "tests/engine/test_forecast_covers_horizon.py": 60.0,
  "tests/engine/test_forward_only_blended_weights.py": 0.2,
  "tests/engine/test_group_invest_method_not_active.py": 0.0,

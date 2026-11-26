@@ -14,6 +14,13 @@
   node in a capacity margin, inertia or non-synchronous group, or a flowGroup flow limit on such a unit; each error
   names the unit and what to change. Each Benders solve prints one line `Benders master: N connections, N
   unit__inputNode arcs, N unit__outputNode arcs`.
+- **Flow group cumulative limits carry across rolls and solves.** In a rolling solve, and over the solves of a run,
+  `max_cumulative_flow` and `min_cumulative_flow` now count the flow that earlier rolls and solves realized, as the
+  CO2 limits do: each roll may use the limit times the hours realized so far plus its own hours, minus the flow
+  already realized. Before, each roll applied the limit to its own window only, so the realized flow could exceed a
+  maximum or fall short of a minimum. Rolling and multi-solve models with these limits give different results;
+  single solves do not change. With stochastic forecasts, a minimum that the realized data make unreachable in a
+  later roll makes that solve infeasible (see `reference/flow_groups.md`).
 - **Stochastic forecasts must cover the horizon.** A forecast that has no value for a time step that its solve or
   roll reads it for (the look-ahead included) now stops the run before that solve, with an error naming the
   forecast, the roll and the first time step without a value. Before, the step silently read 0, or in a forecast

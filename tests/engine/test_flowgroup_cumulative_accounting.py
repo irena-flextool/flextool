@@ -167,9 +167,11 @@ def test_rolling_fan_cumulative_flow_solve_per_forecast_path(tmp_path_factory) -
     surplus covered another's deficit.
 
     Hand values: the limit is an average power times the weighted hours of the path (timestep_weight 1, one period
-    so r = 1): roll k's path is its 24 h jump and min(72, 144 − 24k) h of a forecast, RHS = 1e6·min(96, 168 − 24k).
-    The last roll (k = 6) is its jump only and keeps the legacy row over its 24 h, RHS = 1e6·24 (before 4.7.0: the
-    row of every realization roll)."""
+    so r = 1), carried across the rolls (D19): roll k's path is its 24 h jump and min(72, 144 − 24k) h of a
+    forecast, after 24k realized hours, RHS = 1e6·(24k + min(96, 168 − 24k)) − R_k, R_k the net flow into the group
+    realized by rolls 0 … k − 1: minus the gas the plant drew in their jumps (v_flow·unitsize·slope on the period1
+    steps each roll realized).  The last roll (k = 6) is its jump only and keeps the non-path row, RHS = 1e6·168 −
+    R_6 (before 4.7.0: the row of every realization roll)."""
     fixture = FLEXTOOL_ROOT / "tests" / "fixtures" / "stochastics.json"
     entities = [["flowGroup", "gas_fuel", None],
                 ["flowGroup__unit__node", ["gas_fuel", "gas_plant", "gas_market"], None]]
@@ -180,17 +182,28 @@ def test_rolling_fan_cumulative_flow_solve_per_forecast_path(tmp_path_factory) -
     steps = run(tmp_path_factory, url, scen)
     assert list(steps) == [f"1week_rolling_roll_{k}" for k in range(7)]
     forecasts = ("lower", "mid", "upper")
+    realized = [0.0]  # R_k
+    for k in range(7):
+        st = steps[f"1week_rolling_roll_{k}"]
+        fuel = (utf8(st.solution.value("v_flow"))
+                .filter((pl.col("p") == "gas_plant") & (pl.col("source") == "gas_market") & (pl.col("d") == "period1"))
+                .join(utf8(st.flex_data.realized_dispatch).rename({"period": "d", "step": "t"}), on=["d", "t"])
+                .join(utf8(st.flex_data.p_unitsize.frame).rename({"value": "us"}), on="p")
+                .join(utf8(st.flex_data.p_slope.frame).rename({"value": "slope"}), on=["p", "d", "t"]))
+        assert fuel.height == 24, k
+        realized.append(realized[-1] - float((fuel["value"] * fuel["us"] * fuel["slope"]).sum()))
     for k in range(6):
         pb = build(steps[f"1week_rolling_roll_{k}"].flex_data)
         assert row_bounds(pb, "maxCumulative_flow_solve", "") == {}, k
         rows = row_bounds(pb, "maxCumulative_flow_solve_path", "gas_fuel,")
         assert set(rows) == {f"maxCumulative_flow_solve_path[gas_fuel,{f}]" for f in forecasts}, k
         for nm, (_lb, ub) in rows.items():
-            assert ub == pytest.approx(1.0e6 * min(96, 168 - 24 * k), rel=1e-12), (k, nm)
+            assert ub == pytest.approx(1.0e6 * (24 * k + min(96, 168 - 24 * k)) - realized[k], rel=1e-12), (k, nm)
         for nm, terms in row_terms(pb, "maxCumulative_flow_solve_path", "gas_fuel,").items():
             periods = {col.rsplit(",", 2)[-2] for col in terms if col.startswith("v_flow[")}
             assert periods == {"period1", f"period1_{nm[nm.rindex(',') + 1:-1]}"}, (k, nm, periods)
     last = build(steps["1week_rolling_roll_6"].flex_data)
     assert row_bounds(last, "maxCumulative_flow_solve_path", "") == {}
     legacy = row_bounds(last, "maxCumulative_flow_solve", "gas_fuel")
-    assert legacy == {"maxCumulative_flow_solve[gas_fuel]": (-math.inf, pytest.approx(1.0e6 * 24, rel=1e-12))}
+    assert legacy == {"maxCumulative_flow_solve[gas_fuel]": (-math.inf,
+                                                              pytest.approx(1.0e6 * 168 - realized[6], rel=1e-12))}

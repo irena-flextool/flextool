@@ -66,6 +66,7 @@ from flextool.engine.preprocess._provider_io import _provider_key
 # The FlexData fields of the start-up input (cleared together by reduce_unit_detail_method online).
 from flextool.engine.preprocess._reduce_detail import STARTUP_FIELDS
 from flextool.engine.preprocess.emit._base_steps import NEW_STEP_BASE_STEPS
+from flextool.engine.preprocess.emit import _flowgroup_accumulators as _fg
 
 
 def _loadflex_prof(label: str) -> None:
@@ -1243,6 +1244,7 @@ class FlexData:
     # solve that realized them (the weight co2_max_total's LHS gives them); value null where unknown.
     p_co2_cum_realized_represented: Param | None = None  # (g, d)
     co2_horizon_fraction_reached: float = 1.0
+    flowgroup_realized: pl.DataFrame | None = None  # (g, d) realized flow-group history, _flowgroup_accumulators
 
     # ─── Indirect-conversion (CHP) ────────────────────────────────────────
     process_indirect: pl.DataFrame | None = None
@@ -5555,6 +5557,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
             p_co2_cum_realized_tonnes = co2_cum_realized,
             p_co2_cum_realized_represented = co2_cum_realized_rep,
             co2_horizon_fraction_reached = co2_horizon_fraction,
+            flowgroup_realized = _fg.load_flowgroup_rolling_carry(provider),
 
             process_indirect = indir_set,
             process_input_flows = indir_in,
@@ -7122,8 +7125,7 @@ def build_handoff_from_solution(
       from v_state at fix_storage_timesteps for fix_quantity nodes; the
       price (dual-based) and usage (flow-based) variants stay NULL until
       a fixture exercises them and the dual / flow extraction lands.
-    * ``cumulative_co2`` — per-(group, period), summed from
-      ``solve_data/co2_cum_realized_tonnes.csv`` if present.
+    * ``cumulative_co2`` / ``cumulative_flowgroup`` — per-(group, period) running totals (``emit/_*_accumulators``).
     * ``cumulative_commodity`` — per-(commodity, tier, period),
       derived via :func:`_extract_cumulative_commodity` (this-roll
       v_trade + ``prior_handoff.cumulative_commodity``).
@@ -8094,6 +8096,7 @@ def build_handoff_from_solution(
         cumulative_co2=cumulative_co2_df,
         cumulative_commodity=cumulative_commodity_df,
         cum_sim_hours=cum_sim_hours_df,
+        cumulative_flowgroup=_fg.flowgroup_handoff(flex_data, sol, prior_handoff, _is_dispatch_sibling_parent),
         cycle_start_state=cycle_start_state_df,
         storage_level=storage_level_df,
         scope_start_state=scope_start_state_df,

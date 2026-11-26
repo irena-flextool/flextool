@@ -16,7 +16,7 @@ import polars as pl
 from polar_high import Param, Sum, Where
 from polar_high.engine import Expr, Var
 
-from flextool.engine.input._axis_enums import align_join_dtypes, rename_to_axis
+from flextool.engine.input._axis_enums import align_join_dtypes, join_aligned, rename_to_axis
 from flextool.engine.input._param_shapes import drop_no_limit_rows, without_no_limit_rows
 from flextool.engine.model import _coarse_flows, _dc_power_flow, _extend, _lead_time, _retire_built
 from flextool.engine.model._common import (
@@ -24,6 +24,7 @@ from flextool.engine.model._common import (
     _entity_rows,
     _has_rows,
     _var_view,
+    branch_periods_inherit,
     chain_prior,
     check_max_cap,
     d_period_path,
@@ -855,6 +856,43 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
         )
 
 
+def _with_carry(rhs: pl.DataFrame, carry: pl.DataFrame | None, keys: list[str]) -> pl.DataFrame:
+    """*rhs* (``value``) plus the ``carry`` of its *keys*; a row without a carry keeps its value unchanged."""
+    if carry is None or carry.height == 0:
+        return rhs
+    return (join_aligned(rhs, carry.select(*keys, pl.col("value").alias("carry")), on=keys, how="left")
+            .with_columns(value=pl.when(pl.col("carry").is_null()).then(pl.col("value"))
+                          .otherwise(pl.col("value") + pl.col("carry")))
+            .drop("carry"))
+
+
+def _period_carry(d, cap: Param) -> pl.DataFrame | None:
+    """``[g, d, value]`` = limit[g,d]·H[g,α(d)] − R[g,α(d)] for the (g,d) of *cap* with a realized history (the
+    {max,min}Cumulative_flow_period carry, D19; ``flowgroup_realized`` columns ``flow`` and ``hours``); None without
+    one."""
+    hist = getattr(d, "flowgroup_realized", None)
+    if hist is None or hist.height == 0:
+        return None
+    hist = branch_periods_inherit(d, hist.select("g", "d", R="flow", H="hours"), ("g",))
+    return (join_aligned(cap.frame.select("g", "d", "value"), hist, on=["g", "d"], how="inner")
+            .select("g", "d", value=pl.col("value") * pl.col("H") - pl.col("R")))
+
+
+def _solve_carry(d, cap: Param, r_max: float) -> pl.DataFrame | None:
+    """``[g, value]`` = (limit[g]·Σ_d H_rep[g,d] − Σ_d R_rep[g,d]) / r_max for the groups of *cap* with a realized
+    history (the {max,min}Cumulative_flow_solve carry, D19; ``flowgroup_realized`` columns ``flow_represented`` and
+    ``hours_represented``); None without one.  The history of every period of the run counts once (no copy to
+    forecast branch periods)."""
+    hist = getattr(d, "flowgroup_realized", None)
+    if hist is None or hist.height == 0:
+        return None
+    hist = (hist.select("g", "d", R="flow_represented", H="hours_represented")
+            .sort("g", "d")  # fixed summation order over the periods
+            .group_by("g", maintain_order=True).agg(pl.col("R").sum(), pl.col("H").sum()))
+    return (join_aligned(cap.frame.select("g", "value"), hist, on="g", how="inner")
+            .select("g", value=(pl.col("value") * pl.col("H") - pl.col("R")) / r_max))
+
+
 def _eq_cumulative_flow_solve(b: _Build) -> None:
     """{max,min}Cumulative_flow_solve[_path]: net flow into a flow group, weighted like an
     operational cost, summed over the solve (or, under recourse, over each scenario path)."""
@@ -894,12 +932,16 @@ def _eq_cumulative_flow_solve(b: _Build) -> None:
 
     # ─── EQ. ─── {max,min}Cumulative_flow_solve[_path] ───────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_{d,t} F[g,d,t]·w_y[d,t]  ≤ max_cumulative_flow[g] · Σ_{d,t} w_y[d,t]   (max…)
-    #                            ≥ min_cumulative_flow[g] · Σ_{d,t} w_y[d,t]   (min…)
+    # Σ_{d,t} F[g,d,t]·w_y[d,t]  ≤ max_cumulative_flow[g] · Σ_{d,t} w_y[d,t] + carry_max[g]   (max…)
+    #                            ≥ min_cumulative_flow[g] · Σ_{d,t} w_y[d,t] + carry_min[g]   (min…)
     #   ∀ g with a max / min_cumulative_flow (, per leaf under recourse) — an inf max / −inf min is no limit (no row)
     #   F = net flow into the group (_group_flow; a one-variable connection by v_flow − v_flow_back)
     #   w_y[d,t] = step_duration[d,t]·timestep_weight[d,t]·r[d]
-    #   r[d] = (years_represented[d]/period_share[d]) / max_d′(years_represented[d′]/period_share[d′])
+    #   r[d] = (years_represented[d]/period_share[d]) / r_max,  r_max = max_d′(years_represented[d′]/period_share[d′])
+    #   carry[g] = (limit[g] · Σ_d H_rep[g,d] − Σ_d R_rep[g,d]) / r_max   (no term without history)
+    #   R_rep[g,d] / H_rep[g,d] = Σ F·step_duration·timestep_weight / Σ step_duration·timestep_weight over the
+    #   realized steps of d in earlier rolls and solves of the run, × years_represented[d] / period_share[d] of the
+    #   solve that realized them (flowgroup_realized, *_represented), summed over every period of the run
     # Limits the energy flowing into a flow group over the solve to an average power times the
     # weighted hours of the solve — the same weighting every operational cost term already
     # carries (op_factor), so a representative period or an unequal roll window does not
@@ -907,6 +949,9 @@ def _eq_cumulative_flow_solve(b: _Build) -> None:
     # per (g, leaf), leaf_rows): a plain per-group row, summed across branches, would let one
     # branch's surplus cover another's deficit.  Constraints carry no stochastic branch weight —
     # each branch must respect the limit on its own, unlike the objective (owner decision).
+    # The carry (D19) makes the limit one over the run: limit × (the hours realized so far + this solve's own) −
+    # the flow realized so far, in the raw years_represented/period_share weight, so the realized flow stays within
+    # the limit across rolls and solves.  Every path of a stochastic solve continues from the same realized history.
     for name, sense, cap in caps:
         terms = cap.frame.select("g").unique().join(dt_periods, how="cross").select("g", "d")
         is_path, over, mask = leaf_rows(terms, "g", b.v_flow, d_leaf)
@@ -922,6 +967,7 @@ def _eq_cumulative_flow_solve(b: _Build) -> None:
             cap.frame.select("g", "value").rename({"value": "cap_v"})
                .join(rhs_hours, on="g", how="inner")
                .with_columns(value=pl.col("cap_v") * pl.col("value"))
+               .pipe(_with_carry, _solve_carry(d, cap, r_max), ["g"])
                .select(*leaf_cols, "value"))
         b.m.add_cstr(
             row_name,
@@ -956,9 +1002,12 @@ def _eq_cumulative_flow_period(b: _Build) -> None:
 
     # ─── EQ. ─── {max,min}Cumulative_flow_period ─────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_t F[g,d,t]·sd[d,t]·tw[d,t]  ≤ max_cumulative_flow[g,d] · Σ_t sd[d,t]·tw[d,t]   (max…)
-    #                               ≥ min_cumulative_flow[g,d] · Σ_t sd[d,t]·tw[d,t]   (min…)
+    # Σ_t F[g,d,t]·sd[d,t]·tw[d,t]  ≤ max_cumulative_flow[g,d] · Σ_t sd[d,t]·tw[d,t] + carry_max[g,d]   (max…)
+    #                               ≥ min_cumulative_flow[g,d] · Σ_t sd[d,t]·tw[d,t] + carry_min[g,d]   (min…)
     #   ∀ (g,d) with a max / min_cumulative_flow (the reader leaves out an inf max / −inf min: no limit in d)
+    #   carry[g,d] = limit[g,d] · H[g,α(d)] − R[g,α(d)]   (no term without history)
+    #   R[g,d] / H[g,d] = Σ F·sd·tw / Σ sd·tw over the realized steps of d in earlier rolls and solves of the run
+    #   (flowgroup_realized: flow, hours); α(d) = the period label of a forecast branch period d, d otherwise
     #   split realization roll (d_period_path): the row on a branch period p_f sums the cells d ∈ {p, p_f} (p its
     #   base period: the jump, then the tail), each at its own weight; no row on p; Σ_t sd·tw on the RHS over the same cells
     #   F = net flow into the group (_group_flow; a one-variable connection by v_flow − v_flow_back)
@@ -971,6 +1020,11 @@ def _eq_cumulative_flow_period(b: _Build) -> None:
     # realization roll is the one solve that splits a period: its base period p holds the jump and each
     # branch period p_f the tail, so the row of p_f sums the path p + p_f (flow and hours, d_period_path) and
     # p has no row.  In every other solve a fan starts at the solve's first step: each period is its own path.
+    # The carry (D19): a roll may use the limit times the hours of d realized so far plus its own, minus the flow
+    # realized so far in d, so the realized flow of a period stays within the limit across the rolls and solves
+    # that split it; every forecast continues from its period's realized history.  It assumes that the realized
+    # steps of one period come from solves with the same time weighting (a rolling solve, a sequence, or the
+    # dispatch of a nested chain: an investment solve realizes no dispatch).
     for name, sense, cap in (("maxCumulative_flow_period", "<=", d.pd_max_cumulative_flow),
                              ("minCumulative_flow_period", ">=", d.pd_min_cumulative_flow)):
         if cap is None or cap.frame.height == 0:
@@ -983,6 +1037,7 @@ def _eq_cumulative_flow_period(b: _Build) -> None:
                 {"value": "hours_in_period"})
         rhs = (cap.frame.join(hours, on="d", how="inner")
                .with_columns(value=pl.col("value") * pl.col("hours_in_period"))
+               .pipe(_with_carry, _period_carry(d, cap), ["g", "d"])
                .select("g", "d", "value"))
         b.m.add_cstr(
             name,
