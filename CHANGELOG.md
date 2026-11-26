@@ -97,8 +97,9 @@
   or group membership switched off in an alternative came back switched on. Every class now has the column, on
   its constant sheet or, for a class without parameters (such as `group__node`), on its link sheet.
 - **Excel import: number indexes stay numbers.** A `delay` map ({2: 0.2, 3: 0.5}, index in hours) and a
-  part-load curve (`piecewise_linear_efficiency`, index the load share) came back from a workbook with text
-  indexes ('2.0'); their indexes are numbers again.
+  part-load curve (`piecewise_linear_efficiency`, index the load share, also per period) came back from a
+  workbook with text indexes ('2.0'); their indexes are numbers again. A per-period curve's levels are named
+  `period` and `load` (they were labelled like stochastic branches).
 - **Excel export: index names.** The export labelled the index column of every map on a sheet with the sheet's
   default name, so `solve.solver_arguments` and `timeset.timeset_duration` came back from the workbook indexed by
   `period`, and arrays such as `model.solves` lost their index name. Each parameter now gets its own index name:

@@ -36,6 +36,7 @@ from flextool.export_to_tabular.excel_writer import (
     write_version_sheet,
 )
 import flextool.export_to_tabular.excel_writer as _ew
+from flextool.export_to_tabular import index_names
 
 
 def _build_tab_color_map(navigate_groups: list[dict[str, Any]]) -> dict[str, str]:
@@ -205,9 +206,7 @@ def export_to_excel(
     _ew._stochastic_index_names = settings.get("stochastic_index_names",
                                                 ["forecast", "branch_time", "time", "is_realized"])
     _ew._time_structure_classes = set(settings.get("time_structure_classes", []))
-    _ew._index_names = settings.get("index_names", {})
-    _ew._array_index_name = settings["array_index_name"]
-    _ew._index_name_defaults = settings.get("index_name_defaults", {})
+    index_names.configure(settings)
     specs: list[SheetSpec] = build_sheet_specs(
         db_contents,
         settings,

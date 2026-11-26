@@ -43,6 +43,13 @@ from flextool.export_to_tabular.formatting import (
     FILL_PARAM_HEADER,
     FONT_NAVIGATE_LINK,
 )
+from flextool.export_to_tabular.index_names import (
+    array_index_name,
+    index_name_of,
+    layout_index_name,
+    shape_level_names,
+    sheet_index_names,
+)
 from flextool.export_to_tabular.sheet_config import SheetSpec
 from flextool.units_of_measure import parameter_unit_text
 
@@ -1235,19 +1242,19 @@ def write_array_transposed_sheet_v2(
                 if value is not None and _is_array(value):
                     arr = [_to_native(v) for v in value.values]
                     columns.append((alt, entity_byname, arr))
-                    column_index_names[(alt, entity_byname)] = _index_name_of(
+                    column_index_names[(alt, entity_byname)] = index_name_of(
                         value, entity_class, pname, "constant")
                     if len(arr) > max_array_len:
                         max_array_len = len(arr)
                 elif value is not None and _is_scalar(value):
                     # String value = single-element array
                     columns.append((alt, entity_byname, [_to_native(value)]))
-                    column_index_names[(alt, entity_byname)] = _array_index_name
+                    column_index_names[(alt, entity_byname)] = array_index_name()
                     if 1 > max_array_len:
                         max_array_len = 1
 
     columns.sort(key=lambda c: (c[0], c[1]))
-    index_label, mixed_index_names = _sheet_index_names(column_index_names)
+    index_label, mixed_index_names = sheet_index_names(column_index_names)
 
     cur_row = 1
 
@@ -1363,11 +1370,11 @@ def _flatten_nested_map(
     return result
 
 
-def _get_nested_index_names(value: Any, depth: int) -> list[str]:
+def _get_nested_index_names(value: Any, depth: int, shape_names: tuple[str, ...] | None = None) -> list[str]:
     """Extract index names from each level of a nested Map.
 
-    Falls back to stochastic_index_names defaults from settings when
-    the DB stores 'x' or empty index names.
+    A level stored as 'x' (or unnamed) takes its name from *shape_names* (the parameter's shape, e.g. a
+    per-period part-load curve: period, load), else from the stochastic_index_names defaults of the settings.
     """
     names: list[str] = []
     current = value
@@ -1376,6 +1383,8 @@ def _get_nested_index_names(value: Any, depth: int) -> list[str]:
             iname = current.index_name
             if iname and iname != "x":
                 names.append(iname)
+            elif shape_names is not None and level < len(shape_names):
+                names.append(shape_names[level])
             elif level < len(_stochastic_index_names):
                 names.append(_stochastic_index_names[level])
             else:
@@ -1435,7 +1444,8 @@ def write_stochastic_sheet_v2(
                     continue  # not stochastic (< 3d)
 
                 if not index_names:
-                    index_names = _get_nested_index_names(value, depth)
+                    index_names = _get_nested_index_names(
+                        value, depth, shape_level_names(entity_class, pname, depth))
                 max_depth = max(max_depth, depth)
 
                 flat = _flatten_nested_map(value, depth)
@@ -1596,15 +1606,6 @@ def _xlsx_safe_float(value: Any) -> Any:
     return nat
 
 
-def _ladder_axis_name(axis: Any) -> str:
-    """Return the human-readable axis name for an :class:`AxisName` value.
-
-    Maps registry axis tokens to the index labels we emit in the sheet.
-    """
-    # Use the axis's value (contract token) to derive a label.  We keep
-    # the mapping local to the writer so the registry stays UI-free.
-    token = getattr(axis, "value", str(axis))
-    return {"d": "period", "t": "time", "i": "tier"}.get(token, token)
 
 
 def _walk_ladder_map(
@@ -2384,41 +2385,6 @@ def _add_data_validation(
 _period_only_params: dict[str, list[str]] = {}
 _time_structure_classes: set[str] = set()
 _info_rows: dict[str, str] = {}
-# Index names, set by export_to_excel from export_settings.yaml (see _index_name_of).
-_index_names: dict[str, dict[str, str]] = {}
-_array_index_name: str = "sequence_index"
-_index_name_defaults: dict[str, str] = {}
-# Maps whose default index name 'x' is kept: the engine reads a profile's index name (time / period / x = infer),
-# and their meaningful names are a later change.
-_KEEP_DEFAULT_INDEX_NAME: frozenset[tuple[str, str]] = frozenset({("profile", "profile")})
-
-
-def _index_name_of(value: Any, entity_class: str, pname: str, layout: str) -> str:
-    """The index name the v2 export writes for a 1-level Map or an Array *value* (``None``: a Map not set yet).
-
-    A name of its own stays.  Spine's default (``x`` for a Map, ``i`` for an Array) becomes the meaningful name:
-    ``array_index_name`` for an Array; for a Map the ``index_names`` table of export_settings.yaml, else the
-    parameter's single-level axis in ``_param_shapes`` (period, time, tier, load), else the layout's default.
-    Profile maps keep ``x``.
-    """
-    stored = value.index_name if value is not None else None
-    if value is not None and _is_array(value):
-        return stored if stored and stored != "i" else _array_index_name
-    if stored and stored != "x":
-        return stored
-    if (entity_class, pname) in _KEEP_DEFAULT_INDEX_NAME:
-        return "x"
-    named = _index_names.get(entity_class, {}).get(pname)
-    if named:
-        return named
-    from flextool.engine.input._param_shapes import PARAM_ALLOWED_SHAPES, shape_to_axes
-    one_level = {shape_to_axes(s).map_levels[0] for s in PARAM_ALLOWED_SHAPES.get((entity_class, pname), ())
-                 if len(shape_to_axes(s).map_levels) == 1}
-    if len(one_level) == 1:
-        return _ladder_axis_name(next(iter(one_level)))
-    return _index_name_defaults.get(layout, "period")
-
-
 def _periodic_index_names(
     spec: SheetSpec, db_contents: DatabaseContents,
 ) -> tuple[str, dict[str, str] | None]:
@@ -2439,26 +2405,17 @@ def _periodic_index_names(
                 continue  # time series -> _t sheet
         elif not _is_array(value):
             continue
-        name = _index_name_of(value, cls, pname, "periodic")
+        name = index_name_of(value, cls, pname, "periodic")
         per_param = counts.setdefault(pname, {})
         per_param[name] = per_param.get(name, 0) + 1
     names = {p: max(c, key=lambda n: (c[n], n)) for p, c in counts.items()}
     if not names:
-        names = {p: _index_name_of(None, spec.entity_classes[0], p, "periodic") for p in spec.parameter_names}
-        label, _mixed = _sheet_index_names(names)
-        return label or _index_name_defaults.get("periodic", "period"), None
-    return _sheet_index_names(names)
+        names = {p: index_name_of(None, spec.entity_classes[0], p, "periodic") for p in spec.parameter_names}
+        label, _mixed = sheet_index_names(names)
+        return label or layout_index_name("periodic"), None
+    return sheet_index_names(names)
 
 
-def _sheet_index_names(names: dict[Any, str]) -> tuple[str, dict[Any, str] | None]:
-    """The index column label (the most common name) and, when the names differ, every key's name."""
-    if not names:
-        return "", None
-    counts: dict[str, int] = {}
-    for name in names.values():
-        counts[name] = counts.get(name, 0) + 1
-    label = max(counts, key=lambda n: (counts[n], n))
-    return label, (dict(names) if len(counts) > 1 else None)
 _stochastic_index_names: list[str] = ["forecast", "branch_time", "time", "is_realized"]
 
 
@@ -3429,8 +3386,8 @@ def write_timeseries_sheet_v2(
         cur_row += 1
 
     # Index names: the column A label holds the most common; when the columns differ, each column's own.
-    index_label, mixed_index_names = _sheet_index_names({
-        col_idx: _index_name_of(m, ec, pname, "timeseries")
+    index_label, mixed_index_names = sheet_index_names({
+        col_idx: index_name_of(m, ec, pname, "timeseries")
         for col_idx, (ec, _byname, pname, _alt, m) in enumerate(columns, start=3)
     })
     if mixed_index_names:
@@ -3509,7 +3466,7 @@ def write_timeseries_sheet_v2(
 
     # index: time label on column A of the last header row
     ws.cell(row=n_header_rows, column=1,
-            value=f"index: {index_label or _index_name_defaults.get('timeseries', 'time')}")
+            value=f"index: {index_label or layout_index_name('timeseries')}")
 
     # ── Write time data rows ─────────────────────────────────────
     col_index_maps: list[dict[str, Any]] = []

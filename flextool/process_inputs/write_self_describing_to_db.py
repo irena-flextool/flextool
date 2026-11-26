@@ -65,16 +65,29 @@ def _is_multidimensional(sheet: SheetData) -> bool:
 
 # Map parameters whose index is a number, not a name: a workbook carries every index as text, so their indexes
 # are turned back into floats (``unit.delay`` {2.0: 0.2, 3.0: 0.5}).  The part-load curve's load level is the
-# other float index; it comes from the shape registry (_float_index_parameters).
+# other float index, one level deep or under a period; it comes from the shape registry (_load_axis_parameters).
 _FLOAT_INDEX_PARAMETERS: frozenset[tuple[str, str]] = frozenset({("unit", "delay"), ("connection", "delay")})
+# The name of the load level of a nested part-load curve as the export writes it (an AxisName.L level).
+_LOAD_LEVEL = "load"
+
+
+def _load_axis_parameters() -> frozenset[tuple[str, str]]:
+    """The (class, parameter) pairs with a shape that has the part-load curve's load level."""
+    from flextool.engine.input._param_shapes import PARAM_ALLOWED_SHAPES, AxisName, shape_to_axes
+    return frozenset(key for key, shapes in PARAM_ALLOWED_SHAPES.items()
+                     if any(AxisName.L in shape_to_axes(s).map_levels for s in shapes))
 
 
 def _float_index_parameters() -> frozenset[tuple[str, str]]:
-    """The (class, parameter) pairs whose 1-level Map index is a float: delay, and the load level of the shapes."""
-    from flextool.engine.input._param_shapes import PARAM_ALLOWED_SHAPES, AxisName, shape_to_axes
-    load = {key for key, shapes in PARAM_ALLOWED_SHAPES.items()
-            if any(shape_to_axes(s).map_levels == (AxisName.L,) for s in shapes)}
-    return _FLOAT_INDEX_PARAMETERS | frozenset(load)
+    """The (class, parameter) pairs whose 1-level Map index is a float: delay and the part-load curves."""
+    return _FLOAT_INDEX_PARAMETERS | _load_axis_parameters()
+
+
+def _float_load_levels(value: Map) -> Map:
+    """*value* with the indexes of every level named ``load`` turned into floats (a nested part-load curve)."""
+    indexes = [_float_index(i) for i in value.indexes] if value.index_name == _LOAD_LEVEL else list(value.indexes)
+    values = [_float_load_levels(v) if isinstance(v, Map) else v for v in value.values]
+    return Map(indexes=indexes, values=values, index_name=value.index_name)
 
 
 def _float_index(value: Any) -> Any:
@@ -455,8 +468,11 @@ def _group_multi_index_records(
             templates[key] = rec
 
     nested: list[dict[str, Any]] = []
+    load_params = _load_axis_parameters()
     for key, entries in groups.items():
         top_map = _build_nested_map(entries)
+        if (key[0], key[2]) in load_params:
+            top_map = _float_load_levels(top_map)
         rec = dict(templates[key])
         rec["value"] = top_map
         rec["index_value"] = None

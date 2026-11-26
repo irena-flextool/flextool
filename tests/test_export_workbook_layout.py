@@ -435,6 +435,7 @@ def test_index_names_survive_the_workbook(tmp_path: Path) -> None:
     #   solve.solver_arguments {presolve}, x      -> argument
     #   model.solves      Array, i                -> sequence_index
     #   profile.profile   {t0001, t0002}, x       -> x        (a time series: the timeline names t0001, t0002)
+    #   unit.piecewise_linear_efficiency {p2020: {0.25, 1.0}}, x / x -> period / load (its per-period curve shape)
     db = tmp_path / "index_names.sqlite"
     initialize_database(str(SCHEMA_JSON), str(db))
     url = f"sqlite:///{db}"
@@ -446,6 +447,7 @@ def test_index_names_survive_the_workbook(tmp_path: Path) -> None:
         ("solve", ("s",), "solver_arguments"): Map(["presolve"], ["on"]),
         ("model", ("m",), "solves"): Array(["s"]),
         ("profile", ("pr",), "profile"): Map(["t0001", "t0002"], [0.5, 0.7]),
+        ("unit", ("u",), "piecewise_linear_efficiency"): Map(["p2020"], [Map([0.25, 1.0], [0.3, 0.4])]),
     }
     expected = {
         ("unit", ("u",), "invest_cost"): ("period",),
@@ -455,6 +457,7 @@ def test_index_names_survive_the_workbook(tmp_path: Path) -> None:
         ("solve", ("s",), "solver_arguments"): ("argument",),
         ("model", ("m",), "solves"): ("sequence_index",),
         ("profile", ("pr",), "profile"): ("x",),
+        ("unit", ("u",), "piecewise_linear_efficiency"): ("period", "load"),
     }
     with DatabaseMapping(url) as mapping:
         for cls, byname in {(c, b) for c, b, _p in values}:
@@ -475,9 +478,14 @@ def test_index_names_survive_the_workbook(tmp_path: Path) -> None:
                   from_database(p["value"], p["type"]) for p in mapping.get_parameter_value_items()}
     got = {k: _index_name_path(v) for k, v in parsed.items()}
     delay_indexes = list(parsed[("unit", ("u",), "delay")].indexes)
+    curve = parsed[("unit", ("u",), "piecewise_linear_efficiency")]
+    curve_loads = list(curve.values[0].indexes)
     assert {k: got.get(k) for k in expected} == expected
     # The delay's indexes are numbers (hours), not text.
     assert delay_indexes == [2.0, 3.0] and all(isinstance(i, float) for i in delay_indexes)
+    # So are the load shares of the per-period part-load curve, with their values.
+    assert list(curve.indexes) == ["p2020"] and curve_loads == [0.25, 1.0]
+    assert all(isinstance(i, float) for i in curve_loads) and list(curve.values[0].values) == [0.3, 0.4]
     book = openpyxl.load_workbook(out)
     try:
         ws = book["unit_p"]
