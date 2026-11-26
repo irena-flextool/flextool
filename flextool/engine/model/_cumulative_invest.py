@@ -248,7 +248,7 @@ def _eq_min_entity_period(b: _Build) -> None:
     #   R[e,d] = v_divest[e,d] + Σ_c v_divest_built[e,c,d] (existing and model-built capacity retired in d);
     #   B = the (e,d) of cd_divest_built (_retire_built)
     # Forces a minimum capacity to come online or be retired in a period; the floor twin of
-    # max{Invest,Divest}_entity_period in model/core/.  Capacity in MW (MWh for storage nodes).  Without a
+    # max{Invest,Divest}_entity_period in model/core/_invest.py.  Capacity in MW (MWh for storage nodes).  Without a
     # construction lead time c(o) = o: v_invest_p[p,d] · unitsize[p] ≥ invest_min_period[p,d] over
     # ed_invest_period_set ∩ pd_invest_set.  With one, a period of an entity with a lead time where nothing can
     # come online (no decision early enough in the solve) and the carried capacity is below the floor is a

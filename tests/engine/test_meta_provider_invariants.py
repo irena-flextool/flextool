@@ -787,7 +787,7 @@ def test_rule_4_read_allowlist_is_used() -> None:
     ("d.iterdir()", "model/core/_flows.py"),
     # an allow-listed literal path in another file, or another path in an allow-listed file
     ("open('/proc/self/status')", "model/_reserve.py"),
-    ("open('/proc/self/maps')", "model/core/_flows.py"),
+    ("open('/proc/self/maps')", "model/core/_build.py"),
 ])
 def test_rule_4_detector_flags_every_pattern(source: str, fname: str) -> None:
     """Self-check: Rule 4 flags each banned name and each disk-read form exactly once."""

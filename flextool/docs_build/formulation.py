@@ -269,8 +269,12 @@ def _step_files() -> list[Path]:
                     for elt in sub.iter.elts:
                         if isinstance(elt, ast.Name):
                             files.append(bound.get(elt.id, toc))
-                        elif (isinstance(elt, ast.Attribute) and isinstance(elt.value, ast.Name)
-                              and elt.value.id in bound):
+                        elif isinstance(elt, ast.Attribute) and isinstance(elt.value, ast.Name):
+                            if elt.value.id not in bound:
+                                raise ValueError(
+                                    f"{_rel(toc)}: the step {ast.unparse(elt)} names a module that is not imported "
+                                    f"with 'from {_MODEL_PACKAGE} import {elt.value.id}'; the formulation page "
+                                    f"cannot place it")
                             files.append(bound[elt.value.id])
     return files
 
