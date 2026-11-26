@@ -1,0 +1,472 @@
+"""Data versions 1-25: the template imports and the early schema edits (the pre-v26 template path)."""
+from spinedb_api import from_database, import_data, SpineDBAPIError, to_database
+
+from flextool.update_flextool.db_migration.common import (
+    _already_applied,
+    _attach_list_defaults,
+    _commit_step,
+    _detach_list_defaults,
+    _later_definition,
+    _reused_later,
+    _upsert_definition,
+    add_new_parameters,
+    add_parameters_manual,
+    add_relationships_manual,
+    add_value_list_manual,
+    remove_parameters_manual,
+)
+
+
+def _migrate_v12(db) -> None:
+    new_parameters = [["group", "output_aggregate_flows", None, "output_node_flows", "Used with group_unit_node or group_connection_node to combine the flows when producing the output_node_flows of a node group."],
+                      ["group", "output_node_flows", None, "output_node_flows" ,"Creates the timewise flow output for this node group (group_flow_t)"]]
+    add_parameters_manual(db,new_parameters)
+    remove_parameters_manual(db,[["solve","rolling_start_time"]])
+
+
+def _migrate_v13(db) -> None:
+    new_value_list = [["load_share_type","equal"],["load_share_type","inflow_weighted"],["load_share_type","no"]]
+    new_parameters = [["group", "share_loss_of_load", "no", "load_share_type", "Force the upward slack of the nodes in this group to be equal or inflow (demand) weighted"]]
+    #value list needs to be added first
+    add_value_list_manual(db,new_value_list)
+    add_parameters_manual(db,new_parameters)
+    if not _reused_later(db, 13, "node", "storate_state_end"):
+        remove_parameters_manual(db,[["node","storate_state_end"]])
+
+
+def _migrate_v14(db) -> None:
+    new_parameters = [["model","exclude_entity_outputs", "yes", "optional_output", "Excludes results on node, unit and connection level, but preserves group level results"]]
+    remove_parameters_manual(db, [["model","results"]])
+    add_parameters_manual(db, new_parameters)
+
+
+def _migrate_v15(db) -> None:
+    remove_parameters_manual(db, [[cls, name] for cls, name in (
+        ("unit", "invest_forced"), ("unit", "retire_forced"), ("connection", "invest_forced"),
+        ("connection", "retire_forced"), ("node", "invest_forced"), ("node", "retire_forced"))
+        if not _reused_later(db, 15, cls, name)])
+    add_parameters_manual(db, [["group", "co2_max_period", "no_method", "co2_methods", "[tCO2] Annualized maximum limit for emitted CO2 in each period."]])
+
+
+def _migrate_v17(db) -> None:
+    add_value_list_manual(db,[["yes_no", "yes"], ["yes_no", "no"]])
+    new_parameters = [["solve", "stochastic_branches", None, None, "[4d-Map], Sets branches included in the solve. [Period, branch, start_time (time_step), realized (yes/no), weight (number)]. Only one of the branches should be realized for each start_time"],
+                      ["group", "include_stochastics", "no", "yes_no", "Includes the stochastic branches to be used for the nodes/units/connections in this group"],
+                      ["model", "output_horizon", "no", "yes_no", "Outputs the flows in the horizons. Used for testing the model."]]
+    add_parameters_manual(db,new_parameters)
+
+
+def _migrate_v18(db) -> None:
+    new_parameters = [["group", "penalty_inertia", 5000, None, "[CUR/MWs] Penalty for violating the inertia constraint. Constant or period."],
+                      ["group", "penalty_capacity_margin", 5000, None, "[CUR/MWh] Penalty for violating the capacity margin constraint. Constant or period."],
+                      ["group", "penalty_non_synchronous", 5000, None, "[CUR/MWh] Penalty for violating the non synchronous constraint. Constant or period."]]
+    new_relationships = [["reserve__upDown__group", "penalty_reserve", 5000, None, "[CUR/MW] Penalty for violating a reserve constraint. Constant."]]
+    add_parameters_manual(db,new_parameters)
+    add_relationships_manual(db,new_relationships)
+
+
+def _migrate_v21(db) -> None:
+    new_value_list = [["storage_nested_fix_method","fix_nothing"],["storage_nested_fix_method","fix_quantity"],["storage_nested_fix_method","fix_price"], ["storage_nested_fix_method","fix_usage"]]
+    add_value_list_manual(db,new_value_list)
+
+
+def _migrate_v22(db) -> None:
+    db.add_update_item("parameter_value_list", name = "node_type")
+    add_value_list_manual(db,[["node_type","balance_within_period"],["invest_methods","cumulative_limits"]])
+    db.add_update_item("parameter_definition", entity_class_name= "node", name= "node_type", parameter_value_list_name = "node_type", description = "Selection for the node to have period balance, instead of time step balance.")
+    db.add_update_item("parameter_definition", entity_class_name= "node", name= "cumulative_max_capacity", description = "[MWh] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period.")
+    db.add_update_item("parameter_definition", entity_class_name= "node", name= "cumulative_min_capacity", description = "[MWh] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.")
+    db.add_update_item("parameter_definition", entity_class_name= "connection", name= "cumulative_max_capacity", description = "[MW] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period.")
+    db.add_update_item("parameter_definition", entity_class_name= "connection", name= "cumulative_min_capacity", description = "[MW] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.")
+    db.add_update_item("parameter_definition", entity_class_name= "unit", name= "cumulative_max_capacity", description = "[MW] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period.")
+    db.add_update_item("parameter_definition", entity_class_name= "unit", name= "cumulative_min_capacity", description = "[MW] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.")
+    db.update_item("parameter_definition", entity_class_name= "node", name= "existing", description = "[MWh] Existing storage capacity. Constant or Period")
+    db.update_item("parameter_definition", entity_class_name= "connection", name= "existing", description = "[MW] Existing capacity. Constant or Period")
+    db.update_item("parameter_definition", entity_class_name= "unit", name= "existing", description = "[MW] Existing capacity. Constant or Period")
+    db.update_item("parameter_definition", entity_class_name= "node", name= "penalty_up", description = "[CUR/MW] Penalty cost for decreasing consumption in the node. Constant, Period or Time.")
+    db.update_item("parameter_definition", entity_class_name= "node", name= "penalty_down", description = "[CUR/MW] Penalty cost for increasing consumption in the node. Constant, Period or Time.")
+    db.update_item("parameter_definition", entity_class_name= "unit__outputNode", name= "other_operational_cost", description = "[CUR/MWh] Other operational variable cost for energy flows. Constant, Period or Time.")
+    db.update_item("parameter_definition", entity_class_name= "unit__inputNode", name= "other_operational_cost", description = "[CUR/MWh] Other operational variable cost for energy flows. Constant, Period or Time.")
+    db.update_item("parameter_definition", entity_class_name= "connection", name= "other_operational_cost", description = "[CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, Period or time.")
+    db.update_item("parameter_definition", entity_class_name= "solve", name= "solve_mode", description = "A single_solve or rolling_window for a set of rolling optimisation windows solved in a sequence.")
+    _commit_step(db,"Added cumulative investments")
+
+
+def _migrate_v23(db) -> None:
+    db.add_update_item("parameter_definition", entity_class_name= "commodity", name= "price", description = "[CUR/MWh or other unit] Price of the commodity. Constant, period or time.")
+    db.add_update_item("parameter_definition", entity_class_name= "group", name= "co2_price", description = "[CUR/ton] CO2 price for a group of nodes. Constant, period or time.")
+    update_parameter_types_v23(db)
+
+
+def _migrate_v24(db) -> None:
+    db.add_update_item("parameter_definition", entity_class_name= "connection", name= "delay", parameter_type_list = ("float","1d_map"), description = "[hours] A time delay between the input node and the output node - works only with one-way connections (or units). Either a constant indicating the time difference in hours or a map of time differences (index: time difference in hours, value: weight). Each weight indicates its share of the original flow and the weights should sum to 1. Requires that the time resolutions in the model are always integer multiples of these time differences.")
+    db.add_update_item("parameter_definition", entity_class_name= "unit", name= "delay", parameter_type_list = ("float","1d_map"), description = "[hours] A time delay between the input nodes and the output nodes. Either a constant indicating the time difference in hours or a map of time differences (index: time difference in hours, value: weight). Each weight indicates its share of the original flow and the weights should sum to 1. Requires that the time resolutions in the model are always integer multiples of these time differences.")
+
+
+def _migrate_v25(db) -> None:
+    update_timestructure(db)
+    db.add_update_item("parameter_definition", entity_class_name= "model", name= "periods_available", parameter_type_list = ("array",), description = "(Optional) Array of periods available for the model. Periods that are in the data, but are not in period_timeset.")
+    db.add_update_item("parameter_definition", entity_class_name= "solve", name= "contains_solves", parameter_type_list = ("str","array"), description = "Array of solves - used for nested solve sequencesArray of solves - used for nested solve sequences")
+
+
+def change_optional_output_type(db, filepath):
+
+    sq= db.entity_parameter_value_sq
+    sq_def = db.object_parameter_definition_sq
+    enable_parameter_query = db.query(sq).filter(sq.c.object_class_name == "model").filter(sq.c.parameter_name == "enable_optional_outputs")
+    disable_parameter_query = db.query(sq).filter(sq.c.object_class_name == "model").filter(sq.c.parameter_name == "disable_optional_outputs")
+    enable_parameter_definition =  db.query(sq_def).filter(sq_def.c.object_class_name == "model").filter(sq_def.c.parameter_name == "enable_optional_outputs").one_or_none()
+    disable_parameter_definition =  db.query(sq_def).filter(sq_def.c.object_class_name == "model").filter(sq_def.c.parameter_name == "disable_optional_outputs").one_or_none()
+
+    paramset_enable = []
+    paramset_disable = []
+    for param in enable_parameter_query:
+        enable_optional_outputs = from_database(param.value, param.type).values
+        meta = [param.entity_class_name, param.entity_name, param.alternative_name]
+        paramset_enable.append((meta,enable_optional_outputs))
+
+    for param in disable_parameter_query:
+        disable_optional_outputs = from_database(param.value, param.type).values
+        meta = [param.entity_class_name, param.entity_name, param.alternative_name]
+        paramset_disable.append((meta,disable_optional_outputs))
+
+    add_new_parameters(db, filepath)
+
+    for param in paramset_enable:
+        for output_name in param[1]:
+            if output_name == 'ramp_envelope':
+                parameter_name = 'output_ramp_envelope'
+            elif output_name == 'unit__node_ramp_t':
+                parameter_name = 'output_unit__node_ramp_t'
+            elif output_name == 'connection_flow_separate' or output_name == 'connection_flow_one_direction':
+                parameter_name = 'output_connection_flow_separate'
+            else:
+                parameter_name = 'invalid'
+            if parameter_name != 'invalid':
+                new_output = [(param[0][0], param[0][1], parameter_name, "yes", param[0][2])]
+                (num,log) = import_data(db, object_parameter_values = new_output)
+    for param in paramset_disable:
+        for output_name in param[1]:
+            if output_name == 'unit_flow_t' or output_name == 'unit__node_flow_t':
+                parameter_name = 'output_unit__node_flow_t'
+            elif output_name == 'connection_flow_t' or output_name == 'connection__node__node_flow_t':
+                parameter_name = 'output_connection__node__node_flow_t'
+            else:
+                parameter_name = 'invalid'
+            if parameter_name != 'invalid':
+                new_output = [(param[0][0], param[0][1], parameter_name, "no", param[0][2])]
+                (num,log) = import_data(db, object_parameter_values = new_output)
+    
+    if enable_parameter_definition is not None:
+        db.remove_items('parameter_definition', *[enable_parameter_definition.id,disable_parameter_definition.id])
+    try:
+        _commit_step(db,"Changed optional outputs")
+    except SpineDBAPIError:
+        print("This change has been done before, continuing") 
+    return 0
+
+def _v25_already_applied(db) -> bool:
+    """Whether the database already has the v25 time structure although its stamp is older.
+
+    Up to FlexTool 4.6.0 each step committed on its own and ``model.version`` was written only at the end, so a
+    migration that failed at a later step (v35, in FlexTool 4.0 to 4.5) left v25 applied under the old stamp.  Applied means: no ``timeblockSet``
+    class, a ``timeset`` class with ``timeline`` and ``timeset_duration`` and ``solve.period_timeset``.  A database
+    without ``timeblockSet`` that is not in that state stops with a message.
+    """
+    if db.get_item("entity_class", name="timeblockSet"):
+        return False
+    applied = (db.get_item("entity_class", name="timeset")
+               and not db.get_item("entity_class", name="timeblockSet__timeline")
+               and db.get_item("parameter_definition", entity_class_name="timeset", name="timeline")
+               and db.get_item("parameter_definition", entity_class_name="timeset", name="timeset_duration")
+               and db.get_item("parameter_definition", entity_class_name="solve", name="period_timeset"))
+    if not applied:
+        raise SpineDBAPIError("v25: the database has no timeblockSet class and not the v25 time structure (a timeset "
+                              "class with timeline and timeset_duration, solve.period_timeset); cannot migrate it.")
+    return True
+
+
+def update_timestructure(db):
+    if _v25_already_applied(db):
+        return
+    timeblocks__timelines = db.find_entities(entity_class_name="timeblockSet__timeline")
+    block_durations = db.find_parameter_values(entity_class_name="timeblockSet", parameter_definition_name="block_duration")
+    timeblock_entity_class_item = db.item(db.mapped_table("entity_class"), name="timeblockSet")
+    db.update_entity_class(id = timeblock_entity_class_item["id"], name='timeset')
+    db.add_parameter_definition(entity_class_name= "timeset", name= "timeline", parameter_type_list = ("str",), description = "The name of the timeline that the timeset uses. (String)")
+    for block_duration in block_durations:
+        timeset_name = block_duration["entity_byname"][0]
+        # A timeset maps to a single timeline in the new schema, but the old
+        # timeblockSet__timeline relationship allowed several. Pick the
+        # alphabetically-first match so the collapse is deterministic
+        # (find_entities order is unspecified) and announce what was dropped.
+        matching_timelines = sorted(
+            timeblocks__timeline["entity_byname"][1]
+            for timeblocks__timeline in timeblocks__timelines
+            if timeblocks__timeline["entity_byname"][0] == timeset_name
+        )
+        if not matching_timelines:
+            continue
+        chosen_timeline = matching_timelines[0]
+        if len(matching_timelines) > 1:
+            print(f"More than one timeline connected to the timeblockSet {timeset_name}. "
+                  f"Keeping '{chosen_timeline}' (alphabetically first); dropping {matching_timelines[1:]}.")
+        value_x, type_ = to_database(chosen_timeline)
+        param_table = db.mapped_table("parameter_value")
+        db.add(
+            param_table,
+            entity_class_name="timeset",
+            parameter_definition_name="timeline",
+            entity_byname=(timeset_name,),
+            alternative_name=block_duration["alternative_name"],
+            value=value_x,
+            type=type_,
+        )
+    
+    t__t_entity_class_item = db.item(db.mapped_table("entity_class"), name="timeblockSet__timeline")
+    db.remove_entity_class(id = t__t_entity_class_item["id"])
+    timeline_duration_in_years = db.item(db.mapped_table("parameter_definition"), entity_class_name="timeline", name = "timeline_duration_in_years")
+    db.remove_parameter_definition(id = timeline_duration_in_years["id"])
+    #rename params or their description if timeblockSet is mentioned
+    parameter_definitions = db.mapped_table("parameter_definition")
+    param = db.item(parameter_definitions, entity_class_name= "solve", name = "period_timeblockSet")
+    db.update_parameter_definition(id = param["id"], name = "period_timeset", description = "Map of periods with associated timesets that will be included in the solve. Index: period name, value: timeset name.")
+    param = db.item(parameter_definitions, entity_class_name= "timeset", name = "block_duration")
+    db.update_parameter_definition(id = param["id"], name = "timeset_duration", description = "Index: name of the the timestep that starts the timeset, value: duration of the block in timesteps")
+    param = db.item(parameter_definitions, entity_class_name= "timeset", name = "new_stepduration")
+    db.update_parameter_definition(id = param["id"], description = "Hours. Creates a new `timeline` from the old for this `timeset` with this timestep duration. The new timeline will sum or average the other timeseries data like `profile` and `inflow` for the new timesteps.")
+    param = db.item(parameter_definitions, entity_class_name= "node", name = "storage_binding_method")
+    db.update_parameter_definition(id = param["id"], description = "Choice how the storage state will be maintained over discontinuos timelines. The default value 'bind_forward_only' will bind forward over any holes in the used timeline, but will not bind end to the start. Meanwhile 'bind_between_timesets' will bind the storage end state at the end of the timeset to the beginning of the timeset. 'bind_within_period', 'bind_within_solve' and bind_within_model' will act similarly but over increasingly longer time span. Separate parameters (e.g. 'storage_state_start') can force bindings. By default, storage start state is bound to 0.")
+    pending = _detach_list_defaults(db, "storage_binding_methods", {"bind_within_timeblock": "bind_within_timeset"})
+    p_value, p_type = to_database("bind_within_timeblock")
+    param_list_value = db.item(db.mapped_table("list_value"), parameter_value_list_name = "storage_binding_methods", value = p_value, type = p_type)
+    p_value, p_type = to_database("bind_within_timeset")
+    db.update_list_value(id = param_list_value["id"], value = p_value, type = p_type)
+    _attach_list_defaults(db, pending)
+
+
+def update_parameter_types_v23(db):
+    """Set the value types of the parameter definitions (v23).
+
+    An entry is created when the database lacks it (as v23 always did), except one with a later name
+    (:func:`_upsert_definition`).  The ``unit__inputNode`` / ``unit__outputNode`` flow coefficient is ``coefficient`` here: v35 renames it to
+    ``flow_coefficient`` and adds ``max_capacity_coefficient`` / ``min_capacity_coefficient`` (typed there).  Typing
+    those v35 names here created ``flow_coefficient`` beside ``coefficient``, and the v35 rename collided with it.
+    Once v25 ran (``timeblockSet`` renamed ``timeset``, which v25's clean run needs), an absent entry is one a later
+    step removed (e.g. v38 ``node.has_balance``, which the v38 floor keys on) or one the v25 template never had: it
+    is not created.
+    """
+    v25_ran = not db.get_item("entity_class", name="timeblockSet") and db.get_item("entity_class", name="timeset")
+    for cls, name, types in get_parameter_type_list_v23():
+        if v25_ran and not db.get_item("parameter_definition", entity_class_name=cls, name=name):
+            if _later_definition(db, 23, cls, name) is None:
+                _already_applied(23, f"{cls}.{name} is not there after v25")
+                continue
+        _upsert_definition(db, 23, cls, name, parameter_type_list=types)
+
+def get_parameter_type_list_v23():
+    types = [["commodity", "co2_content", ("float",)],
+             ["commodity", "price", ("float","1d_map")],
+             ["connection", "availability", ("float","1d_map")],
+             ["connection", "constraint_capacity_coefficient", ("1d_map",)],
+             ["connection", "cumulative_max_capacity", ("float","1d_map")],
+             ["connection", "cumulative_min_capacity", ("float","1d_map")],
+             ["connection", "efficiency", ("float","1d_map")],
+             ["connection", "existing", ("float","1d_map")],
+             ["connection", "fixed_cost", ("float","1d_map")],
+             ["connection", "interest_rate", ("float","1d_map")],
+             ["connection", "invest_cost", ("float","1d_map")],
+             ["connection", "invest_max_period", ("1d_map",)],
+             ["connection", "invest_max_total", ("float",)],
+             ["connection", "invest_method", ("str",)],
+             ["connection", "invest_min_period", ("1d_map",)],
+             ["connection", "invest_min_total", ("float",)],
+             ["connection", "is_DC", ("str",)],
+             ["connection", "lifetime", ("float","1d_map")],
+             ["connection", "lifetime_method", ("str",)],
+             ["connection", "other_operational_cost", ("float","1d_map")],
+             ["connection", "retire_max_period", ("1d_map",)],
+             ["connection", "retire_max_total", ("float",)],
+             ["connection", "retire_min_period", ("1d_map",)],
+             ["connection", "retire_min_total", ("float",)],
+             ["connection", "salvage_value", ("float","1d_map")],
+             ["connection", "startup_cost", ("float",)],
+             ["connection", "startup_method", ("str",)],
+             ["connection", "transfer_method", ("str",)],
+             ["connection", "virtual_unitsize", ("float",)],
+             ["constraint", "constant", ("float",)],
+             ["constraint", "sense", ("str",)],
+             ["group", "capacity_margin", ("float","1d_map")],
+             ["group", "co2_max_period", ("1d_map",)],
+             ["group", "co2_max_total", ("float",)],
+             ["group", "co2_method", ("str",)],
+             ["group", "co2_price", ("float","1d_map")],
+             ["group", "has_capacity_margin", ("str",)],
+             ["group", "has_inertia", ("str",)],
+             ["group", "has_non_synchronous", ("str",)],
+             ["group", "include_stochastics", ("str",)],
+             ["group", "inertia_limit", ("float","1d_map")],
+             ["group", "invest_max_period", ("1d_map",)],
+             ["group", "invest_max_total", ("float",)],
+             ["group", "invest_method", ("str",)],
+             ["group", "invest_min_period", ("1d_map",)],
+             ["group", "invest_min_total", ("float",)],
+             ["group", "max_cumulative_flow", ("float","1d_map")],
+             ["group", "max_instant_flow", ("float","1d_map")],
+             ["group", "min_cumulative_flow", ("float","1d_map")],
+             ["group", "min_instant_flow", ("float","1d_map")],
+             ["group", "non_synchronous_limit", ("float","1d_map")],
+             ["group", "flow_aggregator",  ("str",)],
+             ["group", "output_nodeGroup_dispatch", ("str",)],
+             ["group", "output_nodeGroup_indicators", ("str",)],
+             ["group", "output_flowGroup_indicators", ("str",)],
+             ["group", "penalty_capacity_margin", ("float","1d_map")],
+             ["group", "penalty_inertia", ("float","1d_map")],
+             ["group", "penalty_non_synchronous", ("float","1d_map")],
+             ["group", "share_loss_of_load", ("str",)],
+             ["model", "debug", ("str",)],
+             ["model", "discount_offset_investment", ("float",)],
+             ["model", "discount_offset_operations", ("float",)],
+             ["model", "discount_rate", ("float",)],
+             ["model", "exclude_entity_outputs", ("str",)],
+             ["model", "output_connection__node__node_flow_t", ("str",)],
+             ["model", "output_connection_flow_separate", ("str",)],
+             ["model", "output_horizon", ("str",)],
+             ["model", "output_node_balance_t", ("str",)],
+             ["model", "output_ramp_envelope", ("str",)],
+             ["model", "output_unit__node_flow_t", ("str",)],
+             ["model", "output_unit__node_ramp_t", ("str",)],
+             ["model", "solves", ("array",)],
+             ["model", "version", ("float",)],
+             ["node", "annual_flow", ("float","1d_map")],
+             ["node", "availability", ("float","1d_map","3d_map")],
+             ["node", "constraint_capacity_coefficient", ("1d_map",)],
+             ["node", "constraint_state_coefficient", ("1d_map",)],
+             ["node", "cumulative_max_capacity", ("float","1d_map")],
+             ["node", "cumulative_min_capacity", ("float","1d_map")],
+             ["node", "existing", ("float","1d_map")],
+             ["node", "fixed_cost", ("float","1d_map")],
+             ["node", "has_balance", ("str",)],
+             ["node", "has_storage", ("str",)],
+             ["node", "inflow", ("float","1d_map","3d_map")],
+             ["node", "inflow_method", ("str",)],
+             ["node", "interest_rate", ("float","1d_map")],
+             ["node", "invest_cost", ("float","1d_map")],
+             ["node", "invest_forced", ("float","1d_map")],
+             ["node", "invest_max_period", ("1d_map",)],
+             ["node", "invest_max_total", ("float",)],
+             ["node", "invest_method", ("str",)],
+             ["node", "invest_min_period", ("1d_map",)],
+             ["node", "invest_min_total", ("float",)],
+             ["node", "lifetime", ("float","1d_map")],
+             ["node", "lifetime_method", ("str",)],
+             ["node", "node_type", ("str",)],
+             ["node", "peak_inflow", ("float","1d_map")],
+             ["node", "penalty_down", ("float","1d_map")],
+             ["node", "penalty_up", ("float","1d_map")],
+             ["node", "retire_max_period", ("1d_map",)],
+             ["node", "retire_max_total", ("float",)],
+             ["node", "retire_min_period", ("1d_map",)],
+             ["node", "retire_min_total", ("float",)],
+             ["node", "salvage_value",  ("float","1d_map")],
+             ["node", "self_discharge_loss", ("float","1d_map")],
+             ["node", "storage_binding_method", ("str",)],
+             ["node", "storage_nested_fix_method", ("str",)],
+             ["node", "storage_solve_horizon_method", ("str",)],
+             ["node", "storage_start_end_method", ("str",)],
+             ["node", "storage_state_end", ("float",)],
+             ["node", "storage_state_reference_price", ("float","1d_map")],
+             ["node", "storage_state_reference_value", ("float","1d_map")],
+             ["node", "storage_state_start", ("float",)],
+             ["node", "storate_state_end", ("float",)],
+             ["node", "virtual_unitsize", ("float",)],
+             ["profile", "profile", ("1d_map","3d_map")],
+             ["solve", "contains_solves", ("array",)],
+             ["solve", "fix_storage_periods", ("array","2d_map")],
+             ["solve", "highs_method", ("str",)],
+             ["solve", "highs_parallel", ("str",)],
+             ["solve", "highs_presolve", ("str",)],
+             ["solve", "invest_periods", ("array","2d_map")],
+             ["solve", "period_timeblockSet", ("1d_map",)],
+             ["solve", "realized_invest_periods", ("array","2d_map")],
+             ["solve", "realized_periods", ("array","2d_map")],
+             ["solve", "rolling_duration", ("float",)],
+             ["solve", "rolling_solve_horizon", ("float",)],
+             ["solve", "rolling_solve_jump", ("float",)],
+             ["solve", "solve_mode", ("str",)],
+             ["solve", "solver", ("str",)],
+             ["solve", "solver_arguments", ("array",)],
+             ["solve", "solver_precommand", ("str",)],
+             ["solve", "stochastic_branches", ("4d_map",)],
+             ["solve", "years_represented", ("1d_map",)],
+             ["timeblockSet", "block_duration", ("1d_map",)],
+             ["timeblockSet", "new_stepduration", ("float",)],
+             ["timeline", "timeline_duration_in_years", ("float",)],
+             ["timeline", "timestep_duration", ("1d_map",)],
+             ["unit", "availability", ("float","1d_map","3d_map")],
+             ["unit", "constraint_capacity_coefficient", ("1d_map",)],
+             ["unit", "conversion_method", ("str",)],
+             ["unit", "cumulative_max_capacity", ("float","1d_map")],
+             ["unit", "cumulative_min_capacity", ("float","1d_map")],
+             ["unit", "efficiency", ("float","1d_map","3d_map")],
+             ["unit", "efficiency_at_min_load", ("float",)],
+             ["unit", "existing", ("float","1d_map")],
+             ["unit", "fixed_cost", ("float","1d_map")],
+             ["unit", "interest_rate", ("float","1d_map")],
+             ["unit", "invest_cost", ("float","1d_map")],
+             ["unit", "invest_max_period", ("1d_map",)],
+             ["unit", "invest_max_total", ("float",)],
+             ["unit", "invest_method", ("str",)],
+             ["unit", "invest_min_period", ("1d_map",)],
+             ["unit", "invest_min_total", ("float",)],
+             ["unit", "lifetime", ("float","1d_map")],
+             ["unit", "lifetime_method", ("str",)],
+             ["unit", "min_downtime", ("float",)],
+             ["unit", "min_load", ("float","1d_map","3d_map")],
+             ["unit", "min_uptime", ("float",)],
+             ["unit", "minimum_time_method", ("str",)],
+             ["unit", "retire_max_period", ("1d_map",)],
+             ["unit", "retire_max_total", ("float",)],
+             ["unit", "retire_min_period", ("1d_map",)],
+             ["unit", "retire_min_total", ("float",)],
+             ["unit", "salvage_value", ("float","1d_map")],
+             ["unit", "startup_cost", ("float",)],
+             ["unit", "startup_method", ("str",)],
+             ["unit", "virtual_unitsize", ("float",)],
+             ["connection__node", "constraint_flow_coefficient", ("1d_map",)],
+             ["connection__profile", "profile_method", ("str",)],
+             ["node__profile", "profile_method", ("str",)],
+             ["unit__inputNode", "coefficient", ("float",)],
+             ["unit__inputNode", "constraint_flow_coefficient", ("1d_map",)],
+             ["unit__inputNode", "inertia_constant", ("float",)],
+             ["unit__inputNode", "is_non_synchronous", ("str",)],
+             ["unit__inputNode", "other_operational_cost", ("float","1d_map","3d_map")],
+             ["unit__inputNode", "ramp_cost", ("float",)],
+             ["unit__inputNode", "ramp_method", ("str",)],
+             ["unit__inputNode", "ramp_speed_down", ("float",)],
+             ["unit__inputNode", "ramp_speed_up", ("float",)],
+             ["unit__outputNode", "coefficient", ("float",)],
+             ["unit__outputNode", "constraint_flow_coefficient", ("1d_map",)],
+             ["unit__outputNode", "inertia_constant", ("float",)],
+             ["unit__outputNode", "is_non_synchronous", ("str",)],
+             ["unit__outputNode", "other_operational_cost", ("float","1d_map","3d_map")],
+             ["unit__outputNode", "ramp_cost", ("float",)],
+             ["unit__outputNode", "ramp_method", ("str",)],
+             ["unit__outputNode", "ramp_speed_down", ("float",)],
+             ["unit__outputNode", "ramp_speed_up", ("float",)],
+             ["reserve__upDown__group", "increase_reserve_ratio", ("float",)],
+             ["reserve__upDown__group", "penalty_reserve", ("float",)],
+             ["reserve__upDown__group", "reservation",  ("float","1d_map","3d_map")],
+             ["reserve__upDown__group", "reserve_method", ("str",)],
+             ["unit__node__profile", "profile_method", ("str",)],
+             ["reserve__upDown__connection__node", "increase_reserve_ratio", ("float",)],
+             ["reserve__upDown__connection__node", "large_failure_ratio", ("float",)],
+             ["reserve__upDown__connection__node", "max_share", ("float",)],
+             ["reserve__upDown__connection__node", "reliability", ("float",)],
+             ["reserve__upDown__unit__node", "increase_reserve_ratio", ("str",)],
+             ["reserve__upDown__unit__node", "large_failure_ratio", ("float",)],
+             ["reserve__upDown__unit__node", "max_share", ("float",)],
+             ["reserve__upDown__unit__node", "reliability", ("float",)]
+             ]
+    
+    return types

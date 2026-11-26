@@ -5,6 +5,9 @@
         "flextool/cli/cmd_migrate_database.py",
         "flextool/update_flextool/db_migration/__init__.py",
         "flextool/update_flextool/db_migration/common.py",
+        "flextool/update_flextool/db_migration/v01_v25.py",
+        "flextool/update_flextool/db_migration/v26_v43.py",
+        "flextool/update_flextool/db_migration/v44_v49.py",
         "flextool/update_flextool/v84_branching.py",
         "flextool/update_flextool/__init__.py"
     ],

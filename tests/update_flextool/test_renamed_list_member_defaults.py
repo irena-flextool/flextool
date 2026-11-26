@@ -23,7 +23,7 @@ from spinedb_api import DatabaseMapping, from_database, to_database
 
 from flextool._resources import package_data_path
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
-from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import v01_v25 as m
 from flextool.update_flextool.db_migration import migrate_database
 from flextool.update_flextool.initialize_database import initialize_database
 from tests.db_utils import json_to_db
