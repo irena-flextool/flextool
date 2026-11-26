@@ -304,7 +304,8 @@ def test_flextool3_highs_settings_are_left_out_of_a_commercial_solve(caplog) -> 
 
 def test_flextool3_highs_names_are_the_migrations() -> None:
     """The names the v56 migration folds FlexTool 3's highs_method / highs_parallel / highs_presolve into."""
-    source = (REPO / "flextool" / "update_flextool" / "db_migration.py").read_text(encoding="utf-8")
+    source = "".join(path.read_text(encoding="utf-8")
+                     for path in sorted((REPO / "flextool" / "update_flextool" / "db_migration").glob("*.py")))
     assert set(re.findall(r'highs_key="(\w+)"', source)) == _solver_dispatch._FLEXTOOL3_HIGHS_OPTIONS
 
 

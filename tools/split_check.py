@@ -18,7 +18,8 @@ Checked, each failure printed and counted (exit code 1 when any):
    ``a, b``) where the old one held *g*'s body, statement for statement.  The body must read only its parameters and
    module-level names (no local of the old function), assign nothing the rest of the old function reads, and hold no
    ``return`` / ``yield`` / ``break`` / ``continue`` / ``global`` that would act on the old function.
-4. Every comment line of the old modules is in the new ones (extra comments are listed, not failed).
+4. Every comment line of the old modules is in the new ones (extra comments are listed, not failed); a comment
+   reworded on purpose is named with ``--allow-lost-comment REGEX`` (listed, not failed).
 5. The top-level imports between the new modules have no cycle; with ``--import-check`` each new module imports.
 """
 from __future__ import annotations
@@ -29,6 +30,7 @@ import builtins
 import copy
 import importlib
 import io
+import re
 import subprocess
 import sys
 import tokenize
@@ -216,14 +218,16 @@ def _cycles(graph: dict[str, set[str]]) -> list[list[str]]:
     return found
 
 
-def check(old_specs: list[str], new_paths: list[str], import_check: bool = False) -> list[str]:
+def check(old_specs: list[str], new_paths: list[str], import_check: bool = False,
+          allow_lost: tuple[str, ...] = ()) -> list[str]:
     """The failures of the checks of this module (empty: the split only moved code)."""
     files = _new_files(new_paths)
     return check_texts({spec: _git_show(spec) for spec in old_specs},
-                       {f: f.read_text(encoding="utf-8") for f in files}, import_check)
+                       {f: f.read_text(encoding="utf-8") for f in files}, import_check, allow_lost)
 
 
-def check_texts(old_texts: dict[str, str], new_texts: dict[Path, str], import_check: bool = False) -> list[str]:
+def check_texts(old_texts: dict[str, str], new_texts: dict[Path, str], import_check: bool = False,
+                allow_lost: tuple[str, ...] = ()) -> list[str]:
     """:func:`check` of the old module texts ``{name: text}`` against the new ones ``{path: text}``."""
     errors: list[str] = []
     files = list(new_texts)
@@ -288,8 +292,12 @@ def check_texts(old_texts: dict[str, str], new_texts: dict[Path, str], import_ch
 
     old_comments = sum((_comments(t) for t in old_texts.values()), Counter())
     new_comments = sum((_comments(t) for t in new_texts.values()), Counter())
+    allowed = [re.compile(r) for r in allow_lost]
     for c, k in (old_comments - new_comments).items():
-        errors.append(f"comment lost ({k}x): {c[:100]}")
+        if any(r.search(c) for r in allowed):
+            print(f"comment reworded on purpose ({k}x): {c[:100]}")
+        else:
+            errors.append(f"comment lost ({k}x): {c[:100]}")
     extra = new_comments - old_comments
     for cyc in _cycles(_import_graph(files, trees)):
         errors.append(f"import cycle: {' -> '.join(cyc)}")
@@ -317,8 +325,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--old", action="append", required=True, help="REV:PATH of an old module (repeatable)")
     parser.add_argument("new", nargs="+", help="new module files or folders")
     parser.add_argument("--import-check", action="store_true", help="also import every new module")
+    parser.add_argument("--allow-lost-comment", action="append", default=[], metavar="REGEX",
+                        help="an old comment matching REGEX may be missing (reworded on purpose; repeatable)")
     args = parser.parse_args(argv)
-    errors = check(args.old, args.new, args.import_check)
+    errors = check(args.old, args.new, args.import_check, tuple(args.allow_lost_comment))
     for e in errors:
         print(f"FAIL {e}")
     print("split check: " + ("OK" if not errors else f"{len(errors)} failure(s)"))

@@ -242,7 +242,6 @@ def test_data_tables_are_pinned() -> None:
     assert set(PRIOR) <= {m for name, m in schema["parameter_value_lists"] if name == "invest_methods"}
     assert set(vlh.PRIOR_MEMBERS) == set(vlh.APPENDED) == set(vlh.STEP_COMMIT) == {22}
     assert vlh.APPEND[22] == ("invest_methods",)
-    block = re.split(r"elif next_version == (\d+):", inspect.getsource(db_migration._migrate_open))
-    step22 = block[block.index("22") + 1]
+    step22 = inspect.getsource(db_migration._migrate_v22)
     assert re.findall(r'_commit_step\(db,\s*"([^"]+)"\)', step22) == [vlh.STEP_COMMIT[22]]
     assert f'["invest_methods","{vlh.APPENDED[22]}"]' in step22.replace(" ", "")

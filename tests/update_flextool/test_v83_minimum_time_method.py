@@ -33,6 +33,8 @@ from spinedb_api import DatabaseMapping, Map, to_database
 from spinedb_api.exception import NothingToCommit
 
 from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import common
+from tests.update_flextool._rerun import patch_migration
 
 MARKER = m.BEHAVIOUR_CHANGE_MARKER_PREFIX + m.V83_MIN_TIME_MARKER
 RISING = Map([0.4, 0.7, 1.0], [0.30, 0.40, 0.42])  # fuel 1.33, 1.75, 2.38: two lines, rising efficiency
@@ -466,7 +468,7 @@ def test_guard_stops_on_a_changed_member_without_a_commit(v82_schema_db_url: str
         raw, typ = to_database("overwritten")  # the old spinedb_api bug rewrote a first member
         db.update_item("list_value", id=first["id"], value=raw, type=typ)
 
-    monkeypatch.setattr(m, "_append_list_members", overwrite_first)
+    patch_migration(monkeypatch, "_append_list_members", overwrite_first)
     with DatabaseMapping(url) as db:
         with pytest.raises(m.FlexToolMigrationError,
                            match=r"A version 83 upgrade step changed an existing member of the value list "
@@ -481,7 +483,7 @@ def test_guard_stops_on_a_changed_member_without_a_commit(v82_schema_db_url: str
 def test_guard_removal_form(v82_schema_db_url: str, tmp_path: Path) -> None:
     """A planned removal passes; a planned removal that did not happen stops."""
     with DatabaseMapping(_schema_copy(v82_schema_db_url, tmp_path)) as db:
-        before = m._list_members(db, ["minimum_time_methods"])
+        before = common._list_members(db, ["minimum_time_methods"])
         none_id = next(i for i, (_l, v, _t) in before.items() if v == b'"none"')
         with pytest.raises(m.FlexToolMigrationError, match=r"\('none' \(its planned removal did not happen\)\)"):
             m._v83_check_members(db, "minimum_time_methods", before, removed={none_id})

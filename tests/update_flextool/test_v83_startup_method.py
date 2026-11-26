@@ -19,6 +19,7 @@ from spinedb_api import DatabaseMapping, to_database
 from spinedb_api.exception import NothingToCommit
 
 from flextool.update_flextool import db_migration as m
+from tests.update_flextool._rerun import patch_migration
 
 MEMBERS = ["no_startup", "linear", "linear_fix_in_uc", "integer", "integer_fix_in_uc"]
 #: The v83 texts, copied from plan §2 (the definitions not listed there keep their text).
@@ -255,7 +256,7 @@ def test_guard_stops_on_a_changed_member_without_a_commit(v82_schema_db_url: str
         raw, typ = to_database("overwritten")  # the old spinedb_api bug rewrote a first member
         db.update_item("list_value", id=first["id"], value=raw, type=typ)
 
-    monkeypatch.setattr(m, "_append_list_members", overwrite_first)
+    patch_migration(monkeypatch, "_append_list_members", overwrite_first)
     with DatabaseMapping(url) as db:
         with pytest.raises(m.FlexToolMigrationError,
                            match=r"A version 83 upgrade step changed an existing member of the value list "
@@ -276,7 +277,7 @@ def test_binary_removal_passes_the_guard(v82_schema_db_url: str, tmp_path: Path,
         calls.append({before[i][1] for i in removed})
         check(db, name, before, removed)
 
-    monkeypatch.setattr(m, "_v83_check_members", recording)
+    patch_migration(monkeypatch, "_v83_check_members", recording)
     with DatabaseMapping(_copy(v82_schema_db_url, tmp_path)) as db:
         m._v83_startup_method(db)
         assert _members(db) == MEMBERS
@@ -297,7 +298,7 @@ def test_leftover_default_reference_stops_the_removal(v82_schema_db_url: str, tm
     takes the freed id: the part raises before the removal instead."""
     url = _copy(v82_schema_db_url, tmp_path)
     _binary_default(url)
-    monkeypatch.setattr(m, "_detach_list_defaults", lambda db, name, renames: [])
+    patch_migration(monkeypatch, "_detach_list_defaults", lambda db, name, renames: [])
     with DatabaseMapping(url) as db:
         with pytest.raises(m.FlexToolMigrationError,
                            match=r"remove the member\(s\) 'binary' of the value list startup_methods while still "

@@ -138,6 +138,14 @@ def test_a_lost_comment_fails(tmp_path: Path) -> None:
     assert errors == ["comment lost (1x): # step one"]
 
 
+def test_a_comment_reworded_on_purpose_is_allowed(tmp_path: Path) -> None:
+    step = STEP.replace("    # step one\n", "    # the first step\n")
+    texts = {tmp_path / "pkg" / f"{k}.py": v for k, v in
+             {"common": COMMON.replace("    import json as _j\n", ""), "step": step, "runner": RUNNER}.items()}
+    assert split_check.check_texts({"old.py": OLD}, texts) == ["comment lost (1x): # step one"]
+    assert split_check.check_texts({"old.py": OLD}, texts, allow_lost=(r"^# step one$",)) == []
+
+
 def test_an_extracted_body_that_reads_a_local_fails(tmp_path: Path) -> None:
     step = STEP.replace("seen = [helper(db)]", "seen = [helper(total)]")
     errors = _ok(tmp_path, step=step)

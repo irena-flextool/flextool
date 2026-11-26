@@ -1,11 +1,13 @@
 """Shared helpers for the migration rerun tests: restamp a database, stop a migration after a commit, compare two
-databases item by item, build the v75b seed."""
+databases item by item, build the v75b seed; patch a name in the migration package."""
 from __future__ import annotations
 
 import contextlib
+import importlib
 import io
 import json
 import logging
+import pkgutil
 import shutil
 from collections.abc import Iterator
 from pathlib import Path
@@ -23,6 +25,19 @@ TEMPLATES = package_data_path("schemas/pre_v26")
 #: The data of the v75 seed: alternatives, scenarios, entities and values of a two-period stochastic model (its
 #: definitions are not those of a migrated v75 database: only the data sections are read).
 V75_SEED_DATA = Path(__file__).parent / "data" / "v75_seed_stoch_two_period.json"
+
+
+def patch_migration(monkeypatch, name: str, value) -> None:
+    """``monkeypatch.setattr`` of *name* in every module of the ``db_migration`` package that binds it.  A module
+    calls a helper of another module by the name it imported, so patching one module would miss the other callers."""
+    from flextool.update_flextool import db_migration
+
+    modules = [db_migration] + [importlib.import_module(f"{db_migration.__name__}.{info.name}")
+                                for info in pkgutil.iter_modules(db_migration.__path__) if info.name != "__main__"]
+    bound = [module for module in modules if name in vars(module)]
+    assert bound, f"no module of {db_migration.__name__} binds {name}"
+    for module in bound:
+        monkeypatch.setattr(module, name, value)
 
 
 class Kill(BaseException):

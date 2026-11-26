@@ -25,6 +25,7 @@ from spinedb_api import DatabaseMapping, Map, to_database
 from spinedb_api.exception import NothingToCommit
 
 from flextool.update_flextool import db_migration as m
+from tests.update_flextool._rerun import patch_migration
 
 LIST = "dispatch_realization_methods"
 MEMBERS = ["within_solve", "separate_dispatch", "deterministic"]
@@ -342,7 +343,7 @@ def test_guard_stops_on_a_changed_member(v82_schema_db_url: str, tmp_path: Path,
         raw, typ = to_database("overwritten")  # the old spinedb_api bug rewrote a first member
         db.update_item("list_value", id=first["id"], value=raw, type=typ)
 
-    monkeypatch.setattr(m, "_append_list_members", overwrite_first)
+    patch_migration(monkeypatch, "_append_list_members", overwrite_first)
     with DatabaseMapping(url) as db:
         with pytest.raises(m.FlexToolMigrationError,
                            match=r"A version 83 upgrade step changed an existing member of the value list "

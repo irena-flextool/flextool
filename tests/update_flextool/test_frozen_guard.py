@@ -21,7 +21,8 @@ from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.gui.data_models import ProjectSettings
 from flextool.gui.db_version_check import check_and_upgrade_database
 from flextool.gui.input_sources import InputSourceManager
-from flextool.update_flextool import FLEXTOOL_DB_VERSION, db_handle, db_migration
+from flextool.update_flextool import FLEXTOOL_DB_VERSION, db_handle
+from tests.update_flextool._rerun import patch_migration
 from flextool.update_flextool import frozen as fz
 from flextool.update_flextool.db_migration import migrate_database
 from flextool.update_flextool.db_handle import open_database_mapping
@@ -82,7 +83,7 @@ def no_upgrade_open(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         return real(url, **kwargs)
 
     monkeypatch.setattr(db_handle, "open_database_mapping", guarded)
-    monkeypatch.setattr(db_migration, "open_database_mapping", guarded)
+    patch_migration(monkeypatch, "open_database_mapping", guarded)
     return opened
 
 

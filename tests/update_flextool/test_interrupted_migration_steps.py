@@ -16,6 +16,8 @@ import pytest
 from spinedb_api import from_database, import_data
 
 from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import common
+from tests.update_flextool._rerun import patch_migration
 from flextool.update_flextool.db_handle import open_database_mapping
 
 N = 8
@@ -52,7 +54,7 @@ def _snapshot(url: str) -> dict:
 def _run(url: str, step) -> None:
     with open_database_mapping(url) as db:
         step(db)
-        m._commit_step(db, "the step")
+        common._commit_step(db, "the step")
 
 
 def _clean_and_rerun(tmp_path: Path, build, step, monkeypatch, *, trigger: str = "",
@@ -62,9 +64,9 @@ def _clean_and_rerun(tmp_path: Path, build, step, monkeypatch, *, trigger: str =
     clean, partial = (f"sqlite:///{tmp_path / name}" for name in ("clean.sqlite", "partial.sqlite"))
     build(clean)
     build(partial)
-    monkeypatch.setattr(m, "_MAX_REMOVED_RANGES", 2)
+    patch_migration(monkeypatch, "_MAX_REMOVED_RANGES", 2)
     _run(clean, step)
-    real_commit = m._commit_step
+    real_commit = common._commit_step
     batches: list[str] = []
 
     def stop_after_first_batch(db, message):
@@ -74,10 +76,10 @@ def _clean_and_rerun(tmp_path: Path, build, step, monkeypatch, *, trigger: str =
             batches.append(message)
             raise _Stop(message)
 
-    monkeypatch.setattr(m, "_commit_step", stop_after_first_batch)
+    patch_migration(monkeypatch, "_commit_step", stop_after_first_batch)
     with pytest.raises(_Stop):
         _run(partial, step)
-    monkeypatch.setattr(m, "_commit_step", real_commit)
+    patch_migration(monkeypatch, "_commit_step", real_commit)
     _run(partial, step)
     return _snapshot(clean), _snapshot(partial), batches
 
@@ -290,14 +292,14 @@ def _failing_v81(db) -> None:
     """The v81 step, then a failure after it has committed."""
     m._v81_value_lists(db)
     m._v81_definitions_part(db)
-    m._commit_step(db, "v81 part")
+    common._commit_step(db, "v81 part")
     raise RuntimeError("step failed")
 
 
 def test_failed_migration_restores_the_file(tmp_path, monkeypatch) -> None:
     path, url = _v80_file(tmp_path)
     before = path.read_bytes()
-    monkeypatch.setattr(m, "_migrate_v81_schema_batch", _failing_v81)
+    patch_migration(monkeypatch, "_migrate_v81_schema_batch", _failing_v81)
     with pytest.raises(RuntimeError, match="step failed"):
         m.migrate_database(url)
     assert path.read_bytes() == before
@@ -309,7 +311,7 @@ def test_without_backup_the_failed_step_stays_committed(tmp_path, monkeypatch) -
     is what keeps it whole."""
     path, url = _v80_file(tmp_path)
     before = path.read_bytes()
-    monkeypatch.setattr(m, "_migrate_v81_schema_batch", _failing_v81)
+    patch_migration(monkeypatch, "_migrate_v81_schema_batch", _failing_v81)
     with pytest.raises(RuntimeError, match="step failed"):
         m.migrate_database(url, backup=False)
     assert path.read_bytes() != before
@@ -332,7 +334,7 @@ def test_the_window_upgrade_backs_up_once(tmp_path, monkeypatch) -> None:
         return real_copy(src, dst, *args, **kwargs)
 
     monkeypatch.setattr(migration_backup.shutil, "copy2", counting_copy)
-    monkeypatch.setattr(m, "_migrate_v81_schema_batch", _failing_v81)
+    patch_migration(monkeypatch, "_migrate_v81_schema_batch", _failing_v81)
     was_upgraded, failed, messages = db_version_check.check_and_upgrade_database(path)
     assert failed and not was_upgraded
     assert "restored" in messages[-1]
@@ -374,7 +376,7 @@ def test_interrupt_before_the_rename_keeps_the_original_and_names_it(tmp_path, m
     def interrupted(src, dst):
         raise KeyboardInterrupt("second Ctrl+C")
 
-    monkeypatch.setattr(m, "_migrate_v81_schema_batch", _failing_v81)
+    patch_migration(monkeypatch, "_migrate_v81_schema_batch", _failing_v81)
     monkeypatch.setattr(mb, "os", _os_with_replace(interrupted))
     with pytest.raises(KeyboardInterrupt):
         m.migrate_database(url)
@@ -400,7 +402,7 @@ def test_interrupt_after_the_rename_leaves_the_original(tmp_path, monkeypatch, c
         os.replace(src, dst)
         raise KeyboardInterrupt("second Ctrl+C")
 
-    monkeypatch.setattr(m, "_migrate_v81_schema_batch", _failing_v81)
+    patch_migration(monkeypatch, "_migrate_v81_schema_batch", _failing_v81)
     monkeypatch.setattr(mb, "os", _os_with_replace(replaced_then_interrupted))
     with pytest.raises(KeyboardInterrupt):
         m.migrate_database(url)
@@ -432,7 +434,7 @@ def test_windows_copy_restore_interrupted_keeps_the_original(tmp_path, monkeypat
 
     monkeypatch.setattr(mb, "_WINDOWS", True)
     monkeypatch.setattr(mb, "os", _os_with_replace(refused))
-    monkeypatch.setattr(m, "_migrate_v81_schema_batch", failing_v81_then_copy_breaks)
+    patch_migration(monkeypatch, "_migrate_v81_schema_batch", failing_v81_then_copy_breaks)
     with pytest.raises(KeyboardInterrupt):
         m.migrate_database(url)
     printed = capsys.readouterr().out

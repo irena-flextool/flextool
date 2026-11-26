@@ -57,6 +57,8 @@ from spinedb_api.exception import NothingToCommit
 
 from flextool._resources import package_data_path
 from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import common
+from tests.update_flextool._rerun import patch_migration
 from flextool.update_flextool.db_migration import migrate_database
 
 from tests.update_flextool._rerun import v75b_url
@@ -125,7 +127,7 @@ def _rerun_changes_nothing(db, step, monkeypatch) -> None:
             db_.commit_session(message)
         commits.append(message)
 
-    monkeypatch.setattr(m, "_commit_step", commit_must_be_empty)
+    patch_migration(monkeypatch, "_commit_step", commit_must_be_empty)
     step(db)
     if step is m._migrate_v79_schema_batch:
         assert len(commits) == 1, commits
@@ -620,8 +622,8 @@ def test_rerun_check_fails_when_the_batch_changes_something(tmp_path_factory, mo
         def changing_batch(db_) -> None:
             pdef = db_.get_item("parameter_definition", entity_class_name="solve", name="reduce_unit_detail_method")
             db_.update_parameter_definition(id=pdef["id"], description="changed")
-            m._commit_step(db_, "v79 rerun")
+            common._commit_step(db_, "v79 rerun")
 
-        monkeypatch.setattr(m, "_migrate_v79_schema_batch", changing_batch)
+        patch_migration(monkeypatch, "_migrate_v79_schema_batch", changing_batch)
         with pytest.raises(pytest.fail.Exception):
             _rerun_changes_nothing(db, m._migrate_v79_schema_batch, monkeypatch)

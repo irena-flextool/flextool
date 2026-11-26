@@ -33,6 +33,7 @@ from spinedb_api.exception import NothingToCommit
 
 from flextool._resources import package_data_path
 from flextool.update_flextool import db_migration as m
+from tests.update_flextool._rerun import patch_migration
 from flextool.update_flextool.db_migration import migrate_database
 from tests.db_utils import json_to_db
 from tests.update_flextool._rerun import v75b_url
@@ -303,7 +304,7 @@ def test_rerun_commits_nothing(migrated, monkeypatch) -> None:
             db_.commit_session(message)
         commits.append(message)
 
-    monkeypatch.setattr(m, "_commit_step", commit_must_be_empty)
+    patch_migration(monkeypatch, "_commit_step", commit_must_be_empty)
     with DatabaseMapping(migrated["url"]) as db:
         m._migrate_v80_schema_batch(db)
         assert len(commits) == 1
