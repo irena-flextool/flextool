@@ -22,6 +22,14 @@
   kinds of models that ran before: a group with a master-hosted node (or a connection between regions) and a region
   entity, and a group of units that no region group lists, with their nodes in different regions. Use one group
   per region and one for the master's entities.
+- **`co2_max_total` needs a solve that sees every period.** A total CO2 limit applies over all the periods of the
+  model. A run in which a solve with such a limit does not have every period of the model now stops before anything
+  solves, with an error that names the group, the solve and the periods it lacks. Examples: a chain of solves that
+  each hold their own periods, the nested lower solves of an investment chain, and the solves of a 2-D period map.
+  Before, such a solve shared out the limit as if its own periods were the whole model: an early solve could use up
+  the budget, and a later one could be infeasible. Use `co2_max_period` (a limit per period) in such runs, or give
+  every solve all the periods (look-ahead periods count). Single solves, rolling solves over all the periods, and
+  chains whose solves each hold a part of the same period are not affected.
 - **Flow group cumulative limits carry across rolls and solves.** In a rolling solve, and over the solves of a run,
   `max_cumulative_flow` and `min_cumulative_flow` now count the flow that earlier rolls and solves realized, as the
   CO2 limits do: each roll may use the limit times the hours realized so far plus its own hours, minus the flow

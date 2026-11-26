@@ -174,6 +174,7 @@
  "tests/engine/test_co2_max_period_rolling.py": 267.9,
  "tests/engine/test_co2_price_missing_data_warning.py": 2.4,
  "tests/engine/test_co2_reporting_no_double_count.py": 0.0,
+ "tests/engine/test_co2_total_scope.py": 0.2,
  "tests/engine/test_co2_total_split_period.py": 14.0,
  "tests/engine/test_coarse_flows.py": 211.1,
  "tests/engine/test_coarse_groups.py": 162.7,
