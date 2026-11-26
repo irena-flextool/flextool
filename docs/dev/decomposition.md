@@ -174,8 +174,8 @@ region↔master coupling (one half-flow in that region, keeping the arc's unitsi
 carries its rows; `master_network_data` keeps its arcs, conversion, capacity, invest, costs and online rows), and its
 investment rides the master's invest frames. Its arcs are not capacity-clamped (`_ArcMaster.capacity_bounded`): an
 input arc has no `existing + invested` bound. `_validate_master_units` refuses what a region would have to read
-besides the flows (reserve, a start-up draw or a min-load section at a region node, a capacity margin / inertia /
-non-synchronous group at one of its region nodes, a flowGroup flow limit) and integer online variables. The run log
+besides the flows (reserve, a start-up draw at a region node, a capacity margin / inertia / non-synchronous
+group at one of its region nodes, a flowGroup flow limit) and integer online variables. The run log
 line `Benders master: …` gives `_region_filter.master_arc_counts`. Without any balance node in the master (the
 plain path) the master builds with no balance rows.
 

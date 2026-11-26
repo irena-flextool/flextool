@@ -623,10 +623,12 @@ def _validate_listed_units(pss: pl.DataFrame | None, region_nodes: dict[str, set
 def _validate_master_units(data: FlexData, units: "frozenset[str] | set[str]", region_nodes: dict[str, set[str]],
                            ) -> None:
     """Raise when something that a region subproblem holds reads a term of a master unit other than its flows
-    (which the region sees as half-flows): a reserve, a start-up draw from a region node, a min-load section at a
-    region node, a capacity margin / inertia / non-synchronous group with one of the unit's region nodes, a
-    flowGroup flow limit (``_cross_connection_flow_references``), or integer online variables (the master would
-    become a mixed-integer problem)."""
+    (which the region sees as half-flows): a reserve, a start-up draw from a region node, a capacity margin /
+    inertia / non-synchronous group with one of the unit's region nodes, a flowGroup flow limit
+    (``_cross_connection_flow_references``), or integer online variables (the master would become a mixed-integer
+    problem).  A min-load section (min_load_efficiency) is no such term: it enters a node balance only on the
+    efficiency arc of a direct unit (``flow_from_nodeBalance_eff``), and a master unit's arcs go through the unit
+    (``noEff``; the section is in its conversion row, in the master)."""
     if not units:
         return
     from flextool.engine.model import _group_slack
@@ -651,13 +653,6 @@ def _validate_master_units(data: FlexData, units: "frozenset[str] | set[str]", r
             if p in units and n in node_region:
                 problems.setdefault(p, []).append(
                     f"start-up energy from node {n!r} of {node_region[n]}: take it from a commodity node")
-    eff = getattr(data, "flow_from_nodeBalance_eff", None)
-    minload_eff = _names(getattr(data, "process_min_load_eff", None))
-    if eff is not None and eff.height > 0 and minload_eff:
-        for p, n in eff.select(pl.col("p").cast(pl.Utf8), pl.col("source").cast(pl.Utf8)).iter_rows():
-            if p in units and p in minload_eff and n in node_region:
-                problems.setdefault(p, []).append(
-                    f"a min_load_efficiency input from node {n!r}: use constant_efficiency")
     if not getattr(data, "relax_integrality", False):
         for p in sorted(units & _names(getattr(data, "process_online_integer", None))):
             problems.setdefault(p, []).append(
@@ -991,10 +986,16 @@ def _limit_groups(data: FlexData) -> dict[str, str]:
     return out
 
 
+#: The side of an entity the Benders master holds (:func:`_validate_feature_groups_in_one_region`).
+_MASTER_SIDE = "the Benders master"
+
+
 def _validate_feature_groups_in_one_region(
     data: FlexData,
     region_nodes: dict[str, set[str]],
     region_procs: "dict[str, set[str]] | None" = None,
+    master_hosted_nodes: "frozenset[str] | set[str]" = frozenset(),
+    master_procs: "frozenset[str] | set[str]" = frozenset(),
 ) -> None:
     """A capacity-margin, inertia or non-synchronous group whose nodes lie in more than one region is an error,
     and so is an investment, retirement or cumulative-capacity limit group whose entities do.
@@ -1005,8 +1006,11 @@ def _validate_feature_groups_in_one_region(
     investment periods; ``reduce_system_detail_method`` may leave inertia and non-synchronous out).  Nodes in no
     region (shared, replicated into every region) do not count.  A limit group (:func:`_limit_groups`: a limit
     value set, not only the method)
-    sums over its member entities (``group_entity``: nodes and processes, placed by ``region_nodes`` /
-    ``region_procs``): each region would bound its own members' share by the whole limit.
+    sums over its member entities (``group_entity``): each side would bound its own members' share by the whole
+    limit.  An entity's side is where its investment variable is: the master for a master-hosted node and for a
+    process with an arc in the master (*master_procs*: connections between regions or at master-hosted nodes, the
+    units the master holds whole, the master-local processes), else the region that lists it, else the region of its
+    nodes (:func:`process_region_by_nodes`, as the investment owner of an unlisted process).
     """
     from flextool.engine.model import _group_slack
 
@@ -1037,21 +1041,30 @@ def _validate_feature_groups_in_one_region(
     max_errors: list[str] = []
     ge = data.group_entity
     if limit_groups and ge is not None and ge.height > 0:
-        entity_region = dict(region_of)
+        entity_side = process_region_by_nodes(data.process_source_sink, region_nodes)
+        entity_side.update(region_of)
         for r, ps in (region_procs or {}).items():
             for p in ps:
-                entity_region[p] = r
+                entity_side[p] = r
+        for e in set(master_hosted_nodes) | set(master_procs):
+            entity_side[e] = _MASTER_SIDE
         entity_members: dict[str, set[str]] = {}
         for g, e in ge.select(pl.col("g").cast(pl.Utf8), pl.col("e").cast(pl.Utf8)).iter_rows():
             entity_members.setdefault(g, set()).add(e)
         for g in sorted(limit_groups):
-            regions = sorted({entity_region[e] for e in entity_members.get(g, ()) if e in entity_region})
-            if len(regions) > 1:
+            by_side: dict[str, list[str]] = {}
+            for e in sorted(entity_members.get(g, ())):
+                if e in entity_side:
+                    by_side.setdefault(entity_side[e], []).append(e)
+            if len(by_side) > 1:
+                sides = sorted(by_side, key=lambda x: (x == _MASTER_SIDE, x))
+                text = (f"has entities in regions {', '.join(x for x in sides if x != _MASTER_SIDE)}"
+                        + (f" and {_MASTER_SIDE}" if _MASTER_SIDE in by_side else "")
+                        + " (" + "; ".join(f"{x}: {', '.join(by_side[x])}" for x in sides) + ")")
                 if limit_groups[g] == "min":
-                    errors.append(f"investment limit group {g!r} has entities in regions {', '.join(regions)}")
+                    errors.append(f"investment limit group {g!r} {text}")
                 else:
-                    max_errors.append(f"investment maximum group {g!r} has entities in regions "
-                                      f"{', '.join(regions)}")
+                    max_errors.append(f"investment maximum group {g!r} {text}")
     if errors or max_errors:
         why = []
         if errors:
@@ -1060,7 +1073,8 @@ def _validate_feature_groups_in_one_region(
             why.append("each region could use all of a group's maximum")
         raise RuntimeError(
             "split: " + "; ".join(errors + max_errors) + ". A group's limit cannot be split between Benders "
-            f"region subproblems ({'; '.join(why)}). Use one group per region.")
+            f"region subproblems and the master ({'; '.join(why)}). Use one group per region, and one for the "
+            "connections between regions and the units with nodes in more than one region (the master's).")
 
 
 def _co2_master_partition(
@@ -2752,8 +2766,6 @@ def split(
             for r in regions
         ]
 
-    _validate_feature_groups_in_one_region(data, region_nodes, region_procs)
-
     pss_tagged, cross, region_master, master_local = _classify_arcs(
         data.process_source_sink, region_nodes,
         master_nodes=master_side,
@@ -2797,6 +2809,10 @@ def split(
         # carry neither their arcs nor their entity rows.
         shared_procs -= master_local_procs
 
+    # The master's processes: the arcs between regions and at the master (their investment is the master's).
+    master_procs = ({str(p) for frame in (cross, region_master) for p in frame.get_column("p").to_list()}
+                    | master_local_procs)
+    _validate_feature_groups_in_one_region(data, region_nodes, region_procs, master_hosted_nodes, master_procs)
     _validate_cross_region_connections(data, cross, region_master, in_master)
 
     _two_way = data.process_source_sink_2way_1var

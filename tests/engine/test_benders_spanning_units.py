@@ -246,3 +246,140 @@ def test_lh2_decomposition_reproduces_the_monolith(mb_data, tmp_path, monkeypatc
     res = fx_benders.solve_benders(mb_data, LH2_REGIONS, max_iters=10, tol=1e-4, monolith_objective=M,
                                    scale_the_objective=OBJ_SCALE)
     assert res.lower_bound <= M * (1 + 1e-9), (res.lower_bound, M)
+
+
+# ---------------------------------------------------------------------------
+# A group investment limit over the master and a region (review R1).  dual (in the master) investing next to genB
+# (region_B): before, region_B bounded genB and the master bounded dual, each by the whole limit (Benders 50 + 120 =
+# 170 MW under a maximum of 120; the final solve with those investments was infeasible).  Now refused; a group with
+# only master members is allowed and applied once.
+# ---------------------------------------------------------------------------
+
+DUAL_INVEST = [["unit", "dual", "invest_method", b64("invest_period", "str")],
+               ["unit", "dual", "invest_cost", b64(10.0, "float")],
+               ["unit", "dual", "lifetime_technical", b64(two_region.LIFETIME, "float")],
+               ["unit", "dual", "invest_max_period",
+                b64({"index_type": "str", "index_name": "period", "data": [["p2020", 1000.0]]}, "map")]]
+
+
+def _limit_group(members: list[str], param: str, value: float) -> tuple[list, list]:
+    ents = [["group", "lim", None]] + [["group__unit", ["lim", m], None] for m in members]
+    vals = [["group", "lim", "invest_method", b64("invest_period", "str")],
+            ["group", "lim", param, b64({"index_type": "str", "index_name": "period", "data": [["p2020", value]]},
+                                        "map")]]
+    return ents, vals
+
+
+def _dual_invest_values() -> list:
+    # dual greenfield (existing 0 instead of 1000): the toy's values with that one replaced
+    return [v for v in _dual()[1] if v[:3] != ["unit", "dual", "existing"]] + [
+        ["unit", "dual", "existing", b64(0.0, "float")]] + DUAL_INVEST
+
+
+@pytest.mark.parametrize("case", ["max_unlisted", "min_unlisted", "max_listed_with_genB"])
+def test_group_limit_over_the_master_and_a_region_is_refused(tmp_path_factory, case):
+    param, value = ("invest_min_period", 1.0) if case.startswith("min") else ("invest_max_period", 120.0)
+    ents, vals = _limit_group(["dual", "genB"], param, value)
+    ents += [["group__unit", ["region_B", "genB"], None]]
+    if case == "max_listed_with_genB":
+        ents += [["group__unit", ["region_B", "dual"], None]]
+    data, regions = _benders_input_raw(tmp_path_factory, f"lim_{case}", ents, vals, listed=False)
+    word = "limit" if case.startswith("min") else "maximum"
+    with pytest.raises(RuntimeError, match=rf"investment {word} group 'lim' has entities in regions region_B and the "
+                                           r"Benders master \(region_B: genB; the Benders master: dual\)"):
+        _region_filter.split(data, regions=regions, benders_uncap_cross_region=True)
+
+
+def _benders_input_raw(tmp_path_factory, alt, extra_entities, extra_values, listed=True):
+    """:func:`_benders_input` with dual greenfield and investable."""
+    from flextool.engine import run_chain_from_db
+
+    ents = _dual(listed)[0] + list(extra_entities)
+    vals = _dual_invest_values() + list(extra_values)
+    url, scen = two_region.build(tmp_path_factory, transfer_method="regular", link_mw=LINK_MW, alt=alt,
+                                 extra_entities=ents, extra_values=vals)
+    got = {}
+
+    class _Stop(Exception):
+        pass
+
+    def _capture(data, regions, *args, **kwargs):
+        got["data"], got["regions"] = data, regions
+        raise _Stop
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(fx_benders, "solve_benders", _capture)
+        with pytest.raises(_Stop):
+            run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_w"))
+    return got["data"], got["regions"]
+
+
+#: Hand oracle of the allowed case: lim = {dual} with a maximum of 100 MW in p2020; dual greenfield, invest_cost 10
+#: per kW (annuity of 100 MW = hand_objective(100) / 10 = 76 421.51), fuel 0.1 per MWh (x 182.5 = 18.25).
+#: dual's capacity C bounds each output arc (units.md: per-edge capacity).  Hours 25-48: rB needs 200 = link 50 +
+#: dual + genB, so dual <= C <= 100 leaves genB >= 50 (G); one MW of genB (7 642.15) is worth more than one of dual
+#: (764.22) plus the fuel it saves (at most 48 x 18.25 = 876), so C = 100, G = 50.  Hours 1-24: rA needs 100 beyond
+#: genA = dual + the link's reverse flow (<= 50, from genB's free 50 MW): dual 50.  Fuel 24 x 50 + 24 x 100 = 3 600
+#: MWh.  Objective = 76 421.512 + hand_objective(50) + 3 600 x 0.1 x 182.5.
+ALLOWED_OBJECTIVE = (two_region.hand_objective(100.0) / 10 + two_region.hand_objective(50.0)
+                     + 3_600 * 0.1 * 8760 / 48)
+
+
+@pytest.fixture(scope="module")
+def allowed(tmp_path_factory):
+    from flextool.engine import run_chain_from_db
+
+    out = {}
+    for dec in ("benders", "none"):
+        ents, vals = _limit_group(["dual"], "invest_max_period", 100.0)
+        url, scen = two_region.build(tmp_path_factory, transfer_method="regular", link_mw=LINK_MW,
+                                     decomposition=dec, alt=f"lim_allowed_{dec}",
+                                     extra_entities=_dual(False)[0] + ents,
+                                     extra_values=_dual_invest_values() + vals)
+        steps = run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"lim_allowed_{dec}_w"),
+                                  keep_solutions=True)
+        out[dec] = steps[two_region.SOLVE]
+    return out
+
+
+def test_group_limit_of_master_members_only_is_applied_once(allowed):
+    assert ALLOWED_OBJECTIVE == pytest.approx(524_229.07, abs=0.01)   # the formula, evaluated by hand
+    step, mono = allowed["benders"], allowed["none"]
+    assert step.is_benders and step.optimal, (step.benders_gap, step.benders_iterations)
+    assert float(mono.obj) == pytest.approx(ALLOWED_OBJECTIVE, rel=1e-6)
+    assert float(step.solution.obj) == pytest.approx(ALLOWED_OBJECTIVE, rel=1e-6)
+    invest = utf8(step.solution.value("v_invest_p"))
+    mw = {p: invest.filter(pl.col("p") == p)["value"].sum() * unitsize(step, p) for p in ("dual", "genB")}
+    assert mw == pytest.approx({"dual": 100.0, "genB": 50.0}, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# The other refusals of a master unit (Q4): each error names the unit.
+# ---------------------------------------------------------------------------
+
+def test_start_up_draw_from_a_region_node_is_refused(tmp_path_factory):
+    ents = [["unit__inputNode", ["dual", "rA"], None]]
+    vals = [["unit", "dual", "startup_method", b64("linear", "str")],
+            ["unit__inputNode", ["dual", "rA"], "startup_input_method", b64("startup_only", "str")],
+            ["unit__inputNode", ["dual", "rA"], "startup_energy", b64(1.0, "float")]]
+    data, regions = _benders_input(tmp_path_factory, "span_startup", extra_entities=ents, extra_values=vals)
+    with pytest.raises(FlexToolConfigError, match=r"dual \(start-up energy from node 'rA' of region_A"):
+        _region_filter.split(data, regions=regions, benders_uncap_cross_region=True)
+
+
+def test_capacity_margin_group_at_a_region_node_is_refused(tmp_path_factory):
+    ents = [["group", "cm_b", None], ["group__node", ["cm_b", "rB"], None]]
+    vals = [["group", "cm_b", "capacity_margin_method", b64("absolute", "str")],
+            ["group", "cm_b", "capacity_margin_absolute", b64(10.0, "float")],
+            ["group", "cm_b", "penalty_capacity_margin", b64(100.0, "float")]]
+    data, regions = _benders_input(tmp_path_factory, "span_margin", extra_entities=ents, extra_values=vals)
+    with pytest.raises(FlexToolConfigError, match=r"dual \(capacity margin group 'cm_b' at one of its nodes"):
+        _region_filter.split(data, regions=regions, benders_uncap_cross_region=True)
+
+
+def test_flow_group_limit_on_a_master_unit_is_refused(tmp_path_factory):
+    ents = [["flowGroup", "fg_dual", None], ["flowGroup__unit__node", ["fg_dual", "dual", "rB"], None]]
+    vals = [["flowGroup", "fg_dual", "max_instant_flow", b64(1.0e6, "float")]]
+    data, regions = _benders_input(tmp_path_factory, "span_flowgroup", extra_entities=ents, extra_values=vals)
+    with pytest.raises(FlexToolConfigError, match=r"dual \(flowGroup 'fg_dual' \(unit 'dual'\)"):
+        _region_filter.split(data, regions=regions, benders_uncap_cross_region=True)

@@ -10,10 +10,18 @@
   side: its flow to or from the other region's nodes was lost (free), so the Benders investments and costs of such
   a model were wrong, and they change now. An unlisted such unit, and a unit between a region and a master-hosted
   node, were errors and now run. A unit listed in a region group that has none of its nodes is now an error, and
-  so are a reserve, integer online variables, a start-up input or `min_load_efficiency` input at a region node, a
-  node in a capacity margin, inertia or non-synchronous group, or a flowGroup flow limit on such a unit; each error
-  names the unit and what to change. Each Benders solve prints one line `Benders master: N connections, N
-  unit__inputNode arcs, N unit__outputNode arcs`.
+  so are a reserve, integer online variables, a start-up input at a region node, a node in a capacity margin,
+  inertia or non-synchronous group, or a flowGroup flow limit on such a unit; each error names the unit and what to
+  change. Each Benders solve prints one line `Benders master: N connections, N unit__inputNode arcs, N
+  unit__outputNode arcs`.
+- **Benders: a group investment limit over the master and a region is an error.** A group investment, retirement or
+  cumulative-capacity limit (with a value set) whose entities are partly in the Benders master and partly in a
+  region now stops the run with an error naming the group and its entities on each side; before, each side applied
+  the whole limit to its own members. The master's entities are the connections between regions (or at a
+  master-hosted node), the units with nodes in more than one region and the master-hosted nodes. This also stops two
+  kinds of models that ran before: a group with a master-hosted node (or a connection between regions) and a region
+  entity, and a group of units that no region group lists, with their nodes in different regions. Use one group
+  per region and one for the master's entities.
 - **Flow group cumulative limits carry across rolls and solves.** In a rolling solve, and over the solves of a run,
   `max_cumulative_flow` and `min_cumulative_flow` now count the flow that earlier rolls and solves realized, as the
   CO2 limits do: each roll may use the limit times the hours realized so far plus its own hours, minus the flow
