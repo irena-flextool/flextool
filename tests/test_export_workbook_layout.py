@@ -214,29 +214,37 @@ def _reader_records(path: Path) -> dict[str, list[str]]:
     return out
 
 
-def test_without_description_row_reads_back_the_same(
-    examples_db: Path, workbook_path: Path, tmp_path: Path,
-) -> None:
-    out = tmp_path / "no_description.xlsx"
-    export_to_excel(f"sqlite:///{examples_db}", str(out), include_advanced=True, description_row=False)
+def test_units_row_reads_back_the_same(examples_db: Path, workbook_path: Path, tmp_path: Path) -> None:
+    out = tmp_path / "units_row.xlsx"
+    export_to_excel(f"sqlite:///{examples_db}", str(out), include_advanced=True, units_row=True)
     book = openpyxl.load_workbook(out)
     try:
         ws = book["unit_c"]
-        # Rows: data type, default, definition row 3; the key columns stay frozen.
-        assert [ws.cell(row=r, column=3).value for r in (1, 2, 3)] == ["data type", "default", "parameter"]
-        assert ws.freeze_panes == "C4"
-        assert ws.cell(row=1, column=1).value == "navigate"
-        col = _column_of(ws, 3, "conversion_method")
-        assert ws.cell(row=3, column=col).comment is not None  # the description is still in the note
+        # Same rows as the default export (unit, data type, default, definition row 4), the first labelled unit.
+        assert [ws.cell(row=r, column=3).value for r in (1, 2, 3, 4)] == ["unit", "data type", "default", "parameter"]
+        assert ws.freeze_panes == "C5"
+        # The unit is the bracket the schema description starts with, without the brackets:
+        # existing "[MW or count] ...", fixed_cost "[CUR/kW/a] ...", availability "[-] ...";
+        # conversion_method "[choice] ..." is no unit, so its cell stays empty.
+        expected = {"existing": "MW or count", "fixed_cost": "CUR/kW/a", "availability": "-",
+                    "conversion_method": None}
+        for name, unit in expected.items():
+            col = _column_of(ws, 4, name)
+            assert ws.cell(row=1, column=col).value == unit, name
+            assert ws.cell(row=4, column=col).comment is not None  # the description is in the note
+        col = _column_of(ws, 4, "existing")
+        assert ws.cell(row=1, column=col).fill.fgColor.rgb[-6:] == "FFF2CC"
+        assert not ws.cell(row=1, column=col).alignment.wrap_text
+        assert ws.row_dimensions[1].height is None  # one line
     finally:
         book.close()
     assert _reader_records(out) == _reader_records(workbook_path)
 
 
-def test_without_description_row_needs_the_v2_format(examples_db: Path, tmp_path: Path) -> None:
+def test_units_row_needs_the_v2_format(examples_db: Path, tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="v2"):
         export_to_excel(f"sqlite:///{examples_db}", str(tmp_path / "v1.xlsx"), use_new_format=False,
-                        description_row=False)
+                        units_row=True)
 
 
 RAMP_JSON = package_data_path("schemas/canonical_databases/howto_ramp_and_start_up.json")

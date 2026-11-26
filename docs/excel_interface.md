@@ -89,7 +89,7 @@ Useful flags:
 | `--include-advanced` | Include advanced sheets (solve sequences, periods available, stochastic data) even when empty. |
 | `--old-format` | Emit the legacy v1 layout instead of v2 self-describing — only needed for tooling pinned to the older format. |
 | `--omit-empty-columns` | Leave out the parameter columns that have no value on their sheet, for a narrower workbook of an existing model. The reference list to the right of each sheet still names every parameter: to add one, insert a column before the blank column and type its name in the parameter row and its data type in the data type row. A sheet with no values at all keeps its columns. Not with `--old-format`. |
-| `--no-description-row` | Leave out the description row of the parameter sheets. The description of each parameter stays in the note on its name. Not with `--old-format`. |
+| `--units-row` | Show only each parameter's unit (MW, CUR/MWh, `-` for a share; empty for a choice or a name) in the first row of the parameter sheets, labelled `unit`, instead of its description. The full description stays in the note on the parameter name. Not with `--old-format`. |
 
 A realistic minimal-template export:
 

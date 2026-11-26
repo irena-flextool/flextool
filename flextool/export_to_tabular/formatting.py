@@ -334,8 +334,11 @@ def format_constant_sheet_v2(
     max_row = ws.max_row
     max_col = last_data_col if last_data_col > 0 else ws.max_column
 
-    # The description row (labelled ``description`` in the definition column) wraps to four lines.
-    description_rows = {r for r in range(1, def_row) if ws.cell(row=r, column=def_col).value == "description"}
+    # The description row (labelled ``description`` in the definition column) wraps to four lines; a units row
+    # (``unit``) has the same colour on one line.
+    labels = {r: ws.cell(row=r, column=def_col).value for r in range(1, def_row)}
+    description_rows = {r for r, label in labels.items() if label == "description"}
+    yellow_rows = description_rows | {r for r, label in labels.items() if label == "unit"}
     for r in description_rows:
         ws.row_dimensions[r].height = DESCRIPTION_ROW_HEIGHT
 
@@ -350,14 +353,14 @@ def format_constant_sheet_v2(
             cell = ws.cell(row=meta_row, column=col)
             if col == 1 and meta_row == 1:
                 continue  # navigate link
-            is_description = meta_row in description_rows
+            is_yellow = meta_row in yellow_rows
             if col == def_col and cell.value is not None:
-                cell.fill = FILL_DESCRIPTION_LABEL if is_description else FILL_DESC_ROW
+                cell.fill = FILL_DESCRIPTION_LABEL if is_yellow else FILL_DESC_ROW
                 cell.font = FONT_DESC_ROW
             elif col > def_col and cell.value is not None:
-                cell.fill = FILL_DESCRIPTION if is_description else FILL_DESC_DATA
+                cell.fill = FILL_DESCRIPTION if is_yellow else FILL_DESC_DATA
                 cell.font = FONT_DESC_DATA
-                if is_description:
+                if meta_row in description_rows:
                     cell.alignment = ALIGN_DESCRIPTION
 
         # --- Definition row: def_row ---

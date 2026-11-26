@@ -44,6 +44,7 @@ from flextool.export_to_tabular.formatting import (
     FONT_NAVIGATE_LINK,
 )
 from flextool.export_to_tabular.sheet_config import SheetSpec
+from flextool.units_of_measure import parameter_unit_text
 
 # Index-cell marker written for a zero-length Array/Map parameter value so
 # the round-trip can rebuild an *empty* collection rather than dropping it
@@ -2018,8 +2019,9 @@ def _write_navigate_flat(
 # Data type overrides from settings, set by export_to_excel before writing.
 # Maps (layout, param_name) -> override string.
 _data_type_overrides: dict[str, dict[str, str]] = {}
-# Whether standard sheets carry the description row (``--no-description-row`` leaves it out), set by export_to_excel.
-_description_row: bool = True
+# Whether the first metadata row of standard sheets holds only each parameter's unit (``--units-row``) instead of
+# its description; set by export_to_excel.
+_units_row: bool = False
 
 
 def _param_description(spec: SheetSpec, db_contents: DatabaseContents, pname: str) -> str | None:
@@ -2033,16 +2035,17 @@ def _write_metadata_rows(
     """Write the metadata rows of a standard v2 sheet and return the definition row.
 
     *columns* holds (description, data type, default) of each column right of the definition column.  The rows
-    are ``description`` (unless the export leaves it out), ``data type`` and, when any column has a default,
+    are ``description`` (or, with ``--units-row``, ``unit``: the unit from each description's bracket, see
+    :func:`flextool.units_of_measure.parameter_unit_text`), ``data type`` and, when any column has a default,
     ``default``; the definition column labels them.
     """
     row = 1
-    if _description_row:
-        ws.cell(row=row, column=def_col, value="description")
-        for i, (desc, _dtype, _default) in enumerate(columns):
-            if desc:
-                ws.cell(row=row, column=def_col + 1 + i, value=desc)
-        row += 1
+    ws.cell(row=row, column=def_col, value="unit" if _units_row else "description")
+    for i, (desc, _dtype, _default) in enumerate(columns):
+        text = parameter_unit_text(desc) if _units_row else desc
+        if text:
+            ws.cell(row=row, column=def_col + 1 + i, value=text)
+    row += 1
     ws.cell(row=row, column=def_col, value="data type")
     for i, (_desc, dtype, _default) in enumerate(columns):
         ws.cell(row=row, column=def_col + 1 + i, value=dtype)

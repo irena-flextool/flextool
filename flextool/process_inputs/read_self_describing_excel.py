@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 ROW_KEYWORDS = frozenset({
     "description",
+    "unit",  # the units row of an export with --units-row (content ignored, like the description)
     "data type",
     "parameter",
     "alternative",

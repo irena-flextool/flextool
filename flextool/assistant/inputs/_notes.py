@@ -18,7 +18,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from flextool.assistant.inputs._schema import bracket, shipped_schema
+from flextool.assistant.inputs._schema import shipped_schema
+from flextool.units_of_measure import bracket
 
 
 @dataclass(frozen=True)

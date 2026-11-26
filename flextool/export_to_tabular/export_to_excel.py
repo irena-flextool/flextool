@@ -153,7 +153,7 @@ def export_to_excel(
     use_new_format: bool = True,
     include_stochastics: bool = False,  # deprecated alias for include_advanced
     include_groups: list[str] | None = None,
-    description_row: bool = True,
+    units_row: bool = False,
     omit_empty_columns: bool = False,
 ) -> None:
     """Export a FlexTool Spine DB to an Excel (.xlsx) file.
@@ -172,16 +172,17 @@ def export_to_excel(
             group are dropped.  Sheets that lose all their columns are
             dropped, unless listed under a selected group in
             ``always_include_with_groups`` in ``export_settings.yaml``.
-        description_row: When False, the standard sheets start with the data-type row; each parameter's
-            description stays in the note on its name.  Only for the v2 format.
+        units_row: When True, the first metadata row of the standard sheets (label ``unit``) holds only each
+            parameter's unit; the full description stays in the note on the parameter name.  Only for the v2
+            format.
         omit_empty_columns: When True, a parameter column with no value on its constant or periodic sheet is
             left out (the reference block to the right still lists it).  A sheet whose parameter columns are all
             empty keeps them.  Only for the v2 format.
     """
     if include_stochastics:
         include_advanced = True
-    if not use_new_format and not description_row:
-        raise ValueError("Leaving out the description row is only possible in the v2 (self-describing) format.")
+    if not use_new_format and units_row:
+        raise ValueError("A units row is only possible in the v2 (self-describing) format.")
     if not use_new_format and omit_empty_columns:
         raise ValueError("Leaving out empty columns is only possible in the v2 (self-describing) format.")
 
@@ -199,7 +200,7 @@ def export_to_excel(
 
     # 2b. Load data type overrides and width settings
     _ew._data_type_overrides = settings.get("data_type_overrides", {})
-    _ew._description_row = description_row
+    _ew._units_row = units_row
     _ew._period_only_params = settings.get("period_only_params", {})
     _ew._stochastic_index_names = settings.get("stochastic_index_names",
                                                 ["forecast", "branch_time", "time", "is_realized"])

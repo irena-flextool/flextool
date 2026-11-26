@@ -38,11 +38,12 @@ def main() -> None:
         ),
     )
     parser.add_argument(
-        "--no-description-row",
+        "--units-row",
         action="store_true",
         help=(
-            "Leave out the description row of the parameter sheets; each parameter's description stays in the "
-            "note on its name (self-describing format only)"
+            "Show only each parameter's unit (MW, CUR/MWh, ...) in the first row of the parameter sheets instead "
+            "of its description; the full description stays in the note on the parameter name (self-describing "
+            "format only)"
         ),
     )
     parser.add_argument(
@@ -54,9 +55,8 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
-    if args.old_format and (args.no_description_row or args.omit_empty_columns):
-        parser.error("--no-description-row and --omit-empty-columns need the self-describing format "
-                     "(not --old-format)")
+    if args.old_format and (args.units_row or args.omit_empty_columns):
+        parser.error("--units-row and --omit-empty-columns need the self-describing format (not --old-format)")
     include_groups = (
         [g.strip() for g in args.groups.split(",") if g.strip()]
         if args.groups
@@ -68,7 +68,7 @@ def main() -> None:
         include_advanced=args.include_advanced,
         use_new_format=not args.old_format,
         include_groups=include_groups,
-        description_row=not args.no_description_row,
+        units_row=args.units_row,
         omit_empty_columns=args.omit_empty_columns,
     )
 

@@ -22,10 +22,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from flextool import units_of_measure as uom
-from flextool.assistant.inputs._schema import bracket, shipped_schema
+from flextool.units_of_measure import NOT_UNITS, bracket
+from flextool.assistant.inputs._schema import shipped_schema
 from flextool.assistant.unit_wording import DIMENSIONLESS
 
-NOT_UNITS = frozenset({"[choice]", "[yes/no]", "[name]", "[text]", "[version number]"})
 _COUNT_FORMS = {"[MW or count]": "MW", "[MWh or count]": "MWh"}
 _GROUP_FORM = "[MW or MWh]"
 _PER_RE = re.compile(r"^\s*(per [^.;,]+)")

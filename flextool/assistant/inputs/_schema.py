@@ -63,13 +63,6 @@ def shipped_schema() -> ShippedSchema:
     )
 
 
-def bracket(description: str | None) -> str | None:
-    """The unit bracket a description starts with (``"[MW]"``), or ``None``."""
-    if not description or not description.startswith("[") or "]" not in description:
-        return None
-    return description[: description.index("]") + 1]
-
-
 def ranks_in_words(value_types: tuple[tuple[str, int], ...]) -> str:
     """What the schema's ``parameter_types`` allow, for a user: ``a constant, or a map with 1 or 3 index levels``."""
     parts: list[str] = []
