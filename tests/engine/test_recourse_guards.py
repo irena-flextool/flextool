@@ -328,7 +328,7 @@ def _build_handoff(sol, run, flex_data, provider):
 def _provider_realizing(run, period: str):
     """A clone of the step's provider whose realize-invest key lists only
     *period* (dtype kept from the cascade's frame)."""
-    from flextool.engine.preprocess.flex_data import _read_realize_invest_periods
+    from flextool.engine.preprocess.flex_data._handoff_inputs import _read_realize_invest_periods
 
     provider = clone_provider(run.last.provider)
     orig = provider.get(REALIZE_KEY)

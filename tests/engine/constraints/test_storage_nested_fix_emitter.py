@@ -30,7 +30,7 @@ import polars as pl
 
 from flextool.engine.preprocess.emit import _mid_sets as _mid
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-from flextool.engine.preprocess.flex_data import _load_handoff_aux_pair
+from flextool.engine.preprocess.flex_data._handoff_inputs import _load_handoff_aux_pair
 
 
 def _seed_provider() -> FlexDataProvider:

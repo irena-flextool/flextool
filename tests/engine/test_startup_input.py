@@ -897,7 +897,7 @@ def test_co2_cap_loaders_keep_a_start_up_only_emitter_without_arcs() -> None:
     """With no efficiency arcs at all (pss_eff and pss_noEff None), a start-up draw in a capped group still keeps
     the cap's groups (_load_co2_cap / _load_co2_cap_total): the early return does not drop it."""
     from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-    from flextool.engine.preprocess.flex_data import _load_co2_cap, _load_co2_cap_total
+    from flextool.engine.preprocess.flex_data._load_co2 import _load_co2_cap, _load_co2_cap_total
 
     prov = FlexDataProvider()
     prov.put("solve_data/group_co2_max_period", pl.DataFrame({"group": ["co2g"]}))

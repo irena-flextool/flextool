@@ -27,10 +27,7 @@ from types import SimpleNamespace
 import polars as pl
 import pytest
 
-from flextool.engine.preprocess.flex_data import (
-    _load_invest,
-    _load_cumulative_invest,
-)
+from flextool.engine.preprocess.flex_data._load_features import _load_invest, _load_cumulative_invest
 from flextool.engine.model._cumulative_invest import (
     _eq_group_invest_cumulative,
     has_feature,

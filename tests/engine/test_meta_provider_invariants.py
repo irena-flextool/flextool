@@ -584,7 +584,7 @@ RULE_4_EXEMPT_FILES: dict[str, str] = {
 # (b) Legitimate reads: (file, literal path of the open() call) → reason.  A literal path, not a line number,
 # so the entry survives edits; ``test_rule_4_read_allowlist_is_used`` fails on an unused entry.
 RULE_4_READ_ALLOWLIST: dict[tuple[str, str], str] = {
-    ("preprocess/flex_data.py", "/proc/self/status"): (
+    ("preprocess/flex_data/_readers.py", "/proc/self/status"): (
         "_loadflex_prof: RSS probe of the running process, only with FLEXTOOL_LOADFLEX_PROFILE=1; "
         "not the work folder."
     ),
@@ -751,39 +751,39 @@ def test_rule_4_read_allowlist_is_used() -> None:
     ("workdir_provider_for_paths(paths)", "preprocess/params/_profiles.py"),
     ("import flextool.engine.input._input_source._read_csv_file", "solve/_x.py"),
     ("def _install_csv_cache(cache):\n    pass", "preprocess/_solve_context.py"),
-    ("x = _find_scenario", "preprocess/flex_data.py"),
+    ("x = _find_scenario", "preprocess/flex_data/_load.py"),
     # (b) in preprocess/ and model/
-    ("p.exists()", "preprocess/flex_data.py"),
+    ("p.exists()", "preprocess/flex_data/_load.py"),
     ("p.is_file()", "model/_reserve.py"),
     ("p.is_dir()", "preprocess/emit/_blocks.py"),
     ("p.is_symlink()", "model/core/_flows.py"),
     ("os.path.exists(p)", "preprocess/params/_derived.py"),
     ("os.path.isfile(p)", "model/core/_flows.py"),
     ("os.path.isdir(p)", "preprocess/_solve_context.py"),
-    ("open(p)", "preprocess/flex_data.py"),
+    ("open(p)", "preprocess/flex_data/_load.py"),
     ("open(p, 'r')", "model/core/_flows.py"),
-    ("open(p, mode='rb')", "preprocess/flex_data.py"),
-    ("open(p, 'r+')", "preprocess/flex_data.py"),
-    ("open(p, m)", "preprocess/flex_data.py"),
+    ("open(p, mode='rb')", "preprocess/flex_data/_load.py"),
+    ("open(p, 'r+')", "preprocess/flex_data/_load.py"),
+    ("open(p, m)", "preprocess/flex_data/_load.py"),
     ("p.open()", "preprocess/emit/_blocks.py"),
     ("p.open('r', encoding='utf-8')", "preprocess/emit/_blocks.py"),
     ("gzip.open(p, 'rt')", "model/core/_flows.py"),
     ("p.read_text()", "model/core/_flows.py"),
-    ("p.read_bytes()", "preprocess/flex_data.py"),
-    ("pl.read_parquet(p)", "preprocess/flex_data.py"),
+    ("p.read_bytes()", "preprocess/flex_data/_load.py"),
+    ("pl.read_parquet(p)", "preprocess/flex_data/_load.py"),
     ("pl.scan_parquet(p)", "model/core/_flows.py"),
-    ("pl.read_excel(p)", "preprocess/flex_data.py"),
+    ("pl.read_excel(p)", "preprocess/flex_data/_load.py"),
     ("pl.read_csv(p)", "model/core/_flows.py"),
-    ("polars.read_parquet(p)", "preprocess/flex_data.py"),
+    ("polars.read_parquet(p)", "preprocess/flex_data/_load.py"),
     ("polars.scan_csv(p)", "model/core/_flows.py"),
     ("pd.read_csv(p)", "preprocess/emit/_blocks.py"),
     ("pd.read_excel(p)", "model/core/_flows.py"),
-    ("pandas.read_parquet(p)", "preprocess/flex_data.py"),
-    ("os.stat(p)", "preprocess/flex_data.py"),
+    ("pandas.read_parquet(p)", "preprocess/flex_data/_load.py"),
+    ("os.stat(p)", "preprocess/flex_data/_load.py"),
     ("os.lstat(p)", "model/core/_flows.py"),
-    ("json.load(fh)", "preprocess/flex_data.py"),
-    ("os.listdir(d)", "preprocess/flex_data.py"),
-    ("d.glob('*.csv')", "preprocess/flex_data.py"),
+    ("json.load(fh)", "preprocess/flex_data/_load.py"),
+    ("os.listdir(d)", "preprocess/flex_data/_load.py"),
+    ("d.glob('*.csv')", "preprocess/flex_data/_load.py"),
     ("d.iterdir()", "model/core/_flows.py"),
     # an allow-listed literal path in another file, or another path in an allow-listed file
     ("open('/proc/self/status')", "model/_reserve.py"),
@@ -796,19 +796,19 @@ def test_rule_4_detector_flags_every_pattern(source: str, fname: str) -> None:
 
 @pytest.mark.parametrize("source,fname", [
     ("open('/proc/self/status')", "model/core/_build.py"),                 # RULE_4_READ_ALLOWLIST
-    ("open('/proc/self/status')", "preprocess/flex_data.py"),       # RULE_4_READ_ALLOWLIST
+    ("open('/proc/self/status')", "preprocess/flex_data/_readers.py"),    # RULE_4_READ_ALLOWLIST
     ("p.open('a', encoding='utf-8')", "preprocess/_provider_translators.py"),  # append
-    ("open(p, 'w')", "preprocess/flex_data.py"),
+    ("open(p, 'w')", "preprocess/flex_data/_load.py"),
     ("open(p, mode='wb')", "model/core/_flows.py"),
-    ("p.write_text('x')", "preprocess/flex_data.py"),
-    ("p.mkdir(parents=True, exist_ok=True)", "preprocess/flex_data.py"),
+    ("p.write_text('x')", "preprocess/flex_data/_load.py"),
+    ("p.mkdir(parents=True, exist_ok=True)", "preprocess/flex_data/_load.py"),
     ("p.exists()", "solve/_orchestration.py"),                       # (b) covers preprocess/ and model/ only
-    ("json.loads(s)", "preprocess/flex_data.py"),
-    ("pd.DataFrame(rows)", "preprocess/flex_data.py"),            # pandas, but not a file read
-    ("pl.read_database(q, conn)", "preprocess/flex_data.py"),    # a DB query, not the work folder
+    ("json.loads(s)", "preprocess/flex_data/_load.py"),
+    ("pd.DataFrame(rows)", "preprocess/flex_data/_load.py"),            # pandas, but not a file read
+    ("pl.read_database(q, conn)", "preprocess/flex_data/_load.py"),    # a DB query, not the work folder
     ("frame.stat()", "model/core/_flows.py"),                            # only os.stat / os.lstat are stat probes
-    ("provider.get('solve_data/process_exact')", "preprocess/flex_data.py"),
-    ('"""read_csv_fallback was deleted"""', "preprocess/flex_data.py"),  # docstrings are not references
+    ("provider.get('solve_data/process_exact')", "preprocess/flex_data/_load.py"),
+    ('"""read_csv_fallback was deleted"""', "preprocess/flex_data/_load.py"),  # docstrings are not references
 ])
 def test_rule_4_detector_ignores_allowed_forms(source: str, fname: str) -> None:
     """Self-check: allow-listed reads, writes, other folders, string mentions and provider reads are not flagged."""

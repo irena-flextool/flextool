@@ -28,7 +28,7 @@ from flextool.engine.output import _dump_csvs
 from flextool.engine.preprocess.flex_data import FlexData
 
 _ENGINE = Path(__file__).resolve().parents[2] / "flextool" / "engine"
-_FLEX_DATA = _ENGINE / "preprocess" / "flex_data.py"
+_FLEX_DATA = _ENGINE / "preprocess" / "flex_data"  # the package: load_flextool and its helpers
 _FIELD_SEEDS = _ENGINE / "_csv_reload" / "_field_seeds.py"
 FIELDS: frozenset[str] = frozenset(f.name for f in dataclasses.fields(FlexData))
 
@@ -41,10 +41,21 @@ def _functions(path: Path) -> dict[str, ast.FunctionDef]:
     return {n.name: n for n in ast.parse(path.read_text(encoding="utf-8")).body if isinstance(n, ast.FunctionDef)}
 
 
+@cache
+def _flex_data_functions() -> dict[str, ast.FunctionDef]:
+    """The top-level functions of the flex_data package's modules (each name is defined in one of them)."""
+    out: dict[str, ast.FunctionDef] = {}
+    for path in sorted(_FLEX_DATA.glob("*.py")):
+        functions = _functions(path)
+        assert not set(functions) & set(out), f"{path.name} redefines {sorted(set(functions) & set(out))}"
+        out.update(functions)
+    return out
+
+
 def _resolve(func: ast.expr) -> ast.FunctionDef | None:
-    """The definition of a call to a ``flex_data.py`` function or to ``<module>.<f>`` of ``engine/model/``."""
+    """The definition of a call to a function of the flex_data package or to ``<module>.<f>`` of ``engine/model/``."""
     if isinstance(func, ast.Name):
-        return _functions(_FLEX_DATA).get(func.id)
+        return _flex_data_functions().get(func.id)
     if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
         path = _ENGINE / "model" / f"{func.value.id}.py"
         return _functions(path).get(func.attr) if path.exists() else None
@@ -160,7 +171,7 @@ def _attribute_writes(body: list[ast.stmt], obj: str, seen: set[str]) -> set[str
 @cache
 def loader_writes() -> frozenset[str]:
     """The fields ``load_flextool`` sets on a reader-less load (module docstring, route 2)."""
-    lf = _functions(_FLEX_DATA)["load_flextool"]
+    lf = _flex_data_functions()["load_flextool"]
     ctor = next(n for n in ast.walk(lf) if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "FlexData")
     out = {k.arg for k in ctor.keywords if k.arg is not None and not _is_none(k.value)}
     spread = {k.value.id for k in ctor.keywords if k.arg is None}

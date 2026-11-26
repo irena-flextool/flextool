@@ -64,7 +64,7 @@ def _dt(fd) -> list[tuple[str, str]]:
 
 
 def _csv_step_previous(step) -> pl.DataFrame:
-    from flextool.engine.preprocess.flex_data import _read_step_previous
+    from flextool.engine.preprocess.flex_data._readers import _read_step_previous
 
     return utf8(_read_step_previous(Path("solve_data") / "step_previous.csv", provider=step.flex_data_provider))
 

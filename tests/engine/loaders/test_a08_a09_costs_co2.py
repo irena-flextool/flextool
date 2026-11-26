@@ -29,7 +29,8 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from flextool.engine.preprocess.flex_data import _load_varcost, _load_co2_cap
+from flextool.engine.preprocess.flex_data._load_features import _load_varcost
+from flextool.engine.preprocess.flex_data._load_co2 import _load_co2_cap
 from tests._support.provider import provider_from_csv_dirs
 
 

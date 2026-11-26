@@ -8128,7 +8128,7 @@ def dtttdt_block_lag_from_dtttdt(dtttdt: pl.DataFrame | None,
     """
     if dtttdt is None or dtttdt.height == 0 or period_block_time is None or period_block_time.height == 0:
         return None
-    from flextool.engine.preprocess.flex_data import _within_period_lag
+    from flextool.engine.preprocess.flex_data._readers import _within_period_lag
 
     lag = _within_period_lag(dtttdt, period_branch)
     if lag is None:
@@ -8156,7 +8156,7 @@ def _rolling_realized_steps(flex_data: object, workdir: Path | None,
     where the bind_intraperiod_blocks blocks are cut (:func:`period_block_family_from_source`)."""
     if not getattr(flex_data, "solve_is_rolling", False) or workdir is None:
         return None
-    from flextool.engine.preprocess.flex_data import _realized_steps
+    from flextool.engine.preprocess.flex_data._coarse import _realized_steps
 
     return _realized_steps(Path(workdir) / "solve_data", flex_data, provider=provider)
 
@@ -8357,7 +8357,7 @@ def apply_derived_e(
         # nodes this solve downgraded (no representative periods): those cycle too and get no end pin.
         # A bind_within_solve node of a rolling roll that continues from a carried state chains forward in the roll
         # (_run_model._anchor_cyclic_in_rolling) and its end is tied to its start by storage_roll_end: no pin either.
-        from flextool.engine.preprocess.flex_data import _roll_end_tied_nodes
+        from flextool.engine.preprocess.flex_data._readers import _roll_end_tied_nodes
         for cyclic in (flex_data.storage_bind_within_solve, flex_data.storage_bind_within_period,
                        _roll_end_tied_nodes(getattr(flex_data, "storage_roll_end", None))):
             if use_ref is not None and cyclic is not None and cyclic.height > 0:

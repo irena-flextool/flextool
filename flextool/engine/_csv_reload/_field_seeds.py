@@ -19,7 +19,7 @@ from polar_high import Param
 
 from flextool.engine.input._axis_enums import rename_to_axis
 from flextool.engine.preprocess._invest_seeds import read_invest_set
-from flextool.engine.preprocess.flex_data import _read_wide_e_d
+from flextool.engine.preprocess.flex_data._load_features import _read_wide_e_d
 from flextool.engine.preprocess.params._derived import (
     process_delayed__duration_from_weight,
     process_group_inside_nonSync_from_flex,

@@ -25,7 +25,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from flextool.engine.preprocess.flex_data import _load_user_constraints, _load_stochastics
+from flextool.engine.preprocess.flex_data._load_features import _load_user_constraints, _load_stochastics
 from tests._support.provider import provider_from_csv_dirs
 
 

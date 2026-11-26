@@ -174,11 +174,11 @@ SD2_FAN = _fan([("p1", "R", {"t01": 0.0}, "yes"), ("p1", "A", {"t01": 0.5}, "no"
 
 
 def _sd2_run(folder, monkeypatch, *, today: bool):
-    from flextool.engine.preprocess import flex_data
+    from flextool.engine.preprocess.flex_data import _load
 
     if today:
         # Before D3 solve (1) tied every non-anticipative family across its forecasts (no uc_only role).
-        monkeypatch.setattr(flex_data, "_na_online_fix_in_uc", lambda sd, provider=None: False)
+        monkeypatch.setattr(_load, "_na_online_fix_in_uc", lambda sd, provider=None: False)
     spec = _spec(SD2_PERIODS, mode="single_solve", method="separate_dispatch", realized=["p1"], fan=SD2_FAN,
                  wind=SD2_WIND, gas={"t01": 10.0, "t02": 30.0})
     return scm.run_spec(spec, folder)

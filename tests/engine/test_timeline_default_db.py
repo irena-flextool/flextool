@@ -101,7 +101,7 @@ def _run_ablated(url: str, scenario: str, work_folder: Path):
     ``_apply_db_overrides`` call, so the only way they end up populated is through the DB-side
     timeline readers this commit fixes -- no leftover CSV seed can paper over a gap.  Returns the
     last sub-solve's ``FlexData``."""
-    from flextool.engine.preprocess import flex_data as _fd
+    from flextool.engine.preprocess.flex_data import _load as _fd
     from flextool.engine.solve._orchestration import run_chain_from_db
 
     original = _fd._apply_db_overrides

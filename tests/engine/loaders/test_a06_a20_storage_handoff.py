@@ -26,7 +26,8 @@ import polars as pl
 import pytest
 
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-from flextool.engine.preprocess.flex_data import _load_storage, _apply_db_overrides
+from flextool.engine.preprocess.flex_data._load_storage import _load_storage
+from flextool.engine.preprocess.flex_data._db_overrides import _apply_db_overrides
 from tests._support.provider import provider_from_csv_dirs
 
 

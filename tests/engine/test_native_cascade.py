@@ -50,7 +50,7 @@ import pytest
 from polar_high import Problem
 from flextool.engine import build_flextool
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-from flextool.engine.preprocess.flex_data import _cascade_gate
+from flextool.engine.preprocess.flex_data._container import _cascade_gate
 from tests._support.load import ScenarioRun, clone_provider, load_scenario
 
 

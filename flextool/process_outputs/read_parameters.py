@@ -1238,7 +1238,7 @@ def _node_state_start(flex_data: "FlexData", solution: "Solution", *, solve_name
     solve starts from (``model._self_discharge.start_levels``, as the solve's handoff ``cycle_start_state``: the
     fix_start state, the roll carry, ...), at the node's first steps (``nodeState_first_dt``).  Empty (over the
     solve's (d, t)) without storage or without a solved v_state."""
-    from flextool.engine.preprocess.flex_data import _storage_start_and_level
+    from flextool.engine.preprocess.flex_data._handoff_storage import _storage_start_and_level
 
     first = getattr(flex_data, "nodeState_first_dt", None)
     start = None

@@ -659,7 +659,7 @@ def test_no_active_pairs_after_stochastic_load(maps_2day) -> None:
 
 def test_no_active_pairs_after_failed_stochastic_load(tmp_path_factory, monkeypatch) -> None:
     """A load that raises after the pairs are armed must still reset them (outer finally)."""
-    from flextool.engine.preprocess import flex_data as fd_mod
+    from flextool.engine.model import _commodity_ladder
     from flextool.engine.preprocess.params import _branch
 
     seen = {}
@@ -668,7 +668,7 @@ def test_no_active_pairs_after_failed_stochastic_load(tmp_path_factory, monkeypa
         seen["pairs"] = _branch.active_branch_anchor_pairs()
         raise RuntimeError("c6 injected failure")
 
-    monkeypatch.setattr(fd_mod._commodity_ladder, "inherit_branch_periods", boom)
+    monkeypatch.setattr(_commodity_ladder, "inherit_branch_periods", boom)
     url, scen = make_db(tmp_path_factory, alt="c6_fail", values=[],
                         base_chain=_chain(STOCHASTICS_JSON, "2_day_stochastic_dispatch"),
                         fixture_json=STOCHASTICS_JSON)

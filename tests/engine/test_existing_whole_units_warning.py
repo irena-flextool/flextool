@@ -50,7 +50,7 @@ def _fractional_lines(log, vu: float | None) -> list[str]:
     import polars as pl
 
     from flextool.engine.input._inmemory_reader import InMemoryReader
-    from flextool.engine.preprocess.flex_data import _warn_fractional_integer_unit_counts
+    from flextool.engine.preprocess.flex_data._load import _warn_fractional_integer_unit_counts
 
     flex_data = SimpleNamespace(
         p_process_existing_count=SimpleNamespace(frame=pl.DataFrame(

@@ -97,7 +97,8 @@ def co2_total_groups(provider, source) -> list[str]:
     import polars as pl
 
     from flextool.engine.input._axis_enums import rename_to_axis
-    from flextool.engine.preprocess.flex_data import _startup_co2_sets, co2_capped_emitter_arcs
+    from flextool.engine.preprocess.flex_data import co2_capped_emitter_arcs
+    from flextool.engine.preprocess.flex_data._load_co2 import _startup_co2_sets
     from flextool.engine.preprocess.params._projection import process_source_sink_canonical
 
     capped = provider.get("solve_data/group_co2_max_total")

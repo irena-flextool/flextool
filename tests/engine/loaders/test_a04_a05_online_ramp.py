@@ -61,7 +61,7 @@ def test_pdt_online_zero_startup_cost_excluded(online_run):
     the ``coal_min_load`` provider; ``inp`` / ``sd`` point into the empty
     load folder, so no file is read.
     """
-    from flextool.engine.preprocess.flex_data import _load_online
+    from flextool.engine.preprocess.flex_data._load_ramp_online import _load_online
 
     run, P = online_run
     inp = run.load_folder / "input"

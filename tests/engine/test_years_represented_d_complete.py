@@ -133,7 +133,7 @@ DT = pl.DataFrame({"d": ["p2020", "p2020", "p2025"], "t": ["t0001", "t0002", "t0
 
 
 def _boundary(provider) -> dict[str, float] | None:
-    from flextool.engine.preprocess.flex_data import _years_represented_boundary
+    from flextool.engine.preprocess.flex_data._load import _years_represented_boundary
 
     param = _years_represented_boundary(DT, _NoParams(), provider, None)
     return None if param is None else dict(utf8(param.frame).select("d", "value").iter_rows())

@@ -407,7 +407,7 @@ def test_derived_link_equals_step_previous(tmp_path_factory) -> None:
     """dt_ramp_link built from the source timeline equals the jump == 1 rows of solve_data/step_previous
     (make_step_jump) on gaps, continuing periods, solve-level new_stepduration (review F1), aggregated blocks
     with gaps (the solve's timeline keeps them, #101) and the representative-block rule."""
-    from flextool.engine.preprocess.flex_data import _read_ramp_link
+    from flextool.engine.preprocess.flex_data._load_ramp_online import _read_ramp_link
 
     for alt, vals, chain, ents in (
         ("lk_5w", _ramp(0.002), ("init", "west", "coal", "coal_ramp", "5weeks"), None),
