@@ -57,6 +57,7 @@ from spinedb_api.exception import NothingToCommit
 
 from flextool._resources import package_data_path
 from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import v57_v69
 from flextool.update_flextool.db_migration import common
 from tests.update_flextool._rerun import patch_migration
 from flextool.update_flextool.db_migration import migrate_database
@@ -158,7 +159,7 @@ def _shipped() -> dict:
     v79_texts = {**m._V79_CAPACITY_MARGIN_DESCRIPTIONS, **m._v79_solver_precommand_texts(),
                  ("solve", "reduce_unit_detail_method"): m._V79_REDUCE_DESCRIPTIONS["reduce_unit_detail_method"],
                  ("group", "print_dispatch"): (m._V78_UNIT_PREFIXES[("group", "print_dispatch")] + " "
-                                               + m._V58_GROUP_OUTPUT_FLAG_DESCRIPTIONS["print_dispatch"])}
+                                               + v57_v69._V58_GROUP_OUTPUT_FLAG_DESCRIPTIONS["print_dispatch"])}
     out = {}
     for r in schema["parameter_definitions"]:
         key = (r[0], r[1])

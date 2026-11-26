@@ -8,6 +8,10 @@
         "flextool/update_flextool/db_migration/v01_v25.py",
         "flextool/update_flextool/db_migration/v26_v43.py",
         "flextool/update_flextool/db_migration/v44_v49.py",
+        "flextool/update_flextool/db_migration/v50_v55.py",
+        "flextool/update_flextool/db_migration/v56_methods.py",
+        "flextool/update_flextool/db_migration/v56_renames.py",
+        "flextool/update_flextool/db_migration/v57_v69.py",
         "flextool/update_flextool/v84_branching.py",
         "flextool/update_flextool/__init__.py"
     ],

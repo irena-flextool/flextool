@@ -119,7 +119,7 @@ LARGE_MODULES: dict[str, int] = {
     "flextool/process_outputs/read_parameters.py": 2018,
     "flextool/process_outputs/write_outputs.py": 1566,
     "flextool/project_package.py": 1647,
-    "flextool/update_flextool/db_migration/__init__.py": 10937,
+    "flextool/update_flextool/db_migration/__init__.py": 6014,
     "tools/assistant_eval.py": 3531,
     "tools/lp_snapshot.py": 3403,
 }

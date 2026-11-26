@@ -16,6 +16,7 @@ import pytest
 from spinedb_api import from_database, import_data
 
 from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import v56_methods, v57_v69
 from flextool.update_flextool.db_migration import common
 from tests.update_flextool._rerun import patch_migration
 from flextool.update_flextool.db_handle import open_database_mapping
@@ -113,7 +114,7 @@ def test_v56_yes_no_rebind_rerun_keeps_every_value(tmp_path, monkeypatch, last: 
     """Every ``is_DC = yes`` survives the rebind to ``yes_no`` (default ``no``), also when the step stopped after
     removing the first or the last batch of them: the values wait in a stage definition (written in one run of ids,
     so it is removed in one commit), which is gone after the step."""
-    clean, rerun, batches = _clean_and_rerun(tmp_path, _build_v56_yes_no, m._migrate_v56_retype_yes_only_to_yes_no,
+    clean, rerun, batches = _clean_and_rerun(tmp_path, _build_v56_yes_no, v56_methods._migrate_v56_retype_yes_only_to_yes_no,
                                              monkeypatch, trigger="is_DC values", last=last)
     assert batches
     assert {k: v for k, v in clean["values"].items() if k[2] == "is_DC"} == {
@@ -165,7 +166,7 @@ def test_v56_is_enabled_rerun_keeps_the_written_values(tmp_path, monkeypatch, la
     removing the first or the last batch of entity_alternative rows: the rerun does not take a provision whose row is gone for
     one without a row."""
     clean, rerun, batches = _clean_and_rerun(tmp_path, _build_v56_is_enabled,
-                                             m._migrate_v56_reactivate_is_enabled_parameter, monkeypatch,
+                                             v56_methods._migrate_v56_reactivate_is_enabled_parameter, monkeypatch,
                                              trigger="reserve__upDown__unit__node", last=last)
     assert batches
     assert clean["values"] == _expected_is_enabled()
@@ -179,9 +180,9 @@ def test_v56_is_enabled_rerun_after_the_whole_step(tmp_path) -> None:
     changes nothing: the provisions active in Base stay ``yes``."""
     url = f"sqlite:///{tmp_path / 'db.sqlite'}"
     _build_v56_is_enabled(url)
-    _run(url, m._migrate_v56_reactivate_is_enabled_parameter)
+    _run(url, v56_methods._migrate_v56_reactivate_is_enabled_parameter)
     once = _snapshot(url)
-    _run(url, m._migrate_v56_reactivate_is_enabled_parameter)
+    _run(url, v56_methods._migrate_v56_reactivate_is_enabled_parameter)
     assert once["values"] == _expected_is_enabled()
     assert _snapshot(url) == once
 
@@ -263,7 +264,7 @@ def test_v58_rerun_rehomes_every_membership(tmp_path, monkeypatch, last: bool) -
     leaves group and ``dual`` keeps its node membership, also when the step stopped after the first batch of the
     membership removal, or after the last one (every membership gone, the groups not yet)."""
     clean, rerun, batches = _clean_and_rerun(tmp_path, _build_v57_memberships,
-                                             m._migrate_v58_carve_flowgroup_out_of_group, monkeypatch,
+                                             v57_v69._migrate_v58_carve_flowgroup_out_of_group, monkeypatch,
                                              trigger="flow memberships", last=last)
     assert batches
     entities = set(clean["entities"])

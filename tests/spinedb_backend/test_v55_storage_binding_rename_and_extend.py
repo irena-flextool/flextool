@@ -286,9 +286,7 @@ def test_v55_post_migration_description_matches_canonical(tmp_path: Path) -> Non
     that the canonical text is, in fact, what shipped fixtures
     expose; that's what this test checks now.
     """
-    from flextool.update_flextool.db_migration import (
-        _STORAGE_BINDING_METHOD_DESCRIPTION_V55,
-    )
+    from flextool.update_flextool.db_migration.v50_v55 import _STORAGE_BINDING_METHOD_DESCRIPTION_V55
 
     url = _stage_v54_db_with_planted_rows(
         tmp_path / "v55_description.sqlite",

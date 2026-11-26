@@ -33,6 +33,7 @@ from spinedb_api.exception import NothingToCommit
 
 from flextool._resources import package_data_path
 from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import v57_v69
 from tests.update_flextool._rerun import patch_migration
 from flextool.update_flextool.db_migration import migrate_database
 from tests.db_utils import json_to_db
@@ -240,7 +241,7 @@ def test_replaces_the_print_dispatch_description(migrated) -> None:
     shipped, _ = _shipped()
     key = ("group", "print_dispatch")
     assert after[key][0] == shipped[key] == m._v80_texts()[key] != before[key][0]
-    assert before[key][0] == "[yes/no] " + m._V58_GROUP_OUTPUT_FLAG_DESCRIPTIONS["print_dispatch"]
+    assert before[key][0] == "[yes/no] " + v57_v69._V58_GROUP_OUTPUT_FLAG_DESCRIPTIONS["print_dispatch"]
     assert after[key][1:] == before[key][1:]
     assert after[key][0].startswith(before[key][0] + " ")
     for words in ("ramp envelope (ramp_envelope_t", "Ramp envelope and Ramp frequency plots"):
