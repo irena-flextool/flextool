@@ -546,7 +546,7 @@ def _anchor_cyclic_in_rolling(*, state, solve: str, complete_solve_name: str, in
     ``solve_data/storage_roll_end``:
 
     * a roll whose horizon does not reach the end of the instance: ``anchor`` at the carried level (the model
-      ends the horizon at least there, ``model.core._eq_storage_roll_end``);
+      ends the horizon at least there, ``model.core._storage_state._eq_storage_roll_end``);
     * a closing roll (``closing``: its horizon holds the last step of the instance): ``close`` at the level the
       instance's first roll started from (:class:`_RollingStorage` ``start``).
 

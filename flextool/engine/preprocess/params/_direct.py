@@ -2832,7 +2832,7 @@ def apply_direct_params_a(source: "InputSource",
     # there).  See ``specs/fix_map_reading.md`` §5.  It is the floor's field
     # only (no unit authoring min_load leaves it None; the online feature does
     # not need it).  NB: ``p_min_load`` is a
-    # per-unit floor — the ``minFlow_minload`` constraint (``model/core.py``) sums
+    # per-unit floor — the ``minFlow_minload`` constraint (``model/core/``) sums
     # flow over all of a unit's outputs — and the (p, d, t) shape lets that
     # per-unit floor vary over time; the two compose.
     # Per-output ``capacity_min_coeff`` — the optional per-output floor of

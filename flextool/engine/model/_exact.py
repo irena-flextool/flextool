@@ -2,7 +2,7 @@
 
 Owns the variable v_exact_forward (one binary per exact connection and step: the connection is set to its forward
 direction) and the rows maxFlow_exact_forward / maxFlow_exact_reverse.  The flows' capacity rows (maxFlow,
-maxFlow_online) stay in model/core.py and model/_online.py; the connection reserve rows read :func:`exact_arcs` and
+maxFlow_online) stay in model/core/ and model/_online.py; the connection reserve rows read :func:`exact_arcs` and
 :func:`exact_bound` for their direction-switch rows (model/_reserve.py).  A coarse exact connection
 (``processCoarse``) has one direction per coarse step (an aliased level, like its flows) and its direction rows are
 averaged over the step (``_coarse_flows.add_cstr``).
@@ -18,7 +18,7 @@ from flextool.engine.model import _coarse_flows
 from flextool.engine.model._common import _has_rows, _utf8_keys
 
 if TYPE_CHECKING:
-    from flextool.engine.model.core import _Build
+    from flextool.engine.model.core._context import _Build
 
 # Data fields the exact rows need (checked when process_exact has rows).
 EXACT: tuple[str, ...] = ("process_exact", "process_source_canonical", "p_flow_upper")

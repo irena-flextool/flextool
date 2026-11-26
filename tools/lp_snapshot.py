@@ -117,7 +117,7 @@ How it works
 Known non-determinism (production, not the harness): the RHS of
 ``node_storage_usage_fix_le`` sums several coarse-window usages with a
 polars ``group_by().sum()`` whose input order follows an unordered
-``.unique()`` (model/core.py, storage usage fix block), so
+``.unique()`` (model/core/_node_balance.py, storage usage fix block), so
 ``nested_fix_usage/dispatch_fullYear_roll.mps`` can differ in the last
 bits between processes.  Byte compare flags it; canonical compare with
 ``--rtol 1e-12`` accepts it.
@@ -155,7 +155,10 @@ MODEL_MODULE = "flextool.engine.model.core"
 # Files whose ``add_cstr`` calls define the constraint-family universe
 # checked by ``coverage``: POSIX paths relative to ENGINE_DIR.
 COVERAGE_SOURCES = (
-    "model/core.py", "model/_reserve.py", "model/_group_slack.py",
+    "model/core/_co2.py", "model/core/_conversion.py", "model/core/_flows.py",
+    "model/core/_invest.py", "model/core/_node_balance.py", "model/core/_profiles.py",
+    "model/core/_ramp.py", "model/core/_rp_storage.py", "model/core/_storage_state.py",
+    "model/core/_user_constraints.py", "model/_reserve.py", "model/_group_slack.py",
     "model/_cumulative_invest.py", "model/_delay.py",
     "model/_commodity_ladder.py", "model/_dc_power_flow.py",
     "model/_online.py", "model/_unit_floors.py",
@@ -2095,7 +2098,7 @@ def _patch_piecewise_single_line(data: dict) -> dict:
 
 
 def _patch_piecewise_multi_line(data: dict) -> dict:
-    """piecewise_linear units with two or more lines (conversion_piecewise, model/core.py): the direct coal_plant
+    """piecewise_linear units with two or more lines (conversion_piecewise, model/core/): the direct coal_plant
     with a rising three-point curve (online form, linear start-ups; one input, one output: remapped, with a ramp
     limit and a ramp cost on its input acting on the output) and the two-output coal_chp with a falling
     three-point curve (capacity form: no online variables), in a rolling solve."""
@@ -3168,7 +3171,7 @@ _ADD_CSTR_LITERAL = re.compile(r"add_cstr\(\s*[\"']([A-Za-z_][A-Za-z0-9_]*)[\"']
 # by reading the call sites (source file -> names).
 # Keyed like COVERAGE_SOURCES (path relative to ENGINE_DIR).
 DYNAMIC_CSTR_NAMES: dict[str, tuple[str, ...]] = {
-    "model/core.py": (
+    "model/core/_invest.py": (
         # _eq_invest_period_caps / _eq_invest_total_caps loop tables
         "maxInvest_entity_period_p", "maxInvest_entity_period_n",
         "maxDivest_entity_period_p", "maxDivest_entity_period_n",
@@ -3176,15 +3179,23 @@ DYNAMIC_CSTR_NAMES: dict[str, tuple[str, ...]] = {
         "maxDivest_entity_total", "maxDivest_entity_total_path",
         "maxInvest_entity_total_n", "maxInvest_entity_total_path_n",
         "maxDivest_entity_total_n", "maxDivest_entity_total_path_n",
+    ),
+    "model/core/_ramp.py": (
         # f"ramp_{side}_{dir_}_constraint"
         "ramp_sink_up_constraint", "ramp_sink_down_constraint",
         "ramp_source_up_constraint", "ramp_source_down_constraint",
+    ),
+    "model/core/_user_constraints.py": (
         # user constraints (process_constraint_*)
         "process_constraint_equal", "process_constraint_less_than",
         "process_constraint_greater_than",
+    ),
+    "model/core/_storage_state.py": (
         # _eq_state_profiles loop table
         "profile_state_upper_limit", "profile_state_lower_limit",
         "profile_state_fixed",
+    ),
+    "model/core/_profiles.py": (
         # _eq_profiles loop table
         "profile_flow_upper_limit", "profile_flow_lower_limit",
         "profile_flow_fixed",

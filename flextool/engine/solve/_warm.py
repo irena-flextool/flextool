@@ -512,7 +512,7 @@ def _build_warm_problem(
     build skips polar-high's per-cell tracking pass.
 
     Late-imports ``build_flextool`` to avoid a build-time cycle between
-    this module and ``model/core.py``.
+    this module and ``model/core/``.
     """
     from flextool.engine.model.core import build_flextool
 

@@ -194,7 +194,7 @@ NOT_DUMPED: dict[str, tuple[str, ...]] = {
         "p_entity_previously_invested_capacity", "p_entity_invested", "p_entity_divested",
         "p_entity_carried_commission", "p_entity_carried_in_construction", "p_entity_retired_carried"),
     "set by reduce_unit_detail_method on the loaded FlexData": ("relax_integrality",),
-    "not set by the load: model/core.py computes it on the build": ("nodeState_dt",),
+    "not set by the load: model/core/ computes it on the build": ("nodeState_dt",),
     f"{_OVERLAY} (run-level costs, discounting)": (
         "p_years_represented_d", "p_inflation_op_run", "p_inflation_inv_run", "ed_entity_annual_discounted_run",
         "edl_invest_lines_run", "edl_divest_lines", "edl_existing_credit_lines", "edl_existing_replacement_lines",

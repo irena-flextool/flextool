@@ -383,17 +383,18 @@ def test_life_extension_in_the_start_period_is_a_start_decision(monkeypatch):
     endowment and got no matching end."""
     from types import SimpleNamespace
 
-    from flextool.engine.model import core
+    from flextool.engine.model import _extend
+    from flextool.engine.model.core import _storage_links
 
     extend = pl.DataFrame({"n": ["s", "s"], "cohort": ["existing", "existing"], "d": ["p1", "p2"]})
-    monkeypatch.setattr(core._extend, "options", lambda d, axis: extend if axis == "n" else None)
+    monkeypatch.setattr(_extend, "options", lambda d, axis: extend if axis == "n" else None)
     b = SimpleNamespace(d=SimpleNamespace(nd_invest_set=pl.DataFrame({"n": ["t"], "d": ["p2"]})), has_invest_n=True)
-    assert core._start_decision_periods(b) == {"s": {"p1", "p2"}, "t": {"p2"}}
+    assert _storage_links._start_decision_periods(b) == {"s": {"p1", "p2"}, "t": {"p2"}}
     nodes = pl.DataFrame({"n": ["s", "t"]})
-    assert core._invest_at_start_nodes(b, nodes, ["p1"]) == {"s"}
-    assert core._invest_at_start_nodes(b, nodes, ["p2"]) == {"s", "t"}
+    assert _storage_links._invest_at_start_nodes(b, nodes, ["p1"]) == {"s"}
+    assert _storage_links._invest_at_start_nodes(b, nodes, ["p2"]) == {"s", "t"}
     b.has_invest_n = False
-    assert core._invest_at_start_nodes(b, nodes, ["p1"]) == {"s"}
+    assert _storage_links._invest_at_start_nodes(b, nodes, ["p1"]) == {"s"}
 
 
 def test_timeblock_fix_start_end_in_a_solve_mixing_representative_and_plain_periods_runs(tmp_path_factory):

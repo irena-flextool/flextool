@@ -6,7 +6,7 @@ One definition for every dual-based per-(d,t) price: the node prices (``price_t`
 build_handoff_from_solution``).
 
 Every operational cost term of the objective carries ``w_op[d,t] = Δt · tw · inflation_op / period_share · bw``
-(``model/core.py``, header above ``_obj_balance_slack``) and the whole objective is multiplied by
+(``model/core/_objective.py``, header above ``_obj_balance_slack``) and the whole objective is multiplied by
 ``scale_the_objective`` s.  The LP rows are written as built: Layer-2 row factors are removed by
 ``autoscale.unscale_solution`` before the duals are read, and the Layer-3 HiGHS options are un-scaled by HiGHS.
 

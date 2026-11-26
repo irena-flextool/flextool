@@ -26,7 +26,7 @@ from flextool.engine.model._retire_built import _cost, _members, _unitsize
 from flextool.engine.preprocess.params._cohorts import KIND_EXISTING, KIND_INVEST
 
 if TYPE_CHECKING:
-    from flextool.engine.model.core import _Build
+    from flextool.engine.model.core._context import _Build
 
 
 def options(d, axis: str) -> pl.DataFrame | None:

@@ -11,17 +11,17 @@ uses the set of the solve that realized its later step.
 
 The coefficients come from the model's own helpers (never re-derived here):
 
-* the capacity multiplier of an arc's ``maxFlow`` row (``core._max_flow_rhs``: capacity coefficient × availability
+* the capacity multiplier of an arc's ``maxFlow`` row (``core._flows._max_flow_rhs``: capacity coefficient × availability
   on direct arcs and indirect output arcs, the input limit × x(availability) on indirect input arcs);
 * the floor per unit online (``_unit_floors.arc_floor_share``);
 * the ramp-limit arc sets with their speeds (``process_source_sink_ramp_limit_{side}_{dir}`` without the
   ``conversion_flow_coeff = 0`` arcs, ``_common._drop_uncapped``) and the ramp row's capacity factor c
-  (``core._c_param_plain``);
+  (``core._ramp._c_param_plain``);
 * the coarse steps of the coarse processes (``FlexData.process_coarse_step``).
 
 A coarse process has one flow per coarse step, and its ramp row between two coarse steps takes the Δt-weighted means
 over each coarse step of the time-varying c and floor F (``_coarse_flows.at_first_steps``, the means of c and F in
-the ramp row of ``core._eq_ramp``); its capacity multiplier enters the coarse step's capacity row as the same mean
+the ramp row of ``core._ramp._eq_ramp``); its capacity multiplier enters the coarse step's capacity row as the same mean
 (``_coarse_flows.average``).  So for a coarse process the capacity multiplier, the floor and c are written as their
 coarse-step means to every fine step of the coarse step (:func:`_coarse_mean`): the envelope reads them at any fine
 step of a coarse step and gets the value of that coarse step.
@@ -101,9 +101,9 @@ def _on_arcs_dt(param, arcs: pl.DataFrame, dt: pl.DataFrame, *, default: float) 
 
 def arc_capacity_factor(d: "FlexData") -> "pl.DataFrame | None":
     """``(p, source, sink, d, t, value)``: the capacity multiplier of each unit arc's ``maxFlow`` row
-    (``core._max_flow_rhs``'s ``cap_mult``: v_flow ≤ value · capacity), rows where it is not 1 (a coarse
+    (``core._flows._max_flow_rhs``'s ``cap_mult``: v_flow ≤ value · capacity), rows where it is not 1 (a coarse
     process's: its coarse-step mean, :func:`_coarse_mean`)."""
-    from flextool.engine.model.core import _max_flow_rhs
+    from flextool.engine.model.core._flows import _max_flow_rhs
 
     arcs = _unit_arcs(d)
     if arcs is None or _dt(d) is None:
@@ -165,10 +165,10 @@ def ramp_limits(d: "FlexData") -> "tuple[pl.DataFrame | None, pl.DataFrame | Non
     """``(speed, c)`` of the arcs of this solve's ramp-limit sets (``limit`` ∈ :data:`RAMP_LIMITS` labels):
     ``speed`` ``(p, source, sink, limit, value)``, the ramp speed (share of capacity per minute; a set has no time
     axis), and ``c`` ``(p, source, sink, limit, d, t, value)``, the ramp row's capacity factor
-    (``core._c_param_plain``) at the rows where it is not 1 (a coarse process's: its coarse-step mean,
+    (``core._ramp._c_param_plain``) at the rows where it is not 1 (a coarse process's: its coarse-step mean,
     :func:`_coarse_mean`).  ``(None, None)`` without ramp limits."""
     from flextool.engine.model._common import _drop_uncapped
-    from flextool.engine.model.core import _c_param_plain
+    from flextool.engine.model.core._ramp import _c_param_plain
 
     dt = _dt(d)
     if dt is None:

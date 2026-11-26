@@ -137,9 +137,9 @@ def test_first_use_builds_the_cache_and_later_loads_read_it(user_cache_in_tmp: P
 
 def test_the_cache_key_follows_the_model_code(tmp_path: Path) -> None:
     package = tmp_path / "flextool"
-    model = package / "engine" / "model"
+    model = package / "engine" / "model" / "core"     # a module of a model package
     model.mkdir(parents=True)
-    core = model / "core.py"
+    core = model / "_ramp.py"
     core.write_text("x = 1\n", encoding="utf-8")
     key = docs_store.cache_key(DOCS, package, version="9.9")
     assert key == docs_store.cache_key(DOCS, package, version="9.9")
@@ -148,7 +148,7 @@ def test_the_cache_key_follows_the_model_code(tmp_path: Path) -> None:
     assert changed != key and changed.startswith("9.9-")
     assert docs_store.cache_key(DOCS, package, version="10.0") != changed
     labels = [label for label, _ in docs_store.source_files(DOCS)]
-    for expected in ("md/reference/nodes.md", "pkg/engine/model/core.py", "pkg/engine/solve/_benders.py",
+    for expected in ("md/reference/nodes.md", "pkg/engine/model/core/_build.py", "pkg/engine/model/_online.py", "pkg/engine/solve/_benders.py",
                      "pkg/process_outputs/_output_meta.py", "pkg/process_outputs/write_spinedb.py",
                      "pkg/docs_build/index.py", "pkg/assistant/textsearch.py"):
         assert expected in labels

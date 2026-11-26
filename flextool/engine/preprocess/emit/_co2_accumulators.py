@@ -4,19 +4,19 @@ For each realized ``(d, t)`` (``flex_data.realized_dispatch``), per ``v_flow[p, 
 whose ``source`` is a CO2 commodity node — add ``content * value * us * dur * rpw`` (noEff) or that ×
 ``slope`` (eff — ``slope`` already carries a direct unit's conversion_flow_coeff ratio, #10 / Q12); per
 row whose ``sink`` is a CO2 node — subtract the same flow piece (no slope).  No further unit conversion:
-``co2_content`` is already CO2 tons per MWh (``docs/reference/commodities.md``), the same measure core.py's
+``co2_content`` is already CO2 tons per MWh (``docs/reference/commodities.md``), the same measure core/'s
 ``co2_max_period`` / ``co2_max_total`` / ``co2_price_eff`` rows use directly — an extra ``/1000`` here
 would silently undercount the carried realized total a thousandfold against what the LP itself counts.
 Attribute to groups via ``group_node``; combine with the prior roll's
 accumulator carried in the Provider under ``K.HANDOFF_CUMULATIVE_CO2``
 (populated by ``_provider_translators.translate_handoff_to_provider``).
 
-``min_load_efficiency``'s section term (v_online × section × unitsize, mirroring core.py's
+``min_load_efficiency``'s section term (v_online × section × unitsize, mirroring core/'s
 ``_eff_fuel_input``) is included on the source-side branch when ``flex_data.p_section`` is available;
 otherwise it is omitted and a warning logged (under-reports, LP cap binds slightly tighter than the
 carried figure says).
 
-The start-up input draw (``startup_input_method``: v_startup × startup_energy × unitsize, mirroring core.py's
+The start-up input draw (``startup_input_method``: v_startup × startup_energy × unitsize, mirroring core/'s
 ``_startup_draw``) adds ``content × v_startup × startup_energy × us × rpw`` at its start-up node: an event, so
 no step duration (:func:`_startup_contribution`).
 """
@@ -55,7 +55,7 @@ def _read_co2_capped_groups(
     ``input/group__co2_method.csv``.
 
     Both caps' carried-budget RHS (``_co2_period_cap_with_carry``, ``_co2_total_cap_with_carry`` in
-    ``model/core.py``) need this roll's realized tonnes, so the gate is the union of
+    ``model/core/``) need this roll's realized tonnes, so the gate is the union of
     ``_leaf_sets._CO2_MAX_PERIOD_METHOD`` and ``_leaf_sets._CO2_MAX_TOTAL_METHOD`` — every method that
     carries an actual cap (plain ``price``/``price_period``/``price_total`` excluded: pricing alone has
     no RHS to carry).  Originally gated on ``_CO2_MAX_TOTAL_METHOD`` alone, which silently dropped every
@@ -342,7 +342,7 @@ def compute_co2_rolling_accumulator(
         .select("attr_node", alias_to_axis("d", "period"), "contribution"))
 
     # Min-load efficiency section fuel (v_online_linear / v_online_integer × section × unitsize),
-    # mirroring core.py's _eff_fuel_input section_lin / section_int terms: the LP's CO2 cap rows
+    # mirroring core/_conversion.py's _eff_fuel_input section_lin / section_int terms: the LP's CO2 cap rows
     # (co2_price_eff, co2_max_period, co2_max_total) count this on top of the eff slope term above, so
     # the carried realized-so-far figure (#38, Q22) must too, or it would understate what the LP
     # actually counted and loosen the next roll's carried budget.  Only the source-side (emission)
@@ -422,9 +422,9 @@ def compute_co2_rolling_accumulator(
 
 def _reweigh_split_periods(carrier: pl.DataFrame, flex_data) -> pl.DataFrame:
     """*carrier* with the represented tonnes of each period that the solves of a chain split (item 1042) set to the
-    period's realized tonnes × years_represented / share* of this solve (``core._co2_total_share``): one weight
+    period's realized tonnes × years_represented / share* of this solve (``core._co2._co2_total_share``): one weight
     for every hour of the period, the earlier solves' part included, as co2_max_total weighs them."""
-    from flextool.engine.model.core import _co2_split_represented, _co2_total_share
+    from flextool.engine.model.core._co2 import _co2_split_represented, _co2_total_share
 
     split = _co2_total_share(flex_data)
     if split is None or carrier.height == 0:
@@ -441,7 +441,7 @@ def _startup_contribution(flex_data, sol, realized_dt: pl.DataFrame, cn_co2: pl.
                           ) -> pl.DataFrame:
     """``[attr_node, period, contribution]``: the CO2 of the start-up input draws of the realized steps,
     ``co2_content[c] · v_startup[p,d,t] · startup_energy[p,n,d] · unitsize[p] · timestep_weight[d,t]`` at the
-    start-up node n of a CO2-bearing commodity c (the core._startup_draw term of the CO2 caps: an event, no step
+    start-up node n of a CO2-bearing commodity c (the core._conversion._startup_draw term of the CO2 caps: an event, no step
     duration).  A coarse process's start-up stays at the first fine step of its coarse step (``var_values``
     mode ``first``).  Empty without start-up draws."""
     from flextool.engine.input._axis_enums import cast_dim

@@ -1,6 +1,6 @@
 """The carry of the CO2 caps across rolls and the solves of a chain (#38, Q22, item 1042): what a solve reads of
 the CO2 its chain already realized, and how much of the horizon it reaches (``load_co2_rolling_carry``, the
-consumers ``model/core.py`` ``_co2_period_cap_with_carry`` / ``_co2_total_cap_with_carry``).
+consumers ``model/core/_co2.py`` ``_co2_period_cap_with_carry`` / ``_co2_total_cap_with_carry``).
 
 A period that the solves of a chain split (each solve declares a part of it, item 1042) is known to a solve as the
 hours earlier solves realized of it plus this solve's own complete hours of it.  co2_max_total weighs every hour of

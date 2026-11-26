@@ -255,7 +255,7 @@ def _invest_dual(
 ) -> VariableSpec:
     # ``derived_from`` is set for invest-cap families whose producer
     # splits the LHS into process-side (``..._p``) and node-side
-    # (``..._n``) constraints (model/core.py / _cumulative_invest.py).  The
+    # (``..._n``) constraints (model/core/ / _cumulative_invest.py).  The
     # bracketed entity columns of the two sides are disjoint (process
     # names vs. node names), so ``df.add(fill_value=0.0)`` cleanly
     # unions them into one wide frame at the output boundary.
@@ -464,7 +464,7 @@ VARIABLE_SPECS: list[VariableSpec] = [
         output_name="v_dual_co2_max_total",
     ),
     # A stochastic solve with several scenario paths names the total cap
-    # ``co2_max_total_path[g, leaf]`` (one row per path, model/core.py
+    # ``co2_max_total_path[g, leaf]`` (one row per path, model/core/
     # _eq_co2_max_total) instead of ``co2_max_total[g]``.  Each path's dual
     # carries the path's branch weight; read_variables sums them over the
     # paths into ``dual_co2_max_total`` (item 183).

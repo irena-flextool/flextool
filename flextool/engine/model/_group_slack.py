@@ -35,7 +35,7 @@ from flextool.engine.model import _balance_terms, _coarse_flows, _dc_power_flow,
 from flextool.engine.model._common import _availability_factor, _has_rows, _indirect_sum_arcs, _var_view
 
 if TYPE_CHECKING:
-    from flextool.engine.model.core import _Build
+    from flextool.engine.model.core._context import _Build
 
 
 def _provider_get(provider, path: Path) -> pl.DataFrame | None:
@@ -757,7 +757,7 @@ def _eq_capacity_margin(b: _Build) -> None:
     #   of F(g) ∪ V(g) and without the arcs left out (capacity_margin_left_out_arcs: the connections with both ends
     #   in N(g), the lossy converters inside g); the other units' output and input (slope, section), connections at
     #   N(g) (v_flow, v_flow_back), Benders half-flows; only at the (g, n) pairs of N(g).  The start-up input
-    #   draw (startup_input_method, core._startup_draw: energy per start-up event, not capacity) is not a term, so
+    #   draw (startup_input_method, core._conversion._startup_draw: energy per start-up event, not capacity) is not a term, so
     #   with a draw at a node of N(g) (a unit started on grid electricity) the substituted balance below differs
     #   from the row by that draw
     #   S(g) = the storage nodes with an upward balance slack that feed N(g) through a storage-backed unit or a

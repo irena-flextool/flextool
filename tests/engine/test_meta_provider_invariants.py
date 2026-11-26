@@ -588,7 +588,7 @@ RULE_4_READ_ALLOWLIST: dict[tuple[str, str], str] = {
         "_loadflex_prof: RSS probe of the running process, only with FLEXTOOL_LOADFLEX_PROFILE=1; "
         "not the work folder."
     ),
-    ("model/core.py", "/proc/self/status"): (
+    ("model/core/_build.py", "/proc/self/status"): (
         "_build_prof: RSS probe of the running process, only with FLEXTOOL_BUILD_PROFILE=1; "
         "not the work folder."
     ),
@@ -756,38 +756,38 @@ def test_rule_4_read_allowlist_is_used() -> None:
     ("p.exists()", "preprocess/flex_data.py"),
     ("p.is_file()", "model/_reserve.py"),
     ("p.is_dir()", "preprocess/emit/_blocks.py"),
-    ("p.is_symlink()", "model/core.py"),
+    ("p.is_symlink()", "model/core/_flows.py"),
     ("os.path.exists(p)", "preprocess/params/_derived.py"),
-    ("os.path.isfile(p)", "model/core.py"),
+    ("os.path.isfile(p)", "model/core/_flows.py"),
     ("os.path.isdir(p)", "preprocess/_solve_context.py"),
     ("open(p)", "preprocess/flex_data.py"),
-    ("open(p, 'r')", "model/core.py"),
+    ("open(p, 'r')", "model/core/_flows.py"),
     ("open(p, mode='rb')", "preprocess/flex_data.py"),
     ("open(p, 'r+')", "preprocess/flex_data.py"),
     ("open(p, m)", "preprocess/flex_data.py"),
     ("p.open()", "preprocess/emit/_blocks.py"),
     ("p.open('r', encoding='utf-8')", "preprocess/emit/_blocks.py"),
-    ("gzip.open(p, 'rt')", "model/core.py"),
-    ("p.read_text()", "model/core.py"),
+    ("gzip.open(p, 'rt')", "model/core/_flows.py"),
+    ("p.read_text()", "model/core/_flows.py"),
     ("p.read_bytes()", "preprocess/flex_data.py"),
     ("pl.read_parquet(p)", "preprocess/flex_data.py"),
-    ("pl.scan_parquet(p)", "model/core.py"),
+    ("pl.scan_parquet(p)", "model/core/_flows.py"),
     ("pl.read_excel(p)", "preprocess/flex_data.py"),
-    ("pl.read_csv(p)", "model/core.py"),
+    ("pl.read_csv(p)", "model/core/_flows.py"),
     ("polars.read_parquet(p)", "preprocess/flex_data.py"),
-    ("polars.scan_csv(p)", "model/core.py"),
+    ("polars.scan_csv(p)", "model/core/_flows.py"),
     ("pd.read_csv(p)", "preprocess/emit/_blocks.py"),
-    ("pd.read_excel(p)", "model/core.py"),
+    ("pd.read_excel(p)", "model/core/_flows.py"),
     ("pandas.read_parquet(p)", "preprocess/flex_data.py"),
     ("os.stat(p)", "preprocess/flex_data.py"),
-    ("os.lstat(p)", "model/core.py"),
+    ("os.lstat(p)", "model/core/_flows.py"),
     ("json.load(fh)", "preprocess/flex_data.py"),
     ("os.listdir(d)", "preprocess/flex_data.py"),
     ("d.glob('*.csv')", "preprocess/flex_data.py"),
-    ("d.iterdir()", "model/core.py"),
+    ("d.iterdir()", "model/core/_flows.py"),
     # an allow-listed literal path in another file, or another path in an allow-listed file
     ("open('/proc/self/status')", "model/_reserve.py"),
-    ("open('/proc/self/maps')", "model/core.py"),
+    ("open('/proc/self/maps')", "model/core/_flows.py"),
 ])
 def test_rule_4_detector_flags_every_pattern(source: str, fname: str) -> None:
     """Self-check: Rule 4 flags each banned name and each disk-read form exactly once."""
@@ -795,18 +795,18 @@ def test_rule_4_detector_flags_every_pattern(source: str, fname: str) -> None:
 
 
 @pytest.mark.parametrize("source,fname", [
-    ("open('/proc/self/status')", "model/core.py"),                 # RULE_4_READ_ALLOWLIST
+    ("open('/proc/self/status')", "model/core/_build.py"),                 # RULE_4_READ_ALLOWLIST
     ("open('/proc/self/status')", "preprocess/flex_data.py"),       # RULE_4_READ_ALLOWLIST
     ("p.open('a', encoding='utf-8')", "preprocess/_provider_translators.py"),  # append
     ("open(p, 'w')", "preprocess/flex_data.py"),
-    ("open(p, mode='wb')", "model/core.py"),
+    ("open(p, mode='wb')", "model/core/_flows.py"),
     ("p.write_text('x')", "preprocess/flex_data.py"),
     ("p.mkdir(parents=True, exist_ok=True)", "preprocess/flex_data.py"),
     ("p.exists()", "solve/_orchestration.py"),                       # (b) covers preprocess/ and model/ only
     ("json.loads(s)", "preprocess/flex_data.py"),
     ("pd.DataFrame(rows)", "preprocess/flex_data.py"),            # pandas, but not a file read
     ("pl.read_database(q, conn)", "preprocess/flex_data.py"),    # a DB query, not the work folder
-    ("frame.stat()", "model/core.py"),                            # only os.stat / os.lstat are stat probes
+    ("frame.stat()", "model/core/_flows.py"),                            # only os.stat / os.lstat are stat probes
     ("provider.get('solve_data/process_exact')", "preprocess/flex_data.py"),
     ('"""read_csv_fallback was deleted"""', "preprocess/flex_data.py"),  # docstrings are not references
 ])

@@ -83,7 +83,7 @@ def _var(flex_data, sol, name: str, realized_dt: pl.DataFrame) -> pl.DataFrame |
 
 def _realized_net_flow(flex_data, sol, members: pl.DataFrame, realized_dt: pl.DataFrame) -> list[pl.DataFrame]:
     """The terms of F (MW) at the realized steps, ``[g, d, t, value]`` frames, one row per arc term (not summed)."""
-    from flextool.engine.model.core import _two_way_one_var_arcs
+    from flextool.engine.model.core._prepare import _two_way_one_var_arcs
 
     us = _param(flex_data, "p_unitsize", "us")
     slope = _param(flex_data, "p_slope", "slope")

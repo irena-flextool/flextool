@@ -929,7 +929,7 @@ def read_sets(
 
     # ramp_carry — the ramp_link rows of a continuation roll's first step that continue from the previous roll's
     # last realized step (dt_ramp_carry, without the steps that also have an adjacent link): the model builds
-    # their ramp rows whatever the ramp room (``core._ramp_rows``); the ramp envelope reads them for the same rule.
+    # their ramp rows whatever the ramp room (``core._ramp._ramp_rows``); the ramp envelope reads them for the same rule.
     carry = getattr(flex_data, "dt_ramp_carry", None)
     if carry is not None and carry.height > 0:
         cols = ("d", "t", "d_previous", "t_previous")
@@ -950,7 +950,7 @@ def read_sets(
 
     # node_state_prev — (solve, node, period, time, period_prev, time_prev): the step whose state each storage
     # step starts from in the storage balance (_self_discharge.state_links / previous_steps, the lags of
-    # core._state_change_terms): the chronological predecessor, or the step a binding method relinks it to
+    # core._node_balance._state_change_terms): the chronological predecessor, or the step a binding method relinks it to
     # (bind_within_timeblock wraps the first step of a timeblock to the timeblock's last step).  A step without a
     # row starts from a fixed / carried state or the free state of a representative block.  The ramp envelope
     # caps the storage room toward a step with the state that step starts from.

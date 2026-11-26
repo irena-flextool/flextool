@@ -319,7 +319,7 @@ def _read_p_flow_max(
     # whose ``_rows_to_frame`` types every column ``pl.Utf8``).  This frame is
     # the authoritative seed for ``p_flow_upper`` in the native cascade.  Cast
     # ``value`` back to Float64 here: ``p_flow_upper`` feeds numeric
-    # ``pl.concat`` (``model/core.py`` flow_upper_rhs, indirect_pss ⧺ direct_pss_dt)
+    # ``pl.concat`` (``model/core/`` flow_upper_rhs, indirect_pss ⧺ direct_pss_dt)
     # and ``Param × Param`` paths that raise ``SchemaError`` /
     # ``InvalidOperationError`` on a String ``value`` (the concat fires once
     # the per-(p,source,sink,d,t) frame carries indirect-process rows — e.g.
@@ -981,7 +981,7 @@ def _apply_coarse_process_frames(flex_data: "FlexData") -> None:
 # The storage_roll_end kinds that tie a node's horizon (or first-scope) end to its start: such a node gets no
 # use_reference_value pin in the roll.  The nested-fix kinds (fix_quantity, usage_cap) only restate the upper
 # solve's target and leave the node's own horizon method as it was; scope_close (a bind_intraperiod_blocks period
-# that a roll closes) drops the pin only at the closed step (model.core._eq_storage_reference_value).
+# that a roll closes) drops the pin only at the closed step (model.core._storage_state._eq_storage_reference_value).
 ROLL_END_TIED_KINDS = ("anchor", "close", "anchor_share", "close_share", "wrap_end", "scope_carry", "scope_anchor")
 
 
@@ -1007,7 +1007,7 @@ def _within_period_lag(dtttdt: pl.DataFrame,
     period into paths: the label's jump steps and one branch period's tail each.  The period's part in the roll is
     one path, so the lag crosses the seam: each branch period's first step continues from the label's last jump
     step, and the label's first step wraps to the last step of its last branch period in name order, d* (the
-    model ties every other branch period's end to d*'s, ``core._eq_storage_split_path_end``).
+    model ties every other branch period's end to d*'s, ``core._storage_state._eq_storage_split_path_end``).
     """
     t_dtype = dtttdt.schema["t"]
     frame = (dtttdt.select("d", "t", "t_previous", "d_previous")
@@ -1235,7 +1235,7 @@ class FlexData:
     # annual tier cap uses, read independently of the ladder gate (f_d_k.csv is always emitted).
     # p_co2_cum_realized_tonnes (g, d) is the cumulative_co2 handoff carrier, net of removal credits
     # (#19). co2_horizon_fraction_reached is the whole-chain fraction (years_represented-weighted) that
-    # p_co2_max_total scales by. See _co2_carry.load_co2_rolling_carry and model/core.py's co2_max_period /
+    # p_co2_max_total scales by. See _co2_carry.load_co2_rolling_carry and model/core/'s co2_max_period /
     # co2_max_total EQ headers.
     p_co2_f_d_k: Param | None = None             # (d,)
     p_co2_cum_realized_tonnes: Param | None = None  # (g, d)
@@ -1416,7 +1416,7 @@ class FlexData:
     # ``v_flow ∈ [-cap, +cap]``).  The engine emits ``v_flow ≥ 0`` on the
     # forward arc only, so these arcs carry sink→source flow via a
     # non-negative auxiliary ``v_flow_back``.  Union of DC-power-flow and
-    # non-DC arcs; ``model/core.py`` declares the shared ``v_flow_back`` over it
+    # non-DC arcs; ``model/core/`` declares the shared ``v_flow_back`` over it
     # and ``_dc_power_flow`` consumes the same Var on its DC subset.
     process_source_sink_2way_1var: pl.DataFrame | None = None  # (p, source, sink)
     p_ramp_speed_up_sink:   Param | None = None    # (p, sink)
@@ -1477,7 +1477,7 @@ class FlexData:
     p_startup_cost: Param | None = None                      # (p, d)
     p_section: Param | None = None                           # (p, d, t)
     # Start-up input (unit__inputNode.startup_input_method startup_and_input / startup_only, startup_energy):
-    # each start-up draws startup_energy · MW started from node n (core._startup_draw).  A startup_only arc is
+    # each start-up draws startup_energy · MW started from node n (core._conversion._startup_draw).  A startup_only arc is
     # not an arc: the readers hide it, so it is in none of the arc sets.  All None without start-up roles.
     process_startup_node: pl.DataFrame | None = None         # (p, n): units of the solve, startup_energy ≠ 0
     p_startup_energy: Param | None = None                    # (p, n, d) MWh per MW started
@@ -1550,7 +1550,7 @@ class FlexData:
     # (n, kind, value): the horizon-end condition of the bind_within_solve nodes of a rolling roll that continues
     # from a carried state (solve_data/storage_roll_end, _run_model._anchor_cyclic_in_rolling): kind anchor /
     # close (MWh value), anchor_share / close_share (storage_state_start × capacity) and wrap_end (the first roll's
-    # wrap pinned at storage_state_end).  model.core._eq_storage_roll_end.
+    # wrap pinned at storage_state_end).  model.core._storage_state._eq_storage_roll_end.
     storage_roll_end: pl.DataFrame | None = None
     dtttdt: pl.DataFrame | None = None           # (d, t, t_previous_*, ...)
     dtttdt_forward_only: pl.DataFrame | None = None  # dtttdt with first (d,t) per solve dropped
@@ -1616,7 +1616,7 @@ class FlexData:
     # constraints (.mod:2197-2200, .mod:2965-2997).  Populated by
     # ``_load_storage`` from the Phase-1 Provider keys (see
     # ``_provider_keys.SOLVE_DATA_NODE_STATE_RP`` + siblings).  Loader-only
-    # at this commit — model/core.py wiring lands in Phase 5+.  When
+    # at this commit — model/core/ wiring lands in Phase 5+.  When
     # ``nodeState_rp`` is non-empty the loader enforces that the four
     # tightly-coupled fields (``rp_base_period_set``, ``rp_base__rep``,
     # ``rp_block_first``, ``p_rp_last_step``) are also non-empty.
@@ -1654,7 +1654,7 @@ class FlexData:
     # ``solve_data/p_storage_state_reference_price.csv``.  Consumed by
     # the use_reference_price objective term (B1b) for nodes whose
     # ``storage_solve_horizon_method=use_reference_price``.  Loaded but
-    # unused at the B1a commit; B1b wires it into model/core.py.
+    # unused at the B1a commit; B1b wires it into model/core/.
     p_storage_state_reference_price: Param | None = None     # (n, d)
     # ─── State-profile bounds (node__profile__profile_method) ────────────
     # (n, f) tuples for nodes with a profile-method state bound.  Mirrors
@@ -1858,7 +1858,7 @@ class FlexData:
     # Set once in ``apply_derived_c`` from
     # ``solve_data/stochastic_invest_method.csv`` == 'recourse'.  Survives
     # ``dataclasses.replace`` (region filter) like the lineage frames so
-    # ``model/core.py`` reads ``d.recourse_invest`` without a second CSV read.
+    # ``model/core/`` reads ``d.recourse_invest`` without a second CSV read.
     recourse_invest: bool = False
 
     # ─── Gap F final — handoff-path auxiliaries ───────────────────────────
@@ -2238,7 +2238,7 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
         # ``apply_direct_params``.  The seed used to materialise a fully-
         # zero-filled (c, d, t) Param for fixtures with no explicit price
         # (preprocessed pdtCommodity.csv emits 0.0 rows for every cell);
-        # the model/core.py ``PROCESSES`` invariant requires the field non-None.
+        # the model/core/ ``PROCESSES`` invariant requires the field non-None.
         # We satisfy it with an empty Param as a placeholder; ``Sum(Where(
         # ..., ...) * d.p_commodity_price * ...)`` joins yield no rows
         # which is the same behaviour as zero-filled rows in the LP.
@@ -2663,7 +2663,7 @@ def _load_indirect(sd: Path, pss: pl.DataFrame | None, dt: pl.DataFrame,
     # sink coefficients ({heat: 0.2, west: 2.0}) to encode the iso-fuel
     # relationship via the source-side capacity bound.  Build optional
     # Params restricted to the indirect inputs / outputs sets — only
-    # when non-default coefficients are present — and let model/core.py
+    # when non-default coefficients are present — and let model/core/
     # multiply them into the conversion equation.  Zero-coefficient
     # rows are still anti-joined out (so they don't survive into
     # ``inputs`` / ``outputs``).
@@ -3842,7 +3842,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # apply_projection_params no longer touches this field — the
     # per-solve CSV is the single source of truth.
     binding_within_solve_blended_weights = None
-    # Phase C — not-yet-implemented methods.  Loaded so the model/core.py
+    # Phase C — not-yet-implemented methods.  Loaded so the model/core/
     # guard can surface a precise error instead of silently emitting
     # zero state-change residuals.  Constraint wiring lands in Phases
     # D / E of the storage-binding-methods restructure.
@@ -3994,7 +3994,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         # ``nodeStateBlock`` is the set carrying bind_intraperiod_blocks
         # (loaded below; we look it up via the on-disk CSV here to keep
         # ordering simple).  In a rolling solve a bind_intraperiod_blocks node keeps the pin: it applies where the
-        # roll's last period chains forward (model.core._eq_storage_reference_value), not where its blocks loop.
+        # roll's last period chains forward (model.core._storage_state._eq_storage_reference_value), not where its blocks loop.
         nsb_for_excl = None
         nsb_path_local = sd / "nodeStateBlock.csv"
         if not solve_is_rolling and _provider_has(provider, "solve_data/nodeStateBlock", nsb_path_local):
@@ -4051,7 +4051,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
 
     # ─── Intraperiod-block (bind_intraperiod_blocks) sets ────────────────
     # Used by ``stateConstantWithinBlock_eq`` and ``nodeBalanceBlock_eq``
-    # in model/core.py for nodes whose binding method is ``bind_intraperiod_blocks``.
+    # in model/core/ for nodes whose binding method is ``bind_intraperiod_blocks``.
     # Δ.18 — CSV-fallback seed for ``nodeStateBlock`` (the bind_intraperiod_blocks
     # nodes).  ``apply_derived_e`` (``nodeStateBlock_from_source``) overlays the
     # same set when active; for dump_csvs roundtrip workdirs (no DB) the
@@ -4074,7 +4074,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # ``_leaf_sets.emit_node_state_subsets`` (nodeState_rp),
     # ``_per_solve`` (rp_base_period_set), and
     # ``_solve_writers._compute_rp_frames`` (chain / first / last /
-    # block_first / block_start_last / weights).  Loaded here; model/core.py
+    # block_first / block_start_last / weights).  Loaded here; model/core/
     # wiring lands in Phase 5+.
     from flextool.engine.preprocess import _provider_keys as _K_rp
     nodeState_rp = None
@@ -4094,7 +4094,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # (the same base-period names), and each period has its own base-period chain, blocks and weights.
     def _rp_frame(key: str, basename: str, axis: dict, plain: dict, keep: tuple) -> "pl.DataFrame | None":
         """The frame at ``key``: ``axis`` columns renamed onto their axis (typed), ``plain`` ones renamed as
-        text (base-period / rep-start labels, cast at their use site in model/core.py)."""
+        text (base-period / rep-start labels, cast at their use site in model/core/)."""
         path = sd / basename
         if not _provider_has(provider, key, path):
             return None
@@ -4115,7 +4115,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     rp_block_first = _rp_frame(_K_rp.SOLVE_DATA_RP_BLOCK_FIRST, "rp_block_first.csv",
                                {"period": "d", "step": "t"}, {}, ("d", "t"))
     # ``p_rp_last_step`` — a relation (d, r, last_step), NOT a numeric Param: block r of period d ends at
-    # last_step (model/core.py joins on (d, r) → last_step).
+    # last_step (model/core/ joins on (d, r) → last_step).
     p_rp_last_step = _rp_frame(_K_rp.SOLVE_DATA_RP_BLOCK_START_LAST, "rp_block_start_last.csv",
                                {"period": "d"}, {"rep_start": "r"}, ("d", "r", "last_step"))
     # ``rp_period_previous`` (d, d_prev): the across-solve chain of the rp periods in solve order.
@@ -4391,7 +4391,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         # propagates correctly.
         storage_bind_within_solve_blended_weights = binding_within_solve_blended_weights,
         # Phase C — not-yet-implemented method partitions; consumed by
-        # the model/core.py guard which raises FlexToolConfigError when
+        # the model/core/ guard which raises FlexToolConfigError when
         # non-empty.
         storage_bind_within_period_blended_weights = binding_within_period_blended_weights,
         storage_bind_forward_only_blended_weights = binding_forward_only_blended_weights,
@@ -5578,7 +5578,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # fields against String-dtype scratch frames raises
         # ``SchemaError``.  Casting after the cascade keeps the entire
         # CSV-read + cascade pipeline in String land and converts to
-        # Enum once at the end — Var construction in ``model/core.py`` and
+        # Enum once at the end — Var construction in ``model/core/`` and
         # the model-build cross-joins then operate on Enum-typed
         # frames.
         if db_reader is not None:
@@ -5587,7 +5587,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
                                  provider=provider)
             _loadflex_prof("after_apply_db_overrides")
 
-            # Load-boundary invariant for derived Params that ``model/core.py``
+            # Load-boundary invariant for derived Params that ``model/core/``
             # dereferences UNCONDITIONALLY (no ``is not None`` guard) once
             # their owning structural set is present.  ``_apply_db_overrides``
             # produces these in ``apply_derived_b`` / ``apply_derived_e``, but
@@ -5601,7 +5601,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
             # ``p_flow_constraint_coef`` is the one that actually bites: it has
             # NO ctor seed (the ctor builds only the ``flow_constraint_idx``
             # index — see ``_load_user_constraints``), so the user-defined
-            # flow-constraint block (``model/core.py`` §user_defined_flow_constraints)
+            # flow-constraint block (``model/core/`` §user_defined_flow_constraints)
             # does ``Where(v_flow * p_unitsize, flow_constraint_idx) *
             # p_flow_constraint_coef`` with a ``None`` coefficient.  ``p_unitsize``
             # / ``p_state_unitsize`` DO have ctor seeds so they are rarely
@@ -5812,7 +5812,7 @@ def _reference_start_as_fix_start(flex_data: "FlexData") -> None:
     decision, Phase 5; before, its start was free and only the matching end bounded it): it joins
     ``storage_fix_start`` with that share as ``p_state_start``, so every fix_start rule applies to it (the start pin,
     the matching end of storage the solve can invest in).  A node with its own fix_start keeps it
-    (``model.core._check_storage_accounting`` warns where the two differ)."""
+    (``model.core._prepare._check_storage_accounting`` warns where the two differ)."""
     shares = reference_start_shares(flex_data)
     if not shares:
         return
@@ -6080,7 +6080,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # (Projection Params, pass 2) stays populated while ``p_section`` is
         # left ``None``.  ``build_flextool``'s ``MINLOAD_EFF`` ``_check`` then
         # raises, and (when it doesn't) the section energy-balance term
-        # (``model/core.py`` online cost / flow) and the section cost output are
+        # (``model/core/`` online cost / flow) and the section cost output are
         # silently dropped because both gate on ``p_section is not None``.
         # ``p_section_from_source`` is solve-agnostic (no ``active_solve``
         # filter), so calling it here mirrors ``apply_derived_c`` exactly
@@ -6106,7 +6106,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # (p, d, t) Param instead of a summed (p,) scalar — see
         # ``specs/fix_map_reading.md`` §5), a rolling / synthetic sub-solve
         # would leave ``p_min_load`` ``None``, and the minFlow_minload floor of
-        # every unit with min_load > 0 would fail ``model/core.py``'s
+        # every unit with min_load > 0 would fail ``model/core/``'s
         # ``_check(MIN_LOAD)`` on the synthetic path.
         # ``p_min_load_pdt_from_source`` is solve-agnostic (no ``active_solve``
         # filter) and reads the CSV-loaded ``flex_data.dt``, so calling it here
@@ -8008,7 +8008,7 @@ def build_handoff_from_solution(
 def _storage_usage_mwh(sol, flex_data, nodes: set, steps_df: "pl.DataFrame | None") -> "pl.DataFrame | None":
     """``[node, period, step, p_fix_storage_usage]``: the net energy (MWh) drawn from each storage node of ``nodes``
     in each step of ``steps_df`` (``period``, ``step``) of a solved solve, by the terms of
-    ``model.core._eq_storage_usage_fix`` (see the fix_storage_usage producer in
+    ``model.core._node_balance._eq_storage_usage_fix`` (see the fix_storage_usage producer in
     :func:`build_handoff_from_solution`); None when there is none."""
     if not (nodes
             and steps_df is not None

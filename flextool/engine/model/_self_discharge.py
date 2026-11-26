@@ -18,7 +18,7 @@ The model folds the loss into each state-change term: ``(S⁻·(1 − β) − S�
 ``keep_now``), so the β weight is always on the state the step's state change starts from.  The output writer
 (``process_outputs.read_highs_solution.write_v_self_discharge``) computes the same loss from the solve's own
 solution with :func:`self_discharge_energy`, on the lags of :func:`state_links` — the lags the model's state
-change uses (``model.core._state_change_terms``).
+change uses (``model.core._node_balance._state_change_terms``).
 """
 from __future__ import annotations
 
@@ -177,7 +177,7 @@ class StateLink:
 
 
 def state_links(d, *, has_rp: bool, has_nsb: bool) -> list[StateLink]:
-    """The state-change branches of ``model.core._state_change_terms``, one per storage_binding_method; each node
+    """The state-change branches of ``model.core._node_balance._state_change_terms``, one per storage_binding_method; each node
     is in one branch only (``_validate_storage_binding_disjoint``)."""
     links: list[StateLink] = []
     carry = scope_carry_nodes(d)
@@ -711,7 +711,7 @@ def scope_start_levels(d, state: pl.DataFrame, start: "pl.DataFrame | None") -> 
 def rp_chain_start_levels(d, values) -> "pl.DataFrame | None":
     """``[node, value]``: the level (MWh) the base-period chain of each representative-period storage node starts
     from in a solved solve: v_state_inter at the first base period of the solve's first period less that base
-    period's weighted net change of its blocks (``model.core._rp_weighted_drift``), × state_unitsize.
+    period's weighted net change of its blocks (``model.core._rp_storage._rp_weighted_drift``), × state_unitsize.
 
     ``values(var)`` returns a solved variable as a frame (n, d, …, value) with Utf8 keys, or None.  None without
     representative-period nodes.

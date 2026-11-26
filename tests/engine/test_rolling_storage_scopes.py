@@ -682,7 +682,7 @@ def test_core_storage_notices_print_one_line_per_solve(coded_log):
     from types import SimpleNamespace
 
     from flextool.engine import _behaviour_changes
-    from flextool.engine.model.core import _notice_nodes
+    from flextool.engine.model.core._storage_links import _notice_nodes
 
     marker = '{"since": 82}'
     _behaviour_changes.start_run({"rp_storage_chain_pinned": marker, "storage_end_matches_start": marker,

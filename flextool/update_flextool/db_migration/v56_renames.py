@@ -329,7 +329,7 @@ def _migrate_v56_rename_flow_coefficient_to_conversion_flow_coeff(db) -> None:
     role: it scales the conversion of input → output energy in the
     unit dispatch / node-balance / ``conversion_indirect`` equations
     (see flextool.mod:2557-2580 and the engine dispatch path
-    in ``model/core.py`` §F.4).
+    in ``model/core/`` §F.4).
 
     Pure name change: every other column on the
     ``parameter_definition`` row (description, default value of 1.0,

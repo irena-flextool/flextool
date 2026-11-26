@@ -24,7 +24,7 @@ values are overwritten here:
    ``p_indirect_input_cap`` and the indirect input-arc rows of ``p_flow_upper``
    (:func:`_recompute_input_caps`).
 
-Multi-line units are modelled by ``conversion_piecewise`` (``model/core._eq_conversion_piecewise``), on the
+Multi-line units are modelled by ``conversion_piecewise`` (``model/core/_conversion._eq_conversion_piecewise``), on the
 parameters of step 4.
 """
 from __future__ import annotations

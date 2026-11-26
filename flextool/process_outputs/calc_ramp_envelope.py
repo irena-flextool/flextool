@@ -387,7 +387,7 @@ def _unit_contributions(par, s, r, nx: _Next, dur, dur_next, shared: _Shared):
         units_both = np.where(on, online_next - startup_next, 0.0)
         cap_u[:, on_pos] = np.where(on, units_both * unitsize[on_pos][None, :], cap_u[:, on_pos])
         # A link carried from the previous roll: the model's carried ramp row has no shut-down floor term
-        # (core._eq_ramp: F[d′,t′] → 0), so the stopping units' output stays in f₂ there.
+        # (core._ramp._eq_ramp: F[d′,t′] → 0), so the stopping units' output stays in f₂ there.
         shutdown[:, on_pos] = np.where(on & ~nx.carried[:, None], shutdown_next, 0.0)
         del online_next, startup_next, shutdown_next
 

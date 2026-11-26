@@ -59,7 +59,7 @@ STEP_RELATIONS: dict[str, StepRelation] = {
     "period_block_time": StepRelation(CHECKED, ((None, "b_first", AT_OR_BEFORE),)),
     "node_coarse_step": StepRelation(CHECKED, ((None, "b_first", AT_OR_BEFORE),)),
     "process_coarse_step": StepRelation(CHECKED, ((None, "b_first", AT_OR_BEFORE),)),
-    # Not a FlexData field: the pairs of model.core._first_scope_ends (scope_end_pairs).
+    # Not a FlexData field: the pairs of model.core._storage_state._first_scope_ends (scope_end_pairs).
     "scope_ends": StepRelation(CHECKED, (("d_end", "t_end", BEFORE),)),
     "uptime_lookback": StepRelation(DERIVED, note="dt_ramp_link"),
     "downtime_lookback": StepRelation(DERIVED, note="dt_ramp_link"),
@@ -77,7 +77,7 @@ STEP_RELATIONS: dict[str, StepRelation] = {
         EXEMPT, note="nodeState_first_dt x nodeState_first_dt: the first step of each root of a first-period fan"),
 }
 
-# The storage_roll_end kinds whose nodes read the scope ends (model.core._first_scope_ends).
+# The storage_roll_end kinds whose nodes read the scope ends (model.core._storage_state._first_scope_ends).
 SCOPE_END_KINDS = ("scope_anchor", "scope_close")
 
 # Step columns: the synonyms of the step axis, the t_previous* / b_prev* families and the other step-valued columns.

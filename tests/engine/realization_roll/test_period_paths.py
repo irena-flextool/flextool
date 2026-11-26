@@ -99,7 +99,9 @@ def test_unconverted_co2_rows_are_refused(tmp_path, monkeypatch):
     """With the path helper bypassed, co2_max_period builds one row per name; G1 refuses the label's row."""
     from flextool.engine.model import core
 
-    monkeypatch.setattr(core, "d_period_path", lambda b, *families: None)
+    # every core module that reads the path helper
+    for module in (core._co2, core._node_balance, core._user_constraints):
+        monkeypatch.setattr(module, "d_period_path", lambda b, *families: None)
     with pytest.raises(RuntimeError, match=r"Internal error: co2_max_period on period 'p1' of roll 'st' is not "
                                            r"path-aware"):
         sr._run(_co2(), tmp_path, monkeypatch)

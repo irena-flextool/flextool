@@ -926,7 +926,7 @@ def _master_side_feature_groups(
 
 
 #: Entity-keyed (``e``) investment / retirement limit sets and Params (the rows of ``_cumulative_invest`` and the
-#: per-entity maxima of ``model/core.py``).  A region keeps the rows of its own entities only (item 286).
+#: per-entity maxima of ``model/core/``).  A region keeps the rows of its own entities only (item 286).
 _ENTITY_LIMIT_FIELDS: tuple[str, ...] = (
     "ed_invest_period_set", "ed_divest_period_set",
     "ed_invest_min_period", "ed_divest_min_period", "ed_invest_max_period", "ed_divest_max_period",
@@ -1481,7 +1481,7 @@ def _build_region_data(
 #: Benders mode capacity of the cross-region half-flow ``maxFlow``.  The
 #: real ``f ≤ C·unitsize`` limit lives in the master, so the per-region
 #: half-flow is uncapped: an existing capacity of ``inf`` is no limit, and
-#: the model leaves such a ``maxFlow`` row out (``core._without_no_limit_rows``)
+#: the model leaves such a ``maxFlow`` row out (``core._flows._without_no_limit_rows``)
 #: — it cannot bind or leak a dual into the per-region subproblem (Phase-1
 #: Claim 4).  A finite stand-in (formerly 1e12) would instead be a real
 #: limit 12 decades above the flows: it widened the region's bound / RHS
@@ -1903,7 +1903,7 @@ def _inject_half_flows(
 #: inflow, penalties, profiles, …).  The master OMITS every terminal node
 #: from balance, so each of these is emptied (set to ``None``) — a node
 #: absent from ``nodeBalance`` / ``nodeStateBlock`` gets no balance row
-#: (Phase-3 design §1.3; ``model/core.py`` builds balance only over the
+#: (Phase-3 design §1.3; ``model/core/`` builds balance only over the
 #: populated node sets).
 _MASTER_NODE_FIELDS: tuple[str, ...] = (
     "nodeBalance_dt", "nodeBalancePeriod",

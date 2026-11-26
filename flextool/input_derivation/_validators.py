@@ -1738,7 +1738,7 @@ def validate_connection_startup(db, provider) -> None:
     the angles, and switching it needs line-switching constraints FlexTool does not have.  Reads the DC line
     set from the Provider (``input/connection_dc_power_flow``, after :func:`derive_dc_power_flow`).  The model
     builder raises the same error for data built without the input derivation
-    (``model.core._validate_no_online_dc_lines``).
+    (``model.core._prepare._validate_no_online_dc_lines``).
     """
     from flextool.engine.model.core import DC_ONLINE_MESSAGE
 

@@ -16,7 +16,7 @@ a = 1000 CUR/MW (as the p2040 build of ``test_invest_solve_branching``).  ``soci
 Weights (``_solve_writers._compute_rp_period_frames``): the timestep weight of a block is the sum of the base
 weights it stands for, times n_rep / n_base = 2 / 4, so w_A = 3 · 0.5 = 1.5 and w_B = 1 · 0.5 = 0.5 (they sum to
 the 2 modelled steps).  The period's share of the year is its modelled hours over 8760, 2 / 8760.  An operating
-cost term is weighted by step_duration · w_t / period_share · branch_weight (``core.py`` objective header), so a
+cost term is weighted by step_duration · w_t / period_share · branch_weight (``core/`` objective header), so a
 1-h step of block A costs c · 1.5 · 8760 / 2 = c · 6570 · branch weight, one of block B c · 0.5 · 8760 / 2 =
 c · 2190 · branch weight: per hour of the year, 0.75 · c_A + 0.25 · c_B.
 

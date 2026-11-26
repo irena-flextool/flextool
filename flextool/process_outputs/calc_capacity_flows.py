@@ -12,7 +12,7 @@ def startup_draw_dt(par, s, v, index: pd.Index) -> pd.DataFrame:
 
         draw[p,n,d,t] = v_startup[p,d,t] · startup_energy[p,n,d] · unitsize[p] / step_duration[d,t]
 
-    The same measure as the model's term (core._startup_draw), an event at the first fine step of a coarse step.
+    The same measure as the model's term (core._conversion._startup_draw), an event at the first fine step of a coarse step.
     It is not a flow: ``r.flow_dt`` (ramps, capacity factors, flow groups, variable costs) leaves it out; the
     consumers that report the energy taken from a node add it (commodity cost, CO2, node balance, unit inputs).
     A step of a solve whose reduce_unit_detail_method left out the online variables has no start-up (NaN): 0

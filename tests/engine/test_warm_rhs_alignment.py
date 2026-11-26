@@ -1,6 +1,6 @@
 """Rolling rows: the ``(n, d, t)`` cross-join helpers are left-major, and a roll never reuses an LP.
 
-``compute_nodeBalance_dt`` & co. build the ``over`` frames of ``model/core.py``; their row order must
+``compute_nodeBalance_dt`` & co. build the ``over`` frames of ``model/core/``; their row order must
 follow the sorted inputs.  Under polars 2 a lazy cross join with a small left side emitted right-major
 order unless ``maintain_order`` was given.  That once misplaced the positional ``p_inflow`` push of the
 warm path onto the wrong node.  The warm path no longer pushes anything: a rolled sub-solve (shifted

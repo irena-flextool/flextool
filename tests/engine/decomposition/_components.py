@@ -5,12 +5,12 @@ Each function takes ``(data, sol)`` (where ``sol`` is a solved
 the obj.  Components return ``0.0`` cleanly when their feature isn't
 active in ``data``.
 
-Mirrors the ``_obj_*`` steps of ``flextool/engine/model/core.py``
+Mirrors the ``_obj_*`` steps of ``flextool/engine/model/core/``
 (OBJ. headers) term by term.  See ``audit/objective_audit.md`` for the
 mod-side reference.
 
 NOTE: ``pdt_branch_weight`` is treated as 1.0 universally — both the
-audit and the current polar_high model/core.py emit it that way.
+audit and the current polar_high model/core/ emit it that way.
 """
 
 from __future__ import annotations
@@ -525,7 +525,7 @@ def startup_cost_obj(data, sol) -> float:
 
 # Convenience alias — the proposal mentions ``section_obj`` as a single
 # entry combining commodity- and CO2-side section terms.  Keep both
-# split components above (they map 1:1 to obj lines in model/core.py); this
+# split components above (they map 1:1 to obj lines in model/core/); this
 # alias just lets callers refer to "section" as one summand if they want.
 def section_obj(data, sol) -> float:
     """Aggregate of §2.3 + §4.3 section terms (commodity + CO2 side)."""

@@ -3271,7 +3271,7 @@ def promote_param_to_dt(
     t)``).  Polar_high algebra handles the broadcast lazily at
     constraint emission, but a small number of consumers in the cascade
     do eager ``.frame.join(..., on=["x", "d", "t"], how="left")`` style
-    densification (e.g. ``model/core.py`` flow_upper_rhs availability fold,
+    densification (e.g. ``model/core/`` flow_upper_rhs availability fold,
     ``_region_filter.py`` half-flow injection).  Those consumers need a
     (entity, d, t)-shaped LazyFrame on the right-hand side; this helper
     gives it to them without forcing the source Param to materialise

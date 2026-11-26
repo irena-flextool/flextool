@@ -174,7 +174,7 @@ def _silence_if_quiet(wp: WarmProblem) -> None:
 # whose FIRST element is the entity axis ("p" for process / connection vars,
 # "n" for node vars) and whose last is the period axis "d":
 # ``v_invest`` / ``v_divest`` (existing capacity) over ``(entity, d)``
-# (``model/core.py``), and the retirements of model-built capacity
+# (``model/core/``), and the retirements of model-built capacity
 # (``model/_retire_built.py``): ``v_divest_built`` per cohort over
 # ``(entity, "cohort", d)`` (the handoff carries them per cohort in
 # ``realized_retire``) and ``v_divested_built`` over ``(entity, d)`` (the

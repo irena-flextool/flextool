@@ -235,7 +235,7 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     # ``online_fix_eq_{linear,integer}`` (resolver strips the UC suffix to
     # the registered ``online_fix_eq`` base).
     "online_fix_eq_linear", "online_fix_eq_integer",
-    # Slice D per-path total caps — model/core.py ``_eq_invest_total_caps``
+    # Slice D per-path total caps — model/core/_invest.py ``_eq_invest_total_caps``
     # and _cumulative_invest.py ``_eq_group_divest_total`` pass the
     # constraint name as a variable (legacy vs ``…_path``), so the
     # literal-grep test above cannot see them.  Pin both the legacy and
@@ -250,11 +250,11 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     # (_cumulative_invest.py ``_eq_group_invest_total``).
     "maxInvestGroup_entity_total_path_p",
     "maxInvestGroup_entity_total_path_n",
-    # Per-period invest/divest caps — model/core.py ``_eq_invest_period_caps``
+    # Per-period invest/divest caps — model/core/_invest.py ``_eq_invest_period_caps``
     # passes the constraint name from a loop table.
     "maxInvest_entity_period_p", "maxInvest_entity_period_n",
     "maxDivest_entity_period_p", "maxDivest_entity_period_n",
-    # Retired capacity within the pre-existing capacity — model/core.py ``_eq_retired_existing`` builds the name
+    # Retired capacity within the pre-existing capacity — model/core/_invest.py ``_eq_retired_existing`` builds the name
     # as f"maxRetired_existing_{axis}".
     "maxRetired_existing_p", "maxRetired_existing_n",
     # Non-anticipativity — _non_anticipativity.py passes the online family
@@ -298,7 +298,7 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     "maxCumulative_flow_solve_path", "minCumulative_flow_solve_path",
     "maxCumulative_flow_period", "minCumulative_flow_period",
     "maxInstant_flow", "minInstant_flow",
-    # Q16 (#52, #58) per-path stochastic caps — model/core.py ``_eq_co2_max_total`` and
+    # Q16 (#52, #58) per-path stochastic caps — model/core/_co2.py ``_eq_co2_max_total`` and
     # _commodity_ladder.py ``_eq_tier_cap_cumulative`` pass the constraint name as a variable
     # (legacy vs "_path"), so the literal grep above cannot see the "_path" shape.
     "co2_max_total", "co2_max_total_path",
@@ -338,8 +338,8 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
                                   "maxExtend_cohort", "extendedCapacity", "non_anticipativity_extend")
       for axis in ("p", "n")),
     # Names passed as a variable from a loop table: the user constraints' invest-only period rows
-    # (core._eq_user_constraints), the storage state profiles (core._eq_state_profiles), the share rows of the
-    # roll-end anchor / close (core._eq_storage_roll_end).
+    # (core._user_constraints._eq_user_constraints), the storage state profiles (core._storage_state._eq_state_profiles), the share rows of the
+    # roll-end anchor / close (core._storage_state._eq_storage_roll_end).
     *(f"process_constraint_{s}_period" for s in ("equal", "less_than", "greater_than")),
     "profile_state_fixed", "profile_state_lower_limit", "profile_state_upper_limit",
     "storage_state_roll_anchor_share", "storage_state_roll_close_share",

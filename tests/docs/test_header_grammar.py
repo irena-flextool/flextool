@@ -140,8 +140,7 @@ def test_grammar_errors_name_the_line(snippet: str, message: str) -> None:
 
 
 def _sources() -> list[tuple[str, Path]]:
-    files = [(p.stem, p) for p in sorted(formulation.MODEL_DIR.glob("*.py")) if p.stem != "__init__"]
-    return files + [("_benders", formulation.BENDERS_FILE)]
+    return formulation.model_sources() + [("_benders", formulation.BENDERS_FILE)]
 
 
 def _functions(tree: ast.AST) -> list[ast.FunctionDef]:

@@ -3,7 +3,7 @@
 Each start-up of a unit takes ``startup_energy`` [MWh per MW started] × MW started from the input node of the arc:
 ``startup_and_input`` keeps the arc's flow as well, ``startup_only`` has no flow (the readers hide the arc from every
 arc set).  The draw is a term on ``v_startup`` (an event: no step duration) in the node's balance, the commodity
-cost, the CO2 price and caps and the commodity ladder (``core._startup_draw``).
+cost, the CO2 price and caps and the commodity ladder (``core._conversion._startup_draw``).
 
 Hand-built model ``coal on oil`` (on ``tests/fixtures/tests.json``, alternative ``init`` only; never a checked-in
 ``.sqlite``): one period p2020, timeset ``2day`` cut to four 1-h steps t0001..t0004 (period share 4/8760, so a

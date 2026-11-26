@@ -29,7 +29,7 @@ from flextool.engine.model._common import (
 from flextool.engine.input._param_shapes import promote_param_to_dt
 
 if TYPE_CHECKING:
-    from flextool.engine.model.core import _Build
+    from flextool.engine.model.core._context import _Build
 
 
 def _check(d, fields: tuple[str, ...]) -> None:
@@ -235,8 +235,8 @@ def _flow_requirement_bound(d, ratio_set, ratio_param, rug_sel, side: str, *,
 
 def _back_arcs(d) -> "pl.DataFrame | None":
     """(p, source, sink) of the arcs with a reverse-flow variable v_flow_back (one-variable and DC arcs), as
-    model/core.py declares them; None when there are none."""
-    from flextool.engine.model.core import _two_way_one_var_arcs
+    model/core/ declares them; None when there are none."""
+    from flextool.engine.model.core._prepare import _two_way_one_var_arcs
 
     if not _has_rows(getattr(d, "process_source_sink", None)):
         return None

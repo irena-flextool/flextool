@@ -17,7 +17,7 @@ start-up / shut-down per coarse step at its start (events registered at the step
 capacity and minimum-load rows are averaged over the step (``_coarse_flows.add_cstr``).  With ramp limits, its
 start-up / shut-down capacity reduction uses the coarse step (``_cap_reduction``: the mean share over the whole
 step of a unit that starts at the step's start or stops at its end) and its units online ramp between coarse steps
-(``core._eq_ramp``).
+(``core._ramp._eq_ramp``).
 """
 
 from typing import TYPE_CHECKING
@@ -35,7 +35,7 @@ from flextool.engine.model._common import (
 )
 
 if TYPE_CHECKING:
-    from flextool.engine.model.core import _Build
+    from flextool.engine.model.core._context import _Build
 
 
 def add_variables(b: "_Build") -> None:
@@ -460,7 +460,7 @@ def add_constraints(b: "_Build") -> None:
         # The reverse flow of a one-variable connection is limited by the units online, as its v_flow is by
         # maxFlow_online: one online status covers both directions (the mirror of maxFlow_back).  No reserve
         # term (connection reserve has its own rows, connection_reserve_*).  DC power-flow lines never get here
-        # (a startup_method on them raises in core._prepare).
+        # (a startup_method on them raises in core._prepare._prepare).
         if b.v_flow_back is not None and _has_rows(b.twoway1var_arcs):
             keys = ["p", "source", "sink"]
             back_on = (_utf8_keys(b.twoway1var_arcs.lazy().select(keys), ["p"])

@@ -103,7 +103,7 @@ def _dual(step) -> list[float]:
 
 def _carry(fd, d: str) -> tuple[float, float, float]:
     """``(f_d_k[d], co2_cum_realized_tonnes[d], period_share[d])`` as carried into this roll's build
-    (c18b, #38, Q22) -- the inputs ``_co2_period_cap_with_carry`` (``model/core.py``) turns into the
+    (c18b, #38, Q22) -- the inputs ``_co2_period_cap_with_carry`` (``model/core/_co2.py``) turns into the
     roll's RHS: ``cap[d] = co2_max_period[d]*f_d_k[d] - co2_cum_realized_tonnes[d]/period_share[d]``, so
     in raw (non-annualised) tonnes the roll's own-window emissions must satisfy
     ``emissions[d] <= co2_max_period[d]*f_d_k[d]*period_share[d] - co2_cum_realized_tonnes[d]``.

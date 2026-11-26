@@ -2814,7 +2814,7 @@ def p_min_load_pdt_from_source(source: "InputSource",
     ``.select(dim, "value")`` dropped the Map index column: a Map min_load
     then yielded one ``(unit, value)`` row per key, and polar_high **summed**
     the duplicate ``(p)`` keys in the ``minFlow_minload`` constraint
-    (``model/core.py``) — a period Map ``{p1: 0.4, p2: 0.3}`` produced a floor of
+    (``model/core/``) — a period Map ``{p1: 0.4, p2: 0.3}`` produced a floor of
     0.7 in *every* period.  See ``specs/fix_map_reading.md`` §5.
 
     A **scalar** min_load is broadcast to the full ``(d, t)`` grid, so the
@@ -2822,7 +2822,7 @@ def p_min_load_pdt_from_source(source: "InputSource",
     ``(p,)`` broadcast — only Map authoring changes behaviour.
 
     Returns ``None`` when no unit authors ``min_load`` (no value = 0, no
-    floor).  The online feature does not need this field; ``model/core.py``
+    floor).  The online feature does not need this field; ``model/core/``
     checks it (``MIN_LOAD``) only when some unit has ``min_load > 0``
     (``process_minload``).
     """
@@ -3001,7 +3001,7 @@ def apply_derived_b(
     # ─── §3.3.3b p_arc_max_cap_coef (per-arc capacity_max_coeff) ───────
     # ``p_flow_upper_existing`` is existing_count only and drops the
     # per-arc ``capacity_max_coeff`` that the .mod's maxToSink /
-    # maxFromSource apply.  Carry the factor here so the model/core.py maxFlow
+    # maxFromSource apply.  Carry the factor here so the model/core/ maxFlow
     # consumer can fold it onto every arc bound by the existing-only RHS
     # (direct arcs + indirect output arcs; indirect input arcs carry it
     # via ``p_flow_upper``).
@@ -3955,7 +3955,7 @@ def p_entity_max_units_from_source(source: "InputSource",
             pass
     # invest_max_period = inf is no limit in that period: the variable takes the no-limit bound
     # (max_flow_for_unconstrained_variables), as under an *_no_limit method; the per-period row is left out
-    # (core._eq_invest_period_caps).  cumulative_max_capacity = inf likewise: existing + the no-limit bound.
+    # (core._invest._eq_invest_period_caps).  cumulative_max_capacity = inf likewise: existing + the no-limit bound.
     imp_map = {k: (p_unc if math.isinf(v) and v > 0 else v) for k, v in imp_map.items()}
     cmc_unlimited = {k for k, v in cmc_map.items() if math.isinf(v) and v > 0}
 
@@ -4434,7 +4434,7 @@ def p_arc_max_cap_coef_from_source(source: "InputSource",
       coefficient above 1 is left untouched when the share is unset.
 
     Indirect (CHP / multi-flow) processes contribute only their OUTPUT
-    arcs (``process_output_flows``): ``model/core.py`` binds those with the
+    arcs (``process_output_flows``): ``model/core/`` binds those with the
     existing-only ``maxToSink`` RHS (``p_flow_upper_existing``), so their
     ``capacity_max_coeff`` must be folded here or it is silently lost.
     Indirect input arcs stay excluded — their limit is
@@ -4470,7 +4470,7 @@ def p_arc_max_cap_coef_from_source(source: "InputSource",
             direct_pss,
             out_flows.lazy().select("p", "source", "sink"),
         ])
-    # conversion_flow_coeff = 0 edges are uncapped (coeff_zero): model/core.py
+    # conversion_flow_coeff = 0 edges are uncapped (coeff_zero): model/core/
     # binds them with the unconstrained ``p_flow_upper`` value, so no
     # capacity coefficient applies to them.
     direct_pss = direct_pss.join(
@@ -4521,7 +4521,7 @@ def p_arc_max_cap_coef_from_source(source: "InputSource",
 
 
 def wire_arc_capacity_params(flex_data, source: "InputSource") -> None:
-    """Set the per-arc capacity Params ``model/core.py``'s ``maxFlow`` needs:
+    """Set the per-arc capacity Params ``model/core/``'s ``maxFlow`` needs:
     ``p_arc_max_cap_coef``, ``process_source_sink_uncapped`` and
     ``p_indirect_input_cap``.
 
@@ -4826,7 +4826,7 @@ def _indirect_input_cap_lf(source: "InputSource",
     ``input_share_max`` (schema default 1: this input alone can run the
     unit at full output) is the largest share of the full-load fuel the
     input may supply.  Multiplied by availability × capacity (existing +
-    invested − retired) in ``model/core.py``'s ``maxFlow`` handling.
+    invested − retired) in ``model/core/``'s ``maxFlow`` handling.
     """
     keys = ["p", "source", "sink", "d", "t"]
     indirect_p = (classified.lazy()
@@ -4938,7 +4938,7 @@ def p_indirect_input_cap_from_source(source: "InputSource",
     units per unit of capacity (:func:`_indirect_input_cap_lf`):
     ``input_share_max × full-load input flow per unit of capacity``.
 
-    ``model/core.py`` multiplies it by availability and the unit's capacity:
+    ``model/core/`` multiplies it by availability and the unit's capacity:
     a per-element ``v_flow`` upper bound when the unit has no invest /
     divest variables in the solve, else a ``maxFlow`` row whose invest /
     divest terms carry the same multiplier.  ``None`` when there are no
@@ -6469,7 +6469,7 @@ def apply_derived_d(
         if pfu_db is not None:
             flex_data.p_flow_upper = pfu_db
         # Input-arc limit of indirect units per unit of capacity
-        # (``input_share_max`` × full-load fuel); model/core.py requires it
+        # (``input_share_max`` × full-load fuel); model/core/ requires it
         # whenever indirect input arcs exist.
         flex_data.p_indirect_input_cap = p_indirect_input_cap_from_source(
             source, pss_for_upper, dt_for_upper,
@@ -7795,7 +7795,7 @@ def storage_use_reference_value_from_source(source: "InputSource",
       * ``nodeStateBlock`` (synthesised + explicit).
 
     With *rolling* (a rolling_window sub-solve) the bind_intraperiod_blocks nodes keep the pin: it applies where the
-    roll's last period chains forward (``model.core._eq_storage_reference_value``).
+    roll's last period chains forward (``model.core._storage_state._eq_storage_reference_value``).
     """
     sshm = _try_param(source, "node", "storage_solve_horizon_method")
     if sshm is None:
@@ -8034,7 +8034,7 @@ def dtttdt_within_solve_from_dtttdt(dtttdt: pl.DataFrame | None,
                 stack.extend(kids)
             else:
                 leaves.append(node)
-        # Convention: with several leaves, the last in sorted name order (as core._eq_storage_within_solve_path_end
+        # Convention: with several leaves, the last in sorted name order (as core._storage_state._eq_storage_within_solve_path_end
         # picks d*).
         return max(leaves)
 

@@ -6,7 +6,7 @@ equality (``on - on_prev - su + sd = 0``); ``maxStartup`` becomes ``su <= on_t``
 ``sd <= built - on_t`` (same-period predecessor only, owner question Q-c14c-A).  Together these make an
 ORPHAN startup/shutdown (one with no matching change in units online) impossible.
 
-Part C (``model/core.py:_eq_ramp``, design §3): a unit with online variables now ramps on ``v_online`` /
+Part C (``model/core/_ramp.py:_eq_ramp``, design §3): a unit with online variables now ramps on ``v_online`` /
 ``v_startup`` / ``v_shutdown`` (continuing units change by at most rho-bar, a starter reaches at most SU, a
 stopper floors at F) instead of on ``existing_count`` plus a flat ``+-v_startup``/``v_shutdown`` of
 coefficient 1 -- the item-99 exploit (declaring a start/stop pair buys a full unit of ramp room for free) is
@@ -95,7 +95,7 @@ def test_startups_equal_online_increases(tmp_path_factory) -> None:
     way: Sigma(su) stays ~3.78 against Sigma(Delta on)+ ~0.11 here (reproducing the design's own evidence,
     section 6.1's ``ramp_reserve_online`` "B (eq)" objective 113107597.9 -- UNCHANGED from the baseline, and
     design section 0.1's "Before: ... Sigma su 3.78" almost exactly) because the actual item-99 exploit for a
-    unit with a RAMP limit lives in core._eq_ramp's ramp rows (a flat full unit of room per start/stop,
+    unit with a RAMP limit lives in core._ramp._eq_ramp's ramp rows (a flat full unit of room per start/stop,
     Part C, not landed in this commit) -- online_change / maxStartup / maxShutdown alone make that pair
     EXACT and BOUNDED (su, sd both correctly track online, no orphan), but a genuine matched pair can still be
     cheaper than not pairing until the ramp rows themselves stop rewarding it.  The "no excess at all" claim
