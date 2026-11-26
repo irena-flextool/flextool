@@ -33,6 +33,7 @@ from spinedb_api import DatabaseMapping, Map, to_database
 from spinedb_api.exception import NothingToCommit
 
 from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import v77
 from flextool.update_flextool.db_migration import common
 from tests.update_flextool._rerun import patch_migration
 
@@ -416,7 +417,7 @@ def test_marker_merges_writes_and_replaces_undecided(v82_schema_db_url: str, tmp
     masking = CASES["masking_conflict"][0]
     with DatabaseMapping(_schema_copy(v82_schema_db_url, tmp_path)) as db:
         _fill(db, {"u": PLAIN, "mc": masking}, {"S1": ["E", "base"], "S2": ["base"]}, {})
-        m._v77_set_marker(db, m.V83_MIN_TIME_MARKER, json.dumps(
+        v77._v77_set_marker(db, m.V83_MIN_TIME_MARKER, json.dumps(
             {"since": 83, "writes": [["x", "A", "both"]], "undecided": [["y", "gone", ["S9"]]]}))
         m._v83_minimum_time_method(db)
         # u: S1 [E, base] and S2 [base] both candidates (u has no method) → base: min_uptime.

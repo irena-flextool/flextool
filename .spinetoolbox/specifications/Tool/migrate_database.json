@@ -12,6 +12,10 @@
         "flextool/update_flextool/db_migration/v56_methods.py",
         "flextool/update_flextool/db_migration/v56_renames.py",
         "flextool/update_flextool/db_migration/v57_v69.py",
+        "flextool/update_flextool/db_migration/v70_v76.py",
+        "flextool/update_flextool/db_migration/v77.py",
+        "flextool/update_flextool/db_migration/v78.py",
+        "flextool/update_flextool/db_migration/v79.py",
         "flextool/update_flextool/v84_branching.py",
         "flextool/update_flextool/__init__.py"
     ],

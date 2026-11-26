@@ -57,6 +57,7 @@ from spinedb_api.exception import NothingToCommit
 
 from flextool._resources import package_data_path
 from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import v78, v79 as dm_v79
 from flextool.update_flextool.db_migration import v57_v69
 from flextool.update_flextool.db_migration import common
 from tests.update_flextool._rerun import patch_migration
@@ -79,8 +80,8 @@ SYSTEM_VALUES = ["none", "reserves", "inertia", "non_synchronous", "inertia_non_
 GROUP_LIMITS_CHANGED = [("group", "inertia_limit"), ("group", "non_synchronous_limit")]
 ADDER = ("node", "energy_margin_adder")
 DURATION = ("timeset", "timeset_duration")
-EFFICIENCY_CHANGED = {("unit", name) for name in m._V79_UNIT_EFFICIENCY_DESCRIPTIONS}
-COEFF_CHANGED = set(m._V79_CONSTRAINT_COEFF_PARAMETERS)
+EFFICIENCY_CHANGED = {("unit", name) for name in dm_v79._V79_UNIT_EFFICIENCY_DESCRIPTIONS}
+COEFF_CHANGED = set(dm_v79._V79_CONSTRAINT_COEFF_PARAMETERS)
 SHARE_NEW = ("group", "capacity_margin_share")
 MARGIN_CHANGED = {("group", "capacity_margin_method"), ("group", "capacity_margin")}
 PERIOD_METHOD_NEW = ("constraint", "constraint_period_method")
@@ -119,7 +120,7 @@ def _markers(db) -> dict:
 
 def _rerun_changes_nothing(db, step, monkeypatch) -> None:
     """Run ``step`` again on ``db`` and check that it changes nothing.  The batch commits through
-    ``m._commit_step``, which swallows ``NothingToCommit``: it is replaced by a check that the commit has nothing to
+    ``_commit_step``, which swallows ``NothingToCommit``: it is replaced by a check that the commit has nothing to
     commit (and the batch must commit once); a part does not commit, so the session is committed here."""
     commits: list[str] = []
 
@@ -130,7 +131,7 @@ def _rerun_changes_nothing(db, step, monkeypatch) -> None:
 
     patch_migration(monkeypatch, "_commit_step", commit_must_be_empty)
     step(db)
-    if step is m._migrate_v79_schema_batch:
+    if step is dm_v79._migrate_v79_schema_batch:
         assert len(commits) == 1, commits
     else:
         assert commits == []
@@ -152,13 +153,13 @@ def _shipped() -> dict:
     later = {key: "".join(sentences)
              for key, sentences in {**m._v80_suffixes(), **m._v80_piecewise_sentences()}.items()}
     old_names = {("group", new): ("group", old) for old, new in m.V80_CAPACITY_MARGIN_RENAMES.items()}
-    old_names.update({(cls, "lifetime_technical"): (cls, "lifetime") for cls in m._V79_LIFETIME_DESCRIPTIONS})
-    v81_back = {**{(cls, "lifetime"): text for cls, text in m._V79_LIFETIME_DESCRIPTIONS.items()},
-                **{(cls, "discount_rate"): m._V79_DISCOUNT_RATE_DESCRIPTION for cls in m._V79_LIFETIME_DESCRIPTIONS},
-                ("node", "unit_of_measure"): m.V79_NODE_UNIT_OF_MEASURE_DESCRIPTION}
-    v79_texts = {**m._V79_CAPACITY_MARGIN_DESCRIPTIONS, **m._v79_solver_precommand_texts(),
-                 ("solve", "reduce_unit_detail_method"): m._V79_REDUCE_DESCRIPTIONS["reduce_unit_detail_method"],
-                 ("group", "print_dispatch"): (m._V78_UNIT_PREFIXES[("group", "print_dispatch")] + " "
+    old_names.update({(cls, "lifetime_technical"): (cls, "lifetime") for cls in dm_v79._V79_LIFETIME_DESCRIPTIONS})
+    v81_back = {**{(cls, "lifetime"): text for cls, text in dm_v79._V79_LIFETIME_DESCRIPTIONS.items()},
+                **{(cls, "discount_rate"): dm_v79._V79_DISCOUNT_RATE_DESCRIPTION for cls in dm_v79._V79_LIFETIME_DESCRIPTIONS},
+                ("node", "unit_of_measure"): dm_v79.V79_NODE_UNIT_OF_MEASURE_DESCRIPTION}
+    v79_texts = {**dm_v79._V79_CAPACITY_MARGIN_DESCRIPTIONS, **dm_v79._v79_solver_precommand_texts(),
+                 ("solve", "reduce_unit_detail_method"): dm_v79._V79_REDUCE_DESCRIPTIONS["reduce_unit_detail_method"],
+                 ("group", "print_dispatch"): (v78._V78_UNIT_PREFIXES[("group", "print_dispatch")] + " "
                                                + v57_v69._V58_GROUP_OUTPUT_FLAG_DESCRIPTIONS["print_dispatch"])}
     out = {}
     for r in schema["parameter_definitions"]:
@@ -290,8 +291,8 @@ def test_adds_the_value_lists_in_order(plain) -> None:
     assert "reduce_unit_detail_methods" not in plain["lists_before"]
     assert plain["lists_after"]["reduce_unit_detail_methods"] == UNIT_VALUES
     assert plain["lists_after"]["reduce_system_detail_methods"] == SYSTEM_VALUES
-    assert tuple(UNIT_VALUES) == m.REDUCE_UNIT_DETAIL_METHODS
-    assert tuple(SYSTEM_VALUES) == m.REDUCE_SYSTEM_DETAIL_METHODS
+    assert tuple(UNIT_VALUES) == dm_v79.REDUCE_UNIT_DETAIL_METHODS
+    assert tuple(SYSTEM_VALUES) == dm_v79.REDUCE_SYSTEM_DETAIL_METHODS
 
 
 def test_completes_a_partial_list(tmp_path_factory) -> None:
@@ -336,10 +337,10 @@ def test_widens_the_group_limit_types_and_rewrites_the_descriptions(plain) -> No
 
 def test_rewrites_the_solve_step_series_descriptions(plain) -> None:
     shipped = _shipped()
-    assert plain["after"][ADDER][2] == shipped[ADDER] == m._V79_ENERGY_MARGIN_ADDER_DESCRIPTION
+    assert plain["after"][ADDER][2] == shipped[ADDER] == dm_v79._V79_ENERGY_MARGIN_ADDER_DESCRIPTION
     assert "sum of the values of the time steps it combines" in shipped[ADDER]
     for k in EFFICIENCY_CHANGED:
-        assert plain["after"][k][2] == shipped[k] == m._V79_UNIT_EFFICIENCY_DESCRIPTIONS[k[1]]
+        assert plain["after"][k][2] == shipped[k] == dm_v79._V79_UNIT_EFFICIENCY_DESCRIPTIONS[k[1]]
         assert shipped[k].startswith("[-] ") and "above 1" in shipped[k]
     assert len(COEFF_CHANGED) == 15
     for k in COEFF_CHANGED:
@@ -366,9 +367,9 @@ def test_markers_name_the_solves_and_nodes(tmp_path_factory, monkeypatch) -> Non
     assert json.loads(both["markers"]["energy_margin_adder_per_original_step"]) == {
         "since": 79, "solves": [both["solve"]], "nodes": [both["node"]]}
     with DatabaseMapping(both["url"]) as db:
-        _rerun_changes_nothing(db, m._v79_solve_step_series, monkeypatch)
+        _rerun_changes_nothing(db, dm_v79._v79_solve_step_series, monkeypatch)
     with DatabaseMapping(both["url"]) as db:
-        _rerun_changes_nothing(db, m._migrate_v79_schema_batch, monkeypatch)
+        _rerun_changes_nothing(db, dm_v79._migrate_v79_schema_batch, monkeypatch)
 
 
 # ─── capacity margin by entity class, share_of_peak ─────────────────────
@@ -395,7 +396,7 @@ def test_capacity_margin_marker_only_with_a_manual_group(tmp_path_factory, plain
     manual = _migrate(tmp_path_factory, "v79_cm_manual", {"group": "manual"})
     assert json.loads(manual["markers"]["capacity_margin_counts_by_flow"]) == {"since": 79, "groups": ["stoch_g"]}
     with DatabaseMapping(manual["url"]) as db:
-        _rerun_changes_nothing(db, m._v79_capacity_margin, monkeypatch)
+        _rerun_changes_nothing(db, dm_v79._v79_capacity_margin, monkeypatch)
 
 
 # ─── constraint_period_method ────────────────────────────────────────────
@@ -431,7 +432,7 @@ def test_discount_rate_marker_only_for_an_explicit_zero(tmp_path_factory, plain,
     zero = _migrate(tmp_path_factory, "v79_disc_zero", {"unit_disc": 0.0})
     assert json.loads(zero["markers"]["discount_rate_zero_is_zero"]) == {"since": 79, "entities": [zero["unit"]]}
     with DatabaseMapping(zero["url"]) as db:
-        _rerun_changes_nothing(db, m._v79_discount_rate_zero, monkeypatch)
+        _rerun_changes_nothing(db, dm_v79._v79_discount_rate_zero, monkeypatch)
 
 
 # ─── investment offered without invest_cost ──────────────────────────────
@@ -448,7 +449,7 @@ def test_invest_without_cost_marker_only_without_a_cost(tmp_path_factory, plain,
         assert json.loads(free["markers"]["invest_without_cost_offered"]) == {"since": 79,
                                                                               "entities": [free["unit"]]}
     with DatabaseMapping(free["url"]) as db:
-        _rerun_changes_nothing(db, m._v79_invest_without_cost, monkeypatch)
+        _rerun_changes_nothing(db, dm_v79._v79_invest_without_cost, monkeypatch)
 
 
 # ─── storage along each stochastic path ──────────────────────────────────
@@ -482,7 +483,7 @@ def test_stochastic_storage_marker_only_with_plain_storage(tmp_path_factory, pla
         else:
             assert "stochastic_storage_paths_tied" not in run["markers"], tag
     with DatabaseMapping(tied["url"]) as db:
-        _rerun_changes_nothing(db, m._v79_stochastic_storage_paths, monkeypatch)
+        _rerun_changes_nothing(db, dm_v79._v79_stochastic_storage_paths, monkeypatch)
 
 
 # ─── every solve discounted from the run start ───────────────────────────
@@ -523,7 +524,7 @@ def test_discount_marker_only_with_inflation_and_a_later_or_fractional_solve(tmp
             assert json.loads(run["markers"][DISCOUNT_MARKER]) == {"since": 79, "solves": solves}, tag
             marked = run
     with DatabaseMapping(marked["url"]) as db:
-        _rerun_changes_nothing(db, m._v79_discount_from_run_start, monkeypatch)
+        _rerun_changes_nothing(db, dm_v79._v79_discount_from_run_start, monkeypatch)
 
 
 # ─── startup_input_method / startup_energy ───────────────────────────────
@@ -553,7 +554,7 @@ def test_adds_the_node_unit_of_measure(plain) -> None:
     assert UOM_NEW not in plain["before"]
     types, group, description, _default, value_list, default = plain["after"][UOM_NEW]
     assert types == ("str",) and group == "basics" and value_list is None and default == "MWh"
-    assert description == _shipped()[UOM_NEW] == m.V79_NODE_UNIT_OF_MEASURE_DESCRIPTION
+    assert description == _shipped()[UOM_NEW] == dm_v79.V79_NODE_UNIT_OF_MEASURE_DESCRIPTION
     assert description.startswith("[text]")
     # The per-kW rule, with its worked number, is explained here (owner decision 2).
     assert "per 0.001 of the rate or amount" in description and "entered as 0.5" in description
@@ -568,11 +569,11 @@ def test_rewrites_the_rp_descriptions(plain) -> None:
     # v82's, the v79 step still writes its own.
     later = m._v82_storage_texts()
     for key in RP_CHANGED:
-        assert plain["after"][key][2] == m._v79_rp_texts()[key] != plain["before"][key][2]
-        assert shipped[key] == later.get(key, m._v79_rp_texts()[key])
+        assert plain["after"][key][2] == dm_v79._v79_rp_texts()[key] != plain["before"][key][2]
+        assert shipped[key] == later.get(key, dm_v79._v79_rp_texts()[key])
         assert plain["after"][key][:2] + plain["after"][key][3:] == plain["before"][key][:2] + plain["before"][key][3:]
     assert "Not allowed in a stochastic solve" in plain["before"][("timeset", "representative_period_weights")][2]
-    v79 = m._v79_rp_texts()[("node", "storage_binding_method")]
+    v79 = dm_v79._v79_rp_texts()[("node", "storage_binding_method")]
     assert "bind forward only (bind_forward_only), with a warning" in v79
     assert "do not work with stochastic" not in v79
     assert "do not work with stochastic" not in shipped[("node", "storage_binding_method")]
@@ -584,7 +585,7 @@ def test_rewrites_the_rp_descriptions(plain) -> None:
 def test_rewrites_the_solver_precommand_descriptions(plain) -> None:
     shipped = _shipped()
     for key in PRECOMMAND_CHANGED:
-        assert plain["after"][key][2] == shipped[key] == m._v79_solver_precommand_texts()[key] != plain["before"][key][2]
+        assert plain["after"][key][2] == shipped[key] == dm_v79._v79_solver_precommand_texts()[key] != plain["before"][key][2]
         assert plain["after"][key][:2] + plain["after"][key][3:] == plain["before"][key][:2] + plain["before"][key][3:]
     assert "never runs" in shipped[("solve", "solver_precommand")]
     assert "solver_precommand" not in shipped[("solve", "solver_arguments")]
@@ -612,7 +613,7 @@ def test_changes_nothing_else(plain) -> None:
     "_v79_discount_from_run_start", "_migrate_v79_schema_batch"])
 def test_rerun_is_idempotent(plain, part: str, monkeypatch) -> None:
     with DatabaseMapping(plain["url"]) as db:
-        _rerun_changes_nothing(db, getattr(m, part), monkeypatch)
+        _rerun_changes_nothing(db, getattr(dm_v79, part), monkeypatch)
 
 
 def test_rerun_check_fails_when_the_batch_changes_something(tmp_path_factory, monkeypatch) -> None:
@@ -627,4 +628,4 @@ def test_rerun_check_fails_when_the_batch_changes_something(tmp_path_factory, mo
 
         patch_migration(monkeypatch, "_migrate_v79_schema_batch", changing_batch)
         with pytest.raises(pytest.fail.Exception):
-            _rerun_changes_nothing(db, m._migrate_v79_schema_batch, monkeypatch)
+            _rerun_changes_nothing(db, dm_v79._migrate_v79_schema_batch, monkeypatch)

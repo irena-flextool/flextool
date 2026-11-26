@@ -16,6 +16,7 @@ import pytest
 from spinedb_api import from_database, import_data
 
 from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import v70_v76
 from flextool.update_flextool.db_migration import v56_methods, v57_v69
 from flextool.update_flextool.db_migration import common
 from tests.update_flextool._rerun import patch_migration
@@ -219,7 +220,7 @@ def test_v70_rerun_removes_every_leftover(tmp_path, monkeypatch, trigger: str, l
     """No output minimum is left after the step (the leftovers equal the maximum, the others are out of range) and
     no input minimum (its meaning changed), also when the step stopped after the first or last batch of either removal."""
     clean, rerun, batches = _clean_and_rerun(tmp_path, _build_v69_coefficients,
-                                             m._migrate_v70_capacity_coefficient_descriptions, monkeypatch,
+                                             v70_v76._migrate_v70_capacity_coefficient_descriptions, monkeypatch,
                                              trigger=trigger, last=last)
     assert batches
     assert not [k for k in clean["values"] if k[2] in ("capacity_min_coeff", "input_share_min")]

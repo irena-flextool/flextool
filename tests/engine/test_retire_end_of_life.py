@@ -738,7 +738,7 @@ def test_no_retirement_notice(tmp_path_factory, coded_log, retiring, marker) -> 
 
 def test_notice_is_registered_and_written_by_the_upgrade() -> None:
     from flextool.engine._behaviour_changes import BEHAVIOUR_CHANGES
-    from flextool.update_flextool import db_migration
+    from flextool.update_flextool.db_migration import v77
 
     assert NOTICE_ID in BEHAVIOUR_CHANGES
-    assert NOTICE_ID in db_migration._V77_UNCONDITIONAL_MARKERS
+    assert NOTICE_ID in v77._V77_UNCONDITIONAL_MARKERS

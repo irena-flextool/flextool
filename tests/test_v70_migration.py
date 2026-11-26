@@ -23,16 +23,16 @@ from pathlib import Path
 from spinedb_api import DatabaseMapping, Map, from_database, import_data, to_database
 
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
-from flextool.update_flextool.db_migration import (
+from flextool.update_flextool.db_migration import migrate_database
+from flextool.update_flextool.db_migration.v70_v76 import (
     _V70_CAPACITY_MAX_COEFF_DESCRIPTION,
     _V70_CAPACITY_MIN_COEFF_DESCRIPTION,
     _V70_CONNECTION_DELAY_DESCRIPTION,
     _V70_INPUT_SHARE_MIN_DESCRIPTION,
     _V70_PENALTY_RESERVE_DESCRIPTION,
     _migrate_v70_capacity_coefficient_descriptions,
-    _v78_new_description,
-    migrate_database,
 )
+from flextool.update_flextool.db_migration.v78 import _v78_new_description
 
 from tests.db_utils import json_to_db
 

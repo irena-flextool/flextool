@@ -162,6 +162,7 @@ def test_upgrade_marks_relabelled_ladders_and_runs_name_them(tmp_path_factory, c
 
     from flextool.engine import run_chain_from_db
     from flextool.update_flextool import db_migration as m
+    from flextool.update_flextool.db_migration import v77
 
     tag = f"lbl_mark_{labels[0]}"
     work = tmp_path_factory.mktemp(tag)
@@ -169,7 +170,7 @@ def test_upgrade_marks_relabelled_ladders_and_runs_name_them(tmp_path_factory, c
     url = json_to_db(work / "f.json", work / "f.sqlite")
     m.migrate_database(url)
     with DatabaseMapping(url) as db:
-        m._v77_ladder_tier_marker(db)
+        v77._v77_ladder_tier_marker(db)
         names = {md["name"] for md in db.get_items("metadata")}
         if marked:
             db.commit_session("marker")

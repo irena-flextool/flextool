@@ -33,6 +33,7 @@ from spinedb_api.exception import NothingToCommit
 
 from flextool._resources import package_data_path
 from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import v79
 from flextool.update_flextool.db_migration import v57_v69
 from tests.update_flextool._rerun import patch_migration
 from flextool.update_flextool.db_migration import migrate_database
@@ -224,7 +225,7 @@ def test_replaces_the_reduce_unit_detail_description(migrated) -> None:
     shipped, _ = _shipped()
     key = ("solve", "reduce_unit_detail_method")
     assert after[key][0] == shipped[key] == m._v80_texts()[key] != before[key][0]
-    assert before[key][0] == m._V79_REDUCE_DESCRIPTIONS["reduce_unit_detail_method"]
+    assert before[key][0] == v79._V79_REDUCE_DESCRIPTIONS["reduce_unit_detail_method"]
     assert after[key][1:] == before[key][1:]
     text = after[key][0]
     assert "less fuel than the curve at part load" not in text

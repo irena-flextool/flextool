@@ -25,6 +25,7 @@ from spinedb_api import DatabaseMapping, Map, to_database
 from spinedb_api.exception import NothingToCommit
 
 from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import v77
 from tests.update_flextool._rerun import patch_migration
 
 LIST = "dispatch_realization_methods"
@@ -127,7 +128,7 @@ def test_planner_reason_names_every_failing_scenario() -> None:
 def test_scenarios_text() -> None:
     assert m._v83_scenarios_text(("S2",)) == "scenario S2"
     assert m._v83_scenarios_text(("S1", "S2")) == "scenarios S1, S2"
-    assert m._v83_scenarios_text((m._V77_NO_SCENARIO,)) == "the database"
+    assert m._v83_scenarios_text((v77._V77_NO_SCENARIO,)) == "the database"
 
 
 # --- on a database --------------------------------------------------------------------------------------------
