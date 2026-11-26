@@ -636,7 +636,8 @@ class AddDialog(tk.Toplevel):
             include_groups = (
                 None if picker.result == "all" else list(picker.result)
             )
-            export_to_excel(db_url, str(dest), include_groups=include_groups)
+            # The GUI's workbooks show each parameter's unit; the full description is in the note on its name.
+            export_to_excel(db_url, str(dest), include_groups=include_groups, units_row=True)
         except ImportError as exc:
             _tell_create_failed(self, exc)
             return
