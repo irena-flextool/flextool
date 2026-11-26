@@ -422,7 +422,7 @@ def compute_co2_rolling_accumulator(
 
 def _reweigh_split_periods(carrier: pl.DataFrame, flex_data) -> pl.DataFrame:
     """*carrier* with the represented tonnes of each period that the solves of a chain split (item 1042) set to the
-    period's realized tonnes × years_represented / share_eff of this solve (``core._co2_total_share``): one weight
+    period's realized tonnes × years_represented / share* of this solve (``core._co2_total_share``): one weight
     for every hour of the period, the earlier solves' part included, as co2_max_total weighs them."""
     from flextool.engine.model.core import _co2_split_represented, _co2_total_share
 

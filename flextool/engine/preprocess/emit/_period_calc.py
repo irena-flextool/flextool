@@ -168,6 +168,32 @@ def _read_step_duration(
     return out, periods
 
 
+#: Hours below which the realized history of a period counts as this solve's own (rounding of the sums).
+_OWN_HOURS_TOL = 1e-6
+
+
+def _hours_realized_by_earlier_solves(period_in_use, realized_hours: dict[str, float],
+                                      step_duration: dict, complete_step_duration: dict) -> list[tuple[str, float]]:
+    """``(period, hours)`` of the periods of the solve that earlier solves of the chain realized hours of (item 1042):
+    the realized hours of the period (``cum_sim_hours``) less those this solve's own earlier rolls realized, which are
+    its complete steps of the period before the roll's first step (the rolls of a solve realize its steps in order).
+    Only periods with such hours (a chain whose solves each hold part of the period); none in a single solve or the
+    rolls of a rolling solve that holds the period alone."""
+    order = {key: i for i, key in enumerate(complete_step_duration)}
+    starts = [order[key] for key in step_duration if key in order]
+    first = min(starts) if starts else len(order)
+    own: dict[str, float] = {}
+    for (d, t), v in complete_step_duration.items():
+        if order[(d, t)] < first:
+            own[d] = own.get(d, 0.0) + v
+    rows = []
+    for d in period_in_use:
+        other = realized_hours.get(d, 0.0) - own.get(d, 0.0)
+        if other > _OWN_HOURS_TOL:
+            rows.append((d, other))
+    return rows
+
+
 def _read_pb_pairs(path: Path,
                    *, provider: "object | None" = None) -> list[tuple[str, str]]:
     """Read period__branch.csv → list of (period, branch) tuples."""
@@ -471,6 +497,9 @@ def emit_period_calculated_params(
             f_d_k_rows.append((d, 1.0))
     _emit_keyed(provider, "solve_data/f_d_k.csv",
                 ("period", "value"), f_d_k_rows)
+    _emit_keyed(provider, "solve_data/hours_realized_by_earlier_solves.csv", ("period", "value"),
+                _hours_realized_by_earlier_solves(period_in_use, p_ladder_cum, step_duration,
+                                                  complete_step_duration))
 
 
 # ---------------------------------------------------------------------------

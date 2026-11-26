@@ -100,8 +100,9 @@
   (for example 3 h and then 1 h), `co2_max_total` gave each part the budget of the whole period and weighed the
   parts' emissions differently: the first solve could use up the period's budget, and the chain emitted less than
   the limit allows (0.75 t of 1 t in the 3 h + 1 h example, or 0.25 t when the first part emitted nothing). The
-  budget is now shared by the hours of each part, so the chain emits up to the limit. Rolling and single solves do
-  not change.
+  budget is now shared by the hours of each part, so the chain emits up to the limit. This holds also when a later
+  part is a rolling solve, which before could stop the run as infeasible in its first roll. Rolling and single
+  solves that hold their periods alone do not change.
 - **Benders: a master without a balance node.** With every node in a region, the Benders master holds only the
   flows between regions and has no balance node.  When every balance node was the end of a flow between regions,
   the run stopped with "No node has an energy balance … every node resolved to node_type = 'commodity'"; it now

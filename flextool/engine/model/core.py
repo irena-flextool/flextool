@@ -4543,28 +4543,23 @@ def _eq_co2_max_period(b: _Build) -> None:
     )
 
 
-#: f_d_k above 1 by more than rounding: the solves of a chain hold parts of the period (_co2_total_share).
-_SPLIT_FDK = 1.0 + 1e-9
-
-
 def _co2_total_share(d) -> "pl.DataFrame | None":
     """``[d, share]`` for the periods that the solves of a chain split (item 1042), None when there is none.
 
-    Each solve's ``period_share`` is its own part of a period, so a chain whose solves each hold part of one period
-    (s1 on 3 h, s2 on the next 1 h) annualised each part as if it were the whole period, and co2_max_total gave
-    each part the whole period's budget.  The share used in that row is instead the period's weighted hours reached
-    so far: share_eff[d] = period_share[d] · f_d_k[d] = (realized hours of d from earlier solves + this solve's
-    hours of d) / 8760 where f_d_k > 1.  Its f_d_k is then 1.  Every hour of the period has one weight in the row,
-    the realized tonnes included (:func:`_co2_total_cap_with_carry`), so the budget is split by hour weight.  A
-    rolling or single solve has f_d_k ≤ 1 (its share is the complete period's), so nothing changes there."""
-    fdk = getattr(d, "p_co2_f_d_k", None)
-    if fdk is None or d.p_period_share is None:
+    Each solve's ``period_share`` is its own complete part of a period, so a chain whose solves each hold part of
+    one period (s1 on 3 h, s2 on the next 9 h, single or rolling) annualised each part as if it were the whole
+    period, and co2_max_total weighed the parts' tonnes differently.  For a period with hours that earlier solves
+    realized (``p_co2_hours_before_solve``) the row uses share* = period_share + those hours / 8760: the period as
+    known to the solve, the earlier parts and its own.  Every hour of the period has one weight in the row, the
+    realized tonnes included (:func:`_co2_total_cap_with_carry`), and its share reached is counted against share*
+    (``_co2_carry.split_f_d_k``), so the budget is split by hour weight.  A single solve, and a rolling solve that
+    holds its periods alone, have no such period: nothing changes there."""
+    from flextool.engine.preprocess._co2_carry import split_share
+
+    before = getattr(d, "p_co2_hours_before_solve", None)
+    if before is None or before.frame.height == 0 or d.p_period_share is None:
         return None
-    split = fdk.frame.filter(pl.col("value") > _SPLIT_FDK)
-    if split.height == 0:
-        return None
-    return (join_aligned(d.p_period_share.frame, split.rename({"value": "fdk"}), on="d", how="inner")
-            .select("d", share=pl.col("value") * pl.col("fdk")))
+    return split_share(d.p_period_share.frame, before.frame).rename({"value": "share"})
 
 
 def _co2_total_cap_with_carry(d) -> Param:
@@ -4618,7 +4613,7 @@ def _co2_total_cap_with_carry(d) -> Param:
 
 def _co2_split_represented(rows: pl.DataFrame, tonnes: pl.DataFrame, split: pl.DataFrame, d) -> pl.DataFrame:
     """``rows`` ``[g, d, value]`` (the represented realized carry) with each split period's value the period's
-    realized tonnes × years_represented / share_eff (:func:`_co2_total_share`): one weight for every hour of the
+    realized tonnes × years_represented / share* (:func:`_co2_total_share`): one weight for every hour of the
     period.  Shared by the row (this solve's carry) and the extraction (the carrier it hands on)."""
     years = getattr(d, "p_years_represented_d", None)
     factor = split.with_columns(years=pl.lit(1.0)) if years is None else join_aligned(
@@ -4673,9 +4668,10 @@ def _eq_co2_max_total(b: _Build) -> None:
     #   ∀ g ∈ group_co2_max_total (, leaf);   w_y = step_duration · timestep_weight / share_eff · years_represented[d]
     #   R_rep[g,d] = realized tonnes of d from earlier rolls / solves · years_represented[d] / period_share[d],
     #   with the share and years of the solve that realized them (the w_y its own row gave them)
-    #   share_eff[d] = period_share[d], except for a period the solves of a chain split (f_d_k[d] > 1, item 1042):
-    #   period_share[d]·f_d_k[d] = (realized hours of d + this solve's hours of d) / 8760, its R_rep the period's
-    #   realized tonnes · years_represented[d] / share_eff[d] and its f_d_k 1 in horizon_fraction_reached
+    #   share_eff[d] = period_share[d], except for a period with hours that earlier solves of the chain realized
+    #   (H_before[d] > 0, item 1042): share*[d] = period_share[d] + H_before[d] / 8760, its R_rep the period's realized
+    #   tonnes · years_represented[d] / share*[d] and its share reached (realized h + this roll's h) / (share*·8760)
+    #   in horizon_fraction_reached
     # Caps the CO2 emissions of a group over the horizon the solve represents (tonnes): each period's
     # annualised emissions (as in co2_max_period, section fuel included) times the years the period
     # represents, summed over the periods — the measure of the model CO2 output.  years_represented is not
