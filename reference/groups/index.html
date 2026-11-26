@@ -1031,6 +1031,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1143,6 +1147,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../how_to/demand_response/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demand response
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how_to/thermal_chp/" class="md-nav__link">
         
   
@@ -1235,6 +1267,34 @@
     
   
     Stochastics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/stochastic_examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stochastic examples
   
 
     
@@ -2865,13 +2925,13 @@
 <p>The margin of a <em>relative_of_peak_demand</em> group is <code>capacity_margin_relative</code> × the group's peak demand: the largest sum of the demand of the group's nodes over the period's full time series, on the period's original timeline (before representative periods and <code>new_stepduration</code>). If the representative periods leave the peak out, the margin still uses the real peak. When several investment periods of a solve use different parts of one timeline (a multi-year timeline, one block per period), each period's peak is over its own part: the time steps of its timeset blocks, or, with representative periods, of the base periods they stand for. A stochastic branch period has its own peak, from its own branch data.</p>
 <p><strong>Reading the result.</strong> After each investment solve that leaves a shortfall, the run log prints <code>capacity margin shortfall: solve …, group …, period …: … MW at … (penalty … M CUR)</code>. The table <a href="../../results/#slack-and-penalty-values"><code>capacity_margin__d</code></a> has, per solve, group and investment period, the binding time step, the requirement, what each class above counts there and the shortfall; <code>capacity_margin_entity__d</code> has what each unit, connection and node counts, which shows which rule applies to it. <code>slack__capacity_margin__d</code> and the <em>capacity margin penalty</em> of the costs are those of the solve that decided the investments.</p>
 <p>With representative periods, the row holds at the sampled time steps only, and the storage that counts is the storage of the sampled days: force-include the peak days. Over a coarse time step (<code>new_stepduration</code>) the row may be averaged (see below).</p>
-<p>Under spatial Benders decomposition (<code>decomposition_method</code> <em>benders_regional</em>), a capacity margin group (and an inertia or non-synchronous group) with nodes in more than one region is an error: each region would have to hold the whole margin. Use one group per region. The same holds for a group investment, retirement or cumulative-capacity limit with a value set (a method alone makes no limit): a minimum over entities of more than one region is an error, and so is a maximum (each region could use all of it), except a maximum of 0, which splits exactly. A flow limit of a flowGroup, or a user constraint's <code>constraint_flow_coeff</code>, on a connection between two regions is an error too: the decomposition replaces that connection with import and export flows in each region, which neither sees. A unit whose nodes are in more than one region, that no region group lists and that converts through the unit itself (several inputs or outputs, or one input and one output with a <code>piecewise_linear_efficiency</code> curve of two or more segments), is an error as well; put its nodes in one region. A unit with one input and one output and a single efficiency (one direct flow) between two regions is cut like a connection, except with online variables (a <code>startup_method</code>) or reserves, which are an error, as they are on a connection between regions. A DC power-flow line (a connection between two nodes of a <code>dc_power_flow_with_angles</code> group) between two regions, or between a region and the master, is an error: the decomposition cannot carry the voltage angles across the regions. Put both nodes of the line in one region, or take the nodes out of the <code>dc_power_flow_with_angles</code> group. A one-variable connection (<code>no_losses_no_variable_cost</code>) between regions works in both directions.</p>
+<p>Under spatial Benders decomposition (<code>decomposition_method</code> <em>benders_regional</em>), a capacity margin group (and an inertia or non-synchronous group) with nodes in more than one region is an error: each region would have to hold the whole margin. Use one group per region. The same holds for a group investment, retirement or cumulative-capacity limit with a value set (a method alone makes no limit): a minimum over entities of more than one region is an error, and so is a maximum (each region could use all of it), except a maximum of 0, which splits exactly. The Benders master counts as one more region here: its entities are the connections between regions (or at a master-hosted node), the units with nodes in more than one region and the master-hosted nodes; a unit that no region group lists is in the region of its nodes. A flow limit of a flowGroup, or a user constraint's <code>constraint_flow_coeff</code>, on a connection between two regions is an error too: the decomposition replaces that connection with import and export flows in each region, which neither sees. A unit that converts through the unit itself (several inputs or outputs, or one input and one output with a <code>piecewise_linear_efficiency</code> curve of two or more segments) and whose nodes are in more than one region, or in a region and the master, is solved in the Benders master, whether a region group lists it or not: its flows, conversion, capacity, investment, costs and linear online variables are in the master, and each region sees its flows at the region's nodes as imports and exports fixed by the master. Such a unit cannot have a reserve, integer online variables (unless <code>reduce_unit_detail_method</code> relaxes integers), a start-up input at a region node, a node in a capacity margin, inertia or non-synchronous group, or a flowGroup flow limit; these are errors naming the unit. A unit listed in a region group that has none of its nodes is an error too. A unit with one input and one output and a single efficiency (one direct flow) between two regions is cut like a connection, except with online variables (a <code>startup_method</code>) or reserves, which are an error, as they are on a connection between regions. A DC power-flow line (a connection between two nodes of a <code>dc_power_flow_with_angles</code> group) between two regions, or between a region and the master, is an error: the decomposition cannot carry the voltage angles across the regions. Put both nodes of the line in one region, or take the nodes out of the <code>dc_power_flow_with_angles</code> group. A one-variable connection (<code>no_losses_no_variable_cost</code>) between regions works in both directions.</p>
 <h2 id="co2-costs-and-limits">CO2 costs and limits</h2>
 <ul>
 <li><code>co2_method</code> - Choice of the CO2 method or a combination of methods: none, price, period, total, price_period, price_total, period_total, price_period_total. A method with <em>period</em> in it needs <code>co2_max_period</code> and a method with <em>total</em> in it needs <code>co2_max_total</code>; a group without that value is an error.</li>
 <li><code>co2_price</code> [CUR/tCO2] CO2 price for a group of nodes. Constant or period. A period-indexed Map may cover <em>more</em> periods than the current solve realises — extra entries are silently ignored, so the same shared CO2-price dataset can drive solves with different period subsets. If the active solve activates <code>co2_price</code> topology (a priced commodity is wired up) but no <code>co2_price</code> or <code>co2_content</code> value is supplied for a needed period, the engine logs a warning and skips the CO2 cost term for that period rather than raising an error.</li>
 <li><code>co2_max_period</code> [tCO2/a] Annualized maximum limit for emitted CO2 in each period (tonnes per year of the period). Constant or period. A period map must give a value for every period of the solve, look-ahead periods included (a missing period is an error). In a rolling solve each roll applies the limit to its own window (realized part and look-ahead): its emissions are annualised over the window's hours of each period. The limit is carried across the rolls: each roll may emit the share of the period's limit reached by the end of its horizon, minus the emissions earlier rolls already realized in the period, so the realized emissions of a period stay within the limit. In a rolling solve the reported CO2 price of a period is the shadow price of the last roll that covers the period. <code>inf</code> means no limit in that period (a constant <code>inf</code>: in no period); its row is left out. A very large finite number is used as a limit and makes the solve numerically unstable; FlexTool warns about a value of 1e15 or more. <code>-inf</code> is an error.</li>
-<li><code>co2_max_total</code> [tCO2] Cumulative limit for emitted CO2 over the whole solve horizon: each period's annualized emissions times the years it represents (<code>years_represented</code>), summed over the periods, so the model chooses when to emit. In a rolling solve or a chain of solves the limit is carried: each roll or solve may emit the part of the limit allotted to the periods it reaches (in a rolling solve, the <code>years_represented</code>-weighted share of the solve's periods reached by the end of the roll's horizon; a solve of a chain reaches all of its own periods) minus what earlier rolls and solves already realized, counted the same way (annualized and times <code>years_represented</code>). The realized emissions of the whole chain therefore stay within the limit, but an early solve of a chain may use up what later solves would have needed. In a stochastic solve each forecast path gets the whole remaining limit.</li>
+<li><code>co2_max_total</code> [tCO2] Cumulative limit for emitted CO2 over the whole model horizon: each period's annualized emissions times the years it represents (<code>years_represented</code>), summed over the periods, so the model chooses when to emit. In a rolling solve or a chain of solves the limit is carried: each roll or solve may emit the part of the limit allotted to the periods it reaches (the <code>years_represented</code>-weighted share of the model's periods reached by the end of the roll's horizon) minus what earlier rolls and solves already realized, counted the same way (annualized and times <code>years_represented</code>). When the solves of a chain each hold a part of one period, the period's budget is shared by the hours of each part: a solve, single or rolling, counts the hours the earlier parts realized plus its own as the period, and weighs the emissions of the earlier parts the same way. The realized emissions of the whole run therefore stay within the limit. In a stochastic solve each forecast path gets the whole remaining limit. Every solve that has the group must see all the periods of the model (its own, look-ahead included; a roll sees its rolling solve's): otherwise the run stops with an error, since such a solve cannot tell its share of the limit. Use <code>co2_max_period</code> for a chain of solves that each hold only some of the periods, for nested lower solves and for the solves of a 2-D period map.</li>
 </ul>
 <p>The emissions that the CO2 price and the limits apply to are the fuel drawn from the group's nodes times the commodity's <code>co2_content</code>, including the extra fuel that <code>min_load_efficiency</code> and <code>piecewise_linear</code> units burn at part load.</p>
 <h2 id="stochastics">Stochastics</h2>

@@ -877,6 +877,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -989,6 +993,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../how_to/demand_response/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demand response
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../how_to/thermal_chp/" class="md-nav__link">
         
   
@@ -1081,6 +1113,34 @@
     
   
     Stochastics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../how_to/stochastic_examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stochastic examples
   
 
     
@@ -3513,7 +3573,7 @@ from the start of the run with the solve's own factors over the solve's own peri
 <li>
 <p><code>unit</code>, <code>connection</code>, <code>node</code> entities <code>capacity</code> parameter — [MW or MWh] decomposed into:</p>
 <ul>
-<li><em>existing</em> — capacity assumed at the start of the period: the <code>existing</code> capacity in service, less what earlier solves of the run retired of it (a life extension carried from an earlier solve is an extension cohort, see below, not existing capacity)</li>
+<li><em>existing</em> — capacity assumed at the start of the period: the <code>existing</code> capacity in service in the period (as its lifetime and a period-varying <code>existing</code> give), before any retirement; retirements, also those decided by earlier solves of the run, are in <em>divested</em> of the period they happen in (a life extension carried from an earlier solve is an extension cohort, see below, not existing capacity)</li>
 <li><em>invested</em> — capacity that comes online in the period (without a construction lead time, the capacity invested in that period)</li>
 <li><em>in_construction</em> — capacity decided but not yet operating in the period; always present, empty without a construction lead time</li>
 <li><em>divested</em> — capacity the model decided to retire at the start of the period</li>

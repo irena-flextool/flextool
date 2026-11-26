@@ -433,6 +433,18 @@
 </a>
 </li>
 <li class="md-nav__item">
+<a class="md-nav__link" href="../../how_to/demand_response/">
+<span class="md-ellipsis">
+    
+  
+    Demand response
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
 <a class="md-nav__link" href="../../how_to/thermal_chp/">
 <span class="md-ellipsis">
     
@@ -474,6 +486,18 @@
     
   
     Stochastics
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../how_to/stochastic_examples/">
+<span class="md-ellipsis">
+    
+  
+    Stochastic examples
   
 
     
@@ -3148,6 +3172,11 @@ columns are those of the module docstring:</p>
 <td><code>cum_sim_hours</code></td>
 <td><code>[period, p_ladder_cum_sim_hours]</code></td>
 <td>Running simulated-hour total per period (ladder and CO2 cap).</td>
+</tr>
+<tr>
+<td><code>cumulative_flowgroup</code></td>
+<td><code>[group, period, flow, hours, weight]</code></td>
+<td>Running realized net flow and hours (Σ step_duration · timestep_weight) per flow group with a cumulative flow limit (<code>_flowgroup_accumulators</code>); <code>weight</code> the years represented / period share of the latest solve that realized steps of the period (one weight per period, for the solve row).  Read as <code>flowgroup_realized</code> into the carry of <code>{max,min}Cumulative_flow_{period,solve}</code>.</td>
 </tr>
 </tbody>
 </table>

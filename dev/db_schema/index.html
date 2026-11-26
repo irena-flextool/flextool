@@ -877,6 +877,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -989,6 +993,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../how_to/demand_response/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demand response
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how_to/thermal_chp/" class="md-nav__link">
         
   
@@ -1081,6 +1113,34 @@
     
   
     Stochastics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/stochastic_examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stochastic examples
   
 
     
@@ -2783,8 +2843,9 @@ fresh write announces matches the migration target.</p>
 <li><code>comparison_settings_template.json</code> — scenario-comparison config seed</li>
 </ul>
 <h2 id="migrations">Migrations</h2>
-<p><code>flextool/update_flextool/db_migration.py</code> walks a user's database
-forward through versioned steps. Each step either:</p>
+<p><code>flextool/update_flextool/db_migration/</code> walks a user's database
+forward through versioned steps (<code>runner.py</code>; one module per step, e.g.
+<code>v79.py</code>, shared helpers in <code>common.py</code>). Each step either:</p>
 <ul>
 <li>imports a small <code>flextool_template_v&lt;N&gt;.json</code> snapshot (e.g.
   <code>flextool_template_rolling_window.json</code>,
@@ -2827,10 +2888,10 @@ which swallows <code>spinedb_api.exception.NothingToCommit</code>. A step that
 was already applied by an earlier partial run is treated as a
 no-op rather than a fatal abort, so later steps run normally.</p>
 </div>
-<p>Skim <code>migrate_database</code> in <code>db_migration.py</code> to see the full chain and
-the per-version diffs.</p>
+<p>Skim <code>_migrate_open</code> in <code>db_migration/runner.py</code> to see the full chain;
+each step is in its version's module.</p>
 <h3 id="recent-schema-versions">Recent schema versions</h3>
-<p>A few recent steps worth knowing about (the chain in <code>db_migration.py</code>
+<p>A few recent steps worth knowing about (the chain in <code>db_migration/runner.py</code>
 is the authoritative inventory):</p>
 <ul>
 <li><strong>v52 — multi-solver selection parameters.</strong> Adds the
@@ -2911,9 +2972,10 @@ On each run it:</p>
    that imports cleanly via <code>spinedb_api.import_data</code>, or write a
    hand-coded <code>add_parameters_manual</code> / <code>remove_parameters_manual</code> /
    <code>add_value_list_manual</code> / <code>add_relationships_manual</code> step. Recent
-   steps in <code>db_migration.py</code> are good templates.</li>
+   steps in <code>db_migration/</code> (e.g. <code>v83.py</code>) are good templates; put the
+   step in a new module <code>db_migration/v&lt;N&gt;.py</code>.</li>
 <li>Append the new step to the <code>while next_version &lt;= new_version:</code>
-   chain in <code>migrate_database</code>.</li>
+   chain in <code>db_migration/runner.py</code> (<code>_migrate_open</code>).</li>
 <li>Bump <code>FLEXTOOL_DB_VERSION</code> in
    <code>flextool/update_flextool/__init__.py</code>.</li>
 <li>Mirror the change into <code>schemas/spinedb_schema.json</code> so freshly

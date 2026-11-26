@@ -948,6 +948,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1060,6 +1064,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../how_to/demand_response/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demand response
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how_to/thermal_chp/" class="md-nav__link">
         
   
@@ -1152,6 +1184,34 @@
     
   
     Stochastics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/stochastic_examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stochastic examples
   
 
     
@@ -2609,8 +2669,8 @@
 <h2 id="cumulative-and-instant-flow-limits">Cumulative and instant flow limits</h2>
 <p>The limits apply to the net flow into the group's member nodes. A connection counts by its net flow at the member node: flow into the node is positive, flow out of it is negative, for every transfer method (also <code>no_losses_no_variable_cost</code> and DC power flow, whose two directions share one flow variable). When both ends of a connection are members, its flow leaves one member node and enters the other, so it adds nothing to the net flow.</p>
 <ul>
-<li><code>max_cumulative_flow</code> - [MW] Maximum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period. A period map must give a value for every period of the solve, look-ahead periods included (a missing period is an error). An explicit 0 is a limit of 0 (the net flow into the group can be negative). <code>inf</code> means no limit in that period (a constant <code>inf</code>: in no period); its row is left out. A very large finite number is used as a limit and makes the solve numerically unstable; FlexTool warns about a value of 1e15 or more. <code>-inf</code> is an error.</li>
-<li><code>min_cumulative_flow</code> - [MW] Minimum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period. A period map must give a value for every period of the solve, look-ahead periods included (a missing period is an error). An explicit 0 is a limit of 0 (the net flow into the group can be negative). <code>-inf</code> means no limit in that period (a constant <code>-inf</code>: in no period); its row is left out. A very large finite number is used as a limit and makes the solve numerically unstable; FlexTool warns about a value of 1e15 or more. <code>inf</code> is an error.</li>
+<li><code>max_cumulative_flow</code> - [MW] Maximum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Constant or period: a constant limits every period and the whole model, a period map each period. In a rolling solve, and over the solves of a run, the limit is carried across the rolls and solves: each roll may use the limit times the hours realized so far plus its own hours, minus the flow already realized, so the realized flow of each period (and of the whole model, for a constant) stays within the limit. A period map must give a value for every period of the solve, look-ahead periods included (a missing period is an error). An explicit 0 is a limit of 0 (the net flow into the group can be negative). <code>inf</code> means no limit in that period (a constant <code>inf</code>: in no period); its row is left out. A very large finite number is used as a limit and makes the solve numerically unstable; FlexTool warns about a value of 1e15 or more. <code>-inf</code> is an error.</li>
+<li><code>min_cumulative_flow</code> - [MW] Minimum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Constant or period: a constant limits every period and the whole model, a period map each period. In a rolling solve, and over the solves of a run, the limit is carried across the rolls and solves: each roll may use the limit times the hours realized so far plus its own hours, minus the flow already realized, so the realized flow of each period (and of the whole model, for a constant) stays within the limit. A period map must give a value for every period of the solve, look-ahead periods included (a missing period is an error). An explicit 0 is a limit of 0 (the net flow into the group can be negative). <code>-inf</code> means no limit in that period (a constant <code>-inf</code>: in no period); its row is left out. A very large finite number is used as a limit and makes the solve numerically unstable; FlexTool warns about a value of 1e15 or more. <code>inf</code> is an error. A minimum that earlier rolls fell short of must be made up by the later rolls. Without forecasts they can, as long as the model can run at the minimum average flow; the plan of the previous roll still holds. With stochastic forecasts a roll plans to meet the minimum on every forecast, so when the realized data turn out worse than all the forecasts, a later roll may be unable to make up the shortfall, and that solve is infeasible.</li>
 <li><code>max_instant_flow</code> - [MW] Maximum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time. A period map, or the period level of a period+time map, must give a value for every period of the solve, look-ahead periods included (a missing period is an error). An explicit 0, also at a single time step, is a limit of 0. <code>inf</code> means no limit in that period or time step (a constant <code>inf</code>: nowhere); its row is left out. A very large finite number is used as a limit and makes the solve numerically unstable; FlexTool warns about a value of 1e15 or more. <code>-inf</code> is an error. With a solve's <code>new_stepduration</code>, a solve step that combines <code>inf</code> time steps with finite ones takes their mean, which is <code>inf</code>: the limit is dropped for the whole solve step, and FlexTool warns (naming the entity, the periods and the solve steps). To keep the limit, give <code>inf</code> in all or none of the time steps of a solve step, or use a shorter <code>new_stepduration</code>.</li>
 <li><code>min_instant_flow</code> - [MW] Minimum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time. A period map, or the period level of a period+time map, must give a value for every period of the solve, look-ahead periods included (a missing period is an error). An explicit 0, also at a single time step, is a limit of 0. <code>-inf</code> means no limit in that period or time step (a constant <code>-inf</code>: nowhere); its row is left out. A very large finite number is used as a limit and makes the solve numerically unstable; FlexTool warns about a value of 1e15 or more. <code>inf</code> is an error. With a solve's <code>new_stepduration</code>, a solve step that combines <code>-inf</code> time steps with finite ones takes their mean, which is <code>-inf</code>: the limit is dropped for the whole solve step, and FlexTool warns (naming the entity, the periods and the solve steps). To keep the limit, give <code>-inf</code> in all or none of the time steps of a solve step, or use a shorter <code>new_stepduration</code>.</li>
 </ul>

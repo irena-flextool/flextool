@@ -877,6 +877,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -989,6 +993,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../how_to/demand_response/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demand response
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../how_to/thermal_chp/" class="md-nav__link">
         
   
@@ -1081,6 +1113,34 @@
     
   
     Stochastics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../how_to/stochastic_examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stochastic examples
   
 
     
@@ -4538,6 +4598,10 @@ filter-only inspector:</p>
 <td>Not carried over (the unit becomes a charger and a discharger).</td>
 </tr>
 <tr>
+<td>a formula cell without a stored value (a workbook saved without Excel calculating it, e.g. written by a script)</td>
+<td>Read as empty; the report names each cell and its formula. Open and save the workbook in Excel, then import again. FlexTool 2's own <code>annuity</code> formula (of the row's <code>interest</code> and <code>lifetime</code>) and the <code>ts_time</code> time jump columns are not listed: the import does not need their values.</td>
+</tr>
+<tr>
 <td>any other non-zero column the importer does not read</td>
 <td>Listed with a note to check whether it matters.</td>
 </tr>
@@ -4549,6 +4613,9 @@ filter-only inspector:</p>
 <p><strong>Capacity.</strong> In FlexTool 2, <code>invested capacity (MW)</code> and <code>invested storage (MWh)</code> are capacity already built: they count in every capacity limit, in every mode, and are not part of the investment decision. So <code>existing</code> is <code>capacity (MW)</code> + <code>invested capacity (MW)</code> (units, chargers and dischargers, connections; for a connection the larger direction) and <code>storage (MWh)</code> + <code>invested storage (MWh)</code> (storage nodes). <code>max invest (MW)</code> / <code>max invest (MWh)</code> is the investment limit (<code>invest_max_total</code>). A sensitivity of either column changes the sum. FlexTool 2 also adds the investment annuity of the invested capacity to its total cost as a fixed amount; FlexTool 4 does not, so the report lists these entities (those with an investment cost, also when a sensitivity gives the capacity). The <code>fixed kW/kWh ratio</code> ties the invested MW to the invested MWh (MW = ratio × MWh), as in FlexTool 2; when only one <code>max invest</code> is given, the other is derived through the ratio, as FlexTool 2 does. A storage node stays a storage while it has capacity or can invest in it; a sensitivity that leaves it neither (e.g. <code>invested storage (MWh)</code> and <code>max invest (MWh)</code> 0, no <code>storage (MWh)</code>) makes it a balance node.</p>
 <p><strong>Time steps.</strong> The steps with <code>in_use</code> 1 on the <code>ts_time</code> sheet form the dispatch timeset, those with <code>in_use_invest</code> 1 the investment timeset (as FlexTool 2's model). A workbook whose solves have no step in use is refused with a message, before any database is written: FlexTool 2 would solve nothing either. (A FlexTool 2 master workbook can take <code>ts_time</code> from its time series folder, <code>ts/&lt;input file name&gt;/ts_time.csv</code>; the importer reads only the workbook, so copy the column into it.)</p>
 <p><strong>Storage start and finish.</strong> A non-zero <code>storage start</code> / <code>storage finish</code> fixes the first / last storage state at that share of the storage capacity (<code>storage_start_end_method</code> <code>fix_start</code>, <code>fix_end</code> or <code>fix_start_end</code>); 0 or empty fixes nothing (<code>fix_nothing</code>). The storage state wraps from the last step to the first (<code>bind_within_solve</code>), except when both are set (<code>bind_forward_only</code>), as in FlexTool 2.</p>
+<p><strong>Online variables and minimum load.</strong> With <code>use online</code> 1, a unit with a <code>min load</code>, a <code>startup cost</code> or a min up / down time gets online variables, as in FlexTool 2: <code>startup_method</code> linear, its <code>min_load</code> and <code>startup_cost</code>, and <code>minimum_time_method</code> for its times. Its <code>conversion_method</code> is <code>min_load_efficiency</code> (with <code>efficiency_at_min_load</code>) when <code>eff at min load</code> is set and differs from <code>efficiency</code>, else <code>constant_efficiency</code>; the minimum load applies either way. With <code>use online</code> 0 FlexTool 2 has no online variables and ignores <code>eff at min load</code>, and so does the import (min up / down times are kept with <code>minimum_time_method</code> none). A storage unit gets these on its discharger. FlexTool 2 leaves online variables, minimum load, start-ups and reserves out of its investment run; FlexTool 4 keeps them in the investment solve too, so the investments take them into account (the report names the units and reserves). A sensitivity of <code>use online</code> or of a unit type's <code>min load</code>, <code>eff at min load</code>, <code>efficiency</code>, <code>startup cost</code>, <code>min uptime (h)</code> or <code>min downtime (h)</code> sets the unit's online parameters for that scenario in the same way. So does a <code>min load</code> or <code>efficiency</code> sensitivity on the <code>units</code> sheet, which FlexTool 2 ignored (it reads them only from <code>unit_type</code>); the report lists these.</p>
+<p><strong>Storage units.</strong> A unit with <code>eff charge</code> becomes a charger (grid to a storage node), the storage node and a discharger (storage node to grid). FlexTool 2 limits the charge from the grid to the unit's capacity; a FlexTool 4 unit's capacity is on its output side, so the charger's output gets <code>capacity_max_coeff</code> = <code>eff charge</code>, below or above 1 (the grid-side charge is then at most the capacity, and so is its ramp). The <code>fixed cost/kW/year</code> goes to the discharger, which has the unit's capacity and investment. Only a storage with an inflow series may spill (<code>penalty_down</code> 0), as in FlexTool 2; other storage nodes get the loss of load penalty.</p>
+<p><strong>Node-level capacity margin and non-synchronous share.</strong> A gridNode <code>capacity margin (MW)</code> or <code>non synchronous share</code> goes to a group <code>&lt;node&gt;_group</code> with that one node (FlexTool 2's node equations are its nodeGroup equations over one node), with the same settings as a nodeGroup's. If the workbook already has a grid or nodeGroup of that name, the report says the values were not carried over. A gridNode sensitivity of either goes to that group; for a node without a value in the workbook it is reported.</p>
 <hr />
 <h2 id="export-and-maintenance-commands">Export and maintenance commands</h2>
 <h3 id="export-database-to-excel">Export database to Excel</h3>

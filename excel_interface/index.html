@@ -433,6 +433,18 @@
 </a>
 </li>
 <li class="md-nav__item">
+<a class="md-nav__link" href="../how_to/demand_response/">
+<span class="md-ellipsis">
+    
+  
+    Demand response
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
 <a class="md-nav__link" href="../how_to/thermal_chp/">
 <span class="md-ellipsis">
     
@@ -474,6 +486,18 @@
     
   
     Stochastics
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../how_to/stochastic_examples/">
+<span class="md-ellipsis">
+    
+  
+    Stochastic examples
   
 
     
@@ -1414,6 +1438,14 @@ groups later — the underlying DB is unchanged.</p>
 <td><code>--old-format</code></td>
 <td>Emit the legacy v1 layout instead of v2 self-describing — only needed for tooling pinned to the older format.</td>
 </tr>
+<tr>
+<td><code>--omit-empty-columns</code></td>
+<td>Leave out the parameter columns that have no value on their sheet, for a narrower workbook of an existing model. The reference list to the right of each sheet still names every parameter: to add one, insert a column before the blank column and type its name in the parameter row and its data type in the data type row. A sheet with no values at all keeps its columns. Not with <code>--old-format</code>.</td>
+</tr>
+<tr>
+<td><code>--units-row</code></td>
+<td>Show only each parameter's unit (MW, CUR/MWh, <code>-</code> for a share; empty for a choice or a name) in the first row of the parameter sheets, labelled <code>unit</code>, instead of its description. The full description stays in the note on the parameter name. Not with <code>--old-format</code>.</td>
+</tr>
 </tbody>
 </table>
 <p>A realistic minimal-template export:</p>
@@ -1436,8 +1468,22 @@ embeds its own header describing what it contains:</p>
 </ul>
 <p>A few practical notes:</p>
 <ul>
-<li>Sheets whose parameter group was not selected at export time are simply
-  absent. Re-export later if you decide to start editing them.</li>
+<li>The header rows and the key columns (alternative, entity, index) stay in view while you scroll; the
+  definition column scrolls away. Every other parameter column has a slightly different background.</li>
+<li>The parameter columns are ordered by parameter group; the name of each parameter has its group's colour.
+  Every group after the first is an Excel outline group (the +/- buttons above the column letters). A group
+  with no value on the sheet starts collapsed; open it with +.</li>
+<li>The <code>index:</code> column holds the index of the sheet's maps (period, time step, solver argument, ...). When the
+  parameters of one sheet have different index names, an <code>index name</code> row under the data types gives each
+  column's own.</li>
+<li>
+<p>The description row shows the first four lines of each parameter's description. The full text is in the note
+  (comment) on the parameter name: hover over the name to read it.</p>
+</li>
+<li>
+<p>Sheets whose parameter group was not selected at export time are simply
+  absent. Re-export later if you decide to start editing them.</p>
+</li>
 <li>When <strong>any</strong> parameter on a sheet carries a database default, a
   <strong>default-value row</strong> is rendered above the data. <code>Map</code>- and <code>Array</code>-
   typed defaults are stringified for display; you should not normally need
@@ -1456,7 +1502,20 @@ scientific notation. If you exchange files across both tools, lock the
 spreadsheet locale to one convention (typically English/US) and the
 column format to plain <code>Number</code> for data columns.</p>
 </div>
+<div class="admonition note">
+<p class="admonition-title">Number precision</p>
+<p>The export writes every number exactly, so a value such as 0.30000000000000004 reads back unchanged.
+LibreOffice keeps only 15 significant digits when it saves an xlsx file again, so a workbook re-saved in
+LibreOffice reads back such values rounded to 15 digits.</p>
+</div>
 <h2 id="importing-edited-data-back">Importing edited data back</h2>
+<div class="admonition note">
+<p class="admonition-title">Workbooks from FlexTool 4.7.1 need FlexTool 4.7.1 or later</p>
+<p>A link sheet (a relationship without parameters, such as <code>group_node</code>) has <code>alternative</code> and
+<code>entity existence</code> columns when an entity is switched on or off in an alternative. FlexTool 4.7.0 reads those
+cells as part of the entity names, so it loses the memberships and their activity. Import such a workbook
+with FlexTool 4.7.1 or later.</p>
+</div>
 <h3 id="from-the-flextool-gui_1">From the FlexTool GUI</h3>
 <p>Add the edited <code>.xlsx</code> as an input source via the <strong>Add input source</strong>
 dialog. The GUI treats a workbook the same way it treats a Spine DB input

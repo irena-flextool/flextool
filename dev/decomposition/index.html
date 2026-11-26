@@ -433,6 +433,18 @@
 </a>
 </li>
 <li class="md-nav__item">
+<a class="md-nav__link" href="../../how_to/demand_response/">
+<span class="md-ellipsis">
+    
+  
+    Demand response
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
 <a class="md-nav__link" href="../../how_to/thermal_chp/">
 <span class="md-ellipsis">
     
@@ -474,6 +486,18 @@
     
   
     Stochastics
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../how_to/stochastic_examples/">
+<span class="md-ellipsis">
+    
+  
+    Stochastic examples
   
 
     
@@ -1787,6 +1811,19 @@ of travel <code>(p, sink, source)</code> (so <code>BendersResult.trade_flow</cod
 master's <code>v_flow_back</code> index). The hand master and the pin diagnostic refuse
 back arcs. A DC power-flow line between regions is refused by <code>split</code>: the
 half-flows cannot carry its voltage angles.</p>
+<p>A unit with an arc through itself (<code>(u, n, u)</code> input, <code>(u, u, n)</code> output: several inputs or outputs, or a
+piecewise curve) whose nodes or start-up nodes are on more than one side — two regions, or a region and the
+master-hosted nodes — is held whole by the master (<code>_region_filter.master_units</code>), whether a region group lists it
+or not. It counts as a master-side endpoint in <code>_classify_arcs</code>: each of its arcs at a region node is a
+region↔master coupling (one half-flow in that region, keeping the arc's unitsize and eff/noEff class, pinned per
+<code>(d, t)</code> to the master's <code>v_flow</code>), its other arcs are master-local, it joins the master-local processes (no region
+carries its rows; <code>master_network_data</code> keeps its arcs, conversion, capacity, invest, costs and online rows), and its
+investment rides the master's invest frames. Its arcs are not capacity-clamped (<code>_ArcMaster.capacity_bounded</code>): an
+input arc has no <code>existing + invested</code> bound. <code>_validate_master_units</code> refuses what a region would have to read
+besides the flows (reserve, a start-up draw at a region node, a capacity margin / inertia / non-synchronous
+group at one of its region nodes, a flowGroup flow limit) and integer online variables. The run log
+line <code>Benders master: …</code> gives <code>_region_filter.master_arc_counts</code>. Without any balance node in the master (the
+plain path) the master builds with no balance rows.</p>
 <p>Star topologies (more than two regions sharing one pipeline) are not
 supported; the rewriter asserts bilateral arcs only.</p>
 <h3 id="24-algorithm-master-multi-cut-benders-loop">2.4 Algorithm — master + multi-cut Benders loop</h3>
