@@ -630,15 +630,11 @@ class TestMasterNetworkDataContent:
     def test_balance_keeps_master_omits_region_endpoints(
         self, md_big
     ) -> None:
-        nb = _col_values(md_big.nodeBalance, "n")
-        # Master-hosted endpoints stay balanced.
-        assert MASTER_BIG <= nb
-        # Region-side endpoints of coupling arcs are omitted (elec_A /
-        # elec_B for the electrolysers, lh2_C for pipe_BC).
-        assert not nb & {"elec_A", "elec_B", "lh2_C"}
-        # Non-terminal region nodes stay as structurally inert balance
-        # rows (legacy behaviour, satisfies the build precondition).
-        assert "battery_A" in nb and "elec_C" in nb
+        # Exactly the master-hosted nodes are balanced in the master: the
+        # region-side endpoints of coupling arcs (elec_A / elec_B for the
+        # electrolysers, lh2_C for pipe_BC) and every other region node
+        # (battery_A, elec_C) have their balance in their region only.
+        assert _col_values(md_big.nodeBalance, "n") == MASTER_BIG
 
     def test_node_keyed_frames_filtered_to_master(self, md_big) -> None:
         for fld in _MASTER_N_KEYED_FIELDS:

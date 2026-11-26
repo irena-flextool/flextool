@@ -65,6 +65,11 @@
 
 ### Fixes
 
+- **Benders: a master without a balance node.** With every node in a region, the Benders master holds only the
+  flows between regions and has no balance node.  When every balance node was the end of a flow between regions,
+  the run stopped with "No node has an energy balance … every node resolved to node_type = 'commodity'"; it now
+  solves.  The master no longer carries the other region nodes as empty balance rows.  A model with no balance node
+  at all still gets that error, now when it is loaded.
 - **Capacity tables: retired existing capacity counted twice.** After an investment solve that retires existing
   capacity, a later solve that dispatches the same periods (a realization solve, or a dispatch solve after an
   investment solve) reported `existing` with the retirement already subtracted, next to the same retirement in

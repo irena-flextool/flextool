@@ -202,10 +202,13 @@ def _arcs(frame) -> set[tuple[str, str, str]]:
 
 
 def test_split_couples_the_reverse_direction(tmp_path_factory):
-    """In-region one-variable DC line ``link_in`` (rA -> rA_aux) next to the cross-region ``link``."""
+    """In-region one-variable DC line ``link_in`` (rA -> rA_aux, a balance node of region_A) next to the
+    cross-region ``link``."""
     ents, vals = _dc_group(["rA", "rA_aux"], ["link_in"])
-    ents += [["connection", "link_in", None], ["connection__node__node", ["link_in", "rA", "rA_aux"], None]]
-    vals += [["connection", "link_in", "transfer_method", b64(ONE_VAR, "str")],
+    ents += [["node", "rA_aux", None], ["group__node", ["region_A", "rA_aux"], None],
+             ["connection", "link_in", None], ["connection__node__node", ["link_in", "rA", "rA_aux"], None]]
+    vals += [["node", "rA_aux", "node_type", b64("balance", "str")],
+             ["connection", "link_in", "transfer_method", b64(ONE_VAR, "str")],
              ["connection", "link_in", "existing", b64(10.0, "float")]]
     data, regions = _benders_input(tmp_path_factory, "one_var_split", ents, vals)
     membership = _region_filter.load_region_membership(data, regions)

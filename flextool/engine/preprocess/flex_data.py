@@ -5070,6 +5070,26 @@ def _years_represented_boundary(dt: "pl.DataFrame | None", db_reader, provider,
         db_reader, active, _drv_yr.bookkeeping_periods(dt, workdir, provider=provider), provider=provider)
 
 
+def _validate_has_balance(flex_data: "FlexData") -> None:
+    """Raise when no node of the solve has an energy balance (a user's model, at load; a reduced FlexData that
+    the engine derives from a loaded one, such as a Benders master holding only flows between regions, may have
+    none and still builds)."""
+    nb = flex_data.nodeBalance
+    nbp = flex_data.nodeBalancePeriod
+    if (nb is None or nb.height == 0) and (nbp is None or nbp.height == 0):
+        raise ValueError(
+            "No node has an energy balance: every node resolved to "
+            "node_type = 'commodity' (or 'none'), so there is no "
+            "per-time-step balance ('balance'/'storage') and no period "
+            "balance ('balance_within_period') to solve.  Check the "
+            "node_type of your nodes and the alternative ranking of the "
+            "active scenario — a high-ranked alternative (e.g. 'Base') "
+            "that sets node_type = 'commodity' will override the "
+            "'balance'/'storage' assignments of lower-ranked "
+            "alternatives."
+        )
+
+
 def load_flextool(source: "Path | str | FlexInputSource",
                    *,
                    db_reader: "object | None" = None,
@@ -5826,6 +5846,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # ``build_flextool`` runs (see _delay.delayed_input_expr
         # which calls ``cast_dim(..., None, ...)``).
         flex_data._axis_enums = axis_enums
+
+        _validate_has_balance(flex_data)
 
         result = _assign_param_names(flex_data)
         load_ok = True  # noqa: F841 — consumed by finally clause below

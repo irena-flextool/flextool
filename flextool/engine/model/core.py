@@ -110,7 +110,9 @@ from flextool.engine.model import _extend
 from flextool.engine.model import _retire_built
 from flextool.engine.model import _self_discharge
 from flextool.engine.model import _unit_floors
-from flextool.engine.input._axis_enums import alias_to_axis, align_join_dtypes, join_aligned, rename_to_axis
+from flextool.engine.input._axis_enums import (
+    alias_to_axis, align_join_dtypes, join_aligned, rename_to_axis, schema_dtype,
+)
 from flextool.engine.preprocess._step_relations import check_step_relations, labels_with_steps, scope_end_pairs
 from flextool.engine.model._common import (
     _availability_factor,
@@ -743,7 +745,8 @@ def _prepare(b: _Build) -> None:
     # ── shared index sets ──
     b.pss_dt = compute_pss_dt(d) if b.has_proc else None
     b.nodeBalance_dt = compute_nodeBalance_dt(d)
-    _validate_has_balance(d, b.nodeBalance_dt)
+    if b.nodeBalance_dt is None:
+        b.nodeBalance_dt = _no_balance_dt(d)
     b.nodeState_dt = compute_nodeState_dt(d) if b.has_storage else None
     b.self_discharge = _self_discharge.loss_coefficients(d, b.nodeState_dt) if b.has_storage else None
     b.process_indirect_dt = (compute_process_indirect_dt(d)
@@ -797,20 +800,16 @@ def _node_list(nodes: list) -> str:
     return shown + ("" if len(nodes) <= 10 else f", ... {len(nodes) - 10} more")
 
 
-def _validate_has_balance(d, nodeBalance_dt) -> None:
-    """Raise when no node has an energy balance to solve."""
-    if nodeBalance_dt is None and not _has_rows(getattr(d, "nodeBalancePeriod", None)):
-        raise ValueError(
-            "No node has an energy balance: every node resolved to "
-            "node_type = 'commodity' (or 'none'), so there is no "
-            "per-time-step balance ('balance'/'storage') and no period "
-            "balance ('balance_within_period') to solve.  Check the "
-            "node_type of your nodes and the alternative ranking of the "
-            "active scenario — a high-ranked alternative (e.g. 'Base') "
-            "that sets node_type = 'commodity' will override the "
-            "'balance'/'storage' assignments of lower-ranked "
-            "alternatives."
-        )
+def _no_balance_dt(d) -> pl.DataFrame:
+    """The empty ``(n, d, t)`` frame of a build without per-step balance nodes (a Benders master holding only
+    flows between regions, or a model with only ``balance_within_period`` nodes): the balance slacks and
+    ``nodeBalance_eq`` are then built with no columns and rows.  Keeps the axis dtypes of ``nodeBalance`` and
+    ``dt``.  A user's model without any balance node is refused when it is loaded
+    (``flex_data._validate_has_balance``)."""
+    nb = d.nodeBalance
+    n = (nb.select("n").head(0) if nb is not None
+         else pl.DataFrame(schema={"n": schema_dtype(getattr(d, "_axis_enums", None), "n")}))
+    return n.join(d.dt.select("d", "t").head(0), how="cross")
 
 
 DC_ONLINE_MESSAGE = (

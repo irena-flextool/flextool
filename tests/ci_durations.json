@@ -134,6 +134,7 @@
  "tests/engine/test_benders_invest_handoff_chain.py": 12.7,
  "tests/engine/test_benders_log_silencing.py": 12.8,
  "tests/engine/test_benders_master_hosted.py": 31.8,
+ "tests/engine/test_benders_master_without_balance.py": 13.0,
  "tests/engine/test_benders_nonconvergence_report.py": 0.0,
  "tests/engine/test_benders_parallel_determinism.py": 39.2,
  "tests/engine/test_benders_phase0_fixture.py": 1.1,

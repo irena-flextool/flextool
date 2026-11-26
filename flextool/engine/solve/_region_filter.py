@@ -1943,8 +1943,8 @@ def master_network_data(
 
     Returns a reduced :class:`FlexData` containing ONLY the cross-region
     ``(p, source, sink)`` arcs plus their invest / cost / timeline params,
-    with EVERY terminal node OMITTED from node balance (and the
-    block / state / inflow frames).  ``build_flextool`` over the result
+    with no balance node (every node is in a region; the block / state /
+    inflow frames are emptied too).  ``build_flextool`` over the result
     generates the master skeleton natively:
 
     * ``v_flow[conn, source, sink, d, t]`` for every cross arc (built from
@@ -1993,9 +1993,8 @@ def master_network_data(
     * the entity-keyed invest frames keep
       ``procs-of-kept-arcs ∪ master_hosted_nodes`` (master storage
       invest needs the ``e``-keyed annuity/lifetime/max-units rows);
-    * only the REGION-side endpoints of coupling arcs (and the
-      region↔region terminals) are omitted from balance — master-hosted
-      endpoints stay balanced;
+    * the master-hosted nodes are the master's balance nodes (on the
+      plain path the master has none);
     * user constraints / CO2 caps / group features whose referenced
       entities are ALL master-side are kept; straddling ones hard-error
       (same validation family as :func:`split`).
@@ -2385,75 +2384,15 @@ def master_network_data(
             obj = None
         setattr(new, fld, obj)
 
-    # ``build_flextool``'s ALWAYS feature requires these four fields to be
-    # PRESENT (not None) even when empty (model/core.py ``ALWAYS``).  Emptying
-    # them (head(0)) — rather than nulling — OMITS every terminal node from
-    # balance while keeping the build's structural precondition satisfied:
-    # the master's ``v_flow`` is then free except for ``maxFlow`` and its
-    # own bound (Phase-3 §1.3).
-    def _empty_like_frame(df: pl.DataFrame | None) -> pl.DataFrame | None:
-        return df.head(0) if df is not None else df
-
-    def _empty_like_param(p: Param | None) -> Param | None:
-        if p is None:
-            return None
-        return Param(p.dims, p.frame.head(0), name=p.name)
-
-    # OMIT every cross-arc TERMINAL node from balance — that is the
-    # "unbalanced virtual node" requirement: with the terminals absent the
-    # master's trade ``v_flow`` is free except for ``maxFlow`` and its own
-    # bound (Phase-3 §1.3).  We do NOT empty ``nodeBalance`` entirely,
-    # because ``build_flextool`` requires a non-empty balance-node set to
-    # declare the ``vq_state_up/down`` slack vars and the ``nodeBalance_eq``
-    # row (a None ``nodeBalance_dt`` crashes ``add_var`` / ``add_cstr``).
-    # Instead we keep the NON-terminal nodes: in the reduced master they
-    # carry NO arcs (every non-cross arc was dropped) and NO inflow, so
-    # their balance collapses to ``slack = 0`` — structurally inert, with
-    # zero effect on the trade flow.  This satisfies the build precondition
-    # while still omitting exactly the trade terminals.
-    terminal_nodes: set[str] = set()
-    if not master_mode:
-        # Today's exact path: every cross-arc terminal is omitted.
-        for k in cross_keys:
-            terminal_nodes.add(k[1])
-            terminal_nodes.add(k[2])
-    else:
-        # Omit ONLY the region-side endpoints: both terminals of
-        # region↔region cross arcs (as today) plus the region-side
-        # endpoint of each region↔master coupling arc.  Master-hosted
-        # endpoints stay balanced (that is the whole point of the
-        # mode); master-local arc endpoints are all master-side and
-        # never omitted.
-        for r in cross.iter_rows(named=True):
-            terminal_nodes.add(r["source"])
-            terminal_nodes.add(r["sink"])
-        for r in region_master.iter_rows(named=True):
-            terminal_nodes.add(
-                r["source"] if r["_src_region"] is not None else r["sink"])
-
-    def _drop_terminal_frame(df: pl.DataFrame | None) -> pl.DataFrame | None:
-        if df is None or "n" not in df.columns:
-            return df
-        return df.filter(~_is_in_keep("n", terminal_nodes))
-
-    def _drop_terminal_param(p: Param | None) -> Param | None:
-        if p is None or "n" not in p.dims:
-            return p
-        return Param(p.dims, p.frame.filter(~_is_in_keep("n", terminal_nodes)),
-                     name=p.name)
-
-    new.nodeBalance = _drop_terminal_frame(data.nodeBalance)
-    if not master_mode:
-        new.p_inflow = _empty_like_param(data.p_inflow)
-    else:
-        # The master keeps its own inflow; every other balance node in
-        # the reduced data stays structurally inert (no arcs, no
-        # inflow ⇒ balance collapses to ``slack = 0``, exactly as the
-        # legacy all-emptied path).
-        new.p_inflow = _filter_param(data.p_inflow, "n",
-                                     set(master_hosted_nodes))
-    new.p_penalty_up = _drop_terminal_param(data.p_penalty_up)
-    new.p_penalty_down = _drop_terminal_param(data.p_penalty_down)
+    # Balance: only the master-hosted nodes (none on the plain path).  Every region node, the ends of the
+    # coupling arcs included, has its balance in its region, so the master's coupling ``v_flow`` is free except
+    # for ``maxFlow``, its bound and the master's own rows.  ``build_flextool`` builds a master without a balance
+    # node with no balance slacks or rows.  The frames stay present (filtered, not None): ALWAYS needs them.
+    master_set = set(master_hosted_nodes)
+    new.nodeBalance = _filter_frame(data.nodeBalance, "n", master_set)
+    new.p_inflow = _filter_param(data.p_inflow, "n", master_set)
+    new.p_penalty_up = _filter_param(data.p_penalty_up, "n", master_set)
+    new.p_penalty_down = _filter_param(data.p_penalty_down, "n", master_set)
     # Every master flow keeps the solve's step: the regions pin the master's half-flows per fine step.
     new.processCoarse = None
     new.process_coarse_step = None
