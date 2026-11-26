@@ -71,30 +71,41 @@ def test_split_period_unused_budget_carries_to_the_later_part(tmp_path):
 STEPS12 = tuple(f"t{i:02d}" for i in range(1, 13))
 
 
-def _chain12(solves: list, timesets: dict) -> dict:
-    """The 4-step model's node, units and CO2 cap on a 12-step timeline, gas 40 (a constant: the 4-step time map
-    has no t05-t12).  *solves* ``(name, timeset,
-    (jump, horizon) | None)`` each hold p1 on their timeset; *timesets* ``{name: (first step, hours)}``."""
+def _chain12(solves: list, timesets: dict, *, years: "dict | None" = None, gas=40.0, cap: float = 2190.0,
+             group_node: str = "coal_n") -> dict:
+    """The 4-step model's node, units and CO2 cap on a 12-step timeline.  *solves* ``(name, periods, (jump, horizon)
+    | None[, realized periods])``: *periods* a timeset name (p1 on it) or ``{period: timeset}``, every period realized
+    unless listed; *timesets* ``{name: (first step, hours)}``; *years* ``{period: years_represented}`` (1 when not
+    given); *gas* a constant or ``{step: cost}`` over the 12 steps (the 4-step time map has no t05-t12); *cap* the
+    ``co2_max_total``; *group_node* the node of group ``co2g``."""
     spec = _co2_chain(40.0)
-    spec["entities"] = [e for e in spec["entities"] if e[0] not in ("solve", "timeset")]
-    spec["entities"] += [*(["timeset", t, None] for t in timesets), *(["solve", s, None] for s, _, _ in solves)]
+    spec["entities"] = [e for e in spec["entities"] if e[0] not in ("solve", "timeset")
+                        and e[:2] != ["group__node", ["co2g", "coal_n"]]]
+    spec["entities"] += [*(["timeset", t, None] for t in timesets), *(["solve", s[0], None] for s in solves),
+                         ["group__node", ["co2g", group_node], None]]
     values = [v for v in spec["parameter_values"]
               if v[0] not in ("solve", "timeset") and v[:3] != ["model", "flextool", "solves"]
               and v[:3] != ["timeline", "tl", "timestep_duration"]]
     gas_cost = ["unit__outputNode", ["gas", "elec"], "other_operational_cost"]
-    values = [[*gas_cost, pack(40.0, "float"), "init"] if v[:3] == gas_cost else v for v in values]
+    gas_value = pack(gas, "float") if isinstance(gas, float) else pack(
+        fc.pmap(list(gas.items()), index_name="time"), "map")
+    values = [[*gas_cost, gas_value, "init"] if v[:3] == gas_cost
+              else [*v[:3], pack(cap, "float"), v[4]] if v[:3] == ["group", "co2g", "co2_max_total"] else v
+              for v in values]
     values += [["timeline", "tl", "timestep_duration",
                 pack(fc.pmap([(t, 1.0) for t in STEPS12], index_name="time"), "map"), "init"],
-               ["model", "flextool", "solves", fc.array([s for s, _, _ in solves]), "init"]]
+               ["model", "flextool", "solves", fc.array([s[0] for s in solves]), "init"]]
     for name, (start, hours) in timesets.items():
         values += [["timeset", name, "timeline", pack("tl", "str"), "init"],
                    ["timeset", name, "timeset_duration", pack(fc.pmap([(start, hours)], index_name="time"), "map"),
                     "init"]]
-    for name, timeset, roll in solves:
+    for name, periods, roll, *realized in solves:
+        periods = {"p1": periods} if isinstance(periods, str) else periods
         rows = [("solve_mode", pack("rolling_window" if roll else "single_solve", "str")),
-                ("period_timeset", pack(fc.pmap([("p1", timeset)], index_name="period"), "map")),
-                ("realized_periods", fc.array(["p1"])),
-                ("years_represented", pack(fc.pmap([("p1", 1.0)], index_name="period"), "map"))]
+                ("period_timeset", pack(fc.pmap(list(periods.items()), index_name="period"), "map")),
+                ("realized_periods", fc.array(realized[0] if realized else list(periods))),
+                ("years_represented", pack(fc.pmap([(p, (years or {}).get(p, 1.0)) for p in periods],
+                                                   index_name="period"), "map"))]
         if roll:
             rows += [("rolling_solve_jump", pack(float(roll[0]), "float")),
                      ("rolling_solve_horizon", pack(float(roll[1]), "float"))]
@@ -140,3 +151,61 @@ def test_three_single_solves_each_hold_a_third(tmp_path):
                              {"a": ("t01", 4.0), "b": ("t05", 4.0), "c": ("t09", 4.0)}), tmp_path)
     assert [_coal(s) for s in steps] == pytest.approx([1.0, 1.0, 1.0], abs=1e-9)
     assert [_cap_rhs(s) for s in steps] == pytest.approx([2190.0, 1095.0, 730.0], rel=1e-9)
+
+
+def _coal_in(step, period: str) -> float:
+    """MWh of coal_u's output in *period* of *step*."""
+    frame = step.solution.value("v_flow").with_columns(pl.col(c).cast(pl.Utf8) for c in ("p", "source", "d"))
+    rows = frame.filter((pl.col("p") == "coal_u") & (pl.col("source") == "coal_n") & (pl.col("d") == period))
+    return float(rows["value"].sum()) * 10.0
+
+
+OWN_PERIODS = ([("s1", {"p1": "a"}, None), ("s2", {"p2": "b"}, None)], {"a": ("t01", 4.0), "b": ("t05", 4.0)})
+
+
+def test_solves_with_their_own_periods_refuse_a_total_cap(tmp_path):
+    """D54: s1 holds p1, s2 holds p2, and co2g (on coal_n, which carries coal) has a co2_max_total: neither solve
+    sees the other's period, so the run stops before anything solves, naming both (one more solve)."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    with pytest.raises(FlexToolConfigError) as err:
+        fc._run(_chain12(*OWN_PERIODS), tmp_path)
+    assert str(err.value).startswith("co2_max_total of group(s) 'co2g' limits the emissions over all the periods of "
+                                     "the model, but solve 's1' (and 1 more solve) does not have period(s) 'p2': ")
+
+
+def test_a_total_cap_without_an_emitter_has_no_row_and_no_check(tmp_path):
+    """The same solves with co2g on elec, a node without a CO2-bearing commodity: no process emits in co2g, so the
+    loader builds no co2_max_total row and the run is not stopped; coal is not limited (4 MWh in each solve)."""
+    steps = fc._run(_chain12(*OWN_PERIODS, group_node="elec"), tmp_path)
+    assert [_coal(s) for s in steps] == pytest.approx([4.0, 4.0], abs=1e-9)
+
+
+def test_a_period_without_years_is_not_a_model_period(tmp_path):
+    """s1 holds p0 (t01, years_represented 0) and p1 (t02-t04), s2 p1 on t05-t12.  p0 represents no years, so s2
+    sees every period that counts (p1) and the run goes on.  p0 carries no weight in the row: its 1 MWh of coal is
+    free.  s1: p1 share 3/8760, E·2920 <= 2190, 0.75 t.  s2: share* (3 + 8)/8760, 796.36 per t, 2190 - 0.75·796.36
+    = 1592.7, so 2 t over its 8 h; p1 in all 2.75 t = 11 h x 0.25."""
+    steps = fc._run(_chain12([("s1", {"p0": "z", "p1": "a"}, None), ("s2", "b", None)],
+                             {"z": ("t01", 1.0), "a": ("t02", 3.0), "b": ("t05", 8.0)}, years={"p0": 0.0}),
+                    tmp_path)
+    assert [_coal_in(steps[0], "p0"), _coal_in(steps[0], "p1"), _coal_in(steps[1], "p1")] == pytest.approx(
+        [1.0, 0.75, 2.0], abs=1e-9)
+
+
+def test_two_solves_that_see_both_periods_carry_the_realized_one(tmp_path):
+    """s1 and s2 both hold p1 (t01-t02) and p2 (t03-t04), share 2/8760 each, years 1; s1 realizes p1, s2 p2.
+    co2_max_total 4380 = 1 t in a single solve (a tonne weighs 4380).  Gas 40 in p1 and 30 in p2, coal 10.
+    s1 (both periods reached): (E_p1 + E_p2)·4380 <= 4380; coal saves more in p1: 1 t there.  Objective
+    4380 x (1 x 10 + 1 x 40 + 2 x 30) = 481 800.  s2: p1 has 2 h realized by s1, so its share* is (2 + 2)/8760
+    (2190 per t) and s1's 1 t counts 2190: E_p1·2190 + E_p2·4380 <= 4380 - 2190 = 2190.  A tonne of budget
+    saves 30/2190 in p1 against 20/4380 in p2, so s2 burns its 1 t in p1 again and none in its realized p2:
+    481 800.  Realized in all: 1 t, the limit."""
+    gas = {t: 40.0 if t in ("t01", "t02") else 30.0 for t in STEPS12}
+    both = {"p1": "a", "p2": "b"}
+    steps = fc._run(_chain12([("s1", both, None, ["p1"]), ("s2", both, None, ["p2"])],
+                             {"a": ("t01", 2.0), "b": ("t03", 2.0)}, gas=gas, cap=4380.0), tmp_path)
+    assert [(_coal_in(s, "p1"), _coal_in(s, "p2")) for s in steps] == [
+        (pytest.approx(1.0, abs=1e-9), pytest.approx(0.0, abs=1e-9))] * 2
+    assert _cap_rhs(steps[1]) == pytest.approx(2190.0, rel=1e-9)
+    assert [s.solution.obj for s in steps] == pytest.approx([481_800.0] * 2, rel=1e-9)

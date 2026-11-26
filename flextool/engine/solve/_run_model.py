@@ -72,6 +72,7 @@ from flextool.engine.solve._co2_total_scope import (
     check_co2_total_sees_all_periods,
     co2_total_groups,
     solve_period_views,
+    weightless_periods,
 )
 from flextool.engine.solve._realized_overlap import (
     check_dispatch_after_investments,
@@ -1867,8 +1868,9 @@ def native_run_model(state, solver) -> int:
     # A total CO2 limit needs every solve that has it to see all the model's periods (D54): an error before anything
     # solves.
     check_co2_total_sees_all_periods(
-        solve_period_views(all_solves, complete_solve, parent_roll, _sub_solve_periods, period__branch_lists, _rdp_map),
-        co2_total_groups(getattr(state, "cascade_input_provider", None)))
+        solve_period_views(all_solves, complete_solve, parent_roll, _sub_solve_periods, _rdp_map),
+        co2_total_groups(getattr(state, "cascade_input_provider", None), getattr(state, "input_source", None)),
+        weightless_periods(state.solve.solve_period_years_represented))
 
     # ------------------------------------------------------------------
     # 3.6 W4c — project each stochastic parameter onto the REALIZED branch

@@ -2512,6 +2512,35 @@ def _load_co2_cap(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
             co2_max_period, g_max.join(period, how="cross"), flow_to_co2_capped)
 
 
+def co2_capped_emitter_arcs(groups: pl.DataFrame, inp: Path, sd: Path, pss_eff: "pl.DataFrame | None",
+                            pss_noEff: "pl.DataFrame | None", *, provider: "object | None" = None):
+    """``(gcn, flow_eff, flow_noEff)`` of the capped *groups* (column ``g``): gcn (g, c, n) the group's nodes that
+    carry a CO2-bearing commodity c, and the eff / noEff arcs (p, source, sink, c, g) drawing from them (the
+    emitters of the cap row; None where there are none).  gcn is None when no group has such a node.  Shared by
+    :func:`_load_co2_cap_total` and the run's check that a total cap is seen whole (``solve._co2_total_scope``)."""
+    cn_co2 = _provider_read(provider, "solve_data/commodity_node_co2",
+                              sd / "commodity_node_co2.csv").pipe(
+        rename_to_axis, {"commodity": "c", "node": "n"})
+    g_node = _provider_read(provider, "input/group__node",
+                              inp / "group__node.csv").pipe(
+        rename_to_axis, {"group": "g", "node": "n"})
+    gcn = (groups.join(g_node, on="g", how="inner")
+                 .join(cn_co2, on="n", how="inner")
+                 .select("g", "c", "n"))
+    if gcn.height == 0:
+        return None, None, None
+    flows = []
+    for arcs in (pss_eff, pss_noEff):
+        flow = None
+        if arcs is not None and arcs.height > 0:
+            # source is the entity-union axis, gcn.n the node axis.
+            joined = (join_aligned(arcs.select("p", "source", "sink"), gcn, left_on="source", right_on="n")
+                      .select("p", "source", "sink", "c", "g"))
+            flow = joined if joined.height > 0 else None
+        flows.append(flow)
+    return gcn, flows[0], flows[1]
+
+
 def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
                           pss_noEff: pl.DataFrame | None = None,
                           *,
@@ -2545,30 +2574,9 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     g_max = _provider_read(provider, "solve_data/group_co2_max_total", p).pipe(rename_to_axis, {"group": "g"})
     if g_max.height == 0:
         return (None, None, None, None, None)
-    cn_co2 = _provider_read(provider, "solve_data/commodity_node_co2",
-                              sd / "commodity_node_co2.csv").pipe(
-        rename_to_axis, {"commodity": "c", "node": "n"})
-    g_node = _provider_read(provider, "input/group__node",
-                              inp / "group__node.csv").pipe(
-        rename_to_axis, {"group": "g", "node": "n"})
-    gcn = (g_max.join(g_node, on="g", how="inner")
-                .join(cn_co2, on="n", how="inner")
-                .select("g", "c", "n"))
-    if gcn.height == 0:
+    gcn, flow_eff, flow_noEff = co2_capped_emitter_arcs(g_max, inp, sd, pss_eff, pss_noEff, provider=provider)
+    if gcn is None:
         return (None, None, None, None, None)
-    flow_eff = None
-    flow_noEff = None
-    if pss_eff is not None and pss_eff.height > 0:
-        # source is the entity-union axis, gcn.n the node axis.
-        eff = (join_aligned(pss_eff.select("p", "source", "sink"), gcn, left_on="source", right_on="n")
-            .select("p", "source", "sink", "c", "g"))
-        if eff.height > 0:
-            flow_eff = eff
-    if pss_noEff is not None and pss_noEff.height > 0:
-        noeff = (join_aligned(pss_noEff.select("p", "source", "sink"), gcn, left_on="source", right_on="n")
-            .select("p", "source", "sink", "c", "g"))
-        if noeff.height > 0:
-            flow_noEff = noeff
     # (#19) Removal credit — same cap group's node(s), unsplit, no slope
     # (mirrors flow_to_co2_capped).  A pure-removal group never binds the
     # cap (removal only loosens it), so the original emitting-flow gate
