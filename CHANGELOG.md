@@ -92,6 +92,10 @@
 
 ### Fixes
 
+- **A node without `node_type` is a balance node.** In a database whose `node_type` default is empty, a node
+  without a `node_type` of its own was left out of the energy balance, although the input checks treated it as a
+  balance node. It is now a balance node, FlexTool's default, so restoring the empty default with
+  `flextool-repair-value-list` changes no result. A database with the default set gets the same model as before.
 - **CO2 total limit in a chain that splits a period.** When the solves of a chain each hold a part of one period
   (for example 3 h and then 1 h), `co2_max_total` gave each part the budget of the whole period and weighed the
   parts' emissions differently: the first solve could use up the period's budget, and the chain emitted less than

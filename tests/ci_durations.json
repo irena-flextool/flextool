@@ -278,6 +278,7 @@
  "tests/engine/test_nested_invest_dispatch_annualized_period_total.py": 6.4,
  "tests/engine/test_no_solution_file.py": 7.6,
  "tests/engine/test_node_dt_balance.py": 0.2,
+ "tests/engine/test_node_type_sets.py": 1.0,
  "tests/engine/test_non_anticipativity_terms.py": 26.4,
  "tests/engine/test_non_sync_group_flows.py": 70.9,
  "tests/engine/test_nonanticipativity_nreal0.py": 3.8,

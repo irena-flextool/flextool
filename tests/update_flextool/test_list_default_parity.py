@@ -58,11 +58,15 @@ def _assert_same_results(shipped: dict, emptied: dict) -> None:
     # groups invest_stochastic (node town) and rolling_stochastic have no include_stochastics in this scenario;
     # the storage nodes rely on the storage method defaults; every method parameter default emptied
     ("stochastics.json", "2_day_stochastic_dispatch", ALL),
-    # DC power flow: nodes commodity_gen1/2 have no node_type of their own.  node.node_type stays set here: an
-    # empty node_type default drops such nodes from the energy balance
-    ("case14_dc_power_flow.json", "dc_opf_test", [n for n in ALL if n != "node.node_type"]),
+    # DC power flow: nodes commodity_gen1/2 have no node_type of their own, so with node.node_type emptied the
+    # engine takes them as balance nodes (FlexTool's default), as the shipped default does
+    ("case14_dc_power_flow.json", "dc_opf_test", ALL),
 ], ids=["stochastic", "dc_power_flow"])
 def test_emptied_method_parameter_defaults_give_the_shipped_results(tmp_path, tmp_path_factory, fixture, scenario,
                                                                     emptied) -> None:
     shipped = _run(tmp_path_factory, _build(tmp_path, fixture, "shipped", ()), scenario)
-    _assert_same_results(shipped, _run(tmp_path_factory, _build(tmp_path, fixture, "emptied", emptied), scenario))
+    emptied_run = _run(tmp_path_factory, _build(tmp_path, fixture, "emptied", emptied), scenario)
+    _assert_same_results(shipped, emptied_run)
+    if fixture.startswith("case14"):
+        last = next(reversed(list(emptied_run.values())))
+        assert {"commodity_gen1", "commodity_gen2"} <= set(last.flex_data.nodeBalance["n"].cast(str).to_list())
