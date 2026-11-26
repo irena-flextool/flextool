@@ -2729,7 +2729,7 @@ def _load_co2_rolling_carry(sd: Path, *, provider: "object | None" = None):
                         {a: fdk_of.get(b, 0.0) for a, b in first_member.items()}, default=pl.col("fdk"),
                         return_dtype=pl.Float64).alias("fdk"))
                 reached = (years.with_columns(pl.col("d").cast(pl.Utf8)).join(eff, on="d", how="left")
-                           .with_columns(pl.col("fdk").fill_null(0.0)))
+                           .with_columns(pl.col("fdk").fill_null(0.0).clip(upper_bound=1.0)))  # a split period: 1
                 fraction_reached = min(
                     float((reached["years"] * reached["fdk"]).sum()) / total_years, 1.0)
     return p_fdk, p_realized, p_realized_rep, fraction_reached
