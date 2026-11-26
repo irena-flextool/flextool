@@ -13,7 +13,7 @@ cross-cutting invariants are in [architecture.md](architecture.md).
 | Task | Sections |
 |---|---|
 | Add a model parameter | [Where to start when…](#where-to-start-when), architecture [Parameter shapes](architecture.md#parameter-shapes-dt-broadcasting), [Solve-step aggregation](architecture.md#solve-step-aggregation-new_stepduration-of-a-solve), [autoscale registry](architecture.md#layers-bottom-up) |
-| Add a constraint / variable / objective term | [LP build](#lp-build-modelcorepy-and-the-feature-modules), [Feature flags](#feature-flags-and-required-fields), [Equation headers](#equation-headers) |
+| Add a constraint / variable / objective term | [LP build](#lp-build-modelcore-and-the-feature-modules), [Feature flags](#feature-flags-and-required-fields), [Equation headers](#equation-headers) |
 | Add an optional model feature | [Where to start when…](#where-to-start-when), [Feature flags](#feature-flags-and-required-fields) |
 | Change a preprocess emit / derive | [Emitters](#emitters), [Vectorized per-roll emit](#vectorized-per-roll-emit), [FlexDataProvider](#flexdataprovider-and-override-translator) |
 | Change solve orchestration, warm start, Benders | [Per-solve pipeline](#per-solve-pipeline), [Solve modes](#solve-modes) |
@@ -183,7 +183,7 @@ or stale CSVs in a reused work folder cannot change a run (Rule 4 of
 provider from them first; architecture.md
 [CSV dump](architecture.md#csv-dump-supported-and-csv-reload-unsupported)).
 
-## LP build: `model/core.py` and the feature modules
+## LP build: `model/core/` and the feature modules
 
 `build_flextool(m, d)` builds the LP into the `polar_high.Problem` `m`
 from the `FlexData` `d`. Its body is a table of contents: a list of
@@ -209,16 +209,22 @@ few shared expressions):
 
 Every family function starts with an early-return guard on its flag
 (`if not b.has_storage: return`), so a feature whose data is empty emits
-nothing. The `model/core.py` module docstring is the map: every variable with
+nothing. The `model/core/__init__.py` docstring is the map: every variable with
 its dims and unit, and every equation family in emit order with the
 module it lives in. Each row, objective term and variable carries an
 `EQ.` / `OBJ.` / `VAR.` header with its formula, so
 `grep -rn "EQ. ─── maxFlow" flextool/engine` finds an equation.
 
-**What lives where.** `model/core.py` holds the core model that every run
-uses: node balance, storage state, flows and capacity, conversion,
-investment maxima, CO2 caps, user constraints, profiles and the core
-objective. An optional feature that brings its own variables or rows
+**What lives where.** The package `model/core/` holds the core model that
+every run uses, one module per equation family: `_prepare` (flags, data
+checks, index sets), `_variables` (variables and shared expressions),
+`_rp_storage`, `_node_balance`, `_flows` (maxFlow, maxOutputSum),
+`_ramp`, `_invest` (investment maxima), `_conversion`, `_co2`,
+`_user_constraints`, `_storage_state`, `_profiles` and `_objective`;
+`_storage_links` holds the storage helpers several of them read,
+`_context` the `_Build` context and the required-field tuples, `_build`
+the table of contents.  `core/__init__.py` re-exports the public names
+only: code that needs a private helper imports it from its module. An optional feature that brings its own variables or rows
 lives in its own module, exposing the parts of the interface it needs —
 `add_variables(b)`, `add_constraints(b)`, `objective_terms(b)`:
 `_online` (unit commitment), `_unit_floors` (minimum load and
@@ -242,7 +248,7 @@ degenerate models. Check the effect with `tools/lp_snapshot.py`
 
 `_prepare` sets one `has_*` flag per feature on the `_Build` context from
 its switch field on `FlexData`. The data each feature needs is a
-module-level tuple at the top of `model/core.py`:
+module-level tuple in `model/core/_context.py`:
 
 ```python
 ALWAYS = ("dt", "nodeBalance",
@@ -347,7 +353,7 @@ grammar; `tests/docs/test_header_grammar.py` checks it):
 - **One header per family.** A generic row helper carries no header; its
   callers do (`ROW_HELPERS` in the test: `_coarse_flows.add_cstr` /
   `add_twin` / `add_row_rule_cstr`, `_lead_time.period_limit`,
-  `core._ramp_family`, `_cumulative_invest._group_period_limit_online`,
+  `core._ramp._ramp_family`, `_cumulative_invest._group_period_limit_online`,
   `_online._add_max_input_flow_online`).
 - **Ratchets** (`tests/docs/test_header_grammar.py`): every `add_cstr` /
   `add_var` in `engine/model/` has a header earlier in its function or sits
@@ -513,7 +519,7 @@ heat rate) is checked before the solve, so the curve is the upper envelope of it
   One-input, one-output multi-line units (`process_piecewise_remap`) keep their input-side items on the output
   (`_projection.single_input_curve_arc_remap`); reserves, operating cost, start-up input, commodity / CO2,
   flowGroup membership and inertia stay on the input.
-- **Model** (`core._eq_conversion_piecewise`, rows `conversion_piecewise` and the coarse twin): weighted input ≥
+- **Model** (`core._conversion._eq_conversion_piecewise`, rows `conversion_piecewise` and the coarse twin): weighted input ≥
   `pw_slope·x + pw_intercept·unitsize·U` for every line, `U` = units online, or the units built (existing count +
   invested − divested) without online variables; `conversion_indirect` skips these units. The rows are `≥`, so the
   input can exceed the curve where that costs nothing or pays (the over-burn cases, units.md "Input above the
@@ -1442,10 +1448,10 @@ API of the other packages is in architecture.md
 
 | You want to… | Start at | Then read |
 |---|---|---|
-| Add a constraint that uses only existing parameters | `model/core.py` table of contents in `build_flextool` | Write an `_eq_<family>(b)` function: an early-return guard on its flag (`if not b.has_<x>: return`), then an `EQ. ─── <name>` header (formula, one to three lines on what it does) above the `m.add_cstr` call. Add it to the table of contents next to related families. A constraint of an optional feature goes into that feature's module (`add_constraints(b)`). Placement sets the LP row order: check the effect with `tools/lp_snapshot.py`. Register the constraint name in autoscale `CONSTRAINT_FAMILIES` (architecture.md [Layers](architecture.md#layers-bottom-up)), a period-level family also in `PERIOD_ROW_KINDS` / `REVIEWED_STEP_LEVEL` ([Realization rolls](#realization-rolls)), and list it in the `model/core.py` module docstring. |
-| Add a new input parameter | `_param_shapes.py` `PARAM_ALLOWED_SHAPES` | Add the parameter's entry, then populate it in `_direct.py` (trivial DB read) or a new module in `preprocess/params/` (computed). Add the field to `FlexData` and to the relevant feature's required-field tuple in `model/core.py`. Register it in autoscale `PARAMETER_TYPES`; a time series also needs its `TIME_AGGREGATION` kind (architecture.md [Solve-step aggregation](architecture.md#solve-step-aggregation-new_stepduration-of-a-solve)). A parameter that takes several shapes needs a constant-vs-equivalent-map test (CONTRIBUTING.md "Shape-equivalence tests"). |
+| Add a constraint that uses only existing parameters | `model/core/_build.py` table of contents in `build_flextool` | Write an `_eq_<family>(b)` function: an early-return guard on its flag (`if not b.has_<x>: return`), then an `EQ. ─── <name>` header (formula, one to three lines on what it does) above the `m.add_cstr` call. Add it to the table of contents next to related families. A constraint of an optional feature goes into that feature's module (`add_constraints(b)`). Placement sets the LP row order: check the effect with `tools/lp_snapshot.py`. Register the constraint name in autoscale `CONSTRAINT_FAMILIES` (architecture.md [Layers](architecture.md#layers-bottom-up)), a period-level family also in `PERIOD_ROW_KINDS` / `REVIEWED_STEP_LEVEL` ([Realization rolls](#realization-rolls)), and list it in the `model/core/_build.py` module docstring. |
+| Add a new input parameter | `_param_shapes.py` `PARAM_ALLOWED_SHAPES` | Add the parameter's entry, then populate it in `_direct.py` (trivial DB read) or a new module in `preprocess/params/` (computed). Add the field to `FlexData` and to the relevant feature's required-field tuple in `model/core/`. Register it in autoscale `PARAMETER_TYPES`; a time series also needs its `TIME_AGGREGATION` kind (architecture.md [Solve-step aggregation](architecture.md#solve-step-aggregation-new_stepduration-of-a-solve)). A parameter that takes several shapes needs a constant-vs-equivalent-map test (CONTRIBUTING.md "Shape-equivalence tests"). |
 | Add a new pre-solve set / index | `_per_solve_sets.py` if it's per-active-solve; a new module in `preprocess/emit/` otherwise | Wire the new function into `_apply_db_overrides` in `flex_data.py`. A frame that links two steps goes in `STEP_RELATIONS`. |
-| Add a new optional feature | A new module next to `_reserve.py` / `_group_slack.py` | Give it `add_variables(b)` (variables with `VAR.` headers, set on `b`), `add_constraints(b)` and `objective_terms(b) -> Expr \| None`, each with an early-return guard on the feature's flag. Add the flag (and any variable fields) to `_Build`; set the flag in `_prepare`, with a `MY_FEATURE = (...)` required-field tuple and a `_check(d, MY_FEATURE, "my_feature")` call if it needs one. Call `add_variables` from `_declare_variables` and put `add_constraints` / `objective_terms` in the `build_flextool` table of contents. Register every new variable and constraint in autoscale `VARIABLE_FAMILIES` / `CONSTRAINT_FAMILIES`, add them to the `model/core.py` module docstring, and check the LP with `tools/lp_snapshot.py`. |
+| Add a new optional feature | A new module next to `_reserve.py` / `_group_slack.py` | Give it `add_variables(b)` (variables with `VAR.` headers, set on `b`), `add_constraints(b)` and `objective_terms(b) -> Expr \| None`, each with an early-return guard on the feature's flag. Add the flag (and any variable fields) to `_Build`; set the flag in `_prepare`, with a `MY_FEATURE = (...)` required-field tuple and a `_check(d, MY_FEATURE, "my_feature")` call if it needs one. Call `add_variables` from `_declare_variables` and put `add_constraints` / `objective_terms` in the `build_flextool` table of contents. Register every new variable and constraint in autoscale `VARIABLE_FAMILIES` / `CONSTRAINT_FAMILIES`, add them to the `model/core/` module docstring, and check the LP with `tools/lp_snapshot.py`. |
 | Trace a numerical issue | `solve_data/autoscale_<solve>.yaml` | The Layer 1 ranges + Layer 2/3 plans show which families are wide and which scalers fired. [scaling.md](scaling.md), architecture.md [Numerical scaling](architecture.md#numerical-scaling). |
 | Trace a feasibility issue | `vq_*` outputs in `output_parquet/` | Slack activity localises the infeasibility to a row family. [slack_convention.md](slack_convention.md). |
 | Add a new decomposition mode | `_benders.py` (+ `_region_filter.py`) for spatial, `_warm.py` + `_orchestration.py` `_drive_cascade` for temporal | Each carries the FlexTool-side glue around a `polar_high` driver. Read [decomposition.md](decomposition.md) first. |

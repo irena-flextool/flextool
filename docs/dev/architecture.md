@@ -10,7 +10,7 @@ emitters, solve orchestration, handoff) are in [engine.md](engine.md).
 |---|---|
 | Orientation: data flow, packages | [Top-level data flow](#top-level-data-flow), [Repository layout](#repository-layout), [Key architectural patterns](#key-architectural-patterns) |
 | Add a model parameter | [Parameter shapes](#parameter-shapes-dt-broadcasting), [Solve-step aggregation](#solve-step-aggregation-new_stepduration-of-a-solve), [autoscale registry](#layers-bottom-up), engine [Where to start when…](engine.md#where-to-start-when) |
-| Add a constraint / variable | engine [LP build](engine.md#lp-build-modelcorepy-and-the-feature-modules), [Equation headers](engine.md#equation-headers), [autoscale registry](#layers-bottom-up) |
+| Add a constraint / variable | engine [LP build](engine.md#lp-build-modelcore-and-the-feature-modules), [Equation headers](engine.md#equation-headers), [autoscale registry](#layers-bottom-up) |
 | Change preprocess emit | engine [Emitters](engine.md#emitters), [Vectorized per-roll emit](engine.md#vectorized-per-roll-emit) |
 | Change solve orchestration / rolling / stochastic handoff | engine [Solve modes](engine.md#solve-modes), [Solve-to-solve handoff](engine.md#solve-to-solve-handoff), [Stochastic branches](engine.md#stochastic-branches) |
 | Schema change & migration | [update_flextool](#flextoolupdate_flextool-migration-and-updates), CONTRIBUTING.md "Updating the Data Structure" |

@@ -1,6 +1,6 @@
 # Unit floors, input shares and reserve shortfall
 
-Engine notes for `_unit_floors.py`, `model/core.py::_eq_min_input_share` and
+Engine notes for `_unit_floors.py`, `model/core/_conversion.py::_eq_min_input_share` and
 `_reserve.reserve_shortfall_scale`. User-facing semantics are in
 `docs/reference/units.md` and `docs/reference/reserves.md` (`min_load`, `capacity_min_coeff`, `input_share_min`,
 Reserves).
@@ -38,13 +38,13 @@ can end up below `min_load`.
 ## Upward reserve and online capacity
 
 Upward reserve held at a node a process delivers into (`b.reserve_up_to_sink`,
-`b.reserve_up_sink_parts` from `core._reserve_coupling`) sits on the LHS of
+`b.reserve_up_sink_parts` from `core._variables._reserve_coupling`) sits on the LHS of
 the capacity rows, with coefficient 1 (`v_flow` and `v_reserve` are both in
 output units of unitsize):
 
 * built capacity, units: `maxFlow` (per arc) and `maxOutputSum`
   (sum of an indirect unit's outputs).  On an indirect unit's INPUT arc
-  `maxFlow`'s M (`core._max_flow_rhs`) uses `x(availability)` in place of
+  `maxFlow`'s M (`core._flows._max_flow_rhs`) uses `x(availability)` in place of
   plain availability — the min-load section is drawn per unit online, not
   per available unit, credited only to a unit with an online variable
   (#102; same `x` as `maxInputFlow_online` below, computed once and shared);
@@ -76,7 +76,7 @@ down_src_eff)` keyed `(p, r, ud, source)` over all unit arcs
 (`all_unit_arcs`): `down` reserve at the source node of an arc whose
 `v_flow` is the input (`sink == p`: an indirect unit's input, a sink-less
 unit; φ = 1) or of a direct input→output arc (`source ≠ p ≠ sink`; φ =
-`1/slope`, `_inverse_slope`). `core._reserve_coupling` turns them into
+`1/slope`, `_inverse_slope`). `core._variables._reserve_coupling` turns them into
 `b.reserve_down_at_source` (per arc `(p, source, sink, d, t)`, converted
 by φ) and `b.reserve_down_input_arcs`; the reducing `up` source selectors
 give `b.reserve_up_at_source` for `profile_flow_lower_limit`.
@@ -104,7 +104,7 @@ have their own rows ("Connections and reserve" below).
 
 ## Reserve and ramp rows
 
-`core._eq_ramp` adds the reserve of an arc to its ramp rows, from the same
+`core._ramp._eq_ramp` adds the reserve of an arc to its ramp rows, from the same
 `_reserve_coupling` aggregates as `maxFlow` and the floors (no new selector):
 
 | row | reserve term | meaning |
