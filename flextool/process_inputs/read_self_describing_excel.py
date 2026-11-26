@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 ROW_KEYWORDS = frozenset({
     "description",
     "unit",  # the units row of an export with --units-row (content ignored, like the description)
+    "index name",  # per-column index names on a sheet whose parameters' indexes differ
     "data type",
     "parameter",
     "alternative",
@@ -106,6 +107,9 @@ class SheetMetadata:
 
     # Descriptions per parameter column index
     descriptions: dict[int, str] = field(default_factory=dict)
+
+    # Index names per data column (an ``index name`` row); a column without one uses ``index_name``
+    index_names: dict[int, str] = field(default_factory=dict)
 
     # Parsed entity class definitions
     entity_classes: list[EntityClassDef] = field(default_factory=list)
@@ -499,6 +503,12 @@ def parse_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
                 if desc:
                     meta.descriptions[c] = desc
 
+        elif kw_lower == "index name":
+            for c in meta.param_cols:
+                name = _cell_value(ws, r, c)
+                if name:
+                    meta.index_names[c] = name
+
         elif kw_lower == "data type":
             if default_val:
                 meta.default_data_type = default_val
@@ -570,6 +580,7 @@ def parse_transposed_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
     label_col = 1  # column B
     datatype_row: int | None = None
     default_row: int | None = None
+    index_name_row: int | None = None
     for r in range(min(10, max_row)):
         val_a = _cell_value(ws, r, 0)
         if _is_info_row(val_a):
@@ -594,6 +605,8 @@ def parse_transposed_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
             meta.param_row = r
             if default_val:
                 meta.default_parameter = default_val
+        elif kw_lower == "index name":
+            index_name_row = r
         elif kw_lower == "default":
             # Multi-param _t sheets show each column's default under the
             # parameter row.  It is a header row, not a time step.
@@ -610,9 +623,16 @@ def parse_transposed_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
             if dt:
                 meta.data_types[c] = dt.lower()
 
+    # Per-column index names (columns whose index names differ).
+    if index_name_row is not None:
+        for c in range(2, ws.max_column or 1):
+            name = _cell_value(ws, index_name_row, c)
+            if name:
+                meta.index_names[c] = name
+
     # Determine data start row (row after last metadata row)
     metadata_rows = [
-        r for r in [meta.alt_row, meta.param_row, meta.entity_row, datatype_row, default_row]
+        r for r in [meta.alt_row, meta.param_row, meta.entity_row, datatype_row, default_row, index_name_row]
         if r is not None
     ]
     if metadata_rows:
@@ -1155,7 +1175,7 @@ def _extract_standard(ws: Worksheet, meta: SheetMetadata) -> SheetData:
                 "param_name": pname,
                 "value": converted,
                 "index_value": index_val,
-                "index_name": meta.index_name,
+                "index_name": meta.index_names.get(c) or meta.index_name,
                 "data_type": dtype,
             }
             if extra_index_values:
@@ -1282,7 +1302,7 @@ def _extract_transposed(ws: Worksheet, meta: SheetMetadata) -> SheetData:
                 "param_name": pname,
                 "value": converted,
                 "index_value": index_val,
-                "index_name": meta.index_name,
+                "index_name": meta.index_names.get(c) or meta.index_name,
                 "data_type": col_dtype,
             })
 

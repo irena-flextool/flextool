@@ -205,6 +205,9 @@ def export_to_excel(
     _ew._stochastic_index_names = settings.get("stochastic_index_names",
                                                 ["forecast", "branch_time", "time", "is_realized"])
     _ew._time_structure_classes = set(settings.get("time_structure_classes", []))
+    _ew._index_names = settings.get("index_names", {})
+    _ew._array_index_name = settings["array_index_name"]
+    _ew._index_name_defaults = settings.get("index_name_defaults", {})
     specs: list[SheetSpec] = build_sheet_specs(
         db_contents,
         settings,

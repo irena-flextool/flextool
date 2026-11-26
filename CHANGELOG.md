@@ -92,6 +92,13 @@
 
 ### Fixes
 
+- **Excel export: index names.** The export labelled the index column of every map on a sheet with the sheet's
+  default name, so `solve.solver_arguments` and `timeset.timeset_duration` came back from the workbook indexed by
+  `period`, and arrays such as `model.solves` lost their index name. Each parameter now gets its own index name:
+  a name stored in the database stays; Spine's default (`x`, or `i` for an array) becomes the meaningful name
+  (`period`, `time`, `argument` for `solver_arguments`, `duration` for `timeset_duration`, `hours` for `delay`,
+  `sequence_index` for arrays), except on profile maps, which keep `x`. A sheet whose parameters have different
+  index names gets an `index name` row under the data types.
 - **A node without `node_type` is a balance node.** In a database whose `node_type` default is empty, a node
   without a `node_type` of its own was left out of the energy balance, although the input checks treated it as a
   balance node. It is now a balance node, FlexTool's default, so restoring the empty default with

@@ -454,6 +454,7 @@ def format_timeseries_sheet_v2(
     type_fills = {
         "description": (FILL_DESC_ROW, FILL_DESC_DATA, FONT_DESC_ROW, FONT_DESC_DATA),
         "data_type":   (FILL_DESC_ROW, FILL_DESC_DATA, FONT_DESC_ROW, FONT_DESC_DATA),
+        "index name":  (FILL_DESC_ROW, FILL_DESC_DATA, FONT_DESC_ROW, FONT_DESC_DATA),
         "default":     (FILL_DESC_ROW, FILL_DESC_DATA, FONT_DESC_ROW, FONT_DESC_DATA),
         "alternative": (FILL_ALT_HEADER, FILL_ALT_DATA, None, None),
         "parameter":   (FILL_PARAM_LABEL, FILL_PARAM_HEADER, None, None),

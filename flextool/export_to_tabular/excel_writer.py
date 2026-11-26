@@ -1223,6 +1223,7 @@ def write_array_transposed_sheet_v2(
 
     # Collect data: (entity_byname, alt) → array values
     columns: list[tuple[str, tuple, list[Any]]] = []  # (alt, entity_byname, values)
+    column_index_names: dict[tuple[str, tuple], str] = {}
     max_array_len = 0
 
     for entity_class in spec.entity_classes:
@@ -1234,15 +1235,19 @@ def write_array_transposed_sheet_v2(
                 if value is not None and _is_array(value):
                     arr = [_to_native(v) for v in value.values]
                     columns.append((alt, entity_byname, arr))
+                    column_index_names[(alt, entity_byname)] = _index_name_of(
+                        value, entity_class, pname, "constant")
                     if len(arr) > max_array_len:
                         max_array_len = len(arr)
                 elif value is not None and _is_scalar(value):
                     # String value = single-element array
                     columns.append((alt, entity_byname, [_to_native(value)]))
+                    column_index_names[(alt, entity_byname)] = _array_index_name
                     if 1 > max_array_len:
                         max_array_len = 1
 
     columns.sort(key=lambda c: (c[0], c[1]))
+    index_label, mixed_index_names = _sheet_index_names(column_index_names)
 
     cur_row = 1
 
@@ -1262,17 +1267,28 @@ def write_array_transposed_sheet_v2(
     if default_str is not None:
         triplet += f" | default: {default_str}"
     ws.cell(row=cur_row, column=2, value=triplet)
+    row_types: dict[int, str] = {cur_row: "param_info"}
     cur_row += 1
+
+    if mixed_index_names:
+        # Columns whose arrays carry different index names: each column's own.
+        ws.cell(row=cur_row, column=2, value="index name")
+        for col_idx, (alt, byname, _arr) in enumerate(columns, start=3):
+            ws.cell(row=cur_row, column=col_idx, value=mixed_index_names[(alt, byname)])
+        row_types[cur_row] = "index name"
+        cur_row += 1
 
     # Entity row
     ws.cell(row=cur_row, column=2, value=entity_label)
     for col_idx, (alt, byname, _arr) in enumerate(columns, start=3):
         ws.cell(row=cur_row, column=col_idx, value=str(_to_native(byname[0])))
+    row_types[cur_row] = "entity"
     cur_row += 1
 
     # Alternative row — this is the last header row; put index: label in A
-    ws.cell(row=cur_row, column=1, value="index:")
+    ws.cell(row=cur_row, column=1, value=f"index: {index_label}" if index_label else "index:")
     ws.cell(row=cur_row, column=2, value="alternative")
+    row_types[cur_row] = "alternative"
     for col_idx, (alt, byname, _arr) in enumerate(columns, start=3):
         ws.cell(row=cur_row, column=col_idx, value=alt)
     cur_row += 1
@@ -1288,18 +1304,7 @@ def write_array_transposed_sheet_v2(
             if idx < len(arr):
                 ws.cell(row=row, column=col_idx, value=arr[idx])
 
-    # Formatting — build row_types based on actual row positions
     n_header_rows = index_start_row - 1
-    row_types: dict[int, str] = {}
-    r = 1
-    if info_text:
-        # INFO row has no special formatting type (plain text)
-        r += 1
-    row_types[r] = "param_info"  # triplet row
-    r += 1
-    row_types[r] = "entity"
-    r += 1
-    row_types[r] = "alternative"
 
     arr_last_data_col = max(len(columns) + 2, 3)
     format_timeseries_sheet_v2(ws, n_header_rows, single_param=True,
@@ -2031,13 +2036,14 @@ def _param_description(spec: SheetSpec, db_contents: DatabaseContents, pname: st
 
 def _write_metadata_rows(
     ws: Worksheet, def_col: int, columns: list[tuple[str | None, str, str | None]],
+    index_names: list[str | None] | None = None,
 ) -> int:
     """Write the metadata rows of a standard v2 sheet and return the definition row.
 
     *columns* holds (description, data type, default) of each column right of the definition column.  The rows
     are ``description`` (or, with ``--units-row``, ``unit``: the unit from each description's bracket, see
-    :func:`flextool.units_of_measure.parameter_unit_text`), ``data type`` and, when any column has a default,
-    ``default``; the definition column labels them.
+    :func:`flextool.units_of_measure.parameter_unit_text`), ``data type``, ``index name`` when *index_names* is
+    given, and, when any column has a default, ``default``; the definition column labels them.
     """
     row = 1
     ws.cell(row=row, column=def_col, value="unit" if _units_row else "description")
@@ -2050,6 +2056,14 @@ def _write_metadata_rows(
     for i, (_desc, dtype, _default) in enumerate(columns):
         ws.cell(row=row, column=def_col + 1 + i, value=dtype)
     row += 1
+    if index_names:
+        # Parameters of one sheet whose indexes differ (a map of solver arguments next to an array): each
+        # column's own index name; the index column's label holds the most common one.
+        ws.cell(row=row, column=def_col, value="index name")
+        for i, name in enumerate(index_names):
+            if name:
+                ws.cell(row=row, column=def_col + 1 + i, value=name)
+        row += 1
     if any(default is not None for _desc, _dtype, default in columns):
         ws.cell(row=row, column=def_col, value="default")
         for i, (_desc, _dtype, default) in enumerate(columns):
@@ -2370,6 +2384,81 @@ def _add_data_validation(
 _period_only_params: dict[str, list[str]] = {}
 _time_structure_classes: set[str] = set()
 _info_rows: dict[str, str] = {}
+# Index names, set by export_to_excel from export_settings.yaml (see _index_name_of).
+_index_names: dict[str, dict[str, str]] = {}
+_array_index_name: str = "sequence_index"
+_index_name_defaults: dict[str, str] = {}
+# Maps whose default index name 'x' is kept: the engine reads a profile's index name (time / period / x = infer),
+# and their meaningful names are a later change.
+_KEEP_DEFAULT_INDEX_NAME: frozenset[tuple[str, str]] = frozenset({("profile", "profile")})
+
+
+def _index_name_of(value: Any, entity_class: str, pname: str, layout: str) -> str:
+    """The index name the v2 export writes for a 1-level Map or an Array *value* (``None``: a Map not set yet).
+
+    A name of its own stays.  Spine's default (``x`` for a Map, ``i`` for an Array) becomes the meaningful name:
+    ``array_index_name`` for an Array; for a Map the ``index_names`` table of export_settings.yaml, else the
+    parameter's single-level axis in ``_param_shapes`` (period, time, tier, load), else the layout's default.
+    Profile maps keep ``x``.
+    """
+    stored = value.index_name if value is not None else None
+    if value is not None and _is_array(value):
+        return stored if stored and stored != "i" else _array_index_name
+    if stored and stored != "x":
+        return stored
+    if (entity_class, pname) in _KEEP_DEFAULT_INDEX_NAME:
+        return "x"
+    named = _index_names.get(entity_class, {}).get(pname)
+    if named:
+        return named
+    from flextool.engine.input._param_shapes import PARAM_ALLOWED_SHAPES, shape_to_axes
+    one_level = {shape_to_axes(s).map_levels[0] for s in PARAM_ALLOWED_SHAPES.get((entity_class, pname), ())
+                 if len(shape_to_axes(s).map_levels) == 1}
+    if len(one_level) == 1:
+        return _ladder_axis_name(next(iter(one_level)))
+    return _index_name_defaults.get(layout, "period")
+
+
+def _periodic_index_names(
+    spec: SheetSpec, db_contents: DatabaseContents,
+) -> tuple[str, dict[str, str] | None]:
+    """The index column label of a periodic v2 sheet and, when its parameters' index names differ, each one's.
+
+    Each parameter's name is the most common :func:`_index_name_of` over its values on this sheet (1-level Maps
+    that are not time series, unless the class defines the time structure, and Arrays).
+    """
+    params = set(spec.parameter_names)
+    counts: dict[str, dict[str, int]] = {}
+    for (cls, _byname, pname, _alt), value in db_contents.parameter_values.items():
+        if cls not in spec.entity_classes or pname not in params:
+            continue
+        if _is_map(value):
+            if any(_is_map(v) for v in value.values):
+                continue  # nested Map -> nested-periodic sheet
+            if _is_time_indexed_map(value) and cls not in _time_structure_classes:
+                continue  # time series -> _t sheet
+        elif not _is_array(value):
+            continue
+        name = _index_name_of(value, cls, pname, "periodic")
+        per_param = counts.setdefault(pname, {})
+        per_param[name] = per_param.get(name, 0) + 1
+    names = {p: max(c, key=lambda n: (c[n], n)) for p, c in counts.items()}
+    if not names:
+        names = {p: _index_name_of(None, spec.entity_classes[0], p, "periodic") for p in spec.parameter_names}
+        label, _mixed = _sheet_index_names(names)
+        return label or _index_name_defaults.get("periodic", "period"), None
+    return _sheet_index_names(names)
+
+
+def _sheet_index_names(names: dict[Any, str]) -> tuple[str, dict[Any, str] | None]:
+    """The index column label (the most common name) and, when the names differ, every key's name."""
+    if not names:
+        return "", None
+    counts: dict[str, int] = {}
+    for name in names.values():
+        counts[name] = counts.get(name, 0) + 1
+    label = max(counts, key=lambda n: (counts[n], n))
+    return label, (dict(names) if len(counts) > 1 else None)
 _stochastic_index_names: list[str] = ["forecast", "branch_time", "time", "is_realized"]
 
 
@@ -2979,7 +3068,7 @@ def write_periodic_sheet_v2(
         Row 4+: data
     """
     # Determine index column name
-    index_col_name = _find_index_column_name(spec, db_contents, default="period")
+    index_col_name, param_index_names = _periodic_index_names(spec, db_contents)
 
     n_entity_cols = len(spec.entity_columns)
     n_dims = n_entity_cols
@@ -3015,7 +3104,7 @@ def write_periodic_sheet_v2(
          _get_param_data_type(pname, spec.entity_classes, db_contents, layout="periodic"),
          _get_param_default_string(pname, spec.entity_classes, db_contents))
         for pname in spec.parameter_names
-    ])
+    ], index_names=[param_index_names.get(p) for p in spec.parameter_names] if param_index_names else None)
     data_start_row = def_row + 1
 
     # --- Definition row ---
@@ -3339,6 +3428,18 @@ def write_timeseries_sheet_v2(
         row_types[cur_row] = "data type"
         cur_row += 1
 
+    # Index names: the column A label holds the most common; when the columns differ, each column's own.
+    index_label, mixed_index_names = _sheet_index_names({
+        col_idx: _index_name_of(m, ec, pname, "timeseries")
+        for col_idx, (ec, _byname, pname, _alt, m) in enumerate(columns, start=3)
+    })
+    if mixed_index_names:
+        ws.cell(row=cur_row, column=2, value="index name")
+        for col_idx, name in mixed_index_names.items():
+            ws.cell(row=cur_row, column=col_idx, value=name)
+        row_types[cur_row] = "index name"
+        cur_row += 1
+
     # entity row — simplified label (just dimension names, not full mapping)
     if n_entity_dims <= 1:
         simple_label = f"entity: {spec.entity_columns[0]}"
@@ -3407,7 +3508,8 @@ def write_timeseries_sheet_v2(
     n_header_rows = cur_row - 1
 
     # index: time label on column A of the last header row
-    ws.cell(row=n_header_rows, column=1, value="index: time")
+    ws.cell(row=n_header_rows, column=1,
+            value=f"index: {index_label or _index_name_defaults.get('timeseries', 'time')}")
 
     # ── Write time data rows ─────────────────────────────────────
     col_index_maps: list[dict[str, Any]] = []

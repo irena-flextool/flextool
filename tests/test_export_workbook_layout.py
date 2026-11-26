@@ -426,3 +426,71 @@ def test_exact_floats_restores_the_formatter_in_place_on_entry(monkeypatch: pyte
         assert cell_writer.safe_string(0.1 + 0.2) == "0.30000000000000004"
         assert cell_writer.safe_string("text") == "text"  # anything else goes to the formatter in place
     assert cell_writer.safe_string is formatter_in_place
+
+
+def _index_name_path(value: object) -> tuple[str, ...]:
+    if isinstance(value, Array):
+        return (value.index_name,)
+    if isinstance(value, Map):
+        first = value.values[0] if len(value.values) else None
+        return (value.index_name,) + (_index_name_path(first) if isinstance(first, Map) else ())
+    return ()
+
+
+def test_index_names_survive_the_workbook(tmp_path: Path) -> None:
+    # Spine's default index name (x for a Map, i for an Array) comes back as the parameter's meaningful name; a
+    # name of its own stays; a profile map keeps x.  Expected names, by hand:
+    #   unit.invest_cost  {p2020, p2025}, x       -> period   (its shape: a map over periods)
+    #   unit.delay        {2, 3}, named "lag"     -> lag      (own name; unit_p gets an index name row)
+    #   timeset.timeset_duration {t0001}, x       -> duration
+    #   solve.solver_arguments {presolve}, x      -> argument
+    #   model.solves      Array, i                -> sequence_index
+    #   profile.profile   {t0001, t0002}, x       -> x        (a time series: the timeline names t0001, t0002)
+    db = tmp_path / "index_names.sqlite"
+    initialize_database(str(SCHEMA_JSON), str(db))
+    url = f"sqlite:///{db}"
+    values = {
+        ("unit", ("u",), "invest_cost"): Map(["p2020", "p2025"], [100.0, 90.0]),
+        ("unit", ("u",), "delay"): Map([2.0, 3.0], [0.5, 0.5], index_name="lag"),
+        ("timeline", ("tl",), "timestep_duration"): Map(["t0001", "t0002"], [1.0, 1.0], index_name="timestep"),
+        ("timeset", ("ts",), "timeset_duration"): Map(["t0001"], [2.0]),
+        ("solve", ("s",), "solver_arguments"): Map(["presolve"], ["on"]),
+        ("model", ("m",), "solves"): Array(["s"]),
+        ("profile", ("pr",), "profile"): Map(["t0001", "t0002"], [0.5, 0.7]),
+    }
+    expected = {
+        ("unit", ("u",), "invest_cost"): ("period",),
+        ("unit", ("u",), "delay"): ("lag",),
+        ("timeline", ("tl",), "timestep_duration"): ("timestep",),
+        ("timeset", ("ts",), "timeset_duration"): ("duration",),
+        ("solve", ("s",), "solver_arguments"): ("argument",),
+        ("model", ("m",), "solves"): ("sequence_index",),
+        ("profile", ("pr",), "profile"): ("x",),
+    }
+    with DatabaseMapping(url) as mapping:
+        for cls, byname in {(c, b) for c, b, _p in values}:
+            mapping.add_entity(entity_class_name=cls, entity_byname=byname)
+        for (cls, byname, name), value in values.items():
+            v, t = to_database(value)
+            mapping.add_parameter_value(entity_class_name=cls, entity_byname=byname, parameter_definition_name=name,
+                                        alternative_name="base", value=v, type=t)
+        mapping.commit_session("index names")
+    out = tmp_path / "index_names.xlsx"
+    export_to_excel(url, str(out), include_advanced=True)
+    target = tmp_path / "round_trip.sqlite"
+    initialize_database(str(SCHEMA_JSON), str(target))
+    write_sheet_data_to_db(read_self_describing_excel(str(out)), f"sqlite:///{target}", purge_first=True,
+                           keep_entities=True)
+    with DatabaseMapping(f"sqlite:///{target}") as mapping:
+        got = {(p["entity_class_name"], tuple(p["entity_byname"]), p["parameter_definition_name"]):
+               _index_name_path(from_database(p["value"], p["type"])) for p in mapping.get_parameter_value_items()}
+    assert {k: got.get(k) for k in expected} == expected
+    book = openpyxl.load_workbook(out)
+    try:
+        ws = book["unit_p"]
+        def_row = _definition_row(ws)
+        def_col = _column_of(ws, def_row, "parameter")
+        labels = [ws.cell(row=r, column=def_col).value for r in range(1, def_row)]
+        assert "index name" in labels  # invest_cost (period) and delay (lag) share the sheet
+    finally:
+        book.close()

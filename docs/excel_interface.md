@@ -120,6 +120,9 @@ A few practical notes:
 - The parameter columns are ordered by parameter group; the name of each parameter has its group's colour.
   Every group after the first is an Excel outline group (the +/- buttons above the column letters). A group
   with no value on the sheet starts collapsed; open it with +.
+- The `index:` column holds the index of the sheet's maps (period, time step, solver argument, ...). When the
+  parameters of one sheet have different index names, an `index name` row under the data types gives each
+  column's own.
 - The description row shows the first four lines of each parameter's description. The full text is in the note
   (comment) on the parameter name: hover over the name to read it.
 
