@@ -625,6 +625,16 @@ def test_rolling_total_cap_binds_at_the_budget(tmp_path_factory) -> None:
     for st in rolls:
         (dual,) = st.solution.constraint_dual("co2_max_total")["dual"].to_list()
         assert dual != 0.0, st.solve_name
+    # roll 1 carries roll 0's p2020 tonnes at the weight its row gave them; a carried row without that weighted
+    # value cannot give a budget: refused, not counted as 0
+    fd = rolls[1].flex_data
+    carry = utf8(fd.p_co2_cum_realized_represented.frame)
+    assert carry.select("g", "d").rows() == [("co2_limit", "p2020")]
+    assert carry["value"][0] == pytest.approx(represented[0], rel=1e-9)
+    unknown = type(fd.p_co2_cum_realized_represented)(
+        ("g", "d"), fd.p_co2_cum_realized_represented.frame.with_columns(value=pl.lit(None, dtype=pl.Float64)))
+    with pytest.raises(ValueError, match=r"co2_max_total: the realized CO2 carry .*co2_limit,p2020"):
+        build(dataclasses.replace(fd, p_co2_cum_realized_represented=unknown))
 
 
 def test_stochastic_rolling_week_total_cap_binds_at_the_budget(tmp_path_factory) -> None:
@@ -660,18 +670,16 @@ def test_stochastic_rolling_week_total_cap_binds_at_the_budget(tmp_path_factory)
     assert weighted == pytest.approx(cap, rel=1e-6)
 
 
-def test_chained_solves_total_cap_binds_at_the_budget(tmp_path_factory) -> None:
-    """Two chained solves (``y2020_2day_dispatch`` realizes p2020, a second single solve realizes p2025), both 2 days
-    of one-hour steps with years_represented 5: a tonne weighs 5 / (48/8760) = 912.5 in either solve's
-    ``co2_max_total`` row.  The first solve's periods are p2020 alone, so it reaches 1.0 of its represented years
-    and the cap C = 2e7 does not bind: coal_plant emits its unconstrained 19 924 t (1.818e7 weighted).  The second
-    solve may emit C − 19 924·912.5 = 1.8e6 weighted, so it binds and the chain emits exactly C.  Before, it got
-    C − 19 924 (raw tonnes) and emitted another 1.8e7."""
+def test_chained_solves_with_their_own_periods_refuse_a_total_cap(tmp_path_factory) -> None:
+    """D54: two chained solves (``y2020_2day_dispatch`` holds p2020, a second single solve p2025), each with only its
+    own period, and a ``co2_max_total``: neither solve sees the model's other period, so neither can tell its share of
+    the limit (the first could take the whole budget and leave the second a negative remainder).  The run stops
+    before anything solves, naming the group, the first solve and the period it lacks."""
     from flextool.engine import run_chain_from_db
+    from flextool.engine.input._solve_state import FlexToolConfigError
 
     second = "y2025_2day_dispatch"
-    cap = BINDING_TOTAL_CAP
-    values = _total_cap(cap) + [
+    values = _total_cap(BINDING_TOTAL_CAP) + [
         ["model", "flexTool", "solves", b64({"value_type": "str", "data": [SOLVE, second]}, "array")],
         ["solve", SOLVE, "years_represented", _pmap({"p2020": 5.0})],
         ["solve", second, "solve_mode", b64("single_solve", "str")],
@@ -683,20 +691,9 @@ def test_chained_solves_total_cap_binds_at_the_budget(tmp_path_factory) -> None:
     ]
     url, scen = make_db(tmp_path_factory, alt="co2tot_chain", values=values, base_chain=CHAIN,
                         entities=[["solve", second, None]])
-    steps = run_chain_from_db(url, scen, keep_solutions=True, work_folder=tmp_path_factory.mktemp("co2tot_chain_w"))
-    assert list(steps) == [SOLVE, second]
-    weight = 5 * 8760 / 48
-    first_t = _tonnes(steps[SOLVE])["p2020"]
-    assert first_t == pytest.approx(19924.0, rel=1e-6)
-    assert (first_t + _tonnes(steps[second])["p2025"]) * weight == pytest.approx(cap, rel=1e-6)
-    (dual,) = steps[second].solution.constraint_dual("co2_max_total")["dual"].to_list()
-    assert dual != 0.0
-    carry = utf8(steps[second].flex_data.p_co2_cum_realized_represented.frame)
-    assert carry.select("g", "d").rows() == [("co2_limit", "p2020")]
-    assert carry["value"][0] == pytest.approx(first_t * weight, rel=1e-12)
-    # a carried row without its weighted value cannot give a budget: refused, not counted as 0
-    fd = steps[second].flex_data
-    unknown = type(fd.p_co2_cum_realized_represented)(
-        ("g", "d"), fd.p_co2_cum_realized_represented.frame.with_columns(value=pl.lit(None, dtype=pl.Float64)))
-    with pytest.raises(ValueError, match=r"co2_max_total: the realized CO2 carry .*co2_limit,p2020"):
-        build(dataclasses.replace(fd, p_co2_cum_realized_represented=unknown))
+    with pytest.raises(FlexToolConfigError) as err:
+        run_chain_from_db(url, scen, keep_solutions=True, work_folder=tmp_path_factory.mktemp("co2tot_chain_w"))
+    message = str(err.value)
+    assert message.startswith(f"co2_max_total of group(s) 'co2_limit' limits the emissions over all the periods of "
+                              f"the model, but solve '{SOLVE}' (and 1 more solve) does not have period(s) 'p2025'")
+    assert "Use co2_max_period" in message

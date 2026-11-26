@@ -14,6 +14,7 @@ from pathlib import Path
 
 from flextool.engine._behaviour_changes import BEHAVIOUR_CHANGES, MARKER_PREFIX, BehaviourChange
 from flextool.update_flextool import db_migration
+from flextool.update_flextool.db_migration import v77, v83
 
 CHANGELOG = Path(__file__).resolve().parents[2] / "CHANGELOG.md"
 RELEASE = re.compile(r"^## Release (\S+) \((\d{1,2}\.\d{1,2}\.\d{4})\)")
@@ -56,7 +57,7 @@ def test_guard_catches_a_release_without_filled_entries() -> None:
 def test_migration_markers_are_registered() -> None:
     """Every marker the database upgrade writes has a registry entry (else its notice could never print)."""
     assert db_migration.BEHAVIOUR_CHANGE_MARKER_PREFIX == MARKER_PREFIX
-    written = set(db_migration._V77_UNCONDITIONAL_MARKERS) | {"storage_default_fix_nothing",
+    written = set(v77._V77_UNCONDITIONAL_MARKERS) | {"storage_default_fix_nothing",
                                                               "storage_fix_method_rewritten",
                                                               "ladder_tier_labels_as_written",
                                                               "unnamed_maps_read_per_depth",
@@ -80,8 +81,8 @@ def test_migration_markers_are_registered() -> None:
                                                               "storage_end_matches_start",
                                                               "storage_reference_start",
                                                               "minimum_time_method_written",
-                                                              db_migration.V83_WITHIN_SOLVE_MARKER,
-                                                              db_migration.V83_SEPARATE_DISPATCH_MARKER}
+                                                              v83.V83_WITHIN_SOLVE_MARKER,
+                                                              v83.V83_SEPARATE_DISPATCH_MARKER}
     assert written <= set(BEHAVIOUR_CHANGES)
 
 

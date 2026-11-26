@@ -88,6 +88,8 @@ Useful flags:
 | `--groups timeline,model,solve_basics,basics` | Restrict to the listed parameter groups (same semantics as the GUI picker). Sheets that lose all their columns are dropped, unless listed in `always_include_with_groups` in `export_settings.yaml`. |
 | `--include-advanced` | Include advanced sheets (solve sequences, periods available, stochastic data) even when empty. |
 | `--old-format` | Emit the legacy v1 layout instead of v2 self-describing — only needed for tooling pinned to the older format. |
+| `--omit-empty-columns` | Leave out the parameter columns that have no value on their sheet, for a narrower workbook of an existing model. The reference list to the right of each sheet still names every parameter: to add one, insert a column before the blank column and type its name in the parameter row and its data type in the data type row. A sheet with no values at all keeps its columns. Not with `--old-format`. |
+| `--units-row` | Show only each parameter's unit (MW, CUR/MWh, `-` for a share; empty for a choice or a name) in the first row of the parameter sheets, labelled `unit`, instead of its description. The full description stays in the note on the parameter name. Not with `--old-format`. |
 
 A realistic minimal-template export:
 
@@ -113,6 +115,17 @@ embeds its own header describing what it contains:
 
 A few practical notes:
 
+- The header rows and the key columns (alternative, entity, index) stay in view while you scroll; the
+  definition column scrolls away. Every other parameter column has a slightly different background.
+- The parameter columns are ordered by parameter group; the name of each parameter has its group's colour.
+  Every group after the first is an Excel outline group (the +/- buttons above the column letters). A group
+  with no value on the sheet starts collapsed; open it with +.
+- The `index:` column holds the index of the sheet's maps (period, time step, solver argument, ...). When the
+  parameters of one sheet have different index names, an `index name` row under the data types gives each
+  column's own.
+- The description row shows the first four lines of each parameter's description. The full text is in the note
+  (comment) on the parameter name: hover over the name to read it.
+
 - Sheets whose parameter group was not selected at export time are simply
   absent. Re-export later if you decide to start editing them.
 - When **any** parameter on a sheet carries a database default, a
@@ -132,7 +145,18 @@ A few practical notes:
     spreadsheet locale to one convention (typically English/US) and the
     column format to plain `Number` for data columns.
 
+!!! note "Number precision"
+    The export writes every number exactly, so a value such as 0.30000000000000004 reads back unchanged.
+    LibreOffice keeps only 15 significant digits when it saves an xlsx file again, so a workbook re-saved in
+    LibreOffice reads back such values rounded to 15 digits.
+
 ## Importing edited data back
+
+!!! note "Workbooks from FlexTool 4.7.1 need FlexTool 4.7.1 or later"
+    A link sheet (a relationship without parameters, such as `group_node`) has `alternative` and
+    `entity existence` columns when an entity is switched on or off in an alternative. FlexTool 4.7.0 reads those
+    cells as part of the entity names, so it loses the memberships and their activity. Import such a workbook
+    with FlexTool 4.7.1 or later.
 
 ### From the FlexTool GUI
 

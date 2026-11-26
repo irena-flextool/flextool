@@ -25,6 +25,8 @@ from spinedb_api import DatabaseMapping, Map, to_database
 from spinedb_api.exception import NothingToCommit
 
 from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import v77, v83
+from tests.update_flextool._rerun import patch_migration
 
 LIST = "dispatch_realization_methods"
 MEMBERS = ["within_solve", "separate_dispatch", "deterministic"]
@@ -100,14 +102,14 @@ ROWS = {
 @pytest.mark.parametrize("row", sorted(ROWS))
 def test_planner(row: str) -> None:
     branches, methods, scenarios, writes, undecided = ROWS[row]
-    got_writes, got_undecided = m.plan_dispatch_realization_method(branches, methods, scenarios)
+    got_writes, got_undecided = v83.plan_dispatch_realization_method(branches, methods, scenarios)
     assert got_writes == writes
     assert tuple(u[0] for u in got_undecided) == undecided
 
 
 def test_planner_undecided_reason() -> None:
     branches, methods, scenarios, _w, _u = ROWS["target_above_method"]
-    assert m.plan_dispatch_realization_method(branches, methods, scenarios)[1] == ((
+    assert v83.plan_dispatch_realization_method(branches, methods, scenarios)[1] == ((
         "v", "a value in alternative base would replace your dispatch_realization_method in alternative E in "
         "scenario S1", ("S2",)),)
 
@@ -117,16 +119,16 @@ def test_planner_reason_names_every_failing_scenario() -> None:
     branches = {("v", "base"): True}
     methods = {("v", "E"): "separate_dispatch", ("v", "F"): "separate_dispatch"}
     scenarios = {"S1": ["E", "base"], "S2": ["F", "base"], "S3": ["base"]}
-    assert m.plan_dispatch_realization_method(branches, methods, scenarios) == ((), ((
+    assert v83.plan_dispatch_realization_method(branches, methods, scenarios) == ((), ((
         "v", "a value in alternative base would replace your dispatch_realization_method in alternative E in "
         "scenario S1; a value in alternative base would replace your dispatch_realization_method in alternative F "
         "in scenario S2", ("S3",)),))
 
 
 def test_scenarios_text() -> None:
-    assert m._v83_scenarios_text(("S2",)) == "scenario S2"
-    assert m._v83_scenarios_text(("S1", "S2")) == "scenarios S1, S2"
-    assert m._v83_scenarios_text((m._V77_NO_SCENARIO,)) == "the database"
+    assert v83._v83_scenarios_text(("S2",)) == "scenario S2"
+    assert v83._v83_scenarios_text(("S1", "S2")) == "scenarios S1, S2"
+    assert v83._v83_scenarios_text((v77._V77_NO_SCENARIO,)) == "the database"
 
 
 # --- on a database --------------------------------------------------------------------------------------------
@@ -207,7 +209,7 @@ def test_no_scenario_writes_into_the_branches_alternative(v82_schema_db_url: str
         db.add_item("entity", entity_class_name="solve", name="det")
         assert (_members(db), _pdef(db)["parsed_value"]) == (["within_solve", "separate_dispatch"], "within_solve")
         assert _pdef(db)["description"] == OLD_TEXT
-        m._v83_dispatch_realization_method(db)
+        v83._v83_dispatch_realization_method(db)
         db.commit_session("v83 part 5")
     with DatabaseMapping(url) as db:
         assert _members(db) == MEMBERS
@@ -226,7 +228,7 @@ def test_scenarios(v82_schema_db_url: str, tmp_path: Path) -> None:
           branches=[("a", "base"), ("b", "a1"), ("b", "a2"), ("c", "a1"), ("d", "base")],
           methods=[("a", "E", "separate_dispatch"), ("d", "U", "separate_dispatch")])
     with DatabaseMapping(url) as db:
-        m._v83_dispatch_realization_method(db)
+        v83._v83_dispatch_realization_method(db)
         db.commit_session("v83 part 5")
     with DatabaseMapping(url) as db:
         assert _methods(db) == {("a", "E"): "separate_dispatch", ("a", "base"): "within_solve",
@@ -242,7 +244,7 @@ def test_undecided_writes_nothing_and_prints(v82_schema_db_url: str, tmp_path: P
     _seed(url, {"S1": ["E", "base"], "S2": ["base"]}, branches=[("v", "base")],
           methods=[("v", "E", "separate_dispatch")])
     with DatabaseMapping(url) as db:
-        m._v83_dispatch_realization_method(db)
+        v83._v83_dispatch_realization_method(db)
         assert _methods(db) == {("v", "E"): "separate_dispatch"}
         assert _members(db) == MEMBERS
     assert UNDECIDED_PRINT in capsys.readouterr().out.splitlines()
@@ -263,7 +265,7 @@ def test_null_and_user_default_are_kept(v82_schema_db_url: str, tmp_path: Path, 
             db.commit_session("user default")
     with DatabaseMapping(url) as db:
         assert _pdef(db)["parsed_value"] == default
-        m._v83_dispatch_realization_method(db)
+        v83._v83_dispatch_realization_method(db)
         db.commit_session("v83 part 5")
     with DatabaseMapping(url) as db:
         assert _pdef(db)["parsed_value"] == default
@@ -279,7 +281,7 @@ def test_a_null_row_in_the_target_is_overwritten(v82_schema_db_url: str, tmp_pat
     _seed(url, {"S1": ["base"]}, branches=[("v", "base")], methods=[("v", "base", None)])
     with DatabaseMapping(url) as db:
         assert _methods(db) == {("v", "base"): None}
-        m._v83_dispatch_realization_method(db)
+        v83._v83_dispatch_realization_method(db)
         db.commit_session("v83 part 5")
     with DatabaseMapping(url) as db:
         assert _methods(db) == {("v", "base"): "within_solve"}
@@ -292,7 +294,7 @@ def test_a_null_row_above_a_method_is_overwritten(v82_schema_db_url: str, tmp_pa
     _seed(url, {"S1": ["base", "L", "H"]}, branches=[("v", "base")],
           methods=[("v", "L", "separate_dispatch"), ("v", "H", None)])
     with DatabaseMapping(url) as db:
-        m._v83_dispatch_realization_method(db)
+        v83._v83_dispatch_realization_method(db)
         db.commit_session("v83 part 5")
     with DatabaseMapping(url) as db:
         assert _methods(db) == {("v", "L"): "separate_dispatch", ("v", "H"): "within_solve"}
@@ -301,7 +303,7 @@ def test_a_null_row_above_a_method_is_overwritten(v82_schema_db_url: str, tmp_pa
 def test_edited_description_is_kept(v82_schema_db_url: str, tmp_path: Path) -> None:
     with DatabaseMapping(_copy(v82_schema_db_url, tmp_path)) as db:
         db.update_item("parameter_definition", id=_pdef(db)["id"], description=OLD_TEXT + " My note.")
-        m._v83_dispatch_realization_method(db)
+        v83._v83_dispatch_realization_method(db)
         assert _pdef(db)["description"] == OLD_TEXT + " My note."
         assert _pdef(db)["parsed_value"] == "deterministic"
 
@@ -318,14 +320,14 @@ def test_rerun_writes_nothing(v82_schema_db_url: str, tmp_path: Path, caplog: py
         return sum("dispatch_realization_method: already written" in r.getMessage() for r in caplog.records)
 
     with DatabaseMapping(url) as db:
-        m._v83_dispatch_realization_method(db)
+        v83._v83_dispatch_realization_method(db)
         assert logged() == 0
-        m._v83_dispatch_realization_method(db)
+        v83._v83_dispatch_realization_method(db)
         assert logged() == 1
         assert (_members(db), _methods(db), _pdef(db)["parsed_value"]) == (MEMBERS, after, "deterministic")
         db.commit_session("v83 part 5")
     with DatabaseMapping(url) as db:
-        m._v83_dispatch_realization_method(db)
+        v83._v83_dispatch_realization_method(db)
         assert logged() == 2
         assert (_members(db), _methods(db), _pdef(db)["parsed_value"]) == (MEMBERS, after, "deterministic")
         with pytest.raises(NothingToCommit):
@@ -342,13 +344,13 @@ def test_guard_stops_on_a_changed_member(v82_schema_db_url: str, tmp_path: Path,
         raw, typ = to_database("overwritten")  # the old spinedb_api bug rewrote a first member
         db.update_item("list_value", id=first["id"], value=raw, type=typ)
 
-    monkeypatch.setattr(m, "_append_list_members", overwrite_first)
+    patch_migration(monkeypatch, "_append_list_members", overwrite_first)
     with DatabaseMapping(url) as db:
         with pytest.raises(m.FlexToolMigrationError,
                            match=r"A version 83 upgrade step changed an existing member of the value list "
                                  r"dispatch_realization_methods \('within_solve'\); "
                                  r"the upgrade stops"):
-            m._v83_dispatch_realization_method(db)
+            v83._v83_dispatch_realization_method(db)
     with DatabaseMapping(url) as db:
         assert _members(db) == ["within_solve", "separate_dispatch"]
         assert _methods(db) == {}

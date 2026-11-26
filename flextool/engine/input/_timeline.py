@@ -12,7 +12,7 @@ Architecture notes
     see ``audit/solve_orchestration_plan.md §3.2``); ``timeset_weights``
     is read from the raw Map and its index shape-checked.
   - ``new_step_durations`` is solve-scoped as of DB v50 (was
-    timeset-scoped pre-v50; ``update_flextool/db_migration.py`` upgrades
+    timeset-scoped pre-v50; ``update_flextool/db_migration/`` upgrades
     older DBs before this loader runs).
   - The six-rule fallback chain in :meth:`TimelineConfig.create_assumptive_parts`
     mutates *both* ``self`` AND the supplied ``solve_config`` in three

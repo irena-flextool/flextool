@@ -236,7 +236,7 @@ def test_group_member_translated_at_v77(tmp_path, schema_db_url) -> None:
     """A pre-v77 group value ``not_allowed`` (in ``invest_methods``) that v77 carried by name as
     ``cumulative_limits`` into ``group_invest_methods``: the archive shows it as ``not_active`` (the v77 rename),
     information only.  The rename table is pinned to the v77 list."""
-    from flextool.update_flextool.db_migration import _V77_GROUP_INVEST_METHODS
+    from flextool.update_flextool.db_migration.v77 import _V77_GROUP_INVEST_METHODS
 
     case, archive = _hit(tmp_path, schema_db_url, pre_v77_group=True, before=[("group", "G1", "base", "not_allowed")])
     v77 = add_commit(case.path, "v77: group invest methods", LATER)

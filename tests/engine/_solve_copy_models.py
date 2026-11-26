@@ -162,9 +162,10 @@ def build_db(json_path: Path, folder: Path) -> str:
     return url
 
 
-def run_capturing(url: str, scenario: str, folder: Path):
+def run_capturing(url: str, scenario: str, folder: Path, **run_kwargs):
     """Run *scenario* cold and capture every built Problem: returns ``(built, steps)`` with ``built`` the
-    ``(solve, MPS path, objective offset)`` of each build in build order and ``steps`` the run's steps."""
+    ``(solve, MPS path, objective offset)`` of each build in build order and ``steps`` the run's steps.
+    *run_kwargs* go to ``run_chain_from_db`` (for example ``csv_dump``)."""
     from flextool.engine import run_chain_from_db
     from flextool.engine.model import core
     import pytest
@@ -185,7 +186,8 @@ def run_capturing(url: str, scenario: str, folder: Path):
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(core, "build_flextool", capturing)
-        steps = run_chain_from_db(url, scenario, work_folder=folder / "w", warm=False, keep_solutions=True)
+        steps = run_chain_from_db(url, scenario, work_folder=folder / "w", warm=False, keep_solutions=True,
+                                  **run_kwargs)
     return built, steps
 
 

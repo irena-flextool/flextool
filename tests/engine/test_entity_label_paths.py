@@ -142,6 +142,7 @@ def test_upgrade_marks_unnamed_mixed_depths_and_runs_name_the_time_maps(tmp_path
     from spinedb_api import DatabaseMapping
 
     from flextool.update_flextool import db_migration as m
+    from flextool.update_flextool.db_migration import v77
 
     labels = ("period", "time") if named else ("x", "x")
     chp = map1("time" if named else "x", {t: 0.5 for t in TIMESTEPS})
@@ -150,7 +151,7 @@ def test_upgrade_marks_unnamed_mixed_depths_and_runs_name_the_time_maps(tmp_path
                         values=[["unit", PLANT, "availability", map2(*labels, _PT)],
                                 ["unit", CHP, "availability", chp]])
     with DatabaseMapping(url) as db:
-        m._v77_unnamed_mixed_depth_marker(db)
+        v77._v77_unnamed_mixed_depth_marker(db)
         names = {md["name"] for md in db.get_items("metadata")}
         if not named:
             db.commit_session("marker")

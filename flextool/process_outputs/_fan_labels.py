@@ -28,15 +28,17 @@ def fan_branch_labels(flex_data: "FlexData") -> dict[str, str]:
     return {b: d for d, b in pairs if d in labels and b != d}
 
 
-def recourse_branch_labels(flex_data: "FlexData") -> dict[str, str]:
+def recourse_branch_labels(flex_data: "FlexData", *, retirements: bool = False) -> dict[str, str]:
     """:func:`fan_branch_labels` of a solve that decides investments in fan branch periods (recourse: a branch
-    period in ``ed_invest_set``).  Empty for a shared fan investment (decided at the label) and for a
-    deterministic solve."""
+    period in ``ed_invest_set``; with ``retirements`` also in ``ed_divest_set``).  Empty for a shared fan
+    investment (decided at the label) and for a deterministic solve."""
     branch_of = fan_branch_labels(flex_data)
-    invest = getattr(flex_data, "ed_invest_set", None)
-    if not branch_of or invest is None or invest.height == 0:
-        return {}
-    decided = set(invest["d"].cast(pl.Utf8).to_list())
+    sets = ("ed_invest_set", "ed_divest_set") if retirements else ("ed_invest_set",)
+    decided: set[str] = set()
+    for name in sets:
+        frame = getattr(flex_data, name, None)
+        if frame is not None and frame.height > 0:
+            decided |= set(frame["d"].cast(pl.Utf8).to_list())
     return branch_of if decided & set(branch_of) else {}
 
 

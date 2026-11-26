@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 ROW_KEYWORDS = frozenset({
     "description",
+    "unit",  # the units row of an export with --units-row (content ignored, like the description)
+    "index name",  # per-column index names on a sheet whose parameters' indexes differ
     "data type",
     "parameter",
     "alternative",
@@ -105,6 +107,9 @@ class SheetMetadata:
 
     # Descriptions per parameter column index
     descriptions: dict[int, str] = field(default_factory=dict)
+
+    # Index names per data column (an ``index name`` row); a column without one uses ``index_name``
+    index_names: dict[int, str] = field(default_factory=dict)
 
     # Parsed entity class definitions
     entity_classes: list[EntityClassDef] = field(default_factory=list)
@@ -498,6 +503,12 @@ def parse_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
                 if desc:
                     meta.descriptions[c] = desc
 
+        elif kw_lower == "index name":
+            for c in meta.param_cols:
+                name = _cell_value(ws, r, c)
+                if name:
+                    meta.index_names[c] = name
+
         elif kw_lower == "data type":
             if default_val:
                 meta.default_data_type = default_val
@@ -505,7 +516,8 @@ def parse_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
                 dt = _cell_value(ws, r, c)
                 # NOTE: ``.lower()`` is defensive — the exporter already
                 # emits all data-type labels lowercase ("float", "string",
-                # "boolean (array)", "string (array)", "*-1d-map", ...).
+                # "string (array)", "*-1d-map", ...; "boolean (array)" in
+                # workbooks from FlexTool 4.7.0 and earlier).
                 # Kept in case a hand-edited sheet uses mixed case so the
                 # downstream dtype dispatch (``_convert_value``) keeps
                 # matching its lowercase ``elif`` branches.
@@ -525,7 +537,8 @@ def parse_link_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
 
     Link sheets have a simpler format:
         Row 1: navigate link
-        Row 2: entity definition in col A, dimension names in cols B+
+        Row 2: entity definition in col A, dimension names in cols B+, optionally then ``alternative`` and
+               ``entity existence``
         Row 3+: data
     """
     meta = SheetMetadata(sheet_name=ws.title)
@@ -537,6 +550,12 @@ def parse_link_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
             meta.entity_classes = _parse_entity_def(val)
             meta.def_row = r
             meta.data_start_row = r + 1
+            for c in range(1, ws.max_column or 1):
+                label = _cell_value(ws, r, c).lower()
+                if label == "alternative":
+                    meta.alt_col = c
+                elif label == ENTITY_EXISTENCE:
+                    meta.entity_existence_col = c
             return meta
 
     return None
@@ -567,6 +586,8 @@ def parse_transposed_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
     # Scan column B for row role definitions (skip INFO rows)
     label_col = 1  # column B
     datatype_row: int | None = None
+    default_row: int | None = None
+    index_name_row: int | None = None
     for r in range(min(10, max_row)):
         val_a = _cell_value(ws, r, 0)
         if _is_info_row(val_a):
@@ -591,6 +612,12 @@ def parse_transposed_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
             meta.param_row = r
             if default_val:
                 meta.default_parameter = default_val
+        elif kw_lower == "index name":
+            index_name_row = r
+        elif kw_lower == "default":
+            # Multi-param _t sheets show each column's default under the
+            # parameter row.  It is a header row, not a time step.
+            default_row = r
         elif vl.startswith("entity"):
             meta.entity_row = r
             meta.entity_classes = _parse_entity_def(val)
@@ -603,9 +630,16 @@ def parse_transposed_sheet_metadata(ws: Worksheet) -> SheetMetadata | None:
             if dt:
                 meta.data_types[c] = dt.lower()
 
+    # Per-column index names (columns whose index names differ).
+    if index_name_row is not None:
+        for c in range(2, ws.max_column or 1):
+            name = _cell_value(ws, index_name_row, c)
+            if name:
+                meta.index_names[c] = name
+
     # Determine data start row (row after last metadata row)
     metadata_rows = [
-        r for r in [meta.alt_row, meta.param_row, meta.entity_row, datatype_row]
+        r for r in [meta.alt_row, meta.param_row, meta.entity_row, datatype_row, default_row, index_name_row]
         if r is not None
     ]
     if metadata_rows:
@@ -1148,7 +1182,7 @@ def _extract_standard(ws: Worksheet, meta: SheetMetadata) -> SheetData:
                 "param_name": pname,
                 "value": converted,
                 "index_value": index_val,
-                "index_name": meta.index_name,
+                "index_name": meta.index_names.get(c) or meta.index_name,
                 "data_type": dtype,
             }
             if extra_index_values:
@@ -1196,15 +1230,31 @@ def _extract_link(ws: Worksheet, meta: SheetMetadata) -> SheetData:
     data = SheetData(sheet_name=meta.sheet_name, metadata=meta)
     max_row = _actual_max_row(ws)
     max_col = ws.max_column or 1
+    activity_cols = {c for c in (meta.alt_col, meta.entity_existence_col) if c is not None}
+    entity_class = meta.entity_classes[0].class_name if meta.entity_classes else None
 
     for r in range(meta.data_start_row, max_row):
         elements = []
         for c in range(max_col):
+            if c in activity_cols:
+                continue
             val = _cell_value(ws, r, c)
             if val:
                 elements.append(val)
-        if elements:
-            data.link_entities.append(tuple(elements))
+        if not elements:
+            continue
+        byname = tuple(elements)
+        if byname not in data.link_entities:  # an entity has one row per alternative that sets its activity
+            data.link_entities.append(byname)
+        if meta.alt_col is not None and meta.entity_existence_col is not None and entity_class:
+            alt = _cell_value(ws, r, meta.alt_col)
+            existence = _cell_value(ws, r, meta.entity_existence_col)
+            if alt and existence:
+                active = _parse_strict_bool(existence, sheet_name=meta.sheet_name, row_1based=r + 1,
+                                            col_1based=meta.entity_existence_col + 1, field_name="entity existence")
+                data.records.append({"alternative": alt, "entity_class": entity_class, "entity_byname": byname,
+                                     "param_name": ENTITY_EXISTENCE, "value": active, "index_value": None,
+                                     "index_name": None})
 
     return data
 
@@ -1220,7 +1270,8 @@ def _extract_transposed(ws: Worksheet, meta: SheetMetadata) -> SheetData:
 
     # On single-param transposed sheets (timeseries, array-transposed)
     # the parameter triplet in row 1 / col B carries the canonical data
-    # type — e.g. ``"parameter: solves | data type: boolean (array)"``.
+    # type — e.g. ``"parameter: solves | data type: string (array)"``
+    # (``boolean (array)`` in workbooks from FlexTool 4.7.0 and earlier).
     # We extract it once and attach it to every emitted record so the
     # writer can decide whether to reconstruct an ``Array`` or a ``Map``.
     triplet_dtype: str | None = None
@@ -1274,7 +1325,7 @@ def _extract_transposed(ws: Worksheet, meta: SheetMetadata) -> SheetData:
                 "param_name": pname,
                 "value": converted,
                 "index_value": index_val,
-                "index_name": meta.index_name,
+                "index_name": meta.index_names.get(c) or meta.index_name,
                 "data_type": col_dtype,
             })
 
@@ -1292,8 +1343,8 @@ def _parse_strict_bool(
     """Strict TRUE / FALSE parse, case-insensitive, mirroring the exporter.
 
     The exporter only ever writes the literal strings ``"TRUE"`` / ``"FALSE"``
-    for entity-existence and boolean-array cells (excel_writer.py:2272 and
-    :2773 — the dropdown validation also enforces those exact tokens).  A
+    for entity-existence cells (the dropdown validation also enforces those
+    exact tokens).  A
     cell holding anything else (``"yes"``, ``"1"``, ``"Y"``, a typo) is a
     data error: raise so the user sees the offending sheet / cell rather
     than silently importing ``False``.

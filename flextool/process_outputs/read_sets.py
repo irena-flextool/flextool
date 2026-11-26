@@ -691,6 +691,18 @@ def read_sets(
     # (``realized_invest_periods`` not within ``realized_periods``): it is
     # kept too, else its invested capacity and investment cost have no row.
     # Without either source (FlexData built by hand) nothing is filtered.
+    #
+    # Under ``investments_after_reveal_period`` the reveal period's investment
+    # and retirement are decided on the forecast copies of the period (one
+    # value in all of them): their rows are also read at the fan's label, the
+    # realized period whose branch-weighted decision ``v_invest_fan`` /
+    # ``v_divest_fan`` carries (``_fan_labels.with_label_rows``).  The copies of
+    # a look-ahead period map to an unrealized label and are filtered out.
+    from flextool.process_outputs._fan_labels import fan_branch_labels, with_label_rows
+
+    fan_branch_of = fan_branch_labels(flex_data)
+    ed_invest_rows = with_label_rows(flex_data.ed_invest_set, fan_branch_of, ("d",))
+    ed_divest_rows = with_label_rows(flex_data.ed_divest_set, fan_branch_of, ("d",))
     invest_periods_list: list = []
     seen: set = set()
     realized_filter: "set | None" = None
@@ -700,7 +712,7 @@ def read_sets(
             realized_filter |= set(flex_data.realized_invest_periods)
     elif flex_data.realized_invest_periods is not None:
         realized_filter = set(flex_data.realized_invest_periods)
-    for src in (flex_data.ed_invest_set, flex_data.ed_divest_set):
+    for src in (ed_invest_rows, ed_divest_rows):
         if (src is not None and src.height > 0
                 and "d" in src.columns):
             for d in src.select("d").unique(maintain_order=True).to_pandas()["d"].tolist():
@@ -736,11 +748,11 @@ def read_sets(
     # ed_invest / ed_divest / edd_invest — (entity, period) /
     # (entity, period_invest, period).
     s.ed_invest = _multi_index_with_solve(
-        flex_data.ed_invest_set, solve_name=solve_name,
+        ed_invest_rows, solve_name=solve_name,
         dims=("e", "d"), names=["entity", "period"],
     )
     s.ed_divest = _multi_index_with_solve(
-        flex_data.ed_divest_set, solve_name=solve_name,
+        ed_divest_rows, solve_name=solve_name,
         dims=("e", "d"), names=["entity", "period"],
     )
 
@@ -766,7 +778,7 @@ def read_sets(
     # them; empty otherwise (the decision comes online in its own period).
     # The fan's investment of a recourse solve is reported at its label (``v_invest_fan``): the start of
     # operation and the operating window of a branch decision are also read at the labels (``_fan_labels``).
-    from flextool.process_outputs._fan_labels import recourse_branch_labels, with_label_rows
+    from flextool.process_outputs._fan_labels import recourse_branch_labels
 
     branch_of = recourse_branch_labels(flex_data)
     for attr in ("edd_invest_commission", "edd_invest_in_construction"):

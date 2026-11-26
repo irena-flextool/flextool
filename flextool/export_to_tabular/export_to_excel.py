@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import importlib
+import logging
+import math
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from openpyxl import Workbook
+from openpyxl.worksheet.worksheet import Worksheet
 
 from flextool.export_to_tabular.db_reader import DatabaseContents, read_database
 from flextool.export_to_tabular.sheet_config import SheetSpec, build_sheet_specs, load_settings
@@ -29,6 +36,7 @@ from flextool.export_to_tabular.excel_writer import (
     write_version_sheet,
 )
 import flextool.export_to_tabular.excel_writer as _ew
+from flextool.export_to_tabular import index_names
 
 
 def _build_tab_color_map(navigate_groups: list[dict[str, Any]]) -> dict[str, str]:
@@ -40,6 +48,89 @@ def _build_tab_color_map(navigate_groups: list[dict[str, Any]]) -> dict[str, str
             for sheet_name in row:
                 color_map[sheet_name] = color
     return color_map
+
+
+def _write_parameter_sheet(
+    wb: Workbook,
+    ws: Worksheet,
+    writer: Callable[[Worksheet, SheetSpec, DatabaseContents], list[str]],
+    spec: SheetSpec,
+    db_contents: DatabaseContents,
+    omit_empty_columns: bool,
+) -> Worksheet:
+    """Write a constant or periodic v2 sheet; with *omit_empty_columns*, write it again without its empty columns.
+
+    The writer itself decides which values land on the sheet, so the columns it left empty are known only after
+    writing.  A sheet whose parameter columns are all empty keeps them: without any parameter column the reader
+    would take it for a link sheet.  Returns the sheet that holds the result.
+    """
+    empty = writer(ws, spec, db_contents)
+    all_params = list(spec.pre_ea_params) + list(spec.parameter_names)
+    if not omit_empty_columns or not empty or len(empty) == len(all_params):
+        return ws
+    index = wb.sheetnames.index(ws.title)
+    wb.remove(ws)
+    ws = wb.create_sheet(spec.sheet_name, index)
+    dropped = set(empty)
+    writer(ws, replace(
+        spec,
+        parameter_names=[p for p in spec.parameter_names if p not in dropped],
+        pre_ea_params=[p for p in spec.pre_ea_params if p not in dropped],
+        omitted_params=empty,
+    ), db_contents)
+    return ws
+
+
+logger = logging.getLogger(__name__)
+
+# Where openpyxl's cell writer looks up its value formatter (private API: looked up at each save, so a future
+# openpyxl that moves it only loses the exact floats, see _exact_floats).
+_OPENPYXL_CELL_WRITER = "openpyxl.cell._writer"
+_OPENPYXL_FORMATTER = "safe_string"
+
+
+def _exact_number_formatter(original: Callable[[Any], str]) -> Callable[[Any], str]:
+    """openpyxl's cell-value formatter *original*, but a finite float is written with ``repr``.
+
+    openpyxl writes numbers with ``"%.16g"``, which loses the 17th significant digit (0.1 + 0.2 comes back as
+    0.3).  ``repr`` gives the shortest string that reads back to the same float; Excel and LibreOffice read it.
+    LibreOffice itself keeps only 15 significant digits when it saves an xlsx again, so the exact value survives
+    only in a workbook that is not re-saved there.
+    """
+    def exact_number_string(value: Any) -> str:
+        if isinstance(value, float) and math.isfinite(value):
+            return repr(float(value))  # float() also turns a numpy float into a plain one (numpy's repr differs)
+        return original(value)
+    return exact_number_string
+
+
+@contextmanager
+def _exact_floats() -> Iterator[None]:
+    """Write floats exactly while saving: swap the formatter openpyxl's cell writer looks up for each cell.
+
+    The formatter in place on entry is put back on exit.  When openpyxl no longer has it where expected, the save
+    goes ahead with openpyxl's own formatting (16 significant digits) and a warning says so.
+    """
+    try:
+        cell_writer = importlib.import_module(_OPENPYXL_CELL_WRITER)
+        original = getattr(cell_writer, _OPENPYXL_FORMATTER)
+    except (ImportError, AttributeError):
+        logger.warning(
+            "openpyxl has no %s.%s: the workbook's numbers are written with 16 significant digits, so a value "
+            "that needs 17 may read back slightly different.", _OPENPYXL_CELL_WRITER, _OPENPYXL_FORMATTER)
+        yield
+        return
+    setattr(cell_writer, _OPENPYXL_FORMATTER, _exact_number_formatter(original))
+    try:
+        yield
+    finally:
+        setattr(cell_writer, _OPENPYXL_FORMATTER, original)
+
+
+def _save_workbook(wb: Workbook, path: str | Path) -> None:
+    """Save *wb* with every float written exactly (see :func:`_exact_number_formatter`)."""
+    with _exact_floats():
+        wb.save(path)
 
 
 def _cells_as_text(wb: Workbook) -> None:
@@ -63,6 +154,8 @@ def export_to_excel(
     use_new_format: bool = True,
     include_stochastics: bool = False,  # deprecated alias for include_advanced
     include_groups: list[str] | None = None,
+    units_row: bool = False,
+    omit_empty_columns: bool = False,
 ) -> None:
     """Export a FlexTool Spine DB to an Excel (.xlsx) file.
 
@@ -80,9 +173,19 @@ def export_to_excel(
             group are dropped.  Sheets that lose all their columns are
             dropped, unless listed under a selected group in
             ``always_include_with_groups`` in ``export_settings.yaml``.
+        units_row: When True, the first metadata row of the standard sheets (label ``unit``) holds only each
+            parameter's unit; the full description stays in the note on the parameter name.  Only for the v2
+            format.
+        omit_empty_columns: When True, a parameter column with no value on its constant or periodic sheet is
+            left out (the reference block to the right still lists it).  A sheet whose parameter columns are all
+            empty keeps them.  Only for the v2 format.
     """
     if include_stochastics:
         include_advanced = True
+    if not use_new_format and units_row:
+        raise ValueError("A units row is only possible in the v2 (self-describing) format.")
+    if not use_new_format and omit_empty_columns:
+        raise ValueError("Leaving out empty columns is only possible in the v2 (self-describing) format.")
 
     # 1. Read all data from the database
     print(f"Reading database: {db_url}")
@@ -98,18 +201,17 @@ def export_to_excel(
 
     # 2b. Load data type overrides and width settings
     _ew._data_type_overrides = settings.get("data_type_overrides", {})
-    _ew._min_param_width = settings.get("minimum_parameter_column_width", 10)
-    _ew._non_param_width = settings.get("width_non_parameter_columns", 22)
-    _ew._def_col_width = settings.get("definition_column_width", 11)
-    _ew._index_col_width = settings.get("index_column_width", 12)
+    _ew._units_row = units_row
     _ew._period_only_params = settings.get("period_only_params", {})
     _ew._stochastic_index_names = settings.get("stochastic_index_names",
                                                 ["forecast", "branch_time", "time", "is_realized"])
     _ew._time_structure_classes = set(settings.get("time_structure_classes", []))
+    index_names.configure(settings)
     specs: list[SheetSpec] = build_sheet_specs(
         db_contents,
         settings,
         include_groups=set(include_groups) if include_groups else None,
+        group_first=use_new_format,
     )
     navigate_groups: list[dict[str, Any]] = settings.get("navigate_groups", [])
     tab_color_map = _build_tab_color_map(navigate_groups) if navigate_groups else {}
@@ -155,20 +257,19 @@ def export_to_excel(
                 # Check if this is a pure-array sheet (model_solve_sequence etc.)
                 _is_array_sheet = (
                     len(spec.parameter_names) == 1
-                    and _ew._get_param_data_type(
-                        spec.parameter_names[0], spec.entity_classes,
-                        db_contents, layout="constant",
-                    ) == "boolean (array)"
+                    and _ew.is_pure_array_param(spec.parameter_names[0], spec.entity_classes, db_contents)
                 )
                 if _is_array_sheet:
                     write_array_transposed_sheet_v2(ws, spec, db_contents)
                 else:
-                    write_constant_sheet_v2(ws, spec, db_contents)
+                    ws = _write_parameter_sheet(wb, ws, write_constant_sheet_v2, spec, db_contents,
+                                                omit_empty_columns)
             else:
                 write_constant_sheet(ws, spec, db_contents)
         elif layout == "periodic":
             if use_new_format:
-                write_periodic_sheet_v2(ws, spec, db_contents)
+                ws = _write_parameter_sheet(wb, ws, write_periodic_sheet_v2, spec, db_contents,
+                                            omit_empty_columns)
             else:
                 write_periodic_sheet(ws, spec, db_contents)
         elif layout == "nested_periodic":
@@ -229,7 +330,7 @@ def export_to_excel(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     _cells_as_text(wb)
-    wb.save(output_path)
+    _save_workbook(wb, output_path)
 
     # 7. Print summary
     format_label = "v2 (self-describing)" if use_new_format else "v1 (original)"

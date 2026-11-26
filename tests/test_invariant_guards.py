@@ -14,9 +14,13 @@ needed.  The counted ones are ratchets: a count may fall (lower its baseline her
 * Module size: a module stays under ``MAX_MODULE_LINES``; the larger ones may not grow more than ``GROWTH_SLACK``
   lines past their size when the ratchet was set.  Agents read and edit large modules badly; new code goes in a new,
   cohesive module.
+* ``node_type`` in the ``Base`` alternative of a fixture or shipped example JSON: an old migration step wrote
+  ``commodity`` there for every node, and a scenario that ranks ``Base`` above the real type turns the node into a
+  commodity node.  Give a node its type in the alternative that defines it.
 """
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -115,7 +119,6 @@ LARGE_MODULES: dict[str, int] = {
     "flextool/process_outputs/read_parameters.py": 2018,
     "flextool/process_outputs/write_outputs.py": 1566,
     "flextool/project_package.py": 1647,
-    "flextool/update_flextool/db_migration.py": 13190,
     "tools/assistant_eval.py": 3531,
     "tools/lp_snapshot.py": 3403,
 }
@@ -185,3 +188,18 @@ def test_modules_do_not_grow_past_their_ratchet():
 def test_large_module_list_has_no_stale_entries():
     stale = sorted(rel for rel in LARGE_MODULES if not (ROOT / rel).exists())
     assert not stale, f"Drop from LARGE_MODULES (the module no longer exists): {stale}"
+
+
+def test_no_example_json_sets_node_type_in_base():
+    files = sorted((ROOT / "tests" / "fixtures").glob("*.json")) + sorted(
+        (ROOT / "flextool" / "schemas" / "canonical_databases").glob("*.json"))
+    hits = {}
+    for path in files:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        rows = data.get("parameter_values", []) if isinstance(data, dict) else []
+        nodes = sorted(row[1] for row in rows if row[0] == "node" and row[2] == "node_type" and row[4] == "Base")
+        if nodes:
+            hits[path.relative_to(ROOT).as_posix()] = nodes
+    assert not hits, (
+        f"node_type set in the Base alternative: {hits}.  A scenario that ranks Base above the node's own "
+        "alternative makes the node a commodity node.  Set node_type in the alternative that defines the node.")

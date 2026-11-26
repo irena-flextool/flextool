@@ -21,10 +21,12 @@ include docs/reference/parameter_groups.md
 include docs/how_to/index.md
 include docs/how_to/basics.md
 include docs/how_to/storage_hydro.md
+include docs/how_to/demand_response.md
 include docs/how_to/thermal_chp.md
 include docs/how_to/investment.md
 include docs/how_to/solve_sequences.md
 include docs/how_to/stochastics.md
+include docs/how_to/stochastic_examples.md
 include docs/how_to/emissions.md
 include docs/how_to/outputs.md
 include docs/how_to/performance.md

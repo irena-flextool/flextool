@@ -19,7 +19,7 @@ Architecture notes
   lists.
 * The DB schema is assumed to be v50+.  v50 moved
   ``new_stepduration`` from ``timeset`` to ``solve``;
-  ``update_flextool/db_migration.py`` handles upgrades for older DBs
+  ``update_flextool/db_migration/`` handles upgrades for older DBs
   before this loader runs.
 """
 from __future__ import annotations

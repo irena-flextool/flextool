@@ -30,6 +30,8 @@ MIXED_UOM = "Mixed units of measure!"
 #: The provider frame (``input/node__unit_of_measure.csv``) that holds the explicit values: ``node``,
 #: ``unit_of_measure``.
 NODE_UNITS_FRAME = "input/node__unit_of_measure"
+#: Description brackets that mark a kind of value, not a unit of measure.
+NOT_UNITS = frozenset({"[choice]", "[yes/no]", "[name]", "[text]", "[version number]"})
 #: The template tokens, longest first (``{kR}`` before ``{R}``).
 TOKENS = ("{kR}", "{kA}", "{R}", "{A}")
 
@@ -40,6 +42,25 @@ _MEGAWATT_HOUR = re.compile(r"^MWh(.*)$")
 _RATE_LIKE = re.compile(r"(/h|/s)$|^[kMGT]?W(_.*)?$")
 #: The power-unit form of :data:`_RATE_LIKE`, for the suggested amount (``MW_th`` -> ``MWh_th``).
 _POWER_UNIT = re.compile(r"^([kMGT]?W)(_.*)?$")
+
+
+def bracket(description: str | None) -> str | None:
+    """The unit bracket a parameter description starts with (``"[MW]"``), or ``None``.
+
+    Every parameter description of the schema starts with one (database version 78 added the missing ones).
+    """
+    if not description or not description.startswith("[") or "]" not in description:
+        return None
+    return description[: description.index("]") + 1]
+
+
+def parameter_unit_text(description: str | None) -> str:
+    """The unit of a parameter as its description's bracket gives it, without the brackets (``MW``, ``-``);
+    empty for a marker that is no unit (:data:`NOT_UNITS`) or a description without a bracket."""
+    mark = bracket(description)
+    if mark is None or mark in NOT_UNITS:
+        return ""
+    return mark[1:-1]
 
 
 def normalise(value) -> str:

@@ -88,8 +88,9 @@ def _drop_blank_rows(df: pl.DataFrame, required_cols: list[str]) -> pl.DataFrame
 # Family 5 — node_type_sets (legacy: preprocessing/node_type_sets.py)
 # ===========================================================================
 
-# Mirror flextool.mod:192 ``default 'balance'`` clause on p_node_type.
-_DEFAULT_NODE_TYPE = "balance"
+#: The type of a node without a ``node_type`` (no value and no default in the database): a balance node, as the
+#: input checks take it.  The DB-direct node sets (``params/_projection.node_type_effective``) use it too.
+DEFAULT_NODE_TYPE = "balance"
 
 # (output filename, set of effective types that match the partition)
 _NODE_TYPE_PARTITIONS: list[tuple[str, frozenset[str]]] = [
@@ -117,7 +118,7 @@ def derive_node_effective_type(input_dir: Path,
     return (
         nodes.join(explicit, on="node", how="left")
              .with_columns(
-                 pl.col("type").fill_null(_DEFAULT_NODE_TYPE),
+                 pl.col("type").fill_null(DEFAULT_NODE_TYPE),
              )
     )
 
@@ -530,7 +531,7 @@ def derive_node_storage_binding_method(input_dir: Path,
     )
     # Single-valued contract (v54 migration): each node must appear at most
     # once.  A duplicate here means either a v52-era DB slipped past the
-    # v54 migration in update_flextool/db_migration.py, or a multi-row
+    # v54 migration in update_flextool/db_migration/, or a multi-row
     # record was manually inserted into node__storage_binding_method.csv.
     # Compare heights rather than silently dedup so the contract violation
     # surfaces as an explicit error.

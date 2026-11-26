@@ -26,7 +26,10 @@ def main() -> None:
     parser.add_argument(
         "--keep-entities",
         action="store_true",
-        help="Keep existing entities during purge (for fresh template DBs)",
+        help=(
+            "When purging, keep the target database's entities (by default they are deleted with the "
+            "alternatives, scenarios and parameter values)"
+        ),
     )
     args = parser.parse_args()
 

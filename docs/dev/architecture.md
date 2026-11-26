@@ -657,7 +657,7 @@ message_sources.py               The list's sources (W-0490, upgraded, unreadabl
 | File | Purpose |
 |---|---|
 | `self_update.py` (`update_flextool`) | `git pull` + project-side migration. |
-| `db_migration.py` (`migrate_database`) | Walk the version chain to the current `FLEXTOOL_DB_VERSION`. |
+| `db_migration/` (`migrate_database`) | Walk the version chain to the current `FLEXTOOL_DB_VERSION`: `runner.py` walks, one module per step (`v01_v25` .. `v84_branching`), `common.py` the shared helpers, `head.py` the refresh at the current version. |
 | `migration_backup.py` | The pre-migration copy (`<db>.premigration.bak`) and its atomic restore on failure; shared by `migrate_database` and the window's upgrade. |
 | `initialize_database.py` (`initialize_database`) | Create new DB from JSON template. |
 | `ensure_settings_db.py` | Idempotent settings-DB creation. |

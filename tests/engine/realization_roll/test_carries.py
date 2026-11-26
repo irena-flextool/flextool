@@ -102,14 +102,18 @@ def test_ladder_carry_is_the_jumps_purchases(tmp_path, monkeypatch):
     assert sr._objectives(steps) == pytest.approx([o * FACTOR for o in BUDGET_OBJECTIVES], rel=1e-9)
 
 
-def test_flow_group_cumulative_limit_is_per_solve(tmp_path, monkeypatch):
-    """T-c3: flow group ``fg`` = coal_u's output, ``max_cumulative_flow`` 0.5 MW (a constant).  The user docs
-    (reference/flow_groups.md: "Applied for each solve") give no carry: each roll caps its own path's hours.
-    R_0: path t01 + t02, coal <= 0.5 x 2 = 1 MWh: x_0 + a_0 <= 1 -> x_0 = 1, a_0 = 0: 10 + 0.5 x 30 = 25 -> 73 000.
-    R_1: the same (the realized 1 MWh is not subtracted): 73 000.  R_2 (t03): coal <= 0.5: 5 + 15 = 20 -> 58 400.
-    (With a carry over the period, 1.5 MWh - 2 realized, R_2 could not be met.)"""
+def test_flow_group_carry_is_the_jumps_flow(tmp_path, monkeypatch):
+    """T-c3: flow group ``fg`` = coal_u's output, ``max_cumulative_flow`` 0.5 MW (a constant): 0.5 x 3 = 1.5 MWh over
+    the period, carried across the rolls (reference/flow_groups.md).  A path row of roll k allows 0.5 x (realized h
+    + jump h + tail h) - the jumps' coal so far:
+    R_0: 0.5 x 2 = 1: x_0 + a_0 <= 1 -> x_0 = 1, a_0 = 0: 10 + 0.5 x 30 = 25 -> 73 000; carried 1.
+    R_1: 0.5 x 3 - 1 = 0.5: x_1 = 0.5, a_1 = 0: 5 + 15 + 15 = 35 -> 102 200; carried 1.5.
+    R_2 (t03): 0.5 x 3 - 1.5 = 0 left, gas: 30 -> 87 600."""
     spec = _spec(entities=[["flowGroup", "fg", None], ["flowGroup__unit__node", ["fg", "coal_u", "elec"], None]],
                  values=[["flowGroup", "fg", "max_cumulative_flow", pack(0.5, "float"), "init"]])
-    built, steps, _datas = sr._run(spec, tmp_path, monkeypatch)
+    built, steps, datas = sr._run(spec, tmp_path, monkeypatch)
     assert len(built) == 3
-    assert sr._objectives(steps) == pytest.approx([25.0 * FACTOR, 25.0 * FACTOR, 20.0 * FACTOR], rel=1e-9)
+    assert sr._objectives(steps) == pytest.approx([25.0 * FACTOR, 35.0 * FACTOR, 30.0 * FACTOR], rel=1e-9)
+    carried = [{str(g): v for g, v in d.flowgroup_realized.select(pl.col("g").cast(pl.Utf8), "flow").rows()}
+               for d in datas[1:]]
+    assert carried == [pytest.approx({"fg": 1.0}), pytest.approx({"fg": 1.5})]

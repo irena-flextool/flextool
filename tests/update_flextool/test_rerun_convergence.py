@@ -19,8 +19,8 @@ import pytest
 from spinedb_api import to_database
 
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
-from flextool.update_flextool.db_migration import (_DEFINITION_RENAMES, _REUSED_DEFINITIONS,
-                                                   BEHAVIOUR_CHANGE_MARKER_PREFIX)
+from flextool.update_flextool.db_migration import BEHAVIOUR_CHANGE_MARKER_PREFIX
+from flextool.update_flextool.db_migration.common import _DEFINITION_RENAMES, _REUSED_DEFINITIONS
 from flextool.update_flextool.db_handle import open_database_mapping
 from flextool.update_flextool.initialize_database import initialize_database
 

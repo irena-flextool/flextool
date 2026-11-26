@@ -70,6 +70,8 @@ __all__ = [
     "HalfFlow",
     "RegionSplit",
     "compute_master_hosted_nodes",
+    "master_arc_counts",
+    "master_units",
     "discover_regions",
     "split",
     "master_network_data",
@@ -505,116 +507,205 @@ def _master_local_procs(
     return {p for p, ts in triples_by_p.items() if ts <= ml_triples}
 
 
-def _validate_no_straddling_units(
+def _unit_names(data: FlexData) -> set[str]:
+    """Every unit of the solve (``process_unit`` ∪ ``process_indirect``; connections are in neither)."""
+    out: set[str] = set()
+    for fld in ("process_unit", "process_indirect"):
+        f = getattr(data, fld, None)
+        if f is not None and f.height > 0:
+            out |= {str(p) for p in f.get_column("p").to_list()}
+    return out
+
+
+def _side_of_node(n: str, node_region: dict[str, str], master_hosted_nodes) -> str | None:
+    """The decomposition side of node *n*: its region, ``"the master"`` (master-hosted) or None (a shared node)."""
+    if n in node_region:
+        return node_region[n]
+    return "the master" if n in master_hosted_nodes else None
+
+
+def master_units(
     data: FlexData,
-    all_region_nodes: set[str],
-    master_nodes: "frozenset[str] | set[str]",
-) -> None:
-    """Hard-error on any UNIT touching both a region node and a
-    master-hosted node (design decision D-a).
+    region_nodes: dict[str, set[str]],
+    master_hosted_nodes: "frozenset[str] | set[str]" = frozenset(),
+) -> frozenset[str]:
+    """The units that the Benders master holds whole: those with an arc through the unit itself (an input
+    ``(u, n, u)``, an output ``(u, u, n)``) whose nodes and start-up input nodes are on more than one side, two
+    regions or a region and the master-hosted nodes, whether a region group lists the unit or not.
 
-    Aggregated PER PROCESS across ALL its ``process_source_sink`` rows —
-    NOT per arc: a unit with one master-local arc plus one purely
-    in-region arc straddles *as an entity* while having no individually
-    straddling arc, and severing any unit arc silently loses conversion
-    terms.  Never a silent degrade (the fix_start precedent is the
-    anti-pattern this guards against).
-
-    A unit's start-up input nodes (``process_startup_node``: the start-up draw is a term on its units started,
-    which live in the region subproblem) count as its endpoints too.
+    Shared nodes (in no region, not master-hosted: commodity nodes) are on no side.  A unit with only direct flows
+    (arcs node to node: one input, one output, a single efficiency) is not one of them: it is cut between regions
+    like a connection.  The master keeps every arc of such a unit; each arc at a region node is coupled to a
+    half-flow in that region.
     """
-    if data.process_source_sink is None:
-        return
-    units: set[str] = set()
-    if data.process_unit is not None and data.process_unit.height > 0:
-        units |= set(data.process_unit["p"].to_list())
-    if (getattr(data, "process_indirect", None) is not None
-            and data.process_indirect.height > 0):
-        units |= set(data.process_indirect["p"].to_list())
-    if not units:
-        return
-    endpoints_by_unit: dict[str, set[str]] = {}
-    for r in data.process_source_sink.iter_rows(named=True):
-        if r["p"] in units:
-            endpoints_by_unit.setdefault(r["p"], set()).update(
-                (r["source"], r["sink"]))
+    pss = data.process_source_sink
+    if pss is None or pss.height == 0:
+        return frozenset()
+    units = _unit_names(data)
+    node_region = {n: r for r, ns in region_nodes.items() for n in ns}
+    through: set[str] = set()
+    sides: dict[str, set[str]] = {}
+    for p, source, sink in pss.select(pl.col("p", "source", "sink").cast(pl.Utf8)).iter_rows():
+        if p not in units:
+            continue
+        if p in (source, sink):
+            through.add(p)
+        for n in (source, sink):
+            side = None if n == p else _side_of_node(n, node_region, master_hosted_nodes)
+            if side is not None:
+                sides.setdefault(p, set()).add(side)
     startup_pn = getattr(data, "process_startup_node", None)
     if startup_pn is not None and startup_pn.height > 0:
         for p, n in startup_pn.select(pl.col("p").cast(pl.Utf8), pl.col("n").cast(pl.Utf8)).iter_rows():
-            if p in units:
-                endpoints_by_unit.setdefault(p, set()).add(n)
-    for unit in sorted(endpoints_by_unit):
-        eps = endpoints_by_unit[unit]
-        region_touch = eps & all_region_nodes
-        master_touch = eps & master_nodes
-        if region_touch and master_touch:
-            raise RuntimeError(
-                f"split: unit {unit!r} straddles the region/master "
-                f"boundary — across its arcs it touches region node(s) "
-                f"{sorted(region_touch)} AND master-hosted node(s) "
-                f"{sorted(master_touch)}.  A unit cannot be severed "
-                f"between a region subproblem and the Benders master.  "
-                f"Insert a handover CONNECTION between the region-side "
-                f"node and the master-hosted node (the handover-"
-                f"connection pattern) so every boundary arc is a "
-                f"connection, and keep the unit's arcs wholly on one "
-                f"side."
-            )
+            side = _side_of_node(n, node_region, master_hosted_nodes)
+            if p in units and side is not None:
+                sides.setdefault(p, set()).add(side)
+    return frozenset(p for p in through if len(sides.get(p, ())) > 1)
 
 
-def _validate_units_in_one_region(pss: pl.DataFrame | None, region_nodes: dict[str, set[str]],
-                                  listed: set[str]) -> None:
-    """Raise when the arcs of a unit that no region group lists have nodes in two regions.
+def master_arc_counts(
+    data: FlexData,
+    regions: list[str],
+    region_membership: dict[str, dict[str, set[str]]] | None = None,
+) -> tuple[int, int, int]:
+    """``(connections, unit__inputNode arcs, unit__outputNode arcs)`` in the Benders master: the connections with an
+    arc in the master, and the input / output node relationships of the units with an arc there (an arc
+    ``(u, n, u)`` is an input, ``(u, u, n)`` an output, a unit's direct arc ``(u, a, b)`` one of each).  The master
+    holds the arcs between regions, the arcs at its hosted nodes and every arc of :func:`master_units`."""
+    pss = data.process_source_sink
+    if pss is None or pss.height == 0:
+        return 0, 0, 0
+    if region_membership is None:
+        region_membership = load_region_membership(data, regions)
+    region_nodes = {r: m["nodes"] for r, m in region_membership.items()}
+    hosted = frozenset(compute_master_hosted_nodes(data, region_membership))
+    _, cross, region_master, master_local = _classify_arcs(
+        pss, region_nodes, master_nodes=hosted | master_units(data, region_nodes, hosted))
+    units = _unit_names(data)
+    connections: set[str] = set()
+    inputs: set[tuple[str, str]] = set()
+    outputs: set[tuple[str, str]] = set()
+    for frame in (cross, region_master, master_local):
+        for p, source, sink in frame.select(pl.col("p", "source", "sink").cast(pl.Utf8)).iter_rows():
+            if p not in units:
+                connections.add(p)
+                continue
+            if sink != p:
+                outputs.add((p, sink))
+            if source != p:
+                inputs.add((p, source))
+    return len(connections), len(inputs), len(outputs)
 
-    A node-to-node arc between regions (a connection, or a unit with one input, one output and one direct flow) is
-    cut into half-flows.  The arcs of a unit with several inputs or outputs, or of a unit with one input and one
-    output whose piecewise efficiency curve has two or more segments (an input flow of its own,
-    ``process_indirect``), go through the unit itself, so the split would keep the unlisted unit in each region
-    with only that region's side balanced (a free source in one region), and no region would own its investment.
-    A *listed* unit is kept in its own region only (unchanged here).
-    """
+
+def _validate_listed_units(pss: pl.DataFrame | None, region_nodes: dict[str, set[str]],
+                           region_procs: dict[str, set[str]], in_master: "frozenset[str] | set[str]",
+                           units: set[str]) -> None:
+    """Raise when a region group lists a unit none of whose nodes is in that region (all in other regions): the
+    split would keep the unit in the listing region, where its nodes have no balance (its flows would be lost)."""
     if pss is None or pss.height == 0:
         return
     node_region = {n: r for r, ns in region_nodes.items() for n in ns}
-    nodes_by_region: dict[str, dict[str, set[str]]] = {}
-    ends: dict[str, list[int]] = {}   # unit -> [inputs, outputs] of its arcs through the unit itself
+    regions_of: dict[str, set[str]] = {}
     for p, source, sink in pss.select(pl.col("p", "source", "sink").cast(pl.Utf8)).iter_rows():
-        if p in listed or (source in node_region and sink in node_region):
-            continue  # listed, or node-to-node: in one region or cut into half-flows
-        count = ends.setdefault(p, [0, 0])
-        count[0 if sink == p else 1] += 1
         for n in (source, sink):
             if n in node_region:
-                nodes_by_region.setdefault(p, {}).setdefault(node_region[n], set()).add(n)
-    bad = {p: by_r for p, by_r in sorted(nodes_by_region.items()) if len(by_r) > 1}
+                regions_of.setdefault(p, set()).add(node_region[n])
+    bad = [f"{p} (listed in {r}, its nodes in {', '.join(sorted(regions_of[p]))})"
+           for r, ps in sorted(region_procs.items()) for p in sorted(ps)
+           if p in units and p not in in_master and p in regions_of and r not in regions_of[p]]
     if bad:
-        def why(p: str) -> str:
-            # One input and one output through the unit: only a piecewise curve of two or more segments does that.
-            return ("a piecewise efficiency curve gives its input a flow of its own" if ends[p] == [1, 1]
-                    else "several inputs or outputs")
-        text = "; ".join(f"{p} (" + " and ".join(f"{', '.join(sorted(ns))} in {r}" for r, ns in sorted(by_r.items()))
-                         + f": {why(p)})" for p, by_r in bad.items())
         raise FlexToolConfigError(
-            "Benders decomposition: unit(s) with nodes in more than one region: " + text + ".  The split cuts "
-            "only a node-to-node flow between region subproblems (a connection, or a unit with one input, one "
-            "output and a single efficiency); these units convert through the unit itself.  Put all nodes of the "
-            "unit in one region, or join the regions with a connection.")
+            "Benders decomposition: unit(s) listed in a region group that has none of their nodes: "
+            + "; ".join(bad) + ".  A unit belongs to the region of its nodes: list it in that region's group "
+            "(group__unit), or remove it from the group (listing units is optional).")
+
+
+def _validate_master_units(data: FlexData, units: "frozenset[str] | set[str]", region_nodes: dict[str, set[str]],
+                           ) -> None:
+    """Raise when something that a region subproblem holds reads a term of a master unit other than its flows
+    (which the region sees as half-flows): a reserve, a start-up draw from a region node, a capacity margin /
+    inertia / non-synchronous group with one of the unit's region nodes, a flowGroup flow limit
+    (``_cross_connection_flow_references``), or integer online variables (the master would become a mixed-integer
+    problem).  A min-load section (min_load_efficiency) is no such term: it enters a node balance only on the
+    efficiency arc of a direct unit (``flow_from_nodeBalance_eff``), and a master unit's arcs go through the unit
+    (``noEff``; the section is in its conversion row, in the master)."""
+    if not units:
+        return
+    from flextool.engine.model import _group_slack
+
+    node_region = {n: r for r, ns in region_nodes.items() for n in ns}
+    region_nodes_of: dict[str, set[str]] = {}
+    pss = data.process_source_sink
+    for p, source, sink in pss.select(pl.col("p", "source", "sink").cast(pl.Utf8)).iter_rows():
+        if p in units:
+            region_nodes_of.setdefault(p, set()).update(n for n in (source, sink) if n in node_region)
+    problems: dict[str, list[str]] = {}
+
+    def _names(frame, col: str = "p") -> set[str]:
+        return (set() if frame is None or frame.height == 0
+                else {str(x) for x in frame.get_column(col).cast(pl.Utf8).to_list()})
+
+    for p in sorted(units & _names(getattr(data, "process_reserve_upDown_node_active", None))):
+        problems.setdefault(p, []).append("a reserve: provide it from units of the reserve's region")
+    startup_pn = getattr(data, "process_startup_node", None)
+    if startup_pn is not None and startup_pn.height > 0:
+        for p, n in startup_pn.select(pl.col("p").cast(pl.Utf8), pl.col("n").cast(pl.Utf8)).iter_rows():
+            if p in units and n in node_region:
+                problems.setdefault(p, []).append(
+                    f"start-up energy from node {n!r} of {node_region[n]}: take it from a commodity node")
+    if not getattr(data, "relax_integrality", False):
+        for p in sorted(units & _names(getattr(data, "process_online_integer", None))):
+            problems.setdefault(p, []).append(
+                "integer online variables: use startup_method linear, or reduce_unit_detail_method integers")
+    gn = data.group_node
+    if gn is not None and gn.height > 0:
+        members: dict[str, set[str]] = {}
+        for g, n in gn.select(pl.col("g").cast(pl.Utf8), pl.col("n").cast(pl.Utf8)).iter_rows():
+            members.setdefault(g, set()).add(n)
+        for what, set_name, active in (("capacity margin", "groupCapacityMargin", _group_slack.has_capacity_margin),
+                                       ("inertia", "groupInertia", _group_slack.has_inertia),
+                                       ("non-synchronous", "groupNonSync", _group_slack.has_non_sync)):
+            groups = getattr(data, set_name, None)
+            if groups is None or groups.height == 0 or not active(data):
+                continue
+            for g in sorted(_names(groups, "g")):
+                for p in sorted(units):
+                    if region_nodes_of.get(p, set()) & members.get(g, set()):
+                        problems.setdefault(p, []).append(
+                            f"{what} group {g!r} at one of its nodes: take the unit's nodes out of the group")
+    for ref in (r for r in _cross_connection_flow_references(data, set(units)) if r.startswith("flowGroup")):
+        p = ref.rsplit("'", 2)[-2]
+        problems.setdefault(p, []).append(ref.replace("connection", "unit") + ": leave the unit out of it")
+    if problems:
+        raise FlexToolConfigError(
+            "Benders decomposition: unit(s) with nodes in more than one region (or in a region and the master) are "
+            "solved in the Benders master, and the region subproblems see only their flows, so these cannot be "
+            "split: " + "; ".join(f"{p} ({', '.join(why)})" for p, why in sorted(problems.items()))
+            + ".  Or put all nodes of the unit in one region.")
 
 
 def _validate_startup_nodes(data: FlexData, region_nodes: dict[str, set[str]],
-                            region_procs: dict[str, set[str]]) -> None:
+                            region_procs: dict[str, set[str]],
+                            master_hosted_nodes: "frozenset[str] | set[str]" = frozenset(),
+                            in_master: "frozenset[str] | set[str]" = frozenset()) -> None:
     """Hard-error on a unit that takes start-up energy (``process_startup_node``, startup_input_method) from a node
-    of a region the unit is not in: the draw is a term on the unit's units started, which live in the unit's own
-    region subproblem, so it cannot enter the other region's balance."""
+    of a region the unit is not in, or from a master-hosted node: the draw is a term on the unit's units started,
+    which live in the unit's own region subproblem, so it cannot enter another region's or the master's balance.
+    A unit the master holds whole (*in_master*) has its start-ups in the master (:func:`_validate_master_units`
+    refuses its draws from region nodes)."""
     pn = getattr(data, "process_startup_node", None)
     if pn is None or pn.height == 0:
         return
     bad: list[str] = []
     all_region_procs = {q for ps in region_procs.values() for q in ps}
     for p, n in pn.select(pl.col("p").cast(pl.Utf8), pl.col("n").cast(pl.Utf8)).iter_rows():
+        if p in in_master:
+            continue
+        who = f"unit {p!r}" if p in all_region_procs else f"unit {p!r} of no region"
+        if n in master_hosted_nodes:
+            bad.append(f"{who} takes start-up energy from node {n!r} of the Benders master")
         for r, nodes in region_nodes.items():
             if n in nodes and p not in region_procs.get(r, set()):
-                who = f"unit {p!r}" if p in all_region_procs else f"unit {p!r} of no region"
                 bad.append(f"{who} takes start-up energy from node {n!r} of region {r!r}")
     if bad:
         raise RuntimeError(
@@ -673,10 +764,12 @@ def _user_constraint_sides(
             continue
         for r in f.iter_rows(named=True):
             cn = r["cn"]
+            if r["p"] in master_local_procs:
+                # The flow of a process the master holds whole is a master column, whichever its nodes.
+                _add(cn, r["p"], "master")
+                continue
             _add(cn, r["source"], _node_side(r["source"]))
             _add(cn, r["sink"], _node_side(r["sink"]))
-            if r["p"] in master_local_procs:
-                _add(cn, r["p"], "master")
     # Node-keyed references: (n, cn).
     for fld in ("p_node_constraint_state_coeff",
                 "p_node_constraint_invested_capacity_coeff",
@@ -695,6 +788,8 @@ def _user_constraint_sides(
     proc_sides: dict[str, set[str]] = {}
     if data.process_source_sink is not None:
         for r in data.process_source_sink.iter_rows(named=True):
+            if r["p"] in master_local_procs:
+                continue
             s = proc_sides.setdefault(r["p"], set())
             for n in (r["source"], r["sink"]):
                 side = _node_side(n)
@@ -891,10 +986,16 @@ def _limit_groups(data: FlexData) -> dict[str, str]:
     return out
 
 
+#: The side of an entity the Benders master holds (:func:`_validate_feature_groups_in_one_region`).
+_MASTER_SIDE = "the Benders master"
+
+
 def _validate_feature_groups_in_one_region(
     data: FlexData,
     region_nodes: dict[str, set[str]],
     region_procs: "dict[str, set[str]] | None" = None,
+    master_hosted_nodes: "frozenset[str] | set[str]" = frozenset(),
+    master_procs: "frozenset[str] | set[str]" = frozenset(),
 ) -> None:
     """A capacity-margin, inertia or non-synchronous group whose nodes lie in more than one region is an error,
     and so is an investment, retirement or cumulative-capacity limit group whose entities do.
@@ -905,8 +1006,11 @@ def _validate_feature_groups_in_one_region(
     investment periods; ``reduce_system_detail_method`` may leave inertia and non-synchronous out).  Nodes in no
     region (shared, replicated into every region) do not count.  A limit group (:func:`_limit_groups`: a limit
     value set, not only the method)
-    sums over its member entities (``group_entity``: nodes and processes, placed by ``region_nodes`` /
-    ``region_procs``): each region would bound its own members' share by the whole limit.
+    sums over its member entities (``group_entity``): each side would bound its own members' share by the whole
+    limit.  An entity's side is where its investment variable is: the master for a master-hosted node and for a
+    process with an arc in the master (*master_procs*: connections between regions or at master-hosted nodes, the
+    units the master holds whole, the master-local processes), else the region that lists it, else the region of its
+    nodes (:func:`process_region_by_nodes`, as the investment owner of an unlisted process).
     """
     from flextool.engine.model import _group_slack
 
@@ -937,21 +1041,30 @@ def _validate_feature_groups_in_one_region(
     max_errors: list[str] = []
     ge = data.group_entity
     if limit_groups and ge is not None and ge.height > 0:
-        entity_region = dict(region_of)
+        entity_side = process_region_by_nodes(data.process_source_sink, region_nodes)
+        entity_side.update(region_of)
         for r, ps in (region_procs or {}).items():
             for p in ps:
-                entity_region[p] = r
+                entity_side[p] = r
+        for e in set(master_hosted_nodes) | set(master_procs):
+            entity_side[e] = _MASTER_SIDE
         entity_members: dict[str, set[str]] = {}
         for g, e in ge.select(pl.col("g").cast(pl.Utf8), pl.col("e").cast(pl.Utf8)).iter_rows():
             entity_members.setdefault(g, set()).add(e)
         for g in sorted(limit_groups):
-            regions = sorted({entity_region[e] for e in entity_members.get(g, ()) if e in entity_region})
-            if len(regions) > 1:
+            by_side: dict[str, list[str]] = {}
+            for e in sorted(entity_members.get(g, ())):
+                if e in entity_side:
+                    by_side.setdefault(entity_side[e], []).append(e)
+            if len(by_side) > 1:
+                sides = sorted(by_side, key=lambda x: (x == _MASTER_SIDE, x))
+                text = (f"has entities in regions {', '.join(x for x in sides if x != _MASTER_SIDE)}"
+                        + (f" and {_MASTER_SIDE}" if _MASTER_SIDE in by_side else "")
+                        + " (" + "; ".join(f"{x}: {', '.join(by_side[x])}" for x in sides) + ")")
                 if limit_groups[g] == "min":
-                    errors.append(f"investment limit group {g!r} has entities in regions {', '.join(regions)}")
+                    errors.append(f"investment limit group {g!r} {text}")
                 else:
-                    max_errors.append(f"investment maximum group {g!r} has entities in regions "
-                                      f"{', '.join(regions)}")
+                    max_errors.append(f"investment maximum group {g!r} {text}")
     if errors or max_errors:
         why = []
         if errors:
@@ -960,7 +1073,8 @@ def _validate_feature_groups_in_one_region(
             why.append("each region could use all of a group's maximum")
         raise RuntimeError(
             "split: " + "; ".join(errors + max_errors) + ". A group's limit cannot be split between Benders "
-            f"region subproblems ({'; '.join(why)}). Use one group per region.")
+            f"region subproblems and the master ({'; '.join(why)}). Use one group per region, and one for the "
+            "connections between regions and the units with nodes in more than one region (the master's).")
 
 
 def _co2_master_partition(
@@ -1333,7 +1447,7 @@ def _build_region_data(
     new.process_exact = _filter_frame(getattr(src, "process_exact", None), "p", keep_procs)
     # Start-up input draws (startup_input_method): the region's units.  Their start-up nodes are in the region or in
     # no region (a shared commodity node, replicated and priced in each region): a node of another region is refused
-    # by split (_validate_startup_nodes), a master-hosted one is a straddling unit (_validate_no_straddling_units).
+    # by split (_validate_startup_nodes), and so is a master-hosted one.
     for _f in STARTUP_FIELDS:
         _obj = getattr(src, _f, None)
         if isinstance(_obj, Param):
@@ -1943,8 +2057,8 @@ def master_network_data(
 
     Returns a reduced :class:`FlexData` containing ONLY the cross-region
     ``(p, source, sink)`` arcs plus their invest / cost / timeline params,
-    with EVERY terminal node OMITTED from node balance (and the
-    block / state / inflow frames).  ``build_flextool`` over the result
+    with no balance node (every node is in a region; the block / state /
+    inflow frames are emptied too).  ``build_flextool`` over the result
     generates the master skeleton natively:
 
     * ``v_flow[conn, source, sink, d, t]`` for every cross arc (built from
@@ -1993,9 +2107,8 @@ def master_network_data(
     * the entity-keyed invest frames keep
       ``procs-of-kept-arcs ∪ master_hosted_nodes`` (master storage
       invest needs the ``e``-keyed annuity/lifetime/max-units rows);
-    * only the REGION-side endpoints of coupling arcs (and the
-      region↔region terminals) are omitted from balance — master-hosted
-      endpoints stay balanced;
+    * the master-hosted nodes are the master's balance nodes (on the
+      plain path the master has none);
     * user constraints / CO2 caps / group features whose referenced
       entities are ALL master-side are kept; straddling ones hard-error
       (same validation family as :func:`split`).
@@ -2023,10 +2136,13 @@ def master_network_data(
     # With the default empty master set the extra classification frames
     # are empty and this path is byte-identical to the historical 2-way
     # behaviour.
-    master_mode = bool(master_hosted_nodes)
+    # The units the master holds whole (:func:`master_units`) are master-side endpoints of their arcs, as in
+    # ``split``: their arcs at region nodes are couplings, their other arcs master-local.
+    in_master = master_units(data, region_nodes, master_hosted_nodes)
+    master_mode = bool(master_hosted_nodes) or bool(in_master)
     _pss_tagged, cross, region_master, master_local = _classify_arcs(
         data.process_source_sink, region_nodes,
-        master_nodes=master_hosted_nodes,
+        master_nodes=frozenset(master_hosted_nodes) | in_master,
     )
     cross_keys: set[tuple[str, str, str]] = {
         (r["p"], r["source"], r["sink"]) for r in cross.iter_rows(named=True)
@@ -2079,10 +2195,8 @@ def master_network_data(
         # silently mis-partition authored data.  The messages are
         # identical to ``split``'s, so a driver run that already raised
         # there cannot raise differently here.
-        _validate_no_straddling_units(
-            data, all_region_nodes, master_hosted_nodes)
         _ml_procs = _master_local_procs(
-            data.process_source_sink, master_local)
+            data.process_source_sink, master_local) | set(in_master)
         _validate_user_constraints(
             data, all_region_nodes, master_hosted_nodes, _ml_procs)
         master_cns = _master_side_constraint_ids(
@@ -2266,14 +2380,10 @@ def master_network_data(
                  "cohort_extend", "edl_invest_lines_run", "edl_divest_lines", "edl_existing_credit_lines",
                  "edl_existing_replacement_lines", "cdl_divest_built_lines", "cdl_extend_lines"):
         setattr(new, name, _keep_entity_frame(getattr(data, name, None)))
-    new.e_invest_total = _keep_entity_frame(data.e_invest_total)
-    new.e_divest_total = _keep_entity_frame(data.e_divest_total)
-    new.e_invest_max_total = _keep_entity_frame(data.e_invest_max_total)
-    new.e_divest_max_total = _keep_entity_frame(data.e_divest_max_total)
-    new.ed_invest_period_set = _keep_entity_frame(data.ed_invest_period_set)
-    new.ed_divest_period_set = _keep_entity_frame(data.ed_divest_period_set)
-    new.ed_invest_max_period = _keep_entity_frame(data.ed_invest_max_period)
-    new.ed_divest_max_period = _keep_entity_frame(data.ed_divest_max_period)
+    # Investment / retirement limits of the master's own entities only (the master counterpart of item 286: an
+    # entity floor of a region entity would be a master row with an empty left-hand side).
+    for name in _ENTITY_LIMIT_FIELDS:
+        setattr(new, name, _keep_entity_frame(getattr(data, name, None)))
     new.p_entity_previously_invested_capacity = _keep_entity_param(
         data.p_entity_previously_invested_capacity)
     new.p_entity_invested = _keep_entity_param(data.p_entity_invested)
@@ -2366,8 +2476,8 @@ def master_network_data(
 
     # Start-up input draws (startup_input_method): none in the network-only master; in master-hosted mode the
     # units of the kept arcs (the master-local units: a region unit's draw is in its region subproblem) at a
-    # master-hosted node or a node of no region (a commodity node, priced like the unit's fuel arc).  A master-local
-    # unit drawing from a region node straddles the boundary (_validate_no_straddling_units).
+    # master-hosted node or a node of no region (a commodity node, priced like the unit's fuel arc).  A master
+    # unit drawing from a region node is refused by split (_validate_master_units).
     _startup_pn = getattr(data, "process_startup_node", None)
     _region_node_union = {n for ns in region_nodes.values() for n in ns}
     startup_nodes_kept = (set() if _startup_pn is None else
@@ -2385,75 +2495,15 @@ def master_network_data(
             obj = None
         setattr(new, fld, obj)
 
-    # ``build_flextool``'s ALWAYS feature requires these four fields to be
-    # PRESENT (not None) even when empty (model/core.py ``ALWAYS``).  Emptying
-    # them (head(0)) — rather than nulling — OMITS every terminal node from
-    # balance while keeping the build's structural precondition satisfied:
-    # the master's ``v_flow`` is then free except for ``maxFlow`` and its
-    # own bound (Phase-3 §1.3).
-    def _empty_like_frame(df: pl.DataFrame | None) -> pl.DataFrame | None:
-        return df.head(0) if df is not None else df
-
-    def _empty_like_param(p: Param | None) -> Param | None:
-        if p is None:
-            return None
-        return Param(p.dims, p.frame.head(0), name=p.name)
-
-    # OMIT every cross-arc TERMINAL node from balance — that is the
-    # "unbalanced virtual node" requirement: with the terminals absent the
-    # master's trade ``v_flow`` is free except for ``maxFlow`` and its own
-    # bound (Phase-3 §1.3).  We do NOT empty ``nodeBalance`` entirely,
-    # because ``build_flextool`` requires a non-empty balance-node set to
-    # declare the ``vq_state_up/down`` slack vars and the ``nodeBalance_eq``
-    # row (a None ``nodeBalance_dt`` crashes ``add_var`` / ``add_cstr``).
-    # Instead we keep the NON-terminal nodes: in the reduced master they
-    # carry NO arcs (every non-cross arc was dropped) and NO inflow, so
-    # their balance collapses to ``slack = 0`` — structurally inert, with
-    # zero effect on the trade flow.  This satisfies the build precondition
-    # while still omitting exactly the trade terminals.
-    terminal_nodes: set[str] = set()
-    if not master_mode:
-        # Today's exact path: every cross-arc terminal is omitted.
-        for k in cross_keys:
-            terminal_nodes.add(k[1])
-            terminal_nodes.add(k[2])
-    else:
-        # Omit ONLY the region-side endpoints: both terminals of
-        # region↔region cross arcs (as today) plus the region-side
-        # endpoint of each region↔master coupling arc.  Master-hosted
-        # endpoints stay balanced (that is the whole point of the
-        # mode); master-local arc endpoints are all master-side and
-        # never omitted.
-        for r in cross.iter_rows(named=True):
-            terminal_nodes.add(r["source"])
-            terminal_nodes.add(r["sink"])
-        for r in region_master.iter_rows(named=True):
-            terminal_nodes.add(
-                r["source"] if r["_src_region"] is not None else r["sink"])
-
-    def _drop_terminal_frame(df: pl.DataFrame | None) -> pl.DataFrame | None:
-        if df is None or "n" not in df.columns:
-            return df
-        return df.filter(~_is_in_keep("n", terminal_nodes))
-
-    def _drop_terminal_param(p: Param | None) -> Param | None:
-        if p is None or "n" not in p.dims:
-            return p
-        return Param(p.dims, p.frame.filter(~_is_in_keep("n", terminal_nodes)),
-                     name=p.name)
-
-    new.nodeBalance = _drop_terminal_frame(data.nodeBalance)
-    if not master_mode:
-        new.p_inflow = _empty_like_param(data.p_inflow)
-    else:
-        # The master keeps its own inflow; every other balance node in
-        # the reduced data stays structurally inert (no arcs, no
-        # inflow ⇒ balance collapses to ``slack = 0``, exactly as the
-        # legacy all-emptied path).
-        new.p_inflow = _filter_param(data.p_inflow, "n",
-                                     set(master_hosted_nodes))
-    new.p_penalty_up = _drop_terminal_param(data.p_penalty_up)
-    new.p_penalty_down = _drop_terminal_param(data.p_penalty_down)
+    # Balance: only the master-hosted nodes (none on the plain path).  Every region node, the ends of the
+    # coupling arcs included, has its balance in its region, so the master's coupling ``v_flow`` is free except
+    # for ``maxFlow``, its bound and the master's own rows.  ``build_flextool`` builds a master without a balance
+    # node with no balance slacks or rows.  The frames stay present (filtered, not None): ALWAYS needs them.
+    master_set = set(master_hosted_nodes)
+    new.nodeBalance = _filter_frame(data.nodeBalance, "n", master_set)
+    new.p_inflow = _filter_param(data.p_inflow, "n", master_set)
+    new.p_penalty_up = _filter_param(data.p_penalty_up, "n", master_set)
+    new.p_penalty_down = _filter_param(data.p_penalty_down, "n", master_set)
     # Every master flow keeps the solve's step: the regions pin the master's half-flows per fine step.
     new.processCoarse = None
     new.process_coarse_step = None
@@ -2467,16 +2517,19 @@ def master_network_data(
 
 
 def _validate_cross_region_connections(data: FlexData, cross: pl.DataFrame,
-                                       region_master: pl.DataFrame) -> None:
+                                       region_master: pl.DataFrame,
+                                       in_master: "frozenset[str] | set[str]" = frozenset()) -> None:
     """Raise when a connection severed by the split has online variables, the exact transfer method or reserve.
 
     A severed connection is replaced by half-flows (other processes) in the regions, so its own rows are gone:
     its online status and direction switch would be free columns without flow rows, and its reserve (limited by
     its flows, connection_reserve_*) would have no channel left.  None of them can be split between two region
     subproblems.  Nor can a DC power-flow line: its dc_flow_eq joins the voltage angles of both end nodes.
+    The units the master holds whole (*in_master*, :func:`master_units`) keep their online variables there and
+    are checked by :func:`_validate_master_units`.
     """
     procs = {str(p) for frame in (cross, region_master) if frame is not None and frame.height > 0
-             for p in frame.get_column("p").to_list()}
+             for p in frame.get_column("p").to_list()} - set(in_master)
     if not procs:
         return
     # DC power-flow lines: dc_flow_eq joins the voltage angles of both end nodes, which half-flows cannot carry.
@@ -2626,9 +2679,14 @@ def split(
         exactly ONE half-flow on the region side, master-local arcs
         (and the processes ALL of whose arcs are master-local) are
         dropped from every region and NOT half-flowed, and authored
-        data that cannot be partitioned (a unit straddling the
-        boundary, a user constraint referencing both sides) raises a
-        hard error — never a silent degrade.
+        data that cannot be partitioned (a user constraint referencing
+        both sides) raises a hard error — never a silent degrade.
+
+        Whatever this set, a unit whose nodes are on more than one side
+        (two regions, or a region and the master-hosted nodes:
+        :func:`master_units`) is held whole by the master: its arcs at
+        region nodes are region↔master couplings, its other arcs
+        master-local, and no region carries its rows.
 
     Returns
     -------
@@ -2680,8 +2738,13 @@ def split(
 
     shared_nodes = all_nodes - all_region_nodes
     shared_procs = all_procs - all_region_procs
-    _validate_startup_nodes(data, region_nodes, region_procs)
-    _validate_units_in_one_region(data.process_source_sink, region_nodes, all_region_procs)
+    in_master = master_units(data, region_nodes, master_hosted_nodes)
+    _validate_listed_units(data.process_source_sink, region_nodes, region_procs, in_master, _unit_names(data))
+    _validate_master_units(data, in_master, region_nodes)
+    _validate_startup_nodes(data, region_nodes, region_procs, master_hosted_nodes, in_master)
+    # The master's side of the arc classification: its hosted nodes and the units it holds whole (an arc of such a
+    # unit at a region node is a region↔master coupling, any other of its arcs master-local).
+    master_side = frozenset(master_hosted_nodes) | in_master
 
     if master_hosted_nodes:
         overlap = set(master_hosted_nodes) & all_region_nodes
@@ -2703,23 +2766,17 @@ def split(
             for r in regions
         ]
 
-    _validate_feature_groups_in_one_region(data, region_nodes, region_procs)
-
     pss_tagged, cross, region_master, master_local = _classify_arcs(
         data.process_source_sink, region_nodes,
-        master_nodes=master_hosted_nodes,
+        master_nodes=master_side,
     )
 
     master_local_procs: set[str] = set()
     master_cns: set[str] = set()
     master_groups: set[str] = set()
-    if master_hosted_nodes:
-        # Hard validation FIRST (D-a): never silently mis-partition
-        # authored data.
-        _validate_no_straddling_units(
-            data, all_region_nodes, master_hosted_nodes)
+    if master_side:
         master_local_procs = _master_local_procs(
-            data.process_source_sink, master_local)
+            data.process_source_sink, master_local) | set(in_master)
         _validate_user_constraints(
             data, all_region_nodes, master_hosted_nodes,
             master_local_procs)
@@ -2729,8 +2786,8 @@ def split(
         # region copy would degenerate (constraint: ``0 sense
         # constant``; feature group: empty membership still charging
         # slack penalty).  The group/CO2 helpers also hard-error on
-        # straddling groups (same validation family as the unit /
-        # user-constraint checks above).
+        # straddling groups (same validation family as the
+        # user-constraint check above).
         master_cns = _master_side_constraint_ids(
             data, all_region_nodes, master_hosted_nodes,
             master_local_procs)
@@ -2752,7 +2809,11 @@ def split(
         # carry neither their arcs nor their entity rows.
         shared_procs -= master_local_procs
 
-    _validate_cross_region_connections(data, cross, region_master)
+    # The master's processes: the arcs between regions and at the master (their investment is the master's).
+    master_procs = ({str(p) for frame in (cross, region_master) for p in frame.get_column("p").to_list()}
+                    | master_local_procs)
+    _validate_feature_groups_in_one_region(data, region_nodes, region_procs, master_hosted_nodes, master_procs)
+    _validate_cross_region_connections(data, cross, region_master, in_master)
 
     _two_way = data.process_source_sink_2way_1var
     one_var_arcs: set[tuple[str, str, str]] = (

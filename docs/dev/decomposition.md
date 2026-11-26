@@ -165,6 +165,20 @@ master's `v_flow_back` index). The hand master and the pin diagnostic refuse
 back arcs. A DC power-flow line between regions is refused by `split`: the
 half-flows cannot carry its voltage angles.
 
+A unit with an arc through itself (`(u, n, u)` input, `(u, u, n)` output: several inputs or outputs, or a
+piecewise curve) whose nodes or start-up nodes are on more than one side — two regions, or a region and the
+master-hosted nodes — is held whole by the master (`_region_filter.master_units`), whether a region group lists it
+or not. It counts as a master-side endpoint in `_classify_arcs`: each of its arcs at a region node is a
+region↔master coupling (one half-flow in that region, keeping the arc's unitsize and eff/noEff class, pinned per
+`(d, t)` to the master's `v_flow`), its other arcs are master-local, it joins the master-local processes (no region
+carries its rows; `master_network_data` keeps its arcs, conversion, capacity, invest, costs and online rows), and its
+investment rides the master's invest frames. Its arcs are not capacity-clamped (`_ArcMaster.capacity_bounded`): an
+input arc has no `existing + invested` bound. `_validate_master_units` refuses what a region would have to read
+besides the flows (reserve, a start-up draw at a region node, a capacity margin / inertia / non-synchronous
+group at one of its region nodes, a flowGroup flow limit) and integer online variables. The run log
+line `Benders master: …` gives `_region_filter.master_arc_counts`. Without any balance node in the master (the
+plain path) the master builds with no balance rows.
+
 Star topologies (more than two regions sharing one pipeline) are not
 supported; the rewriter asserts bilateral arcs only.
 

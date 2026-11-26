@@ -24,7 +24,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from flextool.assistant.inputs._schema import bracket, ranks_in_words, shipped_schema
+from flextool.assistant.inputs._schema import ranks_in_words, shipped_schema
+from flextool.units_of_measure import bracket
 from flextool.assistant.inputs._units import parameter_unit
 from flextool.sqlite_url import read_only_sqlite_url_string, sqlite_file_path
 

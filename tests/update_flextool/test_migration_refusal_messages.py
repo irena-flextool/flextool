@@ -24,6 +24,7 @@ from flextool.update_flextool import db_migration as m
 from flextool.update_flextool import migration_backup as mb
 from flextool.update_flextool.frozen import read_db_version_ro
 from tests.db_utils import json_to_db
+from tests.update_flextool._rerun import patch_migration
 
 REPO = Path(__file__).resolve().parents[2]
 SEED = Path(__file__).resolve().parent / "data" / "v75_seed_stoch_two_period.json"
@@ -108,7 +109,7 @@ def test_migrate_database_cli_reports_a_failed_restore(tmp_path, old_template, m
     def failing_step(db) -> None:
         raise RuntimeError("step failed")
 
-    monkeypatch.setattr(m, f"_migrate_v{FLEXTOOL_DB_VERSION}_schema_batch", failing_step)
+    patch_migration(monkeypatch, f"_migrate_v{FLEXTOOL_DB_VERSION}_schema_batch", failing_step)
     monkeypatch.setattr(mb, "restore_from_backup", lambda _db, _backup: False)
     assert cmd_migrate_database.main([str(path)]) == 1
     err = capsys.readouterr().err

@@ -1,5 +1,7 @@
 import pandas as pd
 
+from flextool.process_outputs.calc_costs import _invest_with_fan, _with_fan
+
 
 def _invest_columns(par, s, v, entities) -> tuple[pd.Series, pd.Series]:
     """``(invested, in_construction)`` in MW (MWh for storage) by ``(entity, period)`` for ``entities``.
@@ -9,17 +11,21 @@ def _invest_columns(par, s, v, entities) -> tuple[pd.Series, pd.Series]:
     unit size over the solve's lead-time sets ``edd_invest_commission`` / ``edd_invest_in_construction``
     (``(entity, period_invest, period)``).  Without a construction lead time those sets are empty: a decision
     comes online in its own period and nothing is in construction.  Over combined solves the decisions are the
-    unioned realized ``v_invest``, each counted once.  A cell without a decision is empty.
+    unioned realized ``v_invest``, each counted once.  Inside a stochastic fan the decision is the one the costs
+    report (:func:`calc_costs._invest_with_fan`): under ``investments_after_reveal_period`` the reveal period's
+    investment is on its forecast copies, tied to one value, and is reported at the period label.  A cell
+    without a decision is empty.
     """
     empty = pd.Series(dtype=float)
-    if v.invest.empty or len(v.invest.columns) == 0:
+    invest = _invest_with_fan(v)
+    if invest.empty or len(invest.columns) == 0:
         return empty, empty
     ed = s.ed_invest[s.ed_invest.get_level_values('entity').isin(entities)]
     # Restrict to (entity, period) pairs that have a v_invest value in the
     # solve: s.ed_invest is the full possible-pairs union, so a never-
     # realized pair (e.g. (e, p2025) when only p2020 is realized in the
     # current solve) would raise a KeyError.
-    unstacked = v.invest.unstack()
+    unstacked = invest.unstack()
     ed = ed.intersection(unstacked.index)
     decision = unstacked[ed] * par.entity_unitsize[ed.get_level_values('entity').unique()]
     commission = s.edd_invest_commission
@@ -35,6 +41,13 @@ def _invest_columns(par, s, v, entities) -> tuple[pd.Series, pd.Series]:
         return joined.groupby(['entity', 'period'], sort=False)['value'].sum(min_count=1)
 
     return _by_period(commission), _by_period(s.edd_invest_in_construction)
+
+
+def _realized_divest(v) -> pd.DataFrame:
+    """The retirement decisions of existing capacity the costs report (rows: period, columns: entity):
+    ``v_divest`` plus, inside a stochastic fan, the branch-weighted ``v_divest_fan`` at the period label
+    (:func:`calc_costs._with_fan`; see :func:`_invest_columns`)."""
+    return _with_fan(v.divest, v.divest_fan)
 
 
 def _with_built_divested(divested: pd.Series, par, v, members, names) -> pd.Series:
@@ -87,7 +100,9 @@ def unit_capacity(par, s, v, r, debug):
     # invested capacity under "existing" in the dispatch solve.  The
     # invested capacity is reported in the ``invested`` column (this
     # solve's / roll's ``v_invest``) and the ``total`` column carries
-    # the cumulative sum; ``existing`` stays at the original baseline.
+    # the cumulative sum; ``existing`` stays at the original baseline,
+    # before retirements (also those of earlier solves): they are the
+    # ``divested`` column of their period.
     existing = par.entity_pre_existing[processes].unstack()
     results['existing'] = existing
 
@@ -96,9 +111,10 @@ def unit_capacity(par, s, v, r, debug):
 
     # Divested capacity - default to None, overwrite if data exists
     results['divested'] = pd.Series(dtype=float)
-    if not v.divest.empty and len(v.divest.columns) > 0:
+    divest = _realized_divest(v)
+    if not divest.empty and len(divest.columns) > 0:
         ed_unit_divest = s.ed_divest[s.ed_divest.get_level_values('entity').isin(s.process_unit)]
-        unstacked_divest = v.divest.unstack()
+        unstacked_divest = divest.unstack()
         ed_unit_divest = ed_unit_divest.intersection(unstacked_divest.index)
         unit_divest = ed_unit_divest.get_level_values('entity').unique()
         results['divested'] = unstacked_divest[ed_unit_divest] * par.entity_unitsize[unit_divest]
@@ -141,9 +157,10 @@ def connection_capacity(par, s, v, r, debug):
 
     # Divested capacity - default to empty, overwrite if data exists
     results['divested'] = pd.Series(dtype=float)
-    if not v.divest.empty and len(v.divest.columns) > 0:
+    divest = _realized_divest(v)
+    if not divest.empty and len(divest.columns) > 0:
         ed_conn_divest = s.ed_divest[s.ed_divest.get_level_values('entity').isin(s.process_connection)]
-        unstacked_divest = v.divest.unstack()
+        unstacked_divest = divest.unstack()
         ed_conn_divest = ed_conn_divest.intersection(unstacked_divest.index)
         conn_divest = ed_conn_divest.get_level_values('entity').unique()
         results['divested'] = unstacked_divest[ed_conn_divest] * par.entity_unitsize[conn_divest]  # was: results['invested']
@@ -191,9 +208,10 @@ def node_capacity(par, s, v, r, debug):
 
     # Divested capacity - default to empty, overwrite if data exists
     results['divested'] = pd.Series(dtype=float)
-    if not v.divest.empty and len(v.divest.columns) > 0:
+    divest = _realized_divest(v)
+    if not divest.empty and len(divest.columns) > 0:
         ed_node_divest = s.ed_divest[s.ed_divest.get_level_values('entity').isin(s.node)]
-        unstacked_divest = v.divest.unstack()
+        unstacked_divest = divest.unstack()
         ed_node_divest = ed_node_divest.intersection(unstacked_divest.index)
         node_divest = ed_node_divest.get_level_values('entity').unique()
         results['divested'] = unstacked_divest[ed_node_divest] * par.entity_unitsize[node_divest]  # was: v.invest, results['invested']

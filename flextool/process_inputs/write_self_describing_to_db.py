@@ -63,6 +63,41 @@ def _is_multidimensional(sheet: SheetData) -> bool:
     return False
 
 
+# Map parameters whose index is a number, not a name: a workbook carries every index as text, so their indexes
+# are turned back into floats (``unit.delay`` {2.0: 0.2, 3.0: 0.5}).  The part-load curve's load level is the
+# other float index, one level deep or under a period; it comes from the shape registry (_load_axis_parameters).
+_FLOAT_INDEX_PARAMETERS: frozenset[tuple[str, str]] = frozenset({("unit", "delay"), ("connection", "delay")})
+# The name of the load level of a nested part-load curve as the export writes it (an AxisName.L level).
+_LOAD_LEVEL = "load"
+
+
+def _load_axis_parameters() -> frozenset[tuple[str, str]]:
+    """The (class, parameter) pairs with a shape that has the part-load curve's load level."""
+    from flextool.engine.input._param_shapes import PARAM_ALLOWED_SHAPES, AxisName, shape_to_axes
+    return frozenset(key for key, shapes in PARAM_ALLOWED_SHAPES.items()
+                     if any(AxisName.L in shape_to_axes(s).map_levels for s in shapes))
+
+
+def _float_index_parameters() -> frozenset[tuple[str, str]]:
+    """The (class, parameter) pairs whose 1-level Map index is a float: delay and the part-load curves."""
+    return _FLOAT_INDEX_PARAMETERS | _load_axis_parameters()
+
+
+def _float_load_levels(value: Map) -> Map:
+    """*value* with the indexes of every level named ``load`` turned into floats (a nested part-load curve)."""
+    indexes = [_float_index(i) for i in value.indexes] if value.index_name == _LOAD_LEVEL else list(value.indexes)
+    values = [_float_load_levels(v) if isinstance(v, Map) else v for v in value.values]
+    return Map(indexes=indexes, values=values, index_name=value.index_name)
+
+
+def _float_index(value: Any) -> Any:
+    """An index read from a workbook as a float when it is a number; anything else stays as it is."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return value
+
+
 def _registry_facet_targets() -> "dict[tuple[str, str], list[tuple[str, tuple[str, ...], frozenset[str]]]]":
     """Return the registry's facet-target map.
 
@@ -433,8 +468,11 @@ def _group_multi_index_records(
             templates[key] = rec
 
     nested: list[dict[str, Any]] = []
+    load_params = _load_axis_parameters()
     for key, entries in groups.items():
         top_map = _build_nested_map(entries)
+        if (key[0], key[2]) in load_params:
+            top_map = _float_load_levels(top_map)
         rec = dict(templates[key])
         rec["value"] = top_map
         rec["index_value"] = None
@@ -493,8 +531,11 @@ def _group_map_records(
 
     # Build collapsed Map records
     collapsed: list[dict[str, Any]] = []
+    float_index = _float_index_parameters()
     for key, entries in map_groups.items():
         indexes = [e[0] for e in entries]
+        if (key[0], key[2]) in float_index:
+            indexes = [_float_index(i) for i in indexes]
         values = [e[1] for e in entries]
         index_name = map_templates[key].get("index_name") or "index"
         rec = dict(map_templates[key])
@@ -577,7 +618,9 @@ def _write_sheet(
                             "Could not add link entity %s (%s): %s",
                             byname, ec.class_name, exc,
                         )
-        return
+        if not sheet.records:
+            return
+        # A link sheet's records are its entity existence rows: written below like any sheet's.
 
     if not sheet.records:
         return
@@ -825,7 +868,8 @@ def _write_scenarios(
 
         # Sort by rank before adding
         alt_ranks.sort(key=lambda x: x[1])
-        for rank, (alt_name, _original_rank) in enumerate(alt_ranks):
+        # Ranks from 1, as the Spine DB editor and the other importers number them.
+        for rank, (alt_name, _original_rank) in enumerate(alt_ranks, start=1):
             # Ensure the alternative exists
             if alt_name not in alternatives_added:
                 alternatives_added.add(alt_name)

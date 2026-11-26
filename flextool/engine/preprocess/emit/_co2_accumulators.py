@@ -417,7 +417,23 @@ def compute_co2_rolling_accumulator(
         ).select("group", "period", "value")
 
     attributed = _with_represented(attributed, flex_data)
-    return _combine_with_prior(attributed, prior_cumulative_co2)
+    return _reweigh_split_periods(_combine_with_prior(attributed, prior_cumulative_co2), flex_data)
+
+
+def _reweigh_split_periods(carrier: pl.DataFrame, flex_data) -> pl.DataFrame:
+    """*carrier* with the represented tonnes of each period that the solves of a chain split (item 1042) set to the
+    period's realized tonnes × years_represented / share* of this solve (``core._co2_total_share``): one weight
+    for every hour of the period, the earlier solves' part included, as co2_max_total weighs them."""
+    from flextool.engine.model.core import _co2_split_represented, _co2_total_share
+
+    split = _co2_total_share(flex_data)
+    if split is None or carrier.height == 0:
+        return carrier
+    frame = carrier.select(alias_to_axis("group", "g"), alias_to_axis("period", "d"),
+                           pl.col("p_co2_cum_realized_tonnes"), pl.col("p_co2_cum_realized_represented"))
+    redone = _co2_split_represented(frame.select("g", "d", value="p_co2_cum_realized_represented"),
+                                    frame.select("g", "d", value="p_co2_cum_realized_tonnes"), split, flex_data)
+    return carrier.with_columns(p_co2_cum_realized_represented=redone["value"])
 
 
 def _startup_contribution(flex_data, sol, realized_dt: pl.DataFrame, cn_co2: pl.DataFrame,

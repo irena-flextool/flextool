@@ -718,6 +718,16 @@ def _entity_all_capacity(
                 v_divest[e, d_dv] * unitsize[e]
               - v_divested_built[e, d] * unitsize[e]   (the model-built capacity retired so far)
               + v_extended[e, d] * unitsize[e]         (the capacity extended beyond its end of life)
+
+        entity_all_capacity[e, L] = Σ_{b ∈ B(L)} pd_branch_weight[b] · entity_all_capacity[e, b]
+          L a realized investment period (``realized_invest_periods``) that is the label of a stochastic fan whose
+          branch periods B(L) decide investments or retirements (``invest_solve_branching_method`` other than
+          ``operations_only``)
+
+    In such a fan the label decides nothing; the capacity at the label is that of its branches, weighted as the
+    reported investment (``v_invest_fan``) and the costs weight them (:mod:`._fan_labels`).  A realized label is a
+    tied period (the reveal period under ``investments_after_reveal_period``), so this is the capacity of every
+    branch.  An unrealized label keeps its own row: its branches' investments are per branch and not reported.
     """
     # Collect base existing — start from p_entity_all_existing if
     # available; else fall back to a (entity × period) zero frame
@@ -934,6 +944,15 @@ def _entity_all_capacity(
         .select("e", "d", "total")
         .collect()
     )
+    from flextool.process_outputs._fan_labels import at_fan_labels, recourse_branch_labels
+
+    realized = set(flex_data.realized_invest_periods or ())
+    tied = [b for b, label in recourse_branch_labels(flex_data, retirements=True).items() if label in realized]
+    if tied and combined.height > 0:
+        at_label = at_fan_labels(combined.filter(pl.col("d").is_in(tied)), flex_data, "d",
+                                 value="total").rename({"total": "at_label"})
+        combined = (combined.join(at_label, on=["e", "d"], how="full", coalesce=True, maintain_order="left_right")
+                            .select("e", "d", total=pl.coalesce("at_label", "total")))
     if combined.height == 0:
         idx = pd.MultiIndex.from_arrays([[], []], names=["solve", "period"])
         out = pd.DataFrame(index=idx, dtype=float)
@@ -1552,23 +1571,17 @@ def read_parameters(
         densify_entities=_entity_universe,
     )
 
-    # entity_pre_existing — the existing capacity column of the capacity tables: the existing cohort in
-    # service less the retirements of it earlier solves realized (``p_entity_pre_existing −
-    # p_entity_retired_carried``), without the carried investments and life extensions (a carried life
-    # extension is an extension cohort of its own).  Without the cohort fields (a csv-dump reload):
-    # ``entity_all_existing`` minus ``p_entity_previously_invested_capacity`` (the carried investments in
-    # service, net of their own carried retirements).  Single solve: identical to entity_all_existing.
+    # entity_pre_existing — the existing capacity column of the capacity tables: the user's existing capacity in
+    # service in the period (``p_entity_pre_existing``: its lifetime and a period-varying ``existing``), before any
+    # retirement, also one an earlier solve of a chain realized (retirements are the divested column of their
+    # period), and without the carried investments and life extensions (a carried life extension is an extension
+    # cohort of its own).  So every solve holding a period gives it the same value.  Without the cohort fields (a
+    # csv-dump reload): ``entity_all_existing`` minus ``p_entity_previously_invested_capacity`` (the carried
+    # investments in service, net of their own carried retirements).  Single solve: identical to
+    # entity_all_existing.
     if getattr(flex_data, "p_entity_pre_existing", None) is not None:
-        from polar_high import Param  # local import — Param is heavy
-        from flextool.engine.input._axis_enums import align_join_dtypes  # local: flextool.engine loads polar_high
-        pre_lf = flex_data.p_entity_pre_existing.frame.lazy()
-        carried = getattr(flex_data, "p_entity_retired_carried", None)
-        if carried is not None and carried.frame.height > 0:
-            pre_lf, ret_lf = align_join_dtypes(pre_lf, carried.frame.lazy().rename({"value": "ret"}), ["e", "d"])
-            pre_lf = (pre_lf.join(ret_lf, on=["e", "d"], how="left")
-                            .with_columns(value=pl.col("value") - pl.col("ret").fill_null(0.0)))
         p.entity_pre_existing = _pdX_per_entity(
-            Param(("e", "d"), pre_lf.select("e", "d", "value").collect()), solve_name=solve_name,
+            flex_data.p_entity_pre_existing, solve_name=solve_name,
             entity_dim="e", col_name="entity", flex_data=flex_data,
             densify_entities=_entity_universe,
         )
@@ -1607,17 +1620,11 @@ def read_parameters(
         )
 
     # entity_user_existing — the reported fixed cost of existing capacity is charged on the user's existing
-    # capacity aged over its lifetime (``p_entity_pre_existing``, set for the reported costs): the capacity
-    # carried from earlier solves is charged in the lump of the solve that invested in it, a retirement's saving
-    # in the lump of the retirement.  A csv-dump reload does not carry it: there it is ``entity_pre_existing``.
-    if getattr(flex_data, "p_entity_pre_existing", None) is not None:
-        p.entity_user_existing = _pdX_per_entity(
-            flex_data.p_entity_pre_existing, solve_name=solve_name,
-            entity_dim="e", col_name="entity", flex_data=flex_data,
-            densify_entities=_entity_universe,
-        )
-    else:
-        p.entity_user_existing = p.entity_pre_existing
+    # capacity aged over its lifetime (``p_entity_pre_existing``, set for the reported costs, the same as
+    # ``entity_pre_existing``): the capacity carried from earlier solves is charged in the lump of the solve that
+    # invested in it, a retirement's saving in the lump of the retirement.  A csv-dump reload does not carry it:
+    # there it is ``entity_pre_existing``.
+    p.entity_user_existing = p.entity_pre_existing
 
     # entity_all_capacity — post-solve derived.
     p.entity_all_capacity = _entity_all_capacity(

@@ -314,10 +314,10 @@ def _default_suspect(con, gap, commits):
 
 def storage_suspects(path: str | Path, commits: dict[int, tuple[str, str]] | None = None) -> list:
     """One suspect ``sn:<entity id>:<alternative id>`` per ``(node, alternative)`` where the version 77 upgrade
-    writes the old default ``fix_start`` (``db_migration.classify_storage_default``, the exact v77 rule, on the
+    writes the old default ``fix_start`` (``db_migration.v77.classify_storage_default``, the exact v77 rule, on the
     snapshot opened read-only).  None when the snapshot has no v77 commit.  Raises
     :class:`~value_list_repair.RepairError` for an older SpineDB schema revision, before any spinedb_api open."""
-    from flextool.update_flextool import db_migration as dbm
+    from flextool.update_flextool.db_migration import v77 as dbm
     from flextool.update_flextool import value_list_suspects as vs
     from flextool.update_flextool.db_handle import open_database_mapping
     from flextool.update_flextool.frozen import _connect_ro, schema_outdated_ro

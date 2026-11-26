@@ -348,7 +348,7 @@ For VRE units (units that use an `upper_limit` profile) the model also reports c
 ## Capacity and investment results
 
 - `unit`, `connection`, `node` entities `capacity` parameter — [MW or MWh] decomposed into:
-    - *existing* — capacity assumed at the start of the period: the `existing` capacity in service, less what earlier solves of the run retired of it (a life extension carried from an earlier solve is an extension cohort, see below, not existing capacity)
+    - *existing* — capacity assumed at the start of the period: the `existing` capacity in service in the period (as its lifetime and a period-varying `existing` give), before any retirement; retirements, also those decided by earlier solves of the run, are in *divested* of the period they happen in (a life extension carried from an earlier solve is an extension cohort, see below, not existing capacity)
     - *invested* — capacity that comes online in the period (without a construction lead time, the capacity invested in that period)
     - *in_construction* — capacity decided but not yet operating in the period; always present, empty without a construction lead time
     - *divested* — capacity the model decided to retire at the start of the period

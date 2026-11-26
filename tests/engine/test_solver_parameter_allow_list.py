@@ -304,7 +304,8 @@ def test_flextool3_highs_settings_are_left_out_of_a_commercial_solve(caplog) -> 
 
 def test_flextool3_highs_names_are_the_migrations() -> None:
     """The names the v56 migration folds FlexTool 3's highs_method / highs_parallel / highs_presolve into."""
-    source = (REPO / "flextool" / "update_flextool" / "db_migration.py").read_text(encoding="utf-8")
+    source = "".join(path.read_text(encoding="utf-8")
+                     for path in sorted((REPO / "flextool" / "update_flextool" / "db_migration").glob("*.py")))
     assert set(re.findall(r'highs_key="(\w+)"', source)) == _solver_dispatch._FLEXTOOL3_HIGHS_OPTIONS
 
 
@@ -366,7 +367,7 @@ def test_ft3_highs_settings_of_a_migrated_database_are_left_out_of_a_gurobi_solv
     from spinedb_api.filters.scenario_filter import apply_scenario_filter_to_subqueries
 
     from flextool.engine.input._solve_config import SolveConfig
-    from flextool.update_flextool import db_migration
+    from flextool.update_flextool.db_migration import v56_renames
     from tests.db_utils import json_to_db
 
     url = json_to_db(REPO / "tests" / "fixtures" / "stochastics.json", tmp_path / "ft3.sqlite")
@@ -382,8 +383,8 @@ def test_ft3_highs_settings_of_a_migrated_database_are_left_out_of_a_gurobi_solv
         assert not errors, errors
         db.commit_session("FlexTool 3 HiGHS settings on a Gurobi solve")
         for step in ("method", "parallel", "presolve"):
-            getattr(db_migration, f"_migrate_v56_fold_highs_{step}_into_solver_arguments")(db)
-            getattr(db_migration, f"_migrate_v56_remove_highs_{step}")(db)
+            getattr(v56_renames, f"_migrate_v56_fold_highs_{step}_into_solver_arguments")(db)
+            getattr(v56_renames, f"_migrate_v56_remove_highs_{step}")(db)
     with DatabaseMapping(url) as db:
         apply_scenario_filter_to_subqueries(db, scenario)
         sc = SolveConfig.load_from_db(db, logging.getLogger("test.ft3"))

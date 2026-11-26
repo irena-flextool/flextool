@@ -26,7 +26,7 @@ entry: the next roll's unit commitment and ramps continue from the dispatch that
 storage or investment solve in between.  The routed ``roll_end_step`` also says where that step ends on the base
 timeline (:func:`with_end_position`), so a solve with longer steps continues the finer dispatch realized before it
 when its own first step's predecessor ends at the same time.  The running totals (``cumulative_co2``, ``cumulative_commodity``,
-``cum_sim_hours``) are not routed: every sub-solve passes them on (its own realised part added), so the sequential
+``cum_sim_hours``, ``cumulative_flowgroup``) are not routed: every sub-solve passes them on (its own realised part added), so the sequential
 predecessor already holds the total realised before the sub-solve, at any level.
 
 The registry is run-scoped (one :class:`CarryRouter` per cascade run), entries are appended in run order (which is

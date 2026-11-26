@@ -63,7 +63,7 @@ PRIOR_MEMBERS: dict[int, tuple[str, ...]] = {22: (
     "invest_retire_total", "invest_retire_period_total")}
 #: The member the step appends (the one the bug wrote over the list's first member).
 APPENDED: dict[int, str] = {22: "cumulative_limits"}
-#: The step's own commit message (``db_migration._commit_step``), the commit right after its value-list commit.
+#: The step's own commit message (``db_migration.common._commit_step``), the commit right after its value-list commit.
 STEP_COMMIT: dict[int, str] = {22: "Added cumulative investments"}
 
 _PREFIX = "Updated Flextool data structure to version "
@@ -87,7 +87,7 @@ class Finding:
     list_commit: int = field(default=0, compare=False)
 
 
-#: The commit of a migration step that adds value list members (``db_migration.add_value_list_manual``).
+#: The commit of a migration step that adds value list members (``db_migration.common.add_value_list_manual``).
 _LIST_STEP = "Added new parameter value lists"
 
 

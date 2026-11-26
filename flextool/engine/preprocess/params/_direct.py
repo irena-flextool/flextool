@@ -268,16 +268,6 @@ def constraint_sense_from_source(source: "InputSource") -> pl.DataFrame:
 # §5.2.7 — method discriminator scalars (string)
 
 
-def node_node_type_from_source(source: "InputSource") -> pl.DataFrame:
-    """``node.node_type`` → ``[n, value]`` with ``balance`` default
-    broadcast to every node.
-    """
-    df = source.parameter("node", "node_type")
-    if df.height == 0:
-        return pl.DataFrame(schema={"n": pl.Utf8, "value": pl.Utf8})
-    return df.lazy().rename({"name": "n"}).select("n", "value").collect()
-
-
 def node_inflow_method_from_source(source: "InputSource") -> pl.DataFrame:
     """``node.inflow_method`` → ``[n, value]``.  None default — only
     nodes with an explicit inflow_method are returned.

@@ -16,9 +16,11 @@ import pytest
 
 from flextool import run_warnings
 from flextool.update_flextool import db_migration
+from flextool.update_flextool.db_migration import common, runner
 from flextool.update_flextool import value_list_history as vlh
 from flextool.update_flextool.value_list_history import Finding
 from tests._support.coded_warnings import capture_coded
+from tests.update_flextool._rerun import patch_migration
 
 _PREFIX = "Updated Flextool data structure to version "
 
@@ -83,17 +85,20 @@ def test_an_unreadable_file_gives_no_finding(tmp_path: Path) -> None:
 def _step_blocks() -> dict[int, str]:
     """``{N: source of step N}``, the helper functions it calls included (four levels deep: step 82 reaches
     the member appends through ``_v81_refresh`` → ``_v81_value_lists`` → ``_append_list_members``)."""
-    parts = re.split(r"elif next_version == (\d+):", inspect.getsource(db_migration._migrate_open))
+    parts = re.split(r"elif next_version == (\d+):", inspect.getsource(runner._migrate_open))
 
-    def expand(text: str, depth: int, seen: set[str]) -> str:
+    package = db_migration.__name__
+
+    def expand(text: str, scope: dict, depth: int, seen: set[str]) -> str:
         out = text
         for name in sorted(set(re.findall(r"\b(\w+)\(", text)) - seen):
-            func = getattr(db_migration, name, None)
-            if depth and inspect.isfunction(func) and func.__module__ == db_migration.__name__:
+            func = scope.get(name)
+            if depth and inspect.isfunction(func) and (func.__module__ + ".").startswith(package + "."):
                 seen.add(name)
-                out += expand(inspect.getsource(func), depth - 1, seen)
+                out += expand(inspect.getsource(func), func.__globals__, depth - 1, seen)
         return out
-    return {int(parts[i]): expand(parts[i + 1], 4, set()) for i in range(1, len(parts), 2)}
+    scope = runner._migrate_open.__globals__
+    return {int(parts[i]): expand(parts[i + 1], scope, 4, set()) for i in range(1, len(parts), 2)}
 
 
 def test_touch_and_append_match_the_migration_steps() -> None:
@@ -212,7 +217,7 @@ def test_guard_stops_an_import_that_rewrites_a_member(schema_db_url: str, tmp_pa
         return 1, []
 
     with open_database_mapping(f"sqlite:///{path}") as db:
-        db_migration.add_value_list_manual(db, [["invest_methods", "first_new"]])   # the real import: fine
-        monkeypatch.setattr(db_migration, "import_data", buggy_import)
+        common.add_value_list_manual(db, [["invest_methods", "first_new"]])   # the real import: fine
+        patch_migration(monkeypatch, "import_data", buggy_import)
         with pytest.raises(db_migration.FlexToolMigrationError, match="invest_methods: 'not_allowed'"):
-            db_migration.add_value_list_manual(db, [["invest_methods", "second_new"]])
+            common.add_value_list_manual(db, [["invest_methods", "second_new"]])

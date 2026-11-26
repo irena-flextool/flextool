@@ -30,13 +30,14 @@ from spinedb_api.exception import NothingToCommit
 
 from flextool._resources import package_data_path
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
-from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import head, v81, v82
 from flextool.update_flextool.db_migration import migrate_database
 
 from tests.update_flextool._rerun import v75b_url
+from tests.update_flextool._rerun import patch_migration
 
-OLD = tuple(m.V82_PARAMETER_RENAMES)
-NEW = tuple(m.V82_PARAMETER_RENAMES.values())
+OLD = tuple(v82.V82_PARAMETER_RENAMES)
+NEW = tuple(v82.V82_PARAMETER_RENAMES.values())
 #: Stored at 80: (alternative index, old name, value).
 STORED = [
     (0, "inflation_rate", 0.02),
@@ -115,7 +116,7 @@ def renamed(tmp_path_factory) -> dict:
 
 def test_values_keep_their_bytes_under_the_new_names(renamed) -> None:
     before, after = renamed["before"]["values"], renamed["after"]["values"]
-    renames = m.V82_PARAMETER_RENAMES
+    renames = v82.V82_PARAMETER_RENAMES
     moved = {(c, e, renames[p], a): v for (c, e, p, a), v in before.items() if c == "model" and p in renames}
     assert len(moved) == len(STORED)
     assert {k: v for k, v in after.items() if k[0] == "model" and k[2] in NEW} == moved
@@ -127,7 +128,7 @@ def test_definitions_keep_their_defaults_and_get_the_shipped_fields(renamed) -> 
     rewritten): empty for the rate, 0.0, the user's 0.25; constant, group ``model``, the shipped description."""
     before, after = renamed["before"]["defs"], renamed["after"]["defs"]
     shipped = _shipped()
-    for old, new in m.V82_PARAMETER_RENAMES.items():
+    for old, new in v82.V82_PARAMETER_RENAMES.items():
         assert ("model", old) not in after
         assert after[("model", new)][4:] == before[("model", old)][4:], new
         assert after[("model", new)][:4] == (shipped[("model", new)], ("float",), "model", None), new
@@ -138,7 +139,7 @@ def test_definitions_keep_their_defaults_and_get_the_shipped_fields(renamed) -> 
 
 def test_descriptions_are_the_shipped_ones(renamed) -> None:
     after, shipped = renamed["after"]["defs"], _shipped()
-    for key, text in m._v82_texts().items():
+    for key, text in v82._v82_texts().items():
         assert after[key][0] == shipped[key] == text, key
     assert "discount_offset_investment - 1" in after[("unit", "discount_rate")][0]
     assert "social_discount_rate" in after[("node", "payback_time")][0]
@@ -146,7 +147,7 @@ def test_descriptions_are_the_shipped_ones(renamed) -> None:
 
 def test_no_shipped_description_names_an_old_name() -> None:
     """Neither the schema nor a text the v81 refresh writes on a database at 82 names an old parameter."""
-    texts = list(_shipped().values()) + list({**m._v81_texts(), **m._v82_texts()}.values())
+    texts = list(_shipped().values()) + list({**v81._v81_texts(), **v82._v82_texts()}.values())
     for old in OLD:
         assert not [t for t in texts if old in (t or "")], old
 
@@ -170,7 +171,7 @@ def test_development_v81_database_reaches_the_same_state(tmp_path_factory, renam
     with DatabaseMapping(url) as db:
         _plant(db)
         pdef = db.get_item("parameter_definition", entity_class_name="unit", name="payback_time")
-        db.update_parameter_definition(id=pdef["id"], description=m._v81_superseded()[("unit", "payback_time")][1])
+        db.update_parameter_definition(id=pdef["id"], description=v81._v81_superseded()[("unit", "payback_time")][1])
         db.remove_item("parameter_definition",
                        db.get_item("parameter_definition", entity_class_name="node", name="build_year")["id"])
         db.commit_session("a development v81 database")
@@ -186,9 +187,9 @@ def _no_commit(db, step, monkeypatch) -> None:
             db_.commit_session(message)
         commits.append(message)
 
-    monkeypatch.setattr(m, "_commit_step", commit_must_be_empty)
+    patch_migration(monkeypatch, "_commit_step", commit_must_be_empty)
     step(db)
-    if step is m._migrate_v82_schema_batch:
+    if step is v82._migrate_v82_schema_batch:
         assert len(commits) == 1, commits
     else:
         assert commits == []
@@ -201,7 +202,7 @@ def _no_commit(db, step, monkeypatch) -> None:
                                   "_refresh_head_schema"])
 def test_rerun_commits_nothing(renamed, part, monkeypatch) -> None:
     with DatabaseMapping(renamed["url"]) as db:
-        _no_commit(db, getattr(m, part), monkeypatch)
+        _no_commit(db, getattr(head if part == "_refresh_head_schema" else v82, part), monkeypatch)
     assert _state(renamed["url"]) == renamed["after"]
 
 
@@ -265,7 +266,7 @@ def test_old_definition_back_beside_the_new_one(tmp_path_factory, capsys, monkey
     assert (after[("model", (entity,), "discount_offset_investment", alts[0])]
             == before[("model", (entity,), "inflation_offset_investment", alts[0])])
     with DatabaseMapping(url) as db:
-        _no_commit(db, m._migrate_v82_schema_batch, monkeypatch)
+        _no_commit(db, v82._migrate_v82_schema_batch, monkeypatch)
 
 
 def test_empty_old_definition_back_at_82_is_removed(tmp_path_factory, renamed) -> None:
@@ -287,22 +288,22 @@ def test_empty_old_definition_back_at_82_is_removed(tmp_path_factory, renamed) -
 
 def test_head_refresh_writes_the_v82_text_for_a_superseded_pair(tmp_path_factory) -> None:
     """A database at the current version whose ``payback_time`` still has the description a development build of
-    v82 shipped gets the v82 description (at 83 by text alone, :func:`db_migration._head_superseded_texts`)."""
+    v82 shipped gets the v82 description (at 83 by text alone, :func:`db_migration.head._head_superseded_texts`)."""
     url = _seed(tmp_path_factory, "v82_head_superseded", FLEXTOOL_DB_VERSION)
     with DatabaseMapping(url) as db:
         for cls in ("unit", "connection", "node"):
             pdef = db.get_item("parameter_definition", entity_class_name=cls, name="payback_time")
-            db.update_parameter_definition(id=pdef["id"], description=m._v82_superseded()[(cls, "payback_time")][1])
+            db.update_parameter_definition(id=pdef["id"], description=v82._v82_superseded()[(cls, "payback_time")][1])
         db.commit_session("a superseded payback_time text")
     path = Path(url.removeprefix("sqlite:///"))
-    assert m._head_defaults_stale_ro(path)
+    assert head._head_defaults_stale_ro(path)
     migrate_database(url)
     with DatabaseMapping(url) as db:
         for cls in ("unit", "connection", "node"):
             text = db.get_item("parameter_definition", entity_class_name=cls, name="payback_time")["description"]
-            assert text == m._v82_texts()[(cls, "payback_time")] == _shipped()[(cls, "payback_time")]
+            assert text == v82._v82_texts()[(cls, "payback_time")] == _shipped()[(cls, "payback_time")]
             assert "inflation_rate" not in text
-    assert not m._head_defaults_stale_ro(path)
+    assert not head._head_defaults_stale_ro(path)
 
 
 #: The ``discount_offset_operations`` description an earlier development build of v82 shipped (no 0-1 range).
@@ -323,7 +324,7 @@ def test_head_refresh_replaces_the_superseded_operations_offset_text(tmp_path_fa
         db.update_parameter_definition(id=pdef["id"], description=old)
         db.commit_session("the operations offset text of a development build")
     path = Path(url.removeprefix("sqlite:///"))
-    assert m._head_defaults_stale_ro(path) is not edited
+    assert head._head_defaults_stale_ro(path) is not edited
     migrate_database(url)
     with DatabaseMapping(url) as db:
         pdef = db.get_item("parameter_definition", entity_class_name="model", name="discount_offset_operations")
@@ -332,7 +333,7 @@ def test_head_refresh_replaces_the_superseded_operations_offset_text(tmp_path_fa
         else:
             assert pdef["description"] == _shipped()[("model", "discount_offset_operations")]
             assert "between 0 and 1" in pdef["description"]
-    assert not m._head_defaults_stale_ro(path)
+    assert not head._head_defaults_stale_ro(path)
 
 
 #: The definitions whose descriptions v82 rewrote for the replacement of reinvest_automatic capacity.
@@ -347,9 +348,9 @@ def test_head_refresh_writes_the_replacement_texts(tmp_path_factory, edited) -> 
     shipped defaults.  It gets the current ones; a description the user edited (here unit.lifetime_method) is
     kept."""
     url = _seed(tmp_path_factory, f"v82_replacement_texts_{edited}", FLEXTOOL_DB_VERSION)
-    old = {key: pair[1] for key, pair in m._v82_superseded().items() if key[1] in _REPLACEMENT_TEXTS}
+    old = {key: pair[1] for key, pair in v82._v82_superseded().items() if key[1] in _REPLACEMENT_TEXTS}
     assert len(old) == 3 * len(_REPLACEMENT_TEXTS)
-    defaults = {key: pair[0] for key, pair in m._v82_superseded().items() if key in old}
+    defaults = {key: pair[0] for key, pair in v82._v82_superseded().items() if key in old}
     with DatabaseMapping(url) as db:
         for (cls, name), text in old.items():
             pdef = db.get_item("parameter_definition", entity_class_name=cls, name=name)
@@ -360,7 +361,7 @@ def test_head_refresh_writes_the_replacement_texts(tmp_path_factory, edited) -> 
                                            **fields)
         db.commit_session("a development build's texts and the shipped defaults")
     path = Path(url.removeprefix("sqlite:///"))
-    assert m._head_defaults_stale_ro(path)
+    assert head._head_defaults_stale_ro(path)
     migrate_database(url)
     with DatabaseMapping(url) as db:
         for (cls, name), text in old.items():
@@ -368,5 +369,5 @@ def test_head_refresh_writes_the_replacement_texts(tmp_path_factory, edited) -> 
             if edited and (cls, name) == ("unit", "lifetime_method"):
                 assert got == text + " My note."
             else:
-                assert got == m._v82_texts()[(cls, name)] == _shipped()[(cls, name)] != text
-    assert not m._head_defaults_stale_ro(path)
+                assert got == v82._v82_texts()[(cls, name)] == _shipped()[(cls, name)] != text
+    assert not head._head_defaults_stale_ro(path)

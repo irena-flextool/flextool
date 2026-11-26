@@ -189,7 +189,7 @@ def _restore(db, a: vr.Analysis, members) -> str:
     """Add *members* to R's list with ``import_data``; no existing member may change (the 0.31–0.34 bug)."""
     from spinedb_api import from_database, import_data
 
-    from flextool.update_flextool.db_migration import _list_members
+    from flextool.update_flextool.db_migration.common import _list_members
 
     name = db.get_item("parameter_value_list", id=a.list_id)["name"]
     before = _list_members(db, [name])

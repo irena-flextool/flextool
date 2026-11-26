@@ -9798,16 +9798,6 @@
         "\"commodity\"",
         "str"
       ],
-      "Base"
-    ],
-    [
-      "node",
-      "anti_energy_market",
-      "node_type",
-      [
-        "\"commodity\"",
-        "str"
-      ],
       "anti_energy_plant"
     ],
     [
@@ -9909,16 +9899,6 @@
         "float"
       ],
       "battery_invest"
-    ],
-    [
-      "node",
-      "battery",
-      "node_type",
-      [
-        "\"commodity\"",
-        "str"
-      ],
-      "Base"
     ],
     [
       "node",
@@ -10079,16 +10059,6 @@
         "float"
       ],
       "battery_invest"
-    ],
-    [
-      "node",
-      "coal_market",
-      "node_type",
-      [
-        "\"commodity\"",
-        "str"
-      ],
-      "Base"
     ],
     [
       "node",
@@ -10295,16 +10265,6 @@
       "dr_storage",
       "node_type",
       [
-        "\"commodity\"",
-        "str"
-      ],
-      "Base"
-    ],
-    [
-      "node",
-      "dr_storage",
-      "node_type",
-      [
         "\"storage\"",
         "str"
       ],
@@ -10375,16 +10335,6 @@
       "east",
       "node_type",
       [
-        "\"commodity\"",
-        "str"
-      ],
-      "Base"
-    ],
-    [
-      "node",
-      "east",
-      "node_type",
-      [
         "\"balance\"",
         "str"
       ],
@@ -10439,16 +10389,6 @@
         "str"
       ],
       "ev"
-    ],
-    [
-      "node",
-      "ev_battery",
-      "node_type",
-      [
-        "\"commodity\"",
-        "str"
-      ],
-      "Base"
     ],
     [
       "node",
@@ -10519,16 +10459,6 @@
         "float"
       ],
       "heat"
-    ],
-    [
-      "node",
-      "heat",
-      "node_type",
-      [
-        "\"commodity\"",
-        "str"
-      ],
-      "Base"
     ],
     [
       "node",
@@ -10619,16 +10549,6 @@
         "float"
       ],
       "network"
-    ],
-    [
-      "node",
-      "north",
-      "node_type",
-      [
-        "\"commodity\"",
-        "str"
-      ],
-      "Base"
     ],
     [
       "node",
@@ -10775,16 +10695,6 @@
       "water_sink",
       "node_type",
       [
-        "\"commodity\"",
-        "str"
-      ],
-      "Base"
-    ],
-    [
-      "node",
-      "water_sink",
-      "node_type",
-      [
         "\"storage\"",
         "str"
       ],
@@ -10819,16 +10729,6 @@
         "float"
       ],
       "water_pump"
-    ],
-    [
-      "node",
-      "water_source",
-      "node_type",
-      [
-        "\"commodity\"",
-        "str"
-      ],
-      "Base"
     ],
     [
       "node",
@@ -10969,16 +10869,6 @@
         "str"
       ],
       "scale_to_peak_flow"
-    ],
-    [
-      "node",
-      "west",
-      "node_type",
-      [
-        "\"commodity\"",
-        "str"
-      ],
-      "Base"
     ],
     [
       "node",

@@ -660,7 +660,7 @@ def _profile_stochastic_lf(workdir: Path | None,
     # Before the reveal, a period reads the forecast made when the solve or roll starts, and it must cover it.
     _check_pre_reveal_reads_have_forecast(pbt_dict, 1, frozenset(stoch_active), tb_for_d, ts_for_d, pe_for_d,
                                           fan_for_d, sd, provider=provider, kind="profile")
-    # The forecast made at the fan start must cover every later period of the solve or roll (item 255).
+    # The forecast made at the fan start must cover every step from the fan on (items 255, 307).
     _check_forecast_covers_horizon(pbt_dict, 1, frozenset(stoch_active), tb_for_d, ts_for_d, pe_for_d,
                                           fan_for_d, sd, provider=provider, kind="profile")
 

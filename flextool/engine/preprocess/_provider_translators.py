@@ -55,6 +55,7 @@ _HANDOFF_EMPTY_SCHEMAS: dict[str, tuple[str, ...]] = {
     K.HANDOFF_CUMULATIVE_COMMODITY: ("commodity", "tier", "period",
                                       "p_ladder_cum_realized_mwh"),
     K.HANDOFF_CUM_SIM_HOURS:      ("period", "p_ladder_cum_sim_hours"),
+    K.HANDOFF_CUMULATIVE_FLOWGROUP: ("group", "period", "flow", "hours", "weight"),
     K.HANDOFF_FIX_STORAGE_QUANTITY: ("node", "period", "step", "p_fix_storage_quantity"),
     K.HANDOFF_FIX_STORAGE_PRICE:    ("node", "period", "step", "p_fix_storage_price"),
     K.HANDOFF_FIX_STORAGE_USAGE:    ("node", "period", "step", "p_fix_storage_usage"),
@@ -83,7 +84,7 @@ def _empty_handoff_frame(key: str) -> pl.DataFrame:
 ROLL_FORWARD_FIELDS: frozenset = frozenset((
     "roll_end_state", "upward_roll_end_state", "roll_end_online", "roll_end_flow",
     "roll_end_step", "online_history", "cumulative_co2", "cumulative_commodity",
-    "cum_sim_hours",
+    "cum_sim_hours", "cumulative_flowgroup",
 ))
 PIN_FIELDS: frozenset = frozenset((
     "realized_commission", "divest_cumulative", "realized_cohort", "realized_retire",
@@ -107,6 +108,7 @@ _FIELD_TO_KEY: tuple[tuple[str, str], ...] = (
     ("cumulative_co2",      K.HANDOFF_CUMULATIVE_CO2),
     ("cumulative_commodity", K.HANDOFF_CUMULATIVE_COMMODITY),
     ("cum_sim_hours",       K.HANDOFF_CUM_SIM_HOURS),
+    ("cumulative_flowgroup", K.HANDOFF_CUMULATIVE_FLOWGROUP),
     ("fix_storage_quantity", K.HANDOFF_FIX_STORAGE_QUANTITY),
     ("fix_storage_price",    K.HANDOFF_FIX_STORAGE_PRICE),
     ("fix_storage_usage",    K.HANDOFF_FIX_STORAGE_USAGE),

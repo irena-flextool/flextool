@@ -26,7 +26,7 @@ from spinedb_api import DatabaseMapping, from_database
 from spinedb_api.exception import NothingToCommit
 
 from flextool.engine.input._solve_state import FlexToolConfigError
-from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import v77, v78
 from flextool.update_flextool.db_migration import migrate_database
 from tests.db_utils import json_to_db
 from tests.engine._unit_db import b64, build, run
@@ -339,9 +339,9 @@ def test_storage_steps_rerun_change_nothing(tmp_path_factory):
     _as_v76(upgraded)
     url = _db(tmp_path_factory, "rerun", upgraded, up_to=77)  # the v77 step only: v78 changes the description
     with DatabaseMapping(url) as db:
-        m._v77_storage_fix_rewrite(db)
-        m._v77_storage_default_explicit(db)
-        m._v77_storage_default(db)
+        v77._v77_storage_fix_rewrite(db)
+        v77._v77_storage_default_explicit(db)
+        v77._v77_storage_default(db)
         with pytest.raises(NothingToCommit):
             db.commit_session("re-run")
 
@@ -357,8 +357,8 @@ def test_storage_default_marker_only_where_the_old_default_fixed(tmp_path_factor
     assert (PREFIX + "storage_default_fix_nothing" in _markers(url)) is marked
     with DatabaseMapping(url) as db:
         pdef = db.get_item("parameter_definition", entity_class_name="node", name="storage_start_end_method")
-        assert pdef["description"] == m._v78_new_description(
-            "node", "storage_start_end_method", m._V77_STORAGE_START_END_DESCRIPTION)
+        assert pdef["description"] == v78._v78_new_description(
+            "node", "storage_start_end_method", v77._V77_STORAGE_START_END_DESCRIPTION)
         new_default = from_database(pdef["default_value"], pdef["default_type"]) if pdef["default_value"] else None
         assert new_default == ("fix_nothing" if marked else None)
 
@@ -370,7 +370,7 @@ def test_storage_default_marker_only_where_the_old_default_fixed(tmp_path_factor
 
 def test_classify_keeps_a_fix_with_its_value():
     """(1) own value in every scenario where the method applies → nothing to do."""
-    from flextool.update_flextool.db_migration import classify_storage_fix
+    from flextool.update_flextool.db_migration.v77 import classify_storage_fix
 
     plan = classify_storage_fix({("n", "A"): "fix_start"}, {("n", "A"): 0.4}, {}, {"S1": ["A"], "S2": ["A", "B"]})
     assert plan.methods == () and plan.values == () and plan.undecided == ()
@@ -379,7 +379,7 @@ def test_classify_keeps_a_fix_with_its_value():
 def test_classify_drops_a_fix_that_did_nothing():
     """(2) no node has a value in any scenario: fix_start → fix_nothing; fix_start_end keeps the end that has
     its value (→ fix_end)."""
-    from flextool.update_flextool.db_migration import classify_storage_fix
+    from flextool.update_flextool.db_migration.v77 import classify_storage_fix
 
     plan = classify_storage_fix({("n", "A"): "fix_start", ("k", "A"): "fix_start_end"}, {}, {("k", "A"): 0.2},
                                 {"S1": ["A"], "S2": ["A", "B"]})
@@ -389,7 +389,7 @@ def test_classify_drops_a_fix_that_did_nothing():
 
 def test_classify_adds_zero_where_the_fix_pinned_at_zero():
     """(3) another node has a start value in every scenario: n was pinned at 0 → storage_state_start 0 at A."""
-    from flextool.update_flextool.db_migration import classify_storage_fix
+    from flextool.update_flextool.db_migration.v77 import classify_storage_fix
 
     plan = classify_storage_fix({("n", "A"): "fix_start"}, {("m", "A"): 0.3}, {}, {"S1": ["A"], "S2": ["A", "B"]})
     assert plan.values == (("n", "A", "storage_state_start"),) and plan.methods == ()
@@ -398,7 +398,7 @@ def test_classify_adds_zero_where_the_fix_pinned_at_zero():
 
 def test_classify_leaves_mixed_scenarios():
     """(4) pinned at 0 in S1 (m has a value there), not fixed in S2 → left, naming both scenarios."""
-    from flextool.update_flextool.db_migration import classify_storage_fix
+    from flextool.update_flextool.db_migration.v77 import classify_storage_fix
 
     plan = classify_storage_fix({("n", "A"): "fix_start"}, {("m", "B"): 0.3}, {}, {"S1": ["A", "B"], "S2": ["A"]})
     assert plan.methods == () and plan.values == ()
@@ -409,7 +409,7 @@ def test_classify_drops_a_zero_that_would_leak_into_another_scenario():
     """n's fix_start at A has no value in S1 (m's value pins it at 0) → candidate 0 at A.  In S2, n's method comes
     from B (above A) and its start 0.5 from L (below A): a 0 at A would override 0.5 there, so the candidate is
     dropped (left, naming S1 and S2)."""
-    from flextool.update_flextool.db_migration import classify_storage_fix
+    from flextool.update_flextool.db_migration.v77 import classify_storage_fix
 
     plan = classify_storage_fix(
         {("n", "A"): "fix_start", ("n", "B"): "fix_start"},
@@ -422,7 +422,7 @@ def test_classify_drops_a_zero_that_would_leak_into_another_scenario():
 def test_classify_ignores_values_of_nodes_switched_off():
     """m is inactive in S2: its start value does not count there, so n's fix did nothing in S2 but pinned at 0
     in S1 → left."""
-    from flextool.update_flextool.db_migration import classify_storage_fix
+    from flextool.update_flextool.db_migration.v77 import classify_storage_fix
 
     plan = classify_storage_fix({("n", "A"): "fix_start"}, {("m", "A"): 0.3}, {},
                                 {"S1": ["A"], "S2": ["A"]}, inactive=frozenset({("S2", "m")}))
@@ -432,7 +432,7 @@ def test_classify_ignores_values_of_nodes_switched_off():
 def test_classify_default_writes_the_old_default_where_the_node_has_its_own_start():
     """n has no stored method and its start 0.4 at A in S1 and S2: fix_start is written at A.  k has no value:
     nothing is written for it (it starts free now; the run names it)."""
-    from flextool.update_flextool.db_migration import classify_storage_default
+    from flextool.update_flextool.db_migration.v77 import classify_storage_default
 
     writes = classify_storage_default({}, {("n", "A"): 0.4}, {}, {"S1": ["A"], "S2": ["A", "B"]}, "fix_start")
     assert writes == (("n", "A"),)
@@ -441,7 +441,7 @@ def test_classify_default_writes_the_old_default_where_the_node_has_its_own_star
 def test_classify_default_never_overrides_a_lower_stored_method():
     """n relies on the default in S1 (start 0.4 at A).  In S2 its method fix_nothing comes from L, below A: a
     fix_start at A would pin it there, so nothing is written for n."""
-    from flextool.update_flextool.db_migration import classify_storage_default
+    from flextool.update_flextool.db_migration.v77 import classify_storage_default
 
     writes = classify_storage_default({("n", "L"): "fix_nothing"}, {("n", "A"): 0.4}, {},
                                       {"S1": ["A"], "S2": ["L", "A"]}, "fix_start")
@@ -454,6 +454,6 @@ def test_database_without_scenarios_is_one_scenario_of_all_alternatives(tmp_path
     (work / "f.json").write_text(json.dumps(data))
     url = json_to_db(work / "f.json", work / "f.sqlite")
     with DatabaseMapping(url) as db:
-        _methods, _starts, _ends, scenarios, _inactive = m._v77_storage_inputs(db)
+        _methods, _starts, _ends, scenarios, _inactive = v77._v77_storage_inputs(db)
         alternatives = [a["name"] for a in db.get_items("alternative")]
-    assert scenarios == {m._V77_NO_SCENARIO: alternatives}
+    assert scenarios == {v77._V77_NO_SCENARIO: alternatives}

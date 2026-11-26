@@ -37,7 +37,26 @@ def main() -> None:
             "columns are removed unless listed in always_include_with_groups."
         ),
     )
+    parser.add_argument(
+        "--units-row",
+        action="store_true",
+        help=(
+            "Show only each parameter's unit (MW, CUR/MWh, ...) in the first row of the parameter sheets instead "
+            "of its description; the full description stays in the note on the parameter name (self-describing "
+            "format only)"
+        ),
+    )
+    parser.add_argument(
+        "--omit-empty-columns",
+        action="store_true",
+        help=(
+            "Leave out the parameter columns that have no value on their sheet; the reference list to the right "
+            "of each sheet still names them (self-describing format only)"
+        ),
+    )
     args = parser.parse_args()
+    if args.old_format and (args.units_row or args.omit_empty_columns):
+        parser.error("--units-row and --omit-empty-columns need the self-describing format (not --old-format)")
     include_groups = (
         [g.strip() for g in args.groups.split(",") if g.strip()]
         if args.groups
@@ -49,6 +68,8 @@ def main() -> None:
         include_advanced=args.include_advanced,
         use_new_format=not args.old_format,
         include_groups=include_groups,
+        units_row=args.units_row,
+        omit_empty_columns=args.omit_empty_columns,
     )
 
 

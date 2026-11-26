@@ -2,11 +2,11 @@
 
 Workflow:
   1. Create a temporary DB from the current schemas/spinedb_schema.json
-  2. Run db_migration.py on it (applies any new migration steps)
+  2. Run db_migration on it (applies any new migration steps)
   3. Export the migrated DB back to schemas/spinedb_schema.json
 
 This ensures the master template always reflects the latest schema
-after db_migration.py has been updated.
+after db_migration has been updated.
 
 Usage:
     python -m flextool.update_flextool.sync_master_json_template [--verify]

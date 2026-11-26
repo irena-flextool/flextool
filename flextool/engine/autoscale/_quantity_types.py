@@ -90,7 +90,7 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('capacity_min_coeff', 'unit__inputNode'): QuantityType.FRACTION,
     ('capacity_min_coeff', 'unit__outputNode'): QuantityType.FRACTION,
     # [factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap on this edge when online (combined multiplicatively with the un...
-    # Legacy long-form aliases still present in the template DB until db_migration.py renames
+    # Legacy long-form aliases still present in the template DB until db_migration renames
     # max_capacity_coefficient → capacity_max_coeff and min_capacity_coefficient → capacity_min_coeff.
     ('constraint_capacity_coeff', 'connection'): QuantityType.DIMENSIONLESS,
     # Puts the connection's capacity in service in each period on the left side of the user constraint (existing plus investments still in service...
@@ -154,7 +154,7 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Puts the capacity in service at the start of each period on the left side of the user constraint (before that period's investments and retir...
     ('constraint_cumulative_pre_built_capacity_coeff', 'unit'): QuantityType.DIMENSIONLESS,
     # Puts the capacity in service at the start of each period on the left side of the user constraint (before that period's investments and retir...
-    # Legacy long-form names still present in the template DB until migration runs (db_migration.py renames *_coefficient → *_coeff).
+    # Legacy long-form names still present in the template DB until migration runs (db_migration renames *_coefficient → *_coeff).
     ('constraint_cumulative_pre_built_capacity_coefficient', 'connection'): QuantityType.DIMENSIONLESS,
     ('constraint_cumulative_pre_built_capacity_coefficient', 'node'): QuantityType.DIMENSIONLESS,
     ('constraint_cumulative_pre_built_capacity_coefficient', 'unit'): QuantityType.DIMENSIONLESS,
@@ -188,7 +188,7 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [factor, default 1] Fuel-equivalent energy per unit of this flow. It enters the unit's conversion equation, not the node balance. Applies to...
     ('conversion_flow_coeff', 'unit__outputNode'): QuantityType.FRACTION,
     # [factor, default 1] Fuel-equivalent energy per unit of this flow. It enters the unit's conversion equation, not the node balance. Applies to...
-    # Legacy long-form alias still present in the template DB until db_migration.py renames flow_coefficient → conversion_flow_coeff.
+    # Legacy long-form alias still present in the template DB until db_migration renames flow_coefficient → conversion_flow_coeff.
     ('flow_coefficient', 'unit__inputNode'): QuantityType.FRACTION,
     ('flow_coefficient', 'unit__outputNode'): QuantityType.FRACTION,
     ('conversion_method', 'unit'): QuantityType.DIMENSIONLESS,

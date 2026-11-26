@@ -60,6 +60,7 @@ from flextool.engine.input._param_shapes import (
 )
 from flextool.engine.preprocess._co2_methods import CO2_MAX_PERIOD_METHODS
 from flextool.engine.preprocess._reserve_methods import RESERVE_METHODS_BY_PARTITION, RESERVE_NO_RESERVE
+from flextool.engine.preprocess.emit._mid_sets import DEFAULT_NODE_TYPE
 
 
 def _to_e(expr: pl.Expr) -> pl.Expr:
@@ -112,14 +113,34 @@ def _try_entities(source: "InputSource", entity_class: str) -> pl.DataFrame | No
 # §1.2 — nodeBalance (P): node_type ∈ {balance}
 # ---------------------------------------------------------------------------
 
+def node_type_effective(source: "InputSource") -> pl.DataFrame | None:
+    """Every node's ``node_type``: ``[name, value]``.  A node without a value takes the parameter's default, and
+    :data:`DEFAULT_NODE_TYPE` (``balance``) when the default is empty too, as the input checks and the emit path
+    take it.  ``None`` without nodes."""
+    nodes = _try_entities(source, "node")
+    if nodes is None:
+        return None
+    try:
+        default = source.parameter_default("node", "node_type")
+    except KeyError:
+        default = None
+    fill = str(default) if default is not None else DEFAULT_NODE_TYPE
+    df = _try_param(source, "node", "node_type")
+    nodes = nodes.select("name")
+    if df is None:
+        return nodes.with_columns(pl.lit(fill).alias("value"))
+    return (nodes.join(df.select("name", pl.col("value").cast(pl.Utf8)), on="name", how="left")
+                 .with_columns(pl.col("value").fill_null(fill)))
+
+
 def nodeBalance(source: "InputSource") -> pl.DataFrame:
-    """Nodes with ``node_type ∈ {'balance', 'storage'}``.
+    """Nodes with ``node_type ∈ {'balance', 'storage'}`` (:func:`node_type_effective`).
 
     Schema: ``[n]``.  flextool's `node_type_sets.py:69` defines
     `nodeBalance` as the nodes whose type is **either** balance or
     storage — both participate in the LHS of `nodeBalance_eq`.
     """
-    df = _try_param(source, "node", "node_type")
+    df = node_type_effective(source)
     if df is None:
         return _empty({"n": pl.Utf8})
     return (df.lazy()
@@ -139,7 +160,7 @@ def nodeBalancePeriod(source: "InputSource") -> pl.DataFrame:
     ``vq_state_up/down``, so they participate in the same slack-scaling /
     penalty params as ``nodeBalance``.
     """
-    df = _try_param(source, "node", "node_type")
+    df = node_type_effective(source)
     if df is None:
         return _empty({"n": pl.Utf8})
     return (df.lazy()
@@ -1344,9 +1365,9 @@ def process_min_load_eff(source: "InputSource") -> pl.DataFrame:
 # ---------------------------------------------------------------------------
 
 def nodeState(source: "InputSource") -> pl.DataFrame:
-    """Nodes with ``node_type='storage'``.  Schema: ``[n]``.
+    """Nodes with ``node_type='storage'`` (:func:`node_type_effective`).  Schema: ``[n]``.
     """
-    df = _try_param(source, "node", "node_type")
+    df = node_type_effective(source)
     if df is None:
         return _empty({"n": pl.Utf8})
     return (df.lazy()

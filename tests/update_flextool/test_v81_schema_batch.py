@@ -41,7 +41,7 @@ connection and a node), ``salvage_value`` (a constant and a ``period`` map) and 
 
 Nothing else changes, and a rerun commits nothing.  Where a database already has a value under a new name, that
 value is kept (and printed).  A database migrated to 81 by a development build gets the v81 definitions and list
-members it lacks inside step 82 (:func:`db_migration._v81_refresh`); since data version 83 the refresh of a database
+members it lacks inside step 82 (:func:`db_migration.v81._v81_refresh`); since data version 83 the refresh of a database
 already at the current version no longer covers the v81 entries (``test_v83_schema_batch.py`` tests that refresh).
 """
 from __future__ import annotations
@@ -57,10 +57,11 @@ from spinedb_api import DatabaseMapping, Map, from_database, to_database
 from spinedb_api.exception import NothingToCommit
 
 from flextool._resources import package_data_path
-from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import v81, v82
 from flextool.update_flextool.db_migration import migrate_database
 from tests.db_utils import json_to_db
 from tests.update_flextool._rerun import v75b_url
+from tests.update_flextool._rerun import patch_migration
 
 TESTS_JSON = Path(__file__).resolve().parents[1] / "fixtures" / "tests.json"
 CLASSES = ("unit", "connection", "node")
@@ -129,7 +130,7 @@ def _shipped(*, as_v81: bool = False) -> tuple[dict, dict[str, list[str]]]:
         lists.setdefault(name, []).append(value)
     texts = {(r[0], r[1]): r[4] for r in schema["parameter_definitions"]}
     if as_v81:
-        texts.update({key: m._v81_texts()[key] for key in m._v82_texts() if key in m._v81_texts()})
+        texts.update({key: v81._v81_texts()[key] for key in v82._v82_texts() if key in v81._v81_texts()})
     return texts, lists
 
 
@@ -187,7 +188,7 @@ def test_salvage_value_is_net_salvage_value(migrated) -> None:
         assert (cls, "salvage_value") not in after["defs"]
         fields = after["defs"][(cls, "net_salvage_value")]
         assert fields == (shipped[(cls, "net_salvage_value")], ("float", "1d_map"), "retirement", None, None, None)
-        assert fields[0] == m._v81_texts()[(cls, "net_salvage_value")]
+        assert fields[0] == v81._v81_texts()[(cls, "net_salvage_value")]
     assert after["defs"][("unit", "net_salvage_value")][0].startswith("[CUR/kW] Net salvage value: ")
     assert after["defs"][("node", "net_salvage_value")][0].startswith("[CUR/kWh] Net salvage value: ")
 
@@ -289,7 +290,7 @@ def test_built_retirable_marker_names_bounded_entities_that_invest_and_retire(mi
 def test_descriptions_are_the_shipped_ones(migrated) -> None:
     before, after = migrated["before"]["defs"], migrated["after"]["defs"]
     shipped, _ = _shipped(as_v81=True)
-    texts = m._v81_texts()
+    texts = v81._v81_texts()
     assert set(texts) == NEW_DEFINITIONS | REWRITTEN
     for key in REWRITTEN:
         assert after[key][0] == shipped[key] == texts[key] != before[key][0], key
@@ -325,9 +326,9 @@ def _rerun_changes_nothing(db, step, monkeypatch) -> None:
             db_.commit_session(message)
         commits.append(message)
 
-    monkeypatch.setattr(m, "_commit_step", commit_must_be_empty)
+    patch_migration(monkeypatch, "_commit_step", commit_must_be_empty)
     step(db)
-    if step is m._migrate_v81_schema_batch:
+    if step is v81._migrate_v81_schema_batch:
         assert len(commits) == 1, commits
     else:
         assert commits == []
@@ -341,7 +342,7 @@ def _rerun_changes_nothing(db, step, monkeypatch) -> None:
                                   "_v81_net_salvage_marker", "_migrate_v81_schema_batch", "_v81_refresh"])
 def test_rerun_commits_nothing(migrated, part: str, monkeypatch) -> None:
     """Each part, the whole step and the v81 refresh (with the v81 texts) change nothing on a database at 81."""
-    step = getattr(m, part)
+    step = getattr(v81, part)
     if part == "_v81_refresh":
         step = functools.partial(step, texts={})
     with DatabaseMapping(migrated["url"]) as db:
@@ -487,5 +488,5 @@ def test_large_database_definitions_are_those_of_a_small_one(large, migrated) ->
 
 def test_large_database_rerun_commits_nothing(large, monkeypatch) -> None:
     with DatabaseMapping(large["url"]) as db:
-        _rerun_changes_nothing(db, m._migrate_v81_schema_batch, monkeypatch)
+        _rerun_changes_nothing(db, v81._migrate_v81_schema_batch, monkeypatch)
         assert _values(db) == large["after"]["values"]

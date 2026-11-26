@@ -310,14 +310,8 @@ def test_registry_has_four_invest_families() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.solver
-def test_recourse_fan_invest_marginals_stay_on_forecast_branches(tmp_path, monkeypatch) -> None:
-    """When the investments branch (``investments_after_reveal_period``) the fan's ``v_invest`` columns are on the
-    forecast branch periods, so its reduced costs are read on the dispatch axis, not the investment axis with the
-    fan's period labels (read on the investment axis, a fan's investment duals put 0 rows at the labels
-    p2035 / p2040, dropped the p2040_low reduced cost and wrote a ``unit_invest_marginal__d`` of -0 rows with an
-    empty solve label).  1000 is the p2040_low reduced cost: its annuity 1 · 1000 · 0.05 / (1 − 1.05^−1) / 1.05 (the
-    parquet once held 1050, the year-end annuity)."""
+def _write_csv(tmp_path, monkeypatch, scenario: str):
+    """Run *scenario* of ``stoch_two_period_hedge.json`` and write its CSV outputs; returns the work folder."""
     from pathlib import Path
 
     from flextool.engine import run_chain_from_db
@@ -332,25 +326,54 @@ def test_recourse_fan_invest_marginals_stay_on_forecast_branches(tmp_path, monke
     monkeypatch.setenv("FLEXTOOL_AUTOSCALE_STRICT", "1")
     monkeypatch.chdir(tmp_path)
     wf = tmp_path / "w"
-    steps = run_chain_from_db(db_url, "hedge_na_window", work_folder=wf, csv_dump=True, keep_solutions=True)
+    steps = run_chain_from_db(db_url, scenario, work_folder=wf, csv_dump=True, keep_solutions=True)
     last = next(reversed(steps.values()))
     last.flex_data_provider.snapshot_processed_inputs(wf)
     write_outputs(
-        scenario_name="hedge_na_window", output_location=str(wf), subdir="out",
+        scenario_name=scenario, output_location=str(wf), subdir="out",
         output_config_path=str(repo / "flextool" / "schemas" / "default_plots.yaml"),
         write_methods=["csv"], fallback_output_location=str(wf), raw_output_dir=str(wf / "output_raw"),
         solution=last.solution, solve_name=last.solve_name,
         solve_steps=[(s.solve_name, s.flex_data, s.effective_solution) for s in steps.values()],
         flex_data_provider=FlexDataProvider(),
     )
+    return wf
 
+
+@pytest.mark.solver
+def test_recourse_fan_invest_marginals_stay_on_forecast_branches(tmp_path, monkeypatch) -> None:
+    """When the investments branch (``investments_after_reveal_period``) the fan's ``v_invest`` columns are on the
+    forecast branch periods, so its reduced costs are read on the dispatch axis, not the investment axis with the
+    fan's period labels (read on the investment axis, a fan's investment duals put 0 rows at the labels
+    p2035 / p2040, dropped the p2040_low reduced cost and wrote a ``unit_invest_marginal__d`` of -0 rows with an
+    empty solve label).  1000 is the p2040_low reduced cost: its annuity 1 · 1000 · 0.05 / (1 − 1.05^−1) / 1.05 (the
+    parquet once held 1050, the year-end annuity)."""
+    wf = _write_csv(tmp_path, monkeypatch, "hedge_na_window")
     duals = pl.read_parquet(wf / "output_raw" / f"v_dual_invest_unit__{SOLVE}.parquet")
     by_period = dict(zip(duals["period"], duals["base"]))
     assert by_period["p2040_low"] == pytest.approx(1000.0, rel=1e-6), duals
     # No 0-filled rows at the fan's period labels.
     assert not {"p2035", "p2040"} & set(by_period), duals
-    # Nothing is invested, and no marginal table of -0 rows with an empty solve label is written.
-    csv_dir = wf / "output_csv" / "out"
-    capacity = pl.read_csv(csv_dir / "unit_capacity__d.csv").filter(pl.col("unit") == "base")
-    assert capacity["invested"].null_count() == capacity.height, capacity
-    assert not (csv_dir / "unit_invest_marginal__d.csv").exists()
+    # No marginal table of -0 rows with an empty solve label is written.
+    assert not (wf / "output_csv" / "out" / "unit_invest_marginal__d.csv").exists()
+
+
+@pytest.mark.solver
+@pytest.mark.parametrize("scenario,expected", [
+    ("hedge_na_window", (0.0, 60.0, None, 60.0)),
+    ("hedge_na_divest", (50.0, 10.0, 0.0, 60.0)),
+])
+def test_shared_first_stage_capacity_is_reported(tmp_path, monkeypatch, scenario, expected) -> None:
+    """The realized p2035 capacity of ``base`` is the shared first stage x* = 60 MW (module docstring: the hedge
+    between D2 low 60 and high 120, above D1 = 40; test_main_invest_shared_first_stage), decided on both
+    forecasts' copies of p2035 and reported under the period label by the investment solve.  hedge_na_window:
+    nothing existing, 60 MW invested, total 60.  hedge_na_divest: the 50 MW existing cost nothing to keep and
+    retiring them saves nothing, so they stay and 10 MW are invested; nothing divested (a decision of 0: base can
+    retire), total 50 + 10 − 0 = 60."""
+    wf = _write_csv(tmp_path, monkeypatch, scenario)
+    capacity = pl.read_csv(wf / "output_csv" / "out" / "unit_capacity__d.csv").filter(pl.col("unit") == "base")
+    rows = capacity.select("solve", "period", "existing", "invested", "divested", "total").rows()
+    assert len(rows) == 1, capacity
+    solve, period, *values = rows[0]
+    assert (solve, period) == (SOLVE, "p2035"), capacity
+    assert [None if v is None else float(v) for v in values] == pytest.approx(list(expected)), capacity

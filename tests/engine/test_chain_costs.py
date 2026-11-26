@@ -541,6 +541,37 @@ def test_retirement_costs(tmp_path_factory, lifetime) -> None:
                 -mw * FIXED, rel=1e-7, abs=1e-6), d
 
 
+def _nested_retire_values() -> list:
+    """``_retire_values(30)`` in an investment solve over p2020 … p2035 (it decides the retirement) followed by a
+    dispatch solve of those periods."""
+    return (_retire_values(30.0) + _solves(["cc_invest", "cc_dispatch"])
+            + _solve("cc_invest", PERIODS, invest_periods=PERIODS, realized_invest_periods=PERIODS)
+            + _solve("cc_dispatch", PERIODS, realized_periods=PERIODS))
+
+
+@pytest.mark.solver
+@pytest.mark.parametrize("kind", ["single", "rolling", "nested"])
+def test_retired_existing_capacity_stays_in_the_existing_column(tmp_path_factory, kind) -> None:
+    """coal_plant: 500 MW existing (lifetime 30, in service p2020 … p2035), exactly 100 MW retired in p2025.  The
+    capacity table's existing is the 500 MW before any retirement in every period, the retirement is divested in
+    p2025 only, and total = existing + Σ invested − Σ divested = 500, 400, 400, 400 (docs/results.md).  The same in
+    the single solve, the rolling chain (whose later solves carry the retirement) and an investment solve followed
+    by a dispatch solve (which dispatches every period after the retirement)."""
+    if kind == "nested":
+        values, chain = _nested_retire_values(), _no_battery_invest(CHAIN)
+        entities = ENTITIES + [["solve", "cc_invest", None], ["solve", "cc_dispatch", None]]
+    else:
+        values, chain = _retire_values(30.0), _no_battery_invest(SINGLE if kind == "single" else CHAIN)
+        entities = ENTITIES
+    out = _write_csv(tmp_path_factory, f"retire_existing_{kind}", values, chain, entities=entities)
+    capacity = pd.read_csv(out / "unit_capacity__d.csv")
+    plant = capacity[capacity["unit"] == PLANT].set_index("period")
+    assert list(plant.index) == PERIODS
+    assert plant["existing"].tolist() == pytest.approx([500.0] * 4, rel=1e-9)
+    assert plant["divested"].fillna(0.0).tolist() == pytest.approx([0.0, 100.0, 0.0, 0.0], abs=1e-9)
+    assert plant["total"].tolist() == pytest.approx([500.0, 400.0, 400.0, 400.0], rel=1e-9)
+    assert plant["invested"].fillna(0.0).tolist() == pytest.approx([0.0] * 4, abs=1e-9)
+
 # ---------------------------------------------------------------------------
 # Stochastic: the realization model
 # ---------------------------------------------------------------------------
@@ -884,10 +915,10 @@ def test_no_notice(tmp_path_factory, coded_log, chain, marker) -> None:
 
 def test_notice_is_registered_and_written_by_the_upgrade() -> None:
     from flextool.engine._behaviour_changes import BEHAVIOUR_CHANGES
-    from flextool.update_flextool import db_migration
+    from flextool.update_flextool.db_migration import v77
 
     assert NOTICE_ID in BEHAVIOUR_CHANGES
-    assert NOTICE_ID in db_migration._V77_UNCONDITIONAL_MARKERS
+    assert NOTICE_ID in v77._V77_UNCONDITIONAL_MARKERS
 
 
 # ---------------------------------------------------------------------------

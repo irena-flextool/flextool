@@ -19,6 +19,14 @@ Each example will either include an example database file that is located in the
 - [How to create a hydro reservoir](storage_hydro.md#how-to-create-a-hydro-reservoir)
 - [How to create a hydro pump storage](storage_hydro.md#how-to-create-a-hydro-pump-storage)
 
+## [Demand response](demand_response.md)
+
+- [How to model price-sensitive demand reduction](demand_response.md#how-to-model-price-sensitive-demand-reduction)
+- [How to model a price-elastic demand (stepwise price blocks)](demand_response.md#how-to-model-a-price-elastic-demand-stepwise-price-blocks)
+- [How to make demand response available only part of the time](demand_response.md#how-to-make-demand-response-available-only-part-of-the-time)
+- [How to model load shifting as a storage](demand_response.md#how-to-model-load-shifting-as-a-storage)
+- [How to model EV smart charging](demand_response.md#how-to-model-ev-smart-charging)
+
 ## [Thermal, CHP and reserves](thermal_chp.md)
 
 - [How to create combined heat and power (CHP)](thermal_chp.md#how-to-create-combined-heat-and-power-chp)
@@ -50,6 +58,11 @@ Each example will either include an example database file that is located in the
 ## [Stochastics](stochastics.md)
 
 - [How to use stochastics (representing uncertainty)](stochastics.md#how-to-use-stochastics-representing-uncertainty)
+
+## [Stochastic examples](stochastic_examples.md)
+
+- [How to compare the realization methods of a stochastic rolling dispatch](stochastic_examples.md#how-to-compare-the-realization-methods-of-a-stochastic-rolling-dispatch)
+- [How to compare stochastic investment choices](stochastic_examples.md#how-to-compare-stochastic-investment-choices)
 
 ## [Emissions and system limits](emissions.md)
 

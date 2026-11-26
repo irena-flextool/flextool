@@ -21,7 +21,7 @@ from spinedb_api import DatabaseMapping
 from spinedb_api.exception import NothingToCommit
 
 from flextool._resources import package_data_path
-from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import v78 as m
 from flextool.update_flextool.db_migration import migrate_database
 
 from tests.update_flextool._rerun import v75b_url

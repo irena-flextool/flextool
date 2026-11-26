@@ -176,6 +176,8 @@ HANDOFF_FIX_ONLINE = "handoff/fix_online"
 HANDOFF_CUMULATIVE_CO2 = "handoff/cumulative_co2"
 HANDOFF_CUMULATIVE_COMMODITY = "handoff/cumulative_commodity"
 HANDOFF_CUM_SIM_HOURS = "handoff/cum_sim_hours"
+# The realized net flow and hours of each flow group with a cumulative flow limit (max/min_cumulative_flow carry).
+HANDOFF_CUMULATIVE_FLOWGROUP = "handoff/cumulative_flowgroup"
 HANDOFF_FIX_STORAGE_QUANTITY = "handoff/fix_storage_quantity"
 HANDOFF_FIX_STORAGE_PRICE = "handoff/fix_storage_price"
 HANDOFF_FIX_STORAGE_USAGE = "handoff/fix_storage_usage"

@@ -12,7 +12,7 @@ Scope
 Append-only.  Adds new entities, alternatives, parameter values, and
 scenarios.  Editing existing entries is intentionally out of scope —
 that workflow remains the SpineDB editor or a Python migration in
-``db_migration.py``.  Complex parameter value types (time-series,
+``db_migration``.  Complex parameter value types (time-series,
 maps, arrays) are also out of scope; the YAML accepts scalar values
 only (int / float / str / bool / None).  Anything more structured
 should be edited via the SpineDB editor.

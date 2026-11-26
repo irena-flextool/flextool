@@ -64,6 +64,7 @@ CANONICAL_DATABASES: tuple[CanonicalDatabase, ...] = (
     CanonicalDatabase("howto_aggregate_output.json", "how to example databases/aggregate_output.sqlite"),
     CanonicalDatabase("howto_connections.json", "how to example databases/connections.sqlite"),
     CanonicalDatabase("howto_demand.json", "how to example databases/Demand.sqlite"),
+    CanonicalDatabase("howto_demand_response.json", "how to example databases/demand_response.sqlite"),
     CanonicalDatabase("howto_hydro_reservoir.json", "how to example databases/hydro_reservoir.sqlite"),
     CanonicalDatabase("howto_hydro_reservoir_with_pump.json", "how to example databases/hydro_reservoir_with_pump.sqlite"),
     CanonicalDatabase("howto_non_sync_and_curtailment.json", "how to example databases/non_sync_and_curtailment.sqlite"),
@@ -81,11 +82,11 @@ def _stale_version(sqlite_abs: Path) -> int | None:
 
     A file at the current version that lacks a definition or list member of the current version's schema step (made
     before that entry was added to the step), or that has a superseded shipped default and description pair of it
-    (``db_migration._head_defaults_stale_ro``, the test the refresh uses), is stale too.  Read read-only.  A frozen
+    (``db_migration.head._head_defaults_stale_ro``, the test the refresh uses), is stale too.  Read read-only.  A frozen
     file, or one whose version or marker cannot be read, is never stale: it is left as it is.
     """
     from flextool.update_flextool import FLEXTOOL_DB_VERSION
-    from flextool.update_flextool.db_migration import _head_defaults_stale_ro, _head_schema_missing_ro
+    from flextool.update_flextool.db_migration.head import _head_defaults_stale_ro, _head_schema_missing_ro
     from flextool.update_flextool.frozen import FrozenCheckError, read_db_version_ro, read_frozen
 
     version = read_db_version_ro(sqlite_abs)

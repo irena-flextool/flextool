@@ -1,3 +1,180 @@
+## Unreleased (4.7.1)
+
+### Behaviour changes
+
+- **Benders: a unit with nodes in more than one region is solved in the master.** A unit that converts through the
+  unit itself (several inputs or outputs, or a `piecewise_linear_efficiency` curve of two or more segments) and has
+  nodes in more than one region, or in a region and the master, is now part of the Benders master: its flows,
+  conversion, capacity, investment, costs and linear online variables, with the regions seeing its flows at their
+  nodes as imports and exports fixed by the master. Before, a unit listed in a region group kept only that region's
+  side: its flow to or from the other region's nodes was lost (free), so the Benders investments and costs of such
+  a model were wrong, and they change now. An unlisted such unit, and a unit between a region and a master-hosted
+  node, were errors and now run. A unit listed in a region group that has none of its nodes is now an error, and
+  so are a reserve, integer online variables, a start-up input at a region node, a node in a capacity margin,
+  inertia or non-synchronous group, or a flowGroup flow limit on such a unit; each error names the unit and what to
+  change. Each Benders solve prints one line `Benders master: N connections, N unit__inputNode arcs, N
+  unit__outputNode arcs`.
+- **Benders: a group investment limit over the master and a region is an error.** A group investment, retirement or
+  cumulative-capacity limit (with a value set) whose entities are partly in the Benders master and partly in a
+  region now stops the run with an error naming the group and its entities on each side; before, each side applied
+  the whole limit to its own members. The master's entities are the connections between regions (or at a
+  master-hosted node), the units with nodes in more than one region and the master-hosted nodes. This also stops two
+  kinds of models that ran before: a group with a master-hosted node (or a connection between regions) and a region
+  entity, and a group of units that no region group lists, with their nodes in different regions. Use one group
+  per region and one for the master's entities.
+- **`co2_max_total` needs a solve that sees every period.** A total CO2 limit applies over all the periods of the
+  model. A run in which a solve with such a limit does not have every period of the model now stops before anything
+  solves, with an error that names the group, the solve and the periods it lacks. Examples: a chain of solves that
+  each hold their own periods, the nested lower solves of an investment chain, and the solves of a 2-D period map.
+  Before, such a solve shared out the limit as if its own periods were the whole model: an early solve could use up
+  the budget, and a later one could be infeasible. Use `co2_max_period` (a limit per period) in such runs, or give
+  every solve all the periods (look-ahead periods count). Single solves, rolling solves over all the periods, and
+  chains whose solves each hold a part of the same period are not affected.
+- **Flow group cumulative limits carry across rolls and solves.** In a rolling solve, and over the solves of a run,
+  `max_cumulative_flow` and `min_cumulative_flow` now count the flow that earlier rolls and solves realized, as the
+  CO2 limits do: each roll may use the limit times the hours realized so far plus its own hours, minus the flow
+  already realized. Before, each roll applied the limit to its own window only, so the realized flow could exceed a
+  maximum or fall short of a minimum. Rolling and multi-solve models with these limits give different results;
+  single solves do not change. With stochastic forecasts, a minimum that the realized data make unreachable in a
+  later roll makes that solve infeasible (see `reference/flow_groups.md`).
+- **Stochastic forecasts must cover the horizon.** A forecast that has no value for a time step that its solve or
+  roll reads it for (the look-ahead included) now stops the run before that solve, with an error naming the
+  forecast, the roll and the first time step without a value. Before, the step silently read 0, or in a forecast
+  branch the realized series. The example `1_week_rolling_wind` (stochastics.sqlite) now gives each forecast the
+  whole 96-hour horizon from its `analysis_time`; its results change in the roll that starts at t0097.
+- **Capacity tables in a chain of solves: existing before retirements.** In a rolling chain of investment solves,
+  the `existing` column of `unit_capacity__d`, `connection_capacity__d` and `node_capacity__d` no longer drops the
+  capacity that an earlier solve retired. It is the existing capacity in service before any retirement in every
+  period, as in a single solve, and the retirement shows as `divested` in its own period. `total` is unchanged.
+- **FlexTool 2 import: minimum load without its own efficiency.** A unit with a `min load` whose `eff at min load` is
+  empty or equals `efficiency` lost its minimum load and start-ups; it now gets `min_load`, `startup_method` linear
+  and `constant_efficiency` (with `use online` 1, as FlexTool 2). With `use online` 0 a unit no longer gets a
+  minimum load, start-ups or `min_load_efficiency`: FlexTool 2 has no online variables then and ignores `eff at min
+  load`. A sensitivity of `min load`, `eff at min load`, `efficiency`, `startup cost`, `min uptime (h)`, `min
+  downtime (h)` or `use online` now sets the unit's online parameters to match (before, a `min load` sensitivity on
+  a unit without a base min load had no effect, and min up / down time sensitivities were not translated). A `min
+  load` or `efficiency` sensitivity on the units sheet is applied to the unit the same way, although FlexTool 2
+  ignored it (it reads them only from unit_type); the import report says so.
+- **FlexTool 2 import: online variables in the investment solve.** FlexTool 2 leaves online variables, minimum
+  load, start-ups and reserves out of its investment run; FlexTool 4 keeps them in the investment solve, so the
+  investments take them into account. The import report now says so and names the units and reserves.
+- **FlexTool 2 import: storage spill.** Only a storage with an inflow series may now spill (`penalty_down` 0), as in
+  FlexTool 2; other storage nodes get the loss of load penalty, so a battery can no longer dump energy for free.
+- **FlexTool 2 import: storage fixed cost.** A storage unit's `fixed cost/kW/year` was dropped; it now goes to the
+  discharger, which carries the unit's capacity and investment.
+- **FlexTool 2 import: charging capacity.** The charger could draw capacity / `eff charge` from the grid; its output
+  now has `capacity_max_coeff` = `eff charge` (any value other than 1, also above 1), so the grid-side charge is
+  limited to the capacity, as in FlexTool 2.
+- **FlexTool 2 import: node-level capacity margin and non-synchronous share.** The gridNode `capacity margin (MW)`
+  and `non synchronous share` were dropped; they now go to a group `<node>_group` with that node. A gridNode
+  sensitivity of either now lands on that group; before, it overwrote the values of the node's nodeGroups.
+- **FlexTool 2 import: formulas without a stored value.** A workbook saved without Excel calculating its formulas
+  (for example written by a script) gives empty cells. The import report now names each such cell with its formula.
+  FlexTool 2's own annuity formula and the time jump columns are not listed: the import does not need their
+  values.
+- **A node without `node_type` is a balance node.** In a database whose `node_type` default is empty, a node
+  without a `node_type` of its own was left out of the energy balance, although the input checks treated it as a
+  balance node. It is now a balance node, FlexTool's default, so restoring the empty default with
+  `flextool-repair-value-list` changes no result. A database with the default set gets the same model as before.
+- **CO2 total limit in a chain that splits a period.** When the solves of a chain each hold a part of one period
+  (for example 3 h and then 1 h), `co2_max_total` gave each part the budget of the whole period and weighed the
+  parts' emissions differently: the first solve could use up the period's budget, and the chain emitted less than
+  the limit allows (0.75 t of 1 t in the 3 h + 1 h example, or 0.25 t when the first part emitted nothing). The
+  budget is now shared by the hours of each part, so the chain emits up to the limit. This holds also when a later
+  part is a rolling solve, which before could stop the run as infeasible in its first roll. Rolling and single
+  solves that hold their periods alone do not change.
+- **Capacity tables under `investments_after_reveal_period`.** The investment and the retirement of the reveal period
+  were missing from the `invested` and `divested` columns of `unit_capacity__d`, `connection_capacity__d` and
+  `node_capacity__d`, and in a solve without a realization solve `total` left them out too; they are now reported
+  under the period label, as the costs already were. The `solve` column of the capacity, cohort capacity, retirement
+  and capacity-margin tables now names the investment solve, as for the other settings, instead of the dispatch
+  solve. The model and its solution are unchanged.
+
+### New features
+
+- **Easier to read input workbooks (Excel export).** On every input sheet the header rows and the key columns
+  (alternative, entity, index) stay in view while you scroll. Every other parameter column has a slightly different
+  background. Columns are as wide as their names, defaults and values, so long names are no longer cut off and short
+  columns are no longer wide (widths are measured in the workbook's font, Calibri / Carlito, so names in lower case
+  get narrower columns than their character count). The description row wraps to four lines in its own colour, and a
+  note on each parameter name holds its full description. The workbook reads back the same as before. The new export
+  flag `--units-row` shows only each parameter's unit in that row (the notes keep the descriptions); workbooks made
+  in the GUI (new input Excel, conversion of a database, version update of a workbook) use it. The parameter columns
+  are ordered by parameter group, with each parameter name in its group's colour; every group after the first is an
+  outline group that you can collapse, and a group with no value on the sheet starts collapsed. The new export flag
+  `--omit-empty-columns` leaves out the parameter columns that have no value on their sheet.
+- **Stochastic examples.** `stochastics.sqlite` has new scenarios, with a new how-to page "Stochastic examples": one
+  small rolling dispatch run with each `dispatch_realization_method` and with a perfect forecast
+  (`rolling_deterministic`, `rolling_within_solve`, `rolling_separate_dispatch`, `rolling_perfect_within_solve`,
+  `rolling_perfect_separate_dispatch`), and one small investment model under uncertain demand that compares
+  `invest_solve_branching_method` `operations_only` with `investments_after_reveal_period` and shows an investment
+  solve followed by a dispatch solve (`invest_operations_only`, `invest_after_reveal_period`,
+  `invest_then_dispatch`). The other scenarios of the database are unchanged.
+- **How-to on demand response** (`docs/how_to/demand_response.md`) with a new example database,
+  `how to example databases/demand_response.sqlite`: price-sensitive demand reduction, a price-elastic demand
+  from stepwise price blocks, demand response available only part of the time (`availability`), load shifting as a
+  small storage, and EV smart charging (a storage that the grid reaches only while the cars are plugged in, with a
+  daily driving need). Each is one scenario of a small two-day model, built from units, storage nodes and
+  connections with existing parameters.
+
+### Fixes
+
+- **Excel export: sheet names fit Excel.** A stochastic sheet of a class with several stochastic parameters is
+  named `<class>_s_<parameter>`, which can exceed Excel's 31 characters (`unit_s_piecewise_linear_efficiency`), so
+  Excel refused or repaired the workbook. Such names are now cut to 31 characters (`~2`, `~3` added on a clash);
+  the import reads the parameter from the sheet itself, so the cut changes nothing in the data.
+- **Excel export: entity activity of every class.** Only nodes, units and connections had an `entity existence`
+  column, so the activity of other entities was lost on a round trip through a workbook: a reserve, constraint
+  or group membership switched off in an alternative came back switched on. Every class now has the column, on
+  its constant sheet or, for a class without parameters (such as `group__node`), on its link sheet. A workbook
+  whose link sheets carry such activity rows needs FlexTool 4.7.1 or later to import: FlexTool 4.7.0 reads the
+  alternative and TRUE / FALSE cells as part of the entity names, so it loses those memberships and their activity.
+- **Excel import: number indexes stay numbers.** A `delay` map ({2: 0.2, 3: 0.5}, index in hours) and a
+  part-load curve (`piecewise_linear_efficiency`, index the load share, also per period) came back from a
+  workbook with text indexes ('2.0'); their indexes are numbers again. A per-period curve's levels are named
+  `period` and `load` (they were labelled like stochastic branches).
+- **Excel export: index names.** The export labelled the index column of every map on a sheet with the sheet's
+  default name, so `solve.solver_arguments` and `timeset.timeset_duration` came back from the workbook indexed by
+  `period`, and arrays such as `model.solves` lost their index name. Each parameter now gets its own index name:
+  a name stored in the database stays; Spine's default (`x`, or `i` for an array) becomes the meaningful name
+  (`period`, `time`, `argument` for `solver_arguments`, `duration` for `timeset_duration`, `hours` for `delay`,
+  `sequence_index` for arrays), except on profile maps, which keep `x`. A sheet whose parameters have different
+  index names gets an `index name` row under the data types.
+- **Benders: a master without a balance node.** With every node in a region, the Benders master holds only the flows
+  between regions and has no balance node. When every balance node was the end of a flow between regions, the run
+  stopped with "No node has an energy balance … every node resolved to node_type = 'commodity'"; it now solves. The
+  master no longer carries the other region nodes as empty balance rows. A model with no balance node at all still
+  gets that error, now when it is loaded.
+- **Capacity tables: retired existing capacity counted twice.** After an investment solve that retires existing
+  capacity, a later solve that dispatches the same periods (a realization solve, or a dispatch solve after an
+  investment solve) reported `existing` with the retirement already subtracted, next to the same retirement in
+  `divested`. For example, a 150 MW plant retired in 2030 showed `existing` 0 and `divested` 150. `existing` is now
+  the capacity before the retirement (150). The model and `total` were right.
+- **Excel import: time-series sheets with a default row.** On a time-series sheet with several parameters
+  (`unit_t`, `node_t`, ...), the `default` row under the parameter row was read as one more time step: each column's
+  series got an extra step named `index: time` carrying the default value. It is now read as a header row. This
+  affected a workbook used as an input source and a workbook imported into a database.
+- **Excel import: scenario ranks from 1.** Importing a self-describing workbook numbered each scenario's alternatives
+  from 0; they are now numbered from 1, as in the Spine database editor and the other importers. The order was
+  and is the same. The help text of the import's `--keep-entities` option now says what it does.
+- **Excel export: array parameters labelled `string (array)`.** `model.solves`, `solve.contains_solves` and the other
+  parameters that hold a list of names were labelled `boolean (array)`; such a column on a constant sheet also
+  offered a TRUE / FALSE dropdown that refused the names. Workbooks with the old label still read.
+- **Excel export: numbers kept exactly.** The export wrote numbers with 16 significant digits, so a value such as
+  0.30000000000000004 came back from the workbook as 0.3. It now writes the shortest form that reads back to the
+  same number. LibreOffice keeps only 15 significant digits when it saves an xlsx again, so this holds for a
+  workbook that is not re-saved in LibreOffice.
+- **Upgrading databases from FlexTool 3.0.0-3.5.1: constraints and reserves kept on.** Migrating a database made
+  with FlexTool 3.0.0-3.5.1 could leave `constraint`, `reserve__upDown__unit__node` or
+  `reserve__upDown__connection__node` inactive by default, so the constraints or reserve provisions were off in
+  every scenario. They now end active by default, and each one is on where its `is_active` was `yes`. A database
+  from those versions that was migrated with FlexTool 4.7.0 or earlier is not repaired: check that these three
+  classes are active by default and that your constraints and reserves have the `is_enabled` you expect.
+- **Example databases: no `node_type` in `Base`.** The examples (examples.sqlite, stochastics.sqlite) set
+  `node_type = commodity` for many nodes in the `Base` alternative, left over from an old migration step. A scenario
+  that ranked `Base` above an example's own alternatives made those nodes commodity nodes. The values are removed;
+  no example's results change.
+
 ## Release 4.7.0 (24.11.2026) — stochastic realization: rolling `within_solve` realizes each jump in one solve, `separate_dispatch` realization looks ahead, `deterministic` default; `startup_method` `_fix_in_uc` members; `minimum_time_method` gates min up / down times; outages end carried obligations; rounded carried units online; one branching setting for stochastic investment solves (schema v84)
 
 Input databases move to data version 84. The FlexTool window, the Spine Toolbox workflow and `flextool-run

@@ -5,7 +5,7 @@ v53 wired the ``storage_binding_methods`` parameter_value_list to
 to scalars.  This **v55 step** restructures the value_list itself:
 
 - Renames three legacy scalar names (per
-  :data:`flextool.update_flextool.db_migration._STORAGE_BINDING_RENAMES_V55`):
+  :data:`flextool.update_flextool.db_migration.v50_v55._STORAGE_BINDING_RENAMES_V55`):
 
     bind_within_timeset         -> bind_within_timeblock
     bind_using_blended_weights  -> bind_within_solve_blended_weights
@@ -286,9 +286,7 @@ def test_v55_post_migration_description_matches_canonical(tmp_path: Path) -> Non
     that the canonical text is, in fact, what shipped fixtures
     expose; that's what this test checks now.
     """
-    from flextool.update_flextool.db_migration import (
-        _STORAGE_BINDING_METHOD_DESCRIPTION_V55,
-    )
+    from flextool.update_flextool.db_migration.v50_v55 import _STORAGE_BINDING_METHOD_DESCRIPTION_V55
 
     url = _stage_v54_db_with_planted_rows(
         tmp_path / "v55_description.sqlite",
@@ -305,7 +303,7 @@ def test_v55_post_migration_description_matches_canonical(tmp_path: Path) -> Non
     # Database version 77 appends one sentence to the v55 text; version 78
     # puts the [choice] marker in front of it; version 82 rewrites it (the
     # rolling storage carry), so the shipped fixture carries the v82 text.
-    from flextool.update_flextool.db_migration import _v82_storage_texts
+    from flextool.update_flextool.db_migration.v82 import _v82_storage_texts
     assert description == _v82_storage_texts()[("node", "storage_binding_method")], (
         "node.storage_binding_method description does not match the "
         "canonical (v82) text.\n"

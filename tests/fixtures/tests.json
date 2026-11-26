@@ -10128,16 +10128,6 @@
         "ImNvbW1vZGl0eSI=",
         "str"
       ],
-      "Base"
-    ],
-    [
-      "node",
-      "anti_energy_market",
-      "node_type",
-      [
-        "ImNvbW1vZGl0eSI=",
-        "str"
-      ],
       "anti_energy_plant"
     ],
     [
@@ -10239,16 +10229,6 @@
         "float"
       ],
       "battery_invest"
-    ],
-    [
-      "node",
-      "battery",
-      "node_type",
-      [
-        "ImNvbW1vZGl0eSI=",
-        "str"
-      ],
-      "Base"
     ],
     [
       "node",
@@ -10409,16 +10389,6 @@
         "float"
       ],
       "battery_invest"
-    ],
-    [
-      "node",
-      "coal_market",
-      "node_type",
-      [
-        "ImNvbW1vZGl0eSI=",
-        "str"
-      ],
-      "Base"
     ],
     [
       "node",
@@ -10625,16 +10595,6 @@
       "dr_storage",
       "node_type",
       [
-        "ImNvbW1vZGl0eSI=",
-        "str"
-      ],
-      "Base"
-    ],
-    [
-      "node",
-      "dr_storage",
-      "node_type",
-      [
         "InN0b3JhZ2Ui",
         "str"
       ],
@@ -10705,16 +10665,6 @@
       "east",
       "node_type",
       [
-        "ImNvbW1vZGl0eSI=",
-        "str"
-      ],
-      "Base"
-    ],
-    [
-      "node",
-      "east",
-      "node_type",
-      [
         "ImJhbGFuY2Ui",
         "str"
       ],
@@ -10769,16 +10719,6 @@
         "str"
       ],
       "ev"
-    ],
-    [
-      "node",
-      "ev_battery",
-      "node_type",
-      [
-        "ImNvbW1vZGl0eSI=",
-        "str"
-      ],
-      "Base"
     ],
     [
       "node",
@@ -10849,16 +10789,6 @@
         "float"
       ],
       "heat"
-    ],
-    [
-      "node",
-      "heat",
-      "node_type",
-      [
-        "ImNvbW1vZGl0eSI=",
-        "str"
-      ],
-      "Base"
     ],
     [
       "node",
@@ -10949,16 +10879,6 @@
         "float"
       ],
       "network"
-    ],
-    [
-      "node",
-      "north",
-      "node_type",
-      [
-        "ImNvbW1vZGl0eSI=",
-        "str"
-      ],
-      "Base"
     ],
     [
       "node",
@@ -11105,16 +11025,6 @@
       "water_sink",
       "node_type",
       [
-        "ImNvbW1vZGl0eSI=",
-        "str"
-      ],
-      "Base"
-    ],
-    [
-      "node",
-      "water_sink",
-      "node_type",
-      [
         "InN0b3JhZ2Ui",
         "str"
       ],
@@ -11149,16 +11059,6 @@
         "float"
       ],
       "water_pump"
-    ],
-    [
-      "node",
-      "water_source",
-      "node_type",
-      [
-        "ImNvbW1vZGl0eSI=",
-        "str"
-      ],
-      "Base"
     ],
     [
       "node",
@@ -11299,16 +11199,6 @@
         "str"
       ],
       "scale_to_peak_flow"
-    ],
-    [
-      "node",
-      "west",
-      "node_type",
-      [
-        "ImNvbW1vZGl0eSI=",
-        "str"
-      ],
-      "Base"
     ],
     [
       "node",

@@ -1,21 +1,26 @@
-# Entity classes that need an Entity Alternative column (active_by_default=False).
-entity_alternative_classes:
-  - node
-  - unit
-  - connection
-
 # Parameters that must appear before the Entity Alternative column.
 # Ensures roundtrip compatibility with the position-based importer.
 pre_entity_alternative_params:
   node: ["node_type"]
 
-# Column width settings (unit ≈ width of character '0' in Calibri 11, ~7px).
-minimum_parameter_column_width: 10
-width_non_parameter_columns: 22
-definition_column_width: 11
-index_column_width: 12
+# Index names of map parameters whose index is neither a period nor a time step (the v2 export writes them for
+# a map stored with Spine's default index name 'x'; a stored name of its own is kept).  Arrays get
+# array_index_name.  Profile maps (profile.profile) keep 'x'.
+index_names:
+  solve:
+    solver_arguments: "argument"
+  timeline:
+    timestep_duration: "timestep"
+  timeset:
+    timeset_duration: "duration"
+  unit:
+    delay: "hours"
+  connection:
+    delay: "hours"
+array_index_name: "sequence_index"
 
-# Default index column names per layout type (replaces 'x' from the DB).
+# Default index column names per layout type (replaces 'x' from the DB when the parameter's shape does not name
+# its index, see _param_shapes).
 index_name_defaults:
   periodic: "period"
   timeseries: "time"

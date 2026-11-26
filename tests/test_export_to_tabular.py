@@ -29,11 +29,12 @@ WHITELIST_EXEMPT_PARAMS: dict[str, set[str]] = {
 def _find_def_row(ws: "openpyxl.worksheet.worksheet.Worksheet") -> int:
     """Return the row number of the v2 parameter-name header row.
 
-    The header sits at row 3 by default but shifts to row 4 when any
-    parameter on the sheet has a default value (an optional 'default'
-    metadata row is inserted between data type and the header).
+    The header sits at row 3 by default; it shifts down one row for each
+    optional metadata row between data type and the header: 'index name'
+    (when the sheet's parameters have different index names) and
+    'default' (when any parameter has a default value).
     """
-    for r in (3, 4):
+    for r in (3, 4, 5):
         if ws.cell(row=r, column=1).value == "alternative":
             return r
     raise AssertionError(

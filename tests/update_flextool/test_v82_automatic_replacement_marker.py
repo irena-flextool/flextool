@@ -20,6 +20,7 @@ import json
 from spinedb_api import DatabaseMapping, Map, to_database
 
 from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import v82
 
 
 def _db() -> DatabaseMapping:
@@ -62,8 +63,8 @@ def _marker(db) -> dict | None:
 
 def test_marker_names_the_automatic_entities_whose_costs_follow_their_replacements() -> None:
     with _db() as db:
-        m._v82_automatic_replacement_marker(db)
+        v82._v82_automatic_replacement_marker(db)
         assert _marker(db) == {"since": 82, "entities": ["mapped", "retiring", "salvaged"]}
         # Idempotent: a rerun writes the same marker.
-        m._v82_automatic_replacement_marker(db)
+        v82._v82_automatic_replacement_marker(db)
         assert _marker(db) == {"since": 82, "entities": ["mapped", "retiring", "salvaged"]}

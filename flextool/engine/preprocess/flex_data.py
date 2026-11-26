@@ -58,14 +58,14 @@ from flextool.engine.preprocess.params._block_layout import BlockLayout
 from flextool.engine.preprocess.params._branch import (
     activate_branch_anchor_pairs,
     deactivate_branch_anchor_pairs,
-    fan_period_labels,
-    period_branch_pairs_lf,
     solve_branch_anchor_pairs,
 )
+from flextool.engine.preprocess._co2_carry import load_co2_rolling_carry
 from flextool.engine.preprocess._provider_io import _provider_key
 # The FlexData fields of the start-up input (cleared together by reduce_unit_detail_method online).
 from flextool.engine.preprocess._reduce_detail import STARTUP_FIELDS
 from flextool.engine.preprocess.emit._base_steps import NEW_STEP_BASE_STEPS
+from flextool.engine.preprocess.emit import _flowgroup_accumulators as _fg
 
 
 def _loadflex_prof(label: str) -> None:
@@ -1235,7 +1235,7 @@ class FlexData:
     # annual tier cap uses, read independently of the ladder gate (f_d_k.csv is always emitted).
     # p_co2_cum_realized_tonnes (g, d) is the cumulative_co2 handoff carrier, net of removal credits
     # (#19). co2_horizon_fraction_reached is the whole-chain fraction (years_represented-weighted) that
-    # p_co2_max_total scales by. See _load_co2_rolling_carry and model/core.py's co2_max_period /
+    # p_co2_max_total scales by. See _co2_carry.load_co2_rolling_carry and model/core.py's co2_max_period /
     # co2_max_total EQ headers.
     p_co2_f_d_k: Param | None = None             # (d,)
     p_co2_cum_realized_tonnes: Param | None = None  # (g, d)
@@ -1243,6 +1243,9 @@ class FlexData:
     # solve that realized them (the weight co2_max_total's LHS gives them); value null where unknown.
     p_co2_cum_realized_represented: Param | None = None  # (g, d)
     co2_horizon_fraction_reached: float = 1.0
+    # (d,) hours of the solve's periods that earlier solves of the chain realized (item 1042; _co2_carry).
+    p_co2_hours_before_solve: Param | None = None
+    flowgroup_realized: pl.DataFrame | None = None  # (g, d) realized flow-group history, _flowgroup_accumulators
 
     # ─── Indirect-conversion (CHP) ────────────────────────────────────────
     process_indirect: pl.DataFrame | None = None
@@ -2509,6 +2512,35 @@ def _load_co2_cap(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
             co2_max_period, g_max.join(period, how="cross"), flow_to_co2_capped)
 
 
+def co2_capped_emitter_arcs(groups: pl.DataFrame, inp: Path, sd: Path, pss_eff: "pl.DataFrame | None",
+                            pss_noEff: "pl.DataFrame | None", *, provider: "object | None" = None):
+    """``(gcn, flow_eff, flow_noEff)`` of the capped *groups* (column ``g``): gcn (g, c, n) the group's nodes that
+    carry a CO2-bearing commodity c, and the eff / noEff arcs (p, source, sink, c, g) drawing from them (the
+    emitters of the cap row; None where there are none).  gcn is None when no group has such a node.  Shared by
+    :func:`_load_co2_cap_total` and the run's check that a total cap is seen whole (``solve._co2_total_scope``)."""
+    cn_co2 = _provider_read(provider, "solve_data/commodity_node_co2",
+                              sd / "commodity_node_co2.csv").pipe(
+        rename_to_axis, {"commodity": "c", "node": "n"})
+    g_node = _provider_read(provider, "input/group__node",
+                              inp / "group__node.csv").pipe(
+        rename_to_axis, {"group": "g", "node": "n"})
+    gcn = (groups.join(g_node, on="g", how="inner")
+                 .join(cn_co2, on="n", how="inner")
+                 .select("g", "c", "n"))
+    if gcn.height == 0:
+        return None, None, None
+    flows = []
+    for arcs in (pss_eff, pss_noEff):
+        flow = None
+        if arcs is not None and arcs.height > 0:
+            # source is the entity-union axis, gcn.n the node axis.
+            joined = (join_aligned(arcs.select("p", "source", "sink"), gcn, left_on="source", right_on="n")
+                      .select("p", "source", "sink", "c", "g"))
+            flow = joined if joined.height > 0 else None
+        flows.append(flow)
+    return gcn, flows[0], flows[1]
+
+
 def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
                           pss_noEff: pl.DataFrame | None = None,
                           *,
@@ -2542,30 +2574,9 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     g_max = _provider_read(provider, "solve_data/group_co2_max_total", p).pipe(rename_to_axis, {"group": "g"})
     if g_max.height == 0:
         return (None, None, None, None, None)
-    cn_co2 = _provider_read(provider, "solve_data/commodity_node_co2",
-                              sd / "commodity_node_co2.csv").pipe(
-        rename_to_axis, {"commodity": "c", "node": "n"})
-    g_node = _provider_read(provider, "input/group__node",
-                              inp / "group__node.csv").pipe(
-        rename_to_axis, {"group": "g", "node": "n"})
-    gcn = (g_max.join(g_node, on="g", how="inner")
-                .join(cn_co2, on="n", how="inner")
-                .select("g", "c", "n"))
-    if gcn.height == 0:
+    gcn, flow_eff, flow_noEff = co2_capped_emitter_arcs(g_max, inp, sd, pss_eff, pss_noEff, provider=provider)
+    if gcn is None:
         return (None, None, None, None, None)
-    flow_eff = None
-    flow_noEff = None
-    if pss_eff is not None and pss_eff.height > 0:
-        # source is the entity-union axis, gcn.n the node axis.
-        eff = (join_aligned(pss_eff.select("p", "source", "sink"), gcn, left_on="source", right_on="n")
-            .select("p", "source", "sink", "c", "g"))
-        if eff.height > 0:
-            flow_eff = eff
-    if pss_noEff is not None and pss_noEff.height > 0:
-        noeff = (join_aligned(pss_noEff.select("p", "source", "sink"), gcn, left_on="source", right_on="n")
-            .select("p", "source", "sink", "c", "g"))
-        if noeff.height > 0:
-            flow_noEff = noeff
     # (#19) Removal credit — same cap group's node(s), unsplit, no slope
     # (mirrors flow_to_co2_capped).  A pure-removal group never binds the
     # cap (removal only loosens it), so the original emitting-flow gate
@@ -2622,115 +2633,6 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     if flow_eff is None and flow_noEff is None and not startup_emitters:
         return (None, None, None, None, None)
     return (g_max, flow_eff, flow_noEff, p_cap, flow_to_co2_capped_total)
-
-
-def _fan_members(workdir: Path, provider) -> "tuple[set[str], dict[str, str]]":
-    """``(members, first_member)`` of the solve's stochastic fans: every fan member period (a forecast branch
-    period, a zero-weight forecast, the realized designation) and, per period label, its first sorted member
-    with steps in ``steps_in_use``.  Both empty without a fan."""
-    from flextool.engine.preprocess.params._branch import steps_in_use_lf
-    pb = period_branch_pairs_lf(workdir, provider=provider).collect()
-    pairs = {(str(a), str(b)) for a, b in zip(pb["d"].to_list(), pb["b"].to_list())}
-    labels = fan_period_labels(pairs)
-    if not labels:
-        return set(), {}
-    with_steps = {str(x) for x in steps_in_use_lf(workdir, provider=provider).collect()["d"].to_list()}
-    members = {b for a, b in pairs if a != b and a in labels}
-    first: dict[str, str] = {}
-    for a in sorted(labels):
-        stepped = sorted(b for x, b in pairs if x == a and b != a and b in with_steps)
-        if stepped:
-            first[a] = stepped[0]
-    return members, first
-
-
-def _load_co2_rolling_carry(sd: Path, *, provider: "object | None" = None):
-    """``(p_co2_f_d_k, p_co2_cum_realized_tonnes, p_co2_cum_realized_represented, horizon_fraction_reached)``
-    for the CO2 cap rolling / chained carry (#38, Q22).
-
-    ``p_co2_f_d_k`` — the raw ``solve_data/f_d_k.csv`` Param ``(d,)``: the same per-period "share of
-    d's hours reached by the end of this roll's horizon" the commodity ladder's annual tier cap uses
-    (``_commodity_ladder._eq_tier_cap_annual``), read straight off the Provider — the file is always
-    emitted — rather than through ``flex_data.p_f_d_k``, which stays ``None`` without a price-ladder
-    commodity (``p_f_d_k_from_source`` gates on that). ``None`` when the file is absent or empty;
-    consumers then treat every period as fully reached (1.0), the pre-fix behaviour.
-
-    ``p_co2_cum_realized_tonnes`` — tonnes already realized per ``(group, period)``, net of removal
-    credits (#19): the ``cumulative_co2`` handoff carrier (``preprocess/emit/_co2_accumulators.py``).
-    ``None`` on the first solve of a chain (no prior carrier); consumers then treat realized as 0.
-
-    ``p_co2_cum_realized_represented`` — the carrier's ``represented`` column: the same tonnes ×
-    years_represented[d] / period_share[d] of the solve that realized them (co2_max_total's LHS units);
-    null values where the carrier has none.  ``None`` exactly when ``p_co2_cum_realized_tonnes`` is.
-
-    ``horizon_fraction_reached`` — ``Σ_d years_represented[d]·f_d_k[d] / Σ_d years_represented[d]``,
-    over every period of the whole chain, each counted once: a stochastic fan's members are left out and its
-    period label stands for the period (the f_d_k of its first member with steps: the realized share plus this
-    solve's share; in a split realization roll the label holds the jump, which that f_d_k counts) (``solve_data/p_years_represented.csv``, the solve's static period→year map, not dt-pruned — the same un-pruned source the ladder's cumulative tier cap reads
-    for its own carried weight, ``p_ladder_cum_weight``). The fraction of the chain's total represented
-    years reached by the end of this roll — scales ``co2_max_total``'s fixed whole-horizon budget down
-    to "allocated so far". ``1.0`` (the old, full-cap-every-roll behaviour) outside rolling / chained
-    solves, or when either CSV is unavailable (a fixture that skips the derived-param pass).
-    """
-    if provider is None:
-        return None, None, None, 1.0
-    from flextool.engine.preprocess import _provider_keys as K
-    from flextool.engine.preprocess._provider_translators import read_handoff_frame
-
-    fdk_df = None
-    if _provider_has(provider, "solve_data/f_d_k", sd / "f_d_k.csv"):
-        raw = _provider_read(provider, "solve_data/f_d_k", sd / "f_d_k.csv")
-        if raw is not None and raw.height > 0 and {"period", "value"}.issubset(raw.columns):
-            fdk_df = (raw.pipe(rename_to_axis, {"period": "d"})
-                      .with_columns(pl.col("value").cast(pl.Float64, strict=False))
-                      .select("d", "value"))
-            if fdk_df.height == 0:
-                fdk_df = None
-    p_fdk = Param(("d",), fdk_df) if fdk_df is not None else None
-
-    realized_raw = read_handoff_frame(provider, K.HANDOFF_CUMULATIVE_CO2)
-    p_realized = None
-    p_realized_rep = None
-    if realized_raw is not None and realized_raw.height > 0:
-        realized_df = (realized_raw.pipe(rename_to_axis, {"group": "g", "period": "d"})
-                       .with_columns(pl.col("value").cast(pl.Float64, strict=False)))
-        if realized_df.height > 0:
-            p_realized = Param(("g", "d"), realized_df.select("g", "d", "value"))
-            rep = (realized_df.with_columns(pl.col("represented").cast(pl.Float64, strict=False))
-                   if "represented" in realized_df.columns
-                   else realized_df.with_columns(represented=pl.lit(None, dtype=pl.Float64)))
-            p_realized_rep = Param(("g", "d"), rep.select("g", "d", value=pl.col("represented")))
-
-    fraction_reached = 1.0
-    if _provider_has(provider, "solve_data/p_years_represented", sd / "p_years_represented.csv"):
-        pyr = _provider_read(provider, "solve_data/p_years_represented", sd / "p_years_represented.csv")
-        if pyr is not None and pyr.height > 0 and {"period", "p_years_represented"}.issubset(pyr.columns):
-            # Each calendar period counts once.  The members of a stochastic fan are alternatives of their
-            # period, not more calendar, so they are in neither sum; the period label (the original name of
-            # the period, no dispatch of its own; in a split realization roll it holds the jump, which its first
-            # member's f_d_k counts) stands for the period: its share reached is the f_d_k of a
-            # member with steps, which holds the label's realized hours from earlier solves plus this
-            # solve's hours (every forecast has the same steps).  A label without such a member keeps its
-            # own f_d_k (its realized share).
-            members, first_member = _fan_members(sd.parent, provider)
-            years = (pyr.pipe(rename_to_axis, {"period": "d"})
-                     .filter(~pl.col("d").cast(pl.Utf8).is_in(sorted(members)))
-                     .with_columns(pl.col("p_years_represented").cast(pl.Float64, strict=False))
-                     .group_by("d").agg(pl.col("p_years_represented").sum().alias("years")))
-            total_years = float(years["years"].sum())
-            if total_years > 0.0 and fdk_df is not None:
-                fdk_of = {str(a): float(v) for a, v in zip(fdk_df["d"].to_list(), fdk_df["value"].to_list())
-                          if v is not None}
-                eff = fdk_df.with_columns(pl.col("d").cast(pl.Utf8)).select("d", pl.col("value").alias("fdk"))
-                if first_member:
-                    eff = eff.with_columns(pl.col("d").replace_strict(
-                        {a: fdk_of.get(b, 0.0) for a, b in first_member.items()}, default=pl.col("fdk"),
-                        return_dtype=pl.Float64).alias("fdk"))
-                reached = (years.with_columns(pl.col("d").cast(pl.Utf8)).join(eff, on="d", how="left")
-                           .with_columns(pl.col("fdk").fill_null(0.0)))
-                fraction_reached = min(
-                    float((reached["years"] * reached["fdk"]).sum()) / total_years, 1.0)
-    return p_fdk, p_realized, p_realized_rep, fraction_reached
 
 
 def _load_indirect(sd: Path, pss: pl.DataFrame | None, dt: pl.DataFrame,
@@ -5070,6 +4972,26 @@ def _years_represented_boundary(dt: "pl.DataFrame | None", db_reader, provider,
         db_reader, active, _drv_yr.bookkeeping_periods(dt, workdir, provider=provider), provider=provider)
 
 
+def _validate_has_balance(flex_data: "FlexData") -> None:
+    """Raise when no node of the solve has an energy balance (a user's model, at load; a reduced FlexData that
+    the engine derives from a loaded one, such as a Benders master holding only flows between regions, may have
+    none and still builds)."""
+    nb = flex_data.nodeBalance
+    nbp = flex_data.nodeBalancePeriod
+    if (nb is None or nb.height == 0) and (nbp is None or nbp.height == 0):
+        raise ValueError(
+            "No node has an energy balance: every node resolved to "
+            "node_type = 'commodity' (or 'none'), so there is no "
+            "per-time-step balance ('balance'/'storage') and no period "
+            "balance ('balance_within_period') to solve.  Check the "
+            "node_type of your nodes and the alternative ranking of the "
+            "active scenario — a high-ranked alternative (e.g. 'Base') "
+            "that sets node_type = 'commodity' will override the "
+            "'balance'/'storage' assignments of lower-ranked "
+            "alternatives."
+        )
+
+
 def load_flextool(source: "Path | str | FlexInputSource",
                    *,
                    db_reader: "object | None" = None,
@@ -5347,8 +5269,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
             kept = (None if g_co2_max_total is None else startup["startup_from_co2_capped_total"].join(
                 g_co2_max_total.select(pl.col("g").cast(pl.Utf8)).unique(), on="g", how="semi"))
             startup["startup_from_co2_capped_total"] = kept if kept is not None and kept.height > 0 else None
-        co2_f_d_k, co2_cum_realized, co2_cum_realized_rep, co2_horizon_fraction = _load_co2_rolling_carry(
-            sd, provider=provider)
+        (co2_f_d_k, co2_cum_realized, co2_cum_realized_rep, co2_horizon_fraction,
+         co2_hours_before_solve) = load_co2_rolling_carry(sd, provider=provider)
 
         (indir_set, indir_in, indir_out, indir_dt,
          p_source_flow_coef, p_sink_flow_coef) = _load_indirect(
@@ -5535,6 +5457,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
             p_co2_cum_realized_tonnes = co2_cum_realized,
             p_co2_cum_realized_represented = co2_cum_realized_rep,
             co2_horizon_fraction_reached = co2_horizon_fraction,
+            p_co2_hours_before_solve = co2_hours_before_solve,
+            flowgroup_realized = _fg.load_flowgroup_rolling_carry(provider),
 
             process_indirect = indir_set,
             process_input_flows = indir_in,
@@ -5826,6 +5750,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # ``build_flextool`` runs (see _delay.delayed_input_expr
         # which calls ``cast_dim(..., None, ...)``).
         flex_data._axis_enums = axis_enums
+
+        _validate_has_balance(flex_data)
 
         result = _assign_param_names(flex_data)
         load_ok = True  # noqa: F841 — consumed by finally clause below
@@ -7100,8 +7026,7 @@ def build_handoff_from_solution(
       from v_state at fix_storage_timesteps for fix_quantity nodes; the
       price (dual-based) and usage (flow-based) variants stay NULL until
       a fixture exercises them and the dual / flow extraction lands.
-    * ``cumulative_co2`` — per-(group, period), summed from
-      ``solve_data/co2_cum_realized_tonnes.csv`` if present.
+    * ``cumulative_co2`` / ``cumulative_flowgroup`` — per-(group, period) running totals (``emit/_*_accumulators``).
     * ``cumulative_commodity`` — per-(commodity, tier, period),
       derived via :func:`_extract_cumulative_commodity` (this-roll
       v_trade + ``prior_handoff.cumulative_commodity``).
@@ -8072,6 +7997,7 @@ def build_handoff_from_solution(
         cumulative_co2=cumulative_co2_df,
         cumulative_commodity=cumulative_commodity_df,
         cum_sim_hours=cum_sim_hours_df,
+        cumulative_flowgroup=_fg.flowgroup_handoff(flex_data, sol, prior_handoff, _is_dispatch_sibling_parent),
         cycle_start_state=cycle_start_state_df,
         storage_level=storage_level_df,
         scope_start_state=scope_start_state_df,

@@ -16,7 +16,7 @@ import pytest
 from spinedb_api import DatabaseMapping, to_database
 
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
-from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import head, runner
 
 from tests.update_flextool.test_v83_schema_batch import (
     _assert_second_refresh_commits_nothing, _copy, _definition, _migrate, _path, _raw, _shipped_texts, _values)
@@ -67,7 +67,7 @@ def test_v25_to_83_descriptions_are_the_shipped_ones(v82_schema_db_url: str, tmp
     assert held[("unit", "virtual_unitsize")] == held[("connection", "virtual_unitsize")] == NEW_UNIT_SIZE
     assert held[("group", "co2_method")] == NEW_CO2_METHOD
     assert "solver" not in lists and solver == "solvers"
-    assert m._current_version_ro(_path(url), None) == FLEXTOOL_DB_VERSION
+    assert runner._current_version_ro(_path(url), None) == FLEXTOOL_DB_VERSION
 
 
 @pytest.mark.parametrize("default", ["null", "price"])
@@ -105,15 +105,15 @@ def test_old_texts_at_83_are_refreshed_once(schema_db_url: str, tmp_path: Path, 
         db.commit_session("old texts")
         values_before = _values(db)
     path = _path(url)
-    assert m._head_defaults_stale_ro(path)
-    assert m._current_version_ro(path, None) is None
+    assert head._head_defaults_stale_ro(path)
+    assert runner._current_version_ro(path, None) is None
     _migrate(url)
     shipped = _shipped_texts()
     with DatabaseMapping(url) as db:
         assert _definition(db, "node", "availability")["description"] == shipped[("node", "availability")]
         assert _definition(db, "unit", "virtual_unitsize")["description"] == NEW_UNIT_SIZE
-    assert not m._head_defaults_stale_ro(path)
-    assert m._current_version_ro(path, None) == FLEXTOOL_DB_VERSION
+    assert not head._head_defaults_stale_ro(path)
+    assert runner._current_version_ro(path, None) == FLEXTOOL_DB_VERSION
 
     def no_lock(*_args, **_kwargs):
         raise AssertionError("a current database took the migration lock")
@@ -187,11 +187,11 @@ def test_release_text_at_83_is_refreshed(schema_db_url: str, tmp_path: Path) -> 
     _write_texts(url, {("unit", "minimum_time_method"): RELEASE_OLD_TEXTS[("unit", "minimum_time_method")][0],
                        ("connection", "reactance"): ""})
     path = _path(url)
-    assert m._head_defaults_stale_ro(path)
+    assert head._head_defaults_stale_ro(path)
     _migrate(url)
     shipped = _shipped_texts()
     with DatabaseMapping(url) as db:
         assert _definition(db, "unit", "minimum_time_method")["description"] == shipped[("unit", "minimum_time_method")]
         assert _definition(db, "connection", "reactance")["description"] == shipped[("connection", "reactance")]
-    assert not m._head_defaults_stale_ro(path)
-    assert m._current_version_ro(path, None) == FLEXTOOL_DB_VERSION
+    assert not head._head_defaults_stale_ro(path)
+    assert runner._current_version_ro(path, None) == FLEXTOOL_DB_VERSION

@@ -42,6 +42,8 @@ class SheetSpec:
     # sheets (e.g. 'solve'), where scalar params have no constant home and the
     # scalar-only row is the only carrier.
     scalar_params_on_constant_sibling: set[str] = field(default_factory=set)
+    # Parameters left off the sheet by --omit-empty-columns: still listed in the reference block.
+    omitted_params: list[str] = field(default_factory=list)
 
 
 def load_settings() -> dict:
@@ -190,12 +192,24 @@ def order_parameters(
     param_names: list[str],
     entity_class: str,
     db_contents: DatabaseContents,
+    group_first: bool = False,
 ) -> list[str]:
     """Sort parameters: string-typed first, then numeric, each by group priority and name.
 
     This ensures the string/float column-type boundary in the import spec
-    lines up correctly for roundtrip xlsx compatibility.
+    lines up correctly for roundtrip xlsx compatibility (v1 format).
+
+    With *group_first* (the v2 format, whose reader takes any column order) the parameters of one group stay
+    together, so each group can be one outline group: by group priority (ungrouped last), then string-typed
+    first, then name.
     """
+    if group_first:
+        def group_key(pname: str) -> tuple[int, bool, str]:
+            group_name = db_contents.param_to_group.get((entity_class, pname))
+            group = db_contents.parameter_groups.get(group_name) if group_name else None
+            priority = (group or {}).get("priority") or 999
+            return (priority, not _is_string_param(pname, entity_class, db_contents), pname)
+        return sorted(param_names, key=group_key)
     {
         p["name"]: p for p in db_contents.parameter_definitions.get(entity_class, [])
     }
@@ -269,6 +283,7 @@ def build_sheet_specs(
     db_contents: DatabaseContents,
     settings: dict | None = None,
     include_groups: set[str] | None = None,
+    group_first: bool = False,
 ) -> list[SheetSpec]:
     """Build the ordered list of SheetSpec objects for all Excel sheets.
 
@@ -280,6 +295,8 @@ def build_sheet_specs(
             group are dropped.  Sheets whose column set goes empty are
             dropped, unless listed under a selected group in
             ``always_include_with_groups``.
+        group_first: Order each sheet's parameters by parameter group first (v2 format), see
+            :func:`order_parameters`.
 
     Returns:
         Ordered list of :class:`SheetSpec` objects.
@@ -295,7 +312,9 @@ def build_sheet_specs(
     sheet_order: list[str] = settings.get("sheet_order", [])
     drop_dims: list[str] = settings.get("drop_dimensions", [])
     rename_sheets: dict[str, str] = settings.get("rename_sheets", {})
-    ea_classes: set[str] = set(settings.get("entity_alternative_classes", []))
+    # Every class gets one "entity existence" column, on its (first) constant sheet; a class with only a link sheet
+    # gets it there (write_link_sheet_v2).
+    ea_assigned: set[str] = set()
     pre_ea_rules: dict[str, list[str]] = settings.get("pre_entity_alternative_params", {})
     index_name_defaults: dict[str, str] = settings.get("index_name_defaults", {})
 
@@ -393,9 +412,7 @@ def build_sheet_specs(
                     suffix = "_c"
 
             sheet_nm = f"{group_name}{suffix}"
-            has_ea = layout_key == "constant" and any(
-                c in ea_classes for c in class_names
-            )
+            has_ea = layout_key == "constant"
 
             spec = SheetSpec(
                 sheet_name=sheet_nm,
@@ -459,8 +476,10 @@ def build_sheet_specs(
                 layout=layout,
                 entity_classes=[entity_class],
                 entity_columns=entity_cols,
-                has_entity_alternative=(layout == "constant" and entity_class in ea_classes),
+                has_entity_alternative=(layout == "constant" and entity_class not in ea_assigned),
             )
+            if layout == "constant":
+                ea_assigned.add(entity_class)
             # Only include params that actually exist in the DB schema
             existing_params = [p for p in sub_params if p in class_pdefs]
             spec._raw_params = existing_params  # type: ignore[attr-defined]
@@ -561,13 +580,13 @@ def build_sheet_specs(
             if not dims:
                 # Zero-dim class with no params — skip (upDown, reserve, etc.)
                 continue
-            # Multi-dim relationship class -> link sheet
+            # Multi-dim relationship class -> link sheet (its entity existence column is there)
             spec = SheetSpec(
                 sheet_name=base_name,
                 layout="link",
                 entity_classes=[cls_name],
                 entity_columns=entity_cols,
-                has_entity_alternative=False,
+                has_entity_alternative=True,
             )
             specs.append(spec)
             continue
@@ -637,7 +656,7 @@ def build_sheet_specs(
                     suffix = layout_to_suffix[layout_key]
 
             sheet_nm = f"{display_name}{suffix}"
-            has_ea = layout_key == "constant" and cls_name in ea_classes
+            has_ea = layout_key == "constant"
 
             spec = SheetSpec(
                 sheet_name=sheet_nm,
@@ -733,7 +752,7 @@ def build_sheet_specs(
         if raw_params is None:
             continue
         primary_class: str = getattr(spec, "_primary_class", "")
-        spec.parameter_names = order_parameters(raw_params, primary_class, db_contents)
+        spec.parameter_names = order_parameters(raw_params, primary_class, db_contents, group_first=group_first)
 
         # Move pre-EA params out of parameter_names into pre_ea_params
         if spec.has_entity_alternative and spec.layout == "constant":
@@ -788,7 +807,38 @@ def build_sheet_specs(
             specs, db_contents, include_groups, always_include_cfg,
         )
 
+    # ---- 11. Sheet names Excel accepts (at most 31 characters) ----
+    for spec, name in zip(specs, fit_sheet_names([spec.sheet_name for spec in specs])):
+        spec.sheet_name = name
+
     return specs
+
+
+# Excel refuses (or repairs) a workbook with a sheet name longer than this.
+MAX_SHEET_NAME = 31
+
+
+def fit_sheet_names(names: list[str]) -> list[str]:
+    """*names* with every name longer than 31 characters cut to 31, unique.
+
+    A cut name that collides with a name already taken ends in ``~2``, ``~3``, ... instead.  Shorter names stay
+    as they are.  The reader does not identify a parameter by its sheet name (the sheet's own definition row and
+    column name it), so the cut needs no way back.
+    """
+    taken = {n for n in names if len(n) <= MAX_SHEET_NAME}
+    out: list[str] = []
+    for name in names:
+        if len(name) > MAX_SHEET_NAME:
+            fitted = name[:MAX_SHEET_NAME]
+            n = 2
+            while fitted in taken:
+                suffix = f"~{n}"
+                fitted = name[:MAX_SHEET_NAME - len(suffix)] + suffix
+                n += 1
+            taken.add(fitted)
+            name = fitted
+        out.append(name)
+    return out
 
 
 def _filter_specs_by_groups(

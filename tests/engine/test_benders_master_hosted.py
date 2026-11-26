@@ -598,17 +598,6 @@ def test_trust_region_and_in_out_mutually_exclusive(mh_data, monkeypatch) -> Non
 # ---------------------------------------------------------------------------
 
 
-def test_straddling_unit_raises_through_driver(mh_data) -> None:
-    """Hosting ONLY lh2_B (3-region run, membership surgery) makes
-    liquefier_B straddle: its input node h2_B stays in region_B while
-    its output node lh2_B is hosted.  The split-level hard error (D-a)
-    must propagate out of ``solve_benders`` naming the unit and the
-    handover pattern."""
-    data = _host_nodes(mh_data, frozenset({"lh2_B"}), REGIONS_ABC)
-    with pytest.raises(RuntimeError, match=r"unit 'liquefier_B' straddles"):
-        solve_benders(data, REGIONS_ABC, max_iters=5, tol=1e-4)
-
-
 def test_mixed_resolution_coupling_brackets_monolith(_runs, tmp_path, monkeypatch) -> None:
     """On the DAILY-group sibling (``lh2_master_build``), hosting the A/B
     carrier chains makes every electrolyser coupling arc join an hourly

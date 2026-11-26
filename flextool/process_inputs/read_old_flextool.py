@@ -8,10 +8,16 @@ for database import.
 from __future__ import annotations
 
 import logging
+import posixpath
+import re
+import zipfile
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+from itertools import zip_longest
 from typing import Any
 
 import openpyxl
+from openpyxl.utils import column_index_from_string, get_column_letter
 
 logger = logging.getLogger(__name__)
 
@@ -250,6 +256,15 @@ class TimeStep:
 
 
 @dataclass
+class UncachedFormula:
+    """A formula cell without a stored value (a workbook saved without Excel calculating it): read as empty."""
+    sheet: str
+    cell: str
+    header: str | None
+    formula: str
+
+
+@dataclass
 class OldFlexToolData:
     """Complete parsed data from one old FlexTool .xlsm file."""
     master: MasterParams
@@ -268,6 +283,7 @@ class OldFlexToolData:
     reserve_group_ts: list[TimeSeriesData]
     unit_ts: list[UnitTimeSeries]
     time_steps: list[TimeStep]
+    uncached_formulas: list[UncachedFormula] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -1141,6 +1157,7 @@ def read_old_flextool(file_path: str) -> OldFlexToolData:
         reserve_group_ts = _read_reserve_ts(wb, "ts_reserve_nodeGroup")
         unit_ts = _read_unit_ts(wb)
         time_steps = _read_time_steps(wb)
+        uncached = uncached_formulas(file_path, [n for n in wb.sheetnames if n not in _SKIP_SHEETS], wb)
 
         logger.info(
             "Parsed: %d nodes, %d unit types, %d units, %d connections, "
@@ -1166,9 +1183,98 @@ def read_old_flextool(file_path: str) -> OldFlexToolData:
             reserve_group_ts=reserve_group_ts,
             unit_ts=unit_ts,
             time_steps=time_steps,
+            uncached_formulas=uncached,
         )
     finally:
         wb.close()
+
+
+#: FT2's own formula columns that FlexTool 4 does not need: the time jumps (its timesets come from the in_use
+#: columns).  A missing value there changes nothing.
+_UNNEEDED_FORMULA_COLUMNS = frozenset({("ts_time", "time_jump"), ("ts_time", "time_jump_invest")})
+
+#: FT2's template annuity, ``=IF(AND(ISNUMBER(<lifetime>),ISNUMBER(<interest>)),-PMT(<interest>,<lifetime>,1),"")``.
+_ANNUITY_TEMPLATE = re.compile(
+    r'=IF\(AND\(ISNUMBER\(([A-Z]+)(\d+)\),ISNUMBER\(([A-Z]+)(\d+)\)\),-PMT\(\3\4,\1\2,1\),""\)', re.IGNORECASE)
+
+
+def _is_template_annuity(sheet: str, header: str | None, formula: str, row: int, headers: tuple) -> bool:
+    """The cell is FT2's annuity formula of its own row's ``lifetime`` and ``interest``.  FlexTool 4 computes the
+    annuity from those two, so this formula is that value by construction (``ft2_annuity``)."""
+    match = _ANNUITY_TEMPLATE.fullmatch(formula.replace(" ", ""))
+    if sheet not in ("unit_type", "nodeNode") or (header or "").lower() != "annuity" or match is None:
+        return False
+    lifetime, life_row, interest, interest_row = match.groups()
+
+    def head(letter: str) -> str:
+        index = column_index_from_string(letter.upper())
+        return (_safe_str(headers[index - 1]) or "").lower() if index <= len(headers) else ""
+
+    return int(life_row) == row == int(interest_row) and head(lifetime) == "lifetime" and head(interest) == "interest"
+
+
+_PACKAGE_RELS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+_FORMULA_ELEMENT = re.compile(rb"<(?:\w+:)?f[ >/]")
+
+
+def _sheets_with_formulas(file_path: str) -> set[str]:
+    """The sheets whose XML has a formula element; none when the package has ``xl/calcChain.xml``.  Excel writes
+    the calculation chain whenever it saves a workbook with formulas, with their values; openpyxl (and so a
+    script) never writes it.  Reads only the zip, not the cells."""
+    with zipfile.ZipFile(file_path) as package:
+        names = set(package.namelist())
+        if "xl/calcChain.xml" in names:
+            return set()
+        workbook = ET.fromstring(package.read("xl/workbook.xml"))
+        rels = ET.fromstring(package.read("xl/_rels/workbook.xml.rels"))
+        targets = {rel.get("Id"): rel.get("Target", "") for rel in rels}
+        found = set()
+        for sheet in workbook.iter("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}sheet"):
+            target = targets.get(sheet.get(_PACKAGE_RELS), "")
+            path = target.lstrip("/") if target.startswith("/") else posixpath.normpath(posixpath.join("xl", target))
+            if path in names and _FORMULA_ELEMENT.search(package.read(path)):
+                found.add(sheet.get("name"))
+        return found
+
+
+def uncached_formulas(file_path: str, sheets: list[str], values: Any = None) -> list[UncachedFormula]:
+    """The formula cells of ``sheets`` without a stored value, which openpyxl (and so the reader) reads as empty:
+    a workbook written by a script and never calculated in Excel has none.  Leaves out the formulas whose value
+    FlexTool 4 does not need (:data:`_UNNEEDED_FORMULA_COLUMNS`, :func:`_is_template_annuity`).  ``values`` is
+    the workbook already open with ``data_only=True``, else it is opened here.  Only the sheets with a formula
+    are walked (:func:`_sheets_with_formulas`), none in a workbook Excel calculated."""
+    sheets = [name for name in sheets if name in _sheets_with_formulas(file_path)]
+    if not sheets:
+        return []
+    formulas = openpyxl.load_workbook(file_path, read_only=True, data_only=False)
+    own = values is None
+    if own:
+        values = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+    found: list[UncachedFormula] = []
+    try:
+        for name in sheets:
+            if name not in formulas.sheetnames:
+                continue
+            headers: tuple = ()
+            rows = zip_longest(formulas[name].iter_rows(values_only=True), values[name].iter_rows(), fillvalue=())
+            for r, (frow, vrow) in enumerate(rows, start=1):
+                headers = frow if r == 1 else headers
+                for c, (f, v) in enumerate(zip_longest(frow, vrow), start=1):
+                    text = getattr(f, "text", f)  # an ArrayFormula keeps its text there
+                    # A formula Excel calculated to "" is stored as an empty string value (type str).
+                    stored = v is not None and (v.value is not None or v.data_type == "str")
+                    if stored or not isinstance(text, str) or not text.startswith("="):
+                        continue
+                    header = _safe_str(headers[c - 1]) if c <= len(headers) else None
+                    if ((name, (header or "").lower()) in _UNNEEDED_FORMULA_COLUMNS
+                            or _is_template_annuity(name, header, text, r, headers)):
+                        continue
+                    found.append(UncachedFormula(name, f"{get_column_letter(c)}{r}", header, text))
+    finally:
+        formulas.close()
+        if own:
+            values.close()
+    return found
 
 
 # ---------------------------------------------------------------------------

@@ -672,8 +672,9 @@ def test_reservation_partial_branch_coverage_is_an_error(tmp_path) -> None:
 
 
 def test_reservation_reads_fan_start(tmp_path) -> None:
-    """A reservation forecast authored at the fan start t1 is read in p2 (own first step t5): 3.0 / 1.5."""
-    provider = _reserve_provider(["high", "low"], [3.0, 1.5])
+    """A reservation forecast authored at the fan start t1 is read in p2 (own first step t5): 3.0 / 1.5.  It covers
+    p1's step t1 too (2.0 / 1.0): the fan's forecast covers the whole horizon (item 307)."""
+    provider = _reserve_provider(["high", "low", "high", "low"], [2.0, 1.0, 3.0, 1.5], times=["t1", "t1", "t5", "t5"])
     df = derive_pdtReserve_upDown_group(tmp_path / "input", tmp_path / "solve_data", provider=provider)
     got = {(r[4], r[5]): float(r[6]) for r in df.iter_rows()}
     assert got[("p2_high", "t5")] == 3.0
@@ -704,9 +705,10 @@ def test_reservation_forecast_must_cover_the_horizon(tmp_path, rolling, solve) -
 
 def test_reservation_roll_forecast_covering_lookahead_is_read(tmp_path) -> None:
     """A roll whose forecast made at t1 also covers t5 (3.0 / 1.5) is silent and reads it there, not the t5
-    forecast (30.0 / 15.0)."""
-    provider = _reserve_provider(["high", "low", "high", "low"], [3.0, 1.5, 30.0, 15.0],
-                                 time_starts=["t1", "t1", "t5", "t5"], times=["t5"] * 4, rolling=True)
+    forecast (30.0 / 15.0).  The forecast made at t1 covers p1's step t1 too (2.0 / 1.0, item 307)."""
+    provider = _reserve_provider(["high", "low", "high", "low", "high", "low"], [2.0, 1.0, 3.0, 1.5, 30.0, 15.0],
+                                 time_starts=["t1", "t1", "t1", "t1", "t5", "t5"],
+                                 times=["t1", "t1", "t5", "t5", "t5", "t5"], rolling=True)
     df = derive_pdtReserve_upDown_group(tmp_path / "input", tmp_path / "solve_data", provider=provider)
     got = {(r[4], r[5]): float(r[6]) for r in df.iter_rows()}
     assert got[("p2_high", "t5")] == 3.0

@@ -20,7 +20,7 @@ from spinedb_api import from_database, to_database
 
 from flextool._resources import package_data_path
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
-from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import head as m
 from flextool.update_flextool import frozen as fz
 from flextool.update_flextool.db_handle import open_database_mapping
 from flextool.update_flextool.db_migration import migrate_database

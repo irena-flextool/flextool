@@ -4289,6 +4289,7 @@ class MainWindow(tk.Tk):
             "flextool.cli.cmd_export_to_tabular",
             tmp_db_url,
             str(xlsx_path),
+            "--units-row",  # the GUI's workbooks show units; descriptions are in the notes
         ]
 
         # Initialize the temp database
@@ -4424,6 +4425,7 @@ class MainWindow(tk.Tk):
             "flextool.cli.cmd_export_to_tabular",
             db_url,
             str(target_xlsx),
+            "--units-row",  # the GUI's workbooks show units; descriptions are in the notes
         ]
 
         self._run_conversion_subprocess(

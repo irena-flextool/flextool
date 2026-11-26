@@ -74,10 +74,12 @@ nav:
     - how_to/index.md
     - 'Basics: time, VRE, network and demand': how_to/basics.md
     - 'Storage and hydro': how_to/storage_hydro.md
+    - 'Demand response': how_to/demand_response.md
     - 'Thermal, CHP and reserves': how_to/thermal_chp.md
     - 'Investment and multi-year models': how_to/investment.md
     - 'Solve sequences, rolling and nested solves': how_to/solve_sequences.md
     - 'Stochastics': how_to/stochastics.md
+    - 'Stochastic examples': how_to/stochastic_examples.md
     - 'Emissions and system limits': how_to/emissions.md
     - 'Outputs, diagnostics and Excel templates': how_to/outputs.md
     - 'Performance and solvers': how_to/performance.md

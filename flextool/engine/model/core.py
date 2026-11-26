@@ -110,7 +110,9 @@ from flextool.engine.model import _extend
 from flextool.engine.model import _retire_built
 from flextool.engine.model import _self_discharge
 from flextool.engine.model import _unit_floors
-from flextool.engine.input._axis_enums import alias_to_axis, align_join_dtypes, join_aligned, rename_to_axis
+from flextool.engine.input._axis_enums import (
+    alias_to_axis, align_join_dtypes, join_aligned, rename_to_axis, schema_dtype,
+)
 from flextool.engine.preprocess._step_relations import check_step_relations, labels_with_steps, scope_end_pairs
 from flextool.engine.model._common import (
     _availability_factor,
@@ -743,7 +745,8 @@ def _prepare(b: _Build) -> None:
     # ── shared index sets ──
     b.pss_dt = compute_pss_dt(d) if b.has_proc else None
     b.nodeBalance_dt = compute_nodeBalance_dt(d)
-    _validate_has_balance(d, b.nodeBalance_dt)
+    if b.nodeBalance_dt is None:
+        b.nodeBalance_dt = _no_balance_dt(d)
     b.nodeState_dt = compute_nodeState_dt(d) if b.has_storage else None
     b.self_discharge = _self_discharge.loss_coefficients(d, b.nodeState_dt) if b.has_storage else None
     b.process_indirect_dt = (compute_process_indirect_dt(d)
@@ -797,20 +800,16 @@ def _node_list(nodes: list) -> str:
     return shown + ("" if len(nodes) <= 10 else f", ... {len(nodes) - 10} more")
 
 
-def _validate_has_balance(d, nodeBalance_dt) -> None:
-    """Raise when no node has an energy balance to solve."""
-    if nodeBalance_dt is None and not _has_rows(getattr(d, "nodeBalancePeriod", None)):
-        raise ValueError(
-            "No node has an energy balance: every node resolved to "
-            "node_type = 'commodity' (or 'none'), so there is no "
-            "per-time-step balance ('balance'/'storage') and no period "
-            "balance ('balance_within_period') to solve.  Check the "
-            "node_type of your nodes and the alternative ranking of the "
-            "active scenario — a high-ranked alternative (e.g. 'Base') "
-            "that sets node_type = 'commodity' will override the "
-            "'balance'/'storage' assignments of lower-ranked "
-            "alternatives."
-        )
+def _no_balance_dt(d) -> pl.DataFrame:
+    """The empty ``(n, d, t)`` frame of a build without per-step balance nodes (a Benders master holding only
+    flows between regions, or a model with only ``balance_within_period`` nodes): the balance slacks and
+    ``nodeBalance_eq`` are then built with no columns and rows.  Keeps the axis dtypes of ``nodeBalance`` and
+    ``dt``.  A user's model without any balance node is refused when it is loaded
+    (``flex_data._validate_has_balance``)."""
+    nb = d.nodeBalance
+    n = (nb.select("n").head(0) if nb is not None
+         else pl.DataFrame(schema={"n": schema_dtype(getattr(d, "_axis_enums", None), "n")}))
+    return n.join(d.dt.select("d", "t").head(0), how="cross")
 
 
 DC_ONLINE_MESSAGE = (
@@ -4544,6 +4543,25 @@ def _eq_co2_max_period(b: _Build) -> None:
     )
 
 
+def _co2_total_share(d) -> "pl.DataFrame | None":
+    """``[d, share]`` for the periods that the solves of a chain split (item 1042), None when there is none.
+
+    Each solve's ``period_share`` is its own complete part of a period, so a chain whose solves each hold part of
+    one period (s1 on 3 h, s2 on the next 9 h, single or rolling) annualised each part as if it were the whole
+    period, and co2_max_total weighed the parts' tonnes differently.  For a period with hours that earlier solves
+    realized (``p_co2_hours_before_solve``) the row uses share* = period_share + those hours / 8760: the period as
+    known to the solve, the earlier parts and its own.  Every hour of the period has one weight in the row, the
+    realized tonnes included (:func:`_co2_total_cap_with_carry`), and its share reached is counted against share*
+    (``_co2_carry.split_f_d_k``), so the budget is split by hour weight.  A single solve, and a rolling solve that
+    holds its periods alone, have no such period: nothing changes there."""
+    from flextool.engine.preprocess._co2_carry import split_share
+
+    before = getattr(d, "p_co2_hours_before_solve", None)
+    if before is None or before.frame.height == 0 or d.p_period_share is None:
+        return None
+    return split_share(d.p_period_share.frame, before.frame).rename({"value": "share"})
+
+
 def _co2_total_cap_with_carry(d) -> Param:
     """co2_max_total's remaining budget (#38): allocated up to the end of this roll's horizon minus
     what earlier rolls / chained solves already realized -- same carried-budget pattern as
@@ -4576,6 +4594,8 @@ def _co2_total_cap_with_carry(d) -> Param:
     realized = getattr(d, "p_co2_cum_realized_represented", None)
     if realized is not None:
         rows = realized.frame.join(cap.select("g"), on="g", how="semi")
+        if (split := _co2_total_share(d)) is not None:
+            rows = _co2_split_represented(rows, d.p_co2_cum_realized_tonnes.frame, split, d)
         missing = rows.filter(pl.col("value").is_null())
         if missing.height:
             raise ValueError(
@@ -4589,6 +4609,20 @@ def _co2_total_cap_with_carry(d) -> Param:
     else:
         cap = cap.with_columns(realized=pl.lit(0.0))
     return Param(("g",), cap.with_columns(value=pl.col("cap") - pl.col("realized")).select("g", "value"))
+
+
+def _co2_split_represented(rows: pl.DataFrame, tonnes: pl.DataFrame, split: pl.DataFrame, d) -> pl.DataFrame:
+    """``rows`` ``[g, d, value]`` (the represented realized carry) with each split period's value the period's
+    realized tonnes × years_represented / share* (:func:`_co2_total_share`): one weight for every hour of the
+    period.  Shared by the row (this solve's carry) and the extraction (the carrier it hands on)."""
+    years = getattr(d, "p_years_represented_d", None)
+    factor = split.with_columns(years=pl.lit(1.0)) if years is None else join_aligned(
+        split, years.frame.select("d", years="value"), on="d", how="left").with_columns(pl.col("years").fill_null(1.0))
+    redone = join_aligned(tonnes.select("g", "d", tonnes="value"), factor, on="d", how="inner").select(
+        "g", "d", rep=pl.col("tonnes") * pl.col("years") / pl.col("share"))
+    return (join_aligned(rows, redone, on=["g", "d"], how="left")
+            .with_columns(value=pl.when(pl.col("rep").is_null()).then(pl.col("value")).otherwise(pl.col("rep")))
+            .drop("rep"))
 
 
 def _eq_co2_max_total(b: _Build) -> None:
@@ -4631,9 +4665,13 @@ def _eq_co2_max_total(b: _Build) -> None:
     #   + Σ_{(p,n,c,g) ∈ startup_from_co2_capped_total, d∈D(leaf),t}
     #     v_startup[p,d,t]·startup_energy[p,n,d]·unitsize[p]·co2_content[c]·w_y[d,t]/step_duration[d,t]
     #   ≤ co2_max_total[g] · horizon_fraction_reached  −  Σ_d R_rep[g,d]
-    #   ∀ g ∈ group_co2_max_total (, leaf);   w_y = step_duration · timestep_weight / period_share · years_represented[d]
+    #   ∀ g ∈ group_co2_max_total (, leaf);   w_y = step_duration · timestep_weight / share_eff · years_represented[d]
     #   R_rep[g,d] = realized tonnes of d from earlier rolls / solves · years_represented[d] / period_share[d],
     #   with the share and years of the solve that realized them (the w_y its own row gave them)
+    #   share_eff[d] = period_share[d], except for a period with hours that earlier solves of the chain realized
+    #   (H_before[d] > 0, item 1042): share*[d] = period_share[d] + H_before[d] / 8760, its R_rep the period's realized
+    #   tonnes · years_represented[d] / share*[d] and its share reached (realized h + this roll's h) / (share*·8760)
+    #   in horizon_fraction_reached
     # Caps the CO2 emissions of a group over the horizon the solve represents (tonnes): each period's
     # annualised emissions (as in co2_max_period, section fuel included) times the years the period
     # represents, summed over the periods — the measure of the model CO2 output.  years_represented is not
@@ -4654,13 +4692,17 @@ def _eq_co2_max_total(b: _Build) -> None:
     # repeated per leaf (horizon_fraction_reached and the realized carry are chain-wide, not
     # per-branch quantities — the carry is kept exactly as _co2_total_cap_with_carry computes it,
     # same as the entity/group total-cap _path families reuse their own bare cap per leaf).
+    split = _co2_total_share(d)
+    share = d.p_period_share if split is None else Param(("d",), join_aligned(
+        d.p_period_share.frame, split, on="d", how="left").select(
+        "d", value=pl.when(pl.col("share").is_null()).then(pl.col("value")).otherwise(pl.col("share"))))
     lhs: dict = {}
     if b.has_co2_cap_total_eff:
         for key, term in _eff_fuel_input(b, _leafify(d.flow_from_co2_capped_total)):
             lhs[f"emissions_{key}"] = Sum(
                 term
                 * d.p_co2_content
-                * d.p_step_duration * d.p_timestep_weight / d.p_period_share
+                * d.p_step_duration * d.p_timestep_weight / share
                 * d.p_years_represented_d,
                 over=("p", "source", "sink", "c", "d", "t"),
             )
@@ -4668,7 +4710,7 @@ def _eq_co2_max_total(b: _Build) -> None:
         lhs["emissions_noEff"] = Sum(
             Where(v_flow * d.p_unitsize, _leafify(d.flow_from_co2_capped_total_noEff))
             * d.p_co2_content
-            * d.p_step_duration * d.p_timestep_weight / d.p_period_share
+            * d.p_step_duration * d.p_timestep_weight / share
             * d.p_years_represented_d,
             over=("p", "source", "sink", "c", "d", "t"),
         )
@@ -4676,14 +4718,14 @@ def _eq_co2_max_total(b: _Build) -> None:
         lhs["removal"] = -Sum(
             Where(v_flow * d.p_unitsize, _leafify(d.flow_to_co2_capped_total))
             * d.p_co2_content
-            * d.p_step_duration * d.p_timestep_weight / d.p_period_share
+            * d.p_step_duration * d.p_timestep_weight / share
             * d.p_years_represented_d,
             over=("p", "source", "sink", "c", "d", "t"),
         )
     if b.has_startup_draw:
         for key, term in _startup_draw(b, _leafify(getattr(d, "startup_from_co2_capped_total", None))):
             lhs[f"emissions_startup_{key}"] = Sum(
-                term * d.p_co2_content * d.p_timestep_weight / d.p_period_share * d.p_years_represented_d,
+                term * d.p_co2_content * d.p_timestep_weight / share * d.p_years_represented_d,
                 over=("p", "n", "c", "d", "t"),
             )
     cap_scalar = _co2_total_cap_with_carry(d)

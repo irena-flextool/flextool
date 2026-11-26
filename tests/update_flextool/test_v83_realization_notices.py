@@ -24,7 +24,7 @@ import pytest
 from spinedb_api import DatabaseMapping, Map, to_database
 from spinedb_api.exception import NothingToCommit
 
-from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import v83 as m
 
 W635 = "flextool_behaviour_change:rolling_within_solve_one_solve"
 W636 = "flextool_behaviour_change:separate_dispatch_realization_looks_ahead"

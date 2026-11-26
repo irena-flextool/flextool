@@ -669,21 +669,19 @@ def test_arc_checks_skip_the_startup_only_arc(tmp_path_factory) -> None:
 # Benders: the draw is a term on the units started, which live in the region subproblem
 
 
-def test_straddle_check_counts_the_start_up_node() -> None:
-    """A region unit whose start-up node is master-hosted straddles the region / master boundary, although none of
-    its arcs touches the master."""
+def test_start_up_node_in_the_master_is_refused() -> None:
+    """A region unit (one direct arc fuel_A -> elec_A) whose start-up node is master-hosted cannot be split: the
+    draw would be in the master's balance, the start-ups in the region subproblem."""
     from types import SimpleNamespace
 
-    from flextool.engine.solve._region_filter import _validate_no_straddling_units
+    from flextool.engine.solve._region_filter import _validate_startup_nodes
 
-    data = SimpleNamespace(
-        process_source_sink=pl.DataFrame({"p": ["u"], "source": ["fuel_A"], "sink": ["elec_A"]}),
-        process_unit=pl.DataFrame({"p": ["u"]}), process_indirect=None,
-        process_startup_node=pl.DataFrame({"p": ["u"], "n": ["oil_M"]}))
-    with pytest.raises(RuntimeError, match=r"unit 'u' straddles.*oil_M"):
-        _validate_no_straddling_units(data, {"fuel_A", "elec_A"}, frozenset({"oil_M"}))
+    nodes, procs = {"A": {"fuel_A", "elec_A", "oil_A"}}, {"A": {"u"}}
+    data = SimpleNamespace(process_startup_node=pl.DataFrame({"p": ["u"], "n": ["oil_M"]}))
+    with pytest.raises(RuntimeError, match=r"unit 'u' takes start-up energy from node 'oil_M' of the Benders master"):
+        _validate_startup_nodes(data, nodes, procs, frozenset({"oil_M"}))
     data.process_startup_node = pl.DataFrame({"p": ["u"], "n": ["oil_A"]})
-    _validate_no_straddling_units(data, {"fuel_A", "elec_A", "oil_A"}, frozenset({"oil_M"}))
+    _validate_startup_nodes(data, nodes, procs, frozenset({"oil_M"}))
 
 
 def test_start_up_node_of_another_region_is_refused() -> None:

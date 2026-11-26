@@ -19,6 +19,7 @@ import json
 from spinedb_api import DatabaseMapping, Map, to_database
 
 from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import v82
 
 
 def _db(*, rp: bool = True) -> DatabaseMapping:
@@ -56,17 +57,17 @@ def _marker(db, change: str) -> dict | None:
 
 def test_markers_name_the_blended_and_forward_storage_nodes() -> None:
     with _db() as db:
-        m._v82_storage_accounting_markers(db)
+        v82._v82_storage_accounting_markers(db)
         assert _marker(db, "rp_storage_chain_pinned") == {"since": 82, "nodes": ["fo_b", "ws_b"]}
         assert _marker(db, "storage_end_matches_start") == {"since": 82, "nodes": ["dflt", "fo_b", "fwd"]}
         # Idempotent: a rerun writes the same markers.
-        m._v82_storage_accounting_markers(db)
+        v82._v82_storage_accounting_markers(db)
         assert _marker(db, "rp_storage_chain_pinned") == {"since": 82, "nodes": ["fo_b", "ws_b"]}
 
 
 def test_no_rp_marker_without_representative_periods() -> None:
     with _db(rp=False) as db:
-        m._v82_storage_accounting_markers(db)
+        v82._v82_storage_accounting_markers(db)
         assert _marker(db, "rp_storage_chain_pinned") is None
         assert _marker(db, "storage_end_matches_start") == {"since": 82, "nodes": ["dflt", "fo_b", "fwd"]}
 
@@ -97,5 +98,5 @@ def test_reference_start_marker_reads_every_alternative() -> None:
         db.add_item("parameter_value", entity_class_name="node", entity_byname=(entity,),
                     parameter_definition_name=name, alternative_name=alt, value=raw, type=typ)
     with db:
-        m._v82_storage_accounting_markers(db)
+        v82._v82_storage_accounting_markers(db)
         assert _marker(db, "storage_reference_start") == {"since": 82, "nodes": ["mixed"]}

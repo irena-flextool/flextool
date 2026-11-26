@@ -130,15 +130,15 @@ def test_ladder_tier_on_the_path(tmp_path, monkeypatch):
 
 def test_cumulative_flow_on_the_path(tmp_path, monkeypatch):
     """Flow group ``fg`` = coal_u's output, ``max_cumulative_flow`` 0.5 MW in p1: the tail row caps the path's coal
-    at 0.5 x 4 h = 2 MWh (x + coal_A <= 2): R_0 as T-pc, 109 500.  R_1's own row (p1 t03-t04): coal <= 0.5 x 2 = 1
-    (no carry across rolls): 10 + 30 = 40 -> 87 600.  (Rows per name: x <= 1, coal_A <= 1 -> 2190 x 60 = 131 400.)"""
+    at 0.5 x 4 h = 2 MWh (x + coal_A <= 2): R_0 as T-pc, 109 500, its jump realizes x = 2.  R_1's row (p1 t03-t04)
+    carries it: coal <= 0.5 x (2 realized h + 2) - 2 = 0, gas only: 2 x 30 -> 131 400 (as T-pc's CO2 cap)."""
     spec = _base(entities=[["flowGroup", "fg", None], ["flowGroup__unit__node", ["fg", "coal_u", "elec"], None]],
                  values=[["flowGroup", "fg", "max_cumulative_flow",
                           pack(pmap([("p1", 0.5)], index_name="period"), "map"), "init"]])
     built, steps, _datas = sr._run(spec, tmp_path, monkeypatch)
     assert sorted(_rows_named(built[0][1], "maxCumulative_flow_period")) == [
         "maxCumulative_flow_period[fg,p1_A]", "maxCumulative_flow_period[fg,p1_B]"]
-    assert sr._objectives(steps) == pytest.approx([109_500.0, 87_600.0], rel=1e-9)
+    assert sr._objectives(steps) == pytest.approx([109_500.0, 131_400.0], rel=1e-9)
 
 
 def test_period_balance_on_the_path(tmp_path, monkeypatch):
