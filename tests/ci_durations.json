@@ -593,6 +593,7 @@
  "tests/update_flextool/test_fixture_migrate_all.py": 12.1,
  "tests/update_flextool/test_fixture_schema.py": 7.7,
  "tests/update_flextool/test_fixture_schema_drift.py": 4.5,
+ "tests/update_flextool/test_list_default_parity.py": 17.0,
  "tests/update_flextool/test_migration_sweep_sources.py": 0.2,
  "tests/update_flextool/test_release_seeds.py": 240.0,
  "tests/update_flextool/test_settings_param_sync.py": 1.7,
