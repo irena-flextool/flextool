@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -310,8 +311,9 @@ def test_a_name_callers_take_from_the_old_module_stays_there(tmp_path: Path) -> 
 
 
 def test_the_callers_of_the_old_module_are_found(tmp_path: Path) -> None:
-    found = split_check._callers({"flextool.update_flextool.db_migration"}, [])
+    found, patched = split_check._callers({"flextool.update_flextool.db_migration"}, [])
     assert {"migrate_database", "MigrationCancelled"} <= found["flextool.update_flextool.db_migration"]
+    assert "migrate_database" in patched["flextool.update_flextool.db_migration"]   # a monkeypatch seam
 
 
 def test_a_lost_future_import_fails(tmp_path: Path) -> None:
@@ -338,3 +340,167 @@ def test_effect_free_statements_may_change_order_across_modules(tmp_path: Path) 
     old = "A = 'a'\nB: tuple[str, ...] = ('b', A)\n"
     texts = _texts(tmp_path, pkg__a="from pkg.b import A\n\nB: tuple[str, ...] = ('b', A)\n", pkg__b="A = 'a'\n")
     assert split_check.check_texts({"old.py": old}, texts) == []
+
+
+# --- review cases: each split changes behaviour and must fail -----------------------------------------------------
+
+def _run(tmp_path: Path, old: str | dict[str, str], new: dict[str, str], **kw) -> list[str]:
+    """``check_texts`` of *old* (``pkg.py`` unless named) against ``{"pkg/a.py": text}`` under *tmp_path*."""
+    olds = old if isinstance(old, dict) else {"pkg.py": old}
+    errors = split_check.check_texts(olds, {tmp_path.joinpath(*k.split("/")): v for k, v in new.items()},
+                                     root=tmp_path, **kw)
+    return [e.replace(str(tmp_path) + os.sep, "").replace(os.sep, "/") for e in errors]
+
+
+def test_a_star_import_binds_only_public_names_and_rebinds(tmp_path: Path) -> None:
+    old = "_X = 1\n\n\ndef f():\n    return _X\n"
+    new = {"pkg/__init__.py": "from pkg.b import f\n", "pkg/a.py": "_X = 1\n",
+           "pkg/b.py": "from pkg.a import *\n\n\ndef f():\n    return _X\n"}
+    assert _run(tmp_path, old, new) == ["pkg/b.py:4 f: _X resolves to missing _X, was pkg.py statement 0"]
+    old = "X = 1\n\n\ndef f():\n    return X\n"
+    new = {"pkg/__init__.py": "from pkg.b import f, X\n", "pkg/a.py": "from os import sep as X\n",
+           "pkg/b.py": "X = 1\nfrom pkg.a import *\n\n\ndef f():\n    return X\n"}
+    assert "pkg/b.py:5 f: X resolves to os.sep, was pkg.py statement 0" in _run(tmp_path, old, new)
+
+
+def test_a_dotted_import_is_not_its_parent(tmp_path: Path) -> None:
+    old = "import importlib.util\n\n\ndef f(p):\n    return importlib.util.find_spec(p)\n"
+    new = {"pkg/__init__.py": "import importlib\n\n\ndef f(p):\n    return importlib.util.find_spec(p)\n"}
+    assert _run(tmp_path, old, new) == [
+        "pkg/__init__.py:4 f: importlib resolves to importlib, was importlib (import importlib.util)",
+        "dropped import: pkg.py: import importlib.util"]
+
+
+def test_an_extracted_body_that_updates_or_deletes_an_old_local_fails(tmp_path: Path) -> None:
+    for stmt in ("count += 1", "del count"):
+        old = f"def run(db):\n    count = db\n    if db:\n        {stmt}\n    return db\n"
+        new = {"pkg/__init__.py": f"def _g():\n    {stmt}\n\n\ndef run(db):\n    count = db\n    if db:\n"
+                                  "        _g()\n    return db\n"}
+        assert _run(tmp_path, old, new) == ["_g: reads locals of run: ['count']"]
+
+
+def test_an_extracted_body_binding_a_name_before_reading_it_passes(tmp_path: Path) -> None:
+    def texts(bind: list[str]) -> tuple[str, dict[str, str]]:
+        body = ["for item in db:", "    try:", *bind, "    except ValueError:", "        continue",
+                "    print(v, {item for item in db})"]
+        old = ("def run(db):\n    v = 0\n    for x in db:\n        if x:\n"
+               + "".join(" " * 12 + line + "\n" for line in body) + "    return db\n")
+        new = ("def _g(db):\n" + "".join(" " * 4 + line + "\n" for line in body)
+               + "\n\ndef run(db):\n    v = 0\n    for x in db:\n        if x:\n            _g(db)\n    return db\n")
+        return old, {"pkg/__init__.py": new}
+    assert _run(tmp_path, *texts(["        v = float(item)"])) == []     # v and item bound in _g before read
+    assert _run(tmp_path, *texts(["        if item:", "            v = float(item)"])) == [
+        "_g: reads locals of run: ['v']"]                                 # v bound on one path only
+
+
+def test_an_extracted_bodys_relative_import_reads_its_own_package(tmp_path: Path) -> None:
+    old = {"pkg/old.py": "def run(db):\n    if db:\n        from .util import x\n        x(db)\n    return db\n"}
+    runner = "from pkg.old.sub.step import _g\n\n\ndef run(db):\n    if db:\n        _g(db)\n    return db\n"
+    good = {"pkg/old/__init__.py": runner, "pkg/old/sub/__init__.py": "",
+            "pkg/old/sub/step.py": "def _g(db):\n    from ...util import x\n    x(db)\n"}
+    assert _run(tmp_path, old, good) == []
+    bad = dict(good, **{"pkg/old/sub/step.py": "def _g(db):\n    from ..util import x\n    x(db)\n"})
+    assert _run(tmp_path, old, bad)[0] == "changed: run (old line 1, now pkg/old/__init__.py:4)"
+
+
+def test_a_name_rebound_by_global_through_an_import_or_a_re_export_fails(tmp_path: Path) -> None:
+    old = "def init():\n    global np\n    import numpy as np\n\n\ndef use():\n    return np.zeros(3)\n"
+    new = {"pkg/__init__.py": "from pkg.a import init\nfrom pkg.b import use\n",
+           "pkg/a.py": "def init():\n    global np\n    import numpy as np\n",
+           "pkg/b.py": "def use():\n    return np.zeros(3)\n"}
+    assert _run(tmp_path, old, new) == ["np is rebound by `global` but used in several new modules: pkg.a, pkg.b"]
+    old = "COUNT = 0\n\n\ndef bump():\n    global COUNT\n    COUNT += 1\n"
+    new = {"pkg/__init__.py": "from pkg.a import COUNT, bump\n", "pkg/a.py": old}
+    assert _run(tmp_path, old, new, callers={"pkg": {"COUNT", "bump"}}) == [
+        "COUNT is rebound by `global` but used in several new modules: pkg, pkg.a"]
+
+
+def test_a_patched_name_read_outside_the_old_module_fails(tmp_path: Path) -> None:
+    old = "def load():\n    return 1\n\n\ndef run():\n    return load()\n"
+    new = {"pkg/__init__.py": "from pkg.a import load, run\n", "pkg/a.py": old}
+    assert _run(tmp_path, old, new, callers={"pkg": {"load"}}, patched={"pkg": {"load"}}) == [
+        "callers patch pkg.load, but moved code reading load in pkg.a no longer sees the patch"]
+
+
+def test_names_callers_take_need_a_module_of_the_old_name(tmp_path: Path) -> None:
+    new = {"pkg/impl.py": "def run():\n    return 1\n"}
+    assert _run(tmp_path, "def run():\n    return 1\n", new, callers={"pkg": {"run"}}) == [
+        "no new module is named pkg, but callers or its __all__ take names from it: run"]
+
+
+def test_import_time_effects_in_an_unimported_module_fail(tmp_path: Path) -> None:
+    old = "REG = []\nREG.append(1)\n\n\ndef f():\n    return REG\n"
+    new = {"pkg/__init__.py": "from pkg.a import REG, f\n", "pkg/a.py": "REG = []\n\n\ndef f():\n    return REG\n",
+           "pkg/effects.py": "from pkg.a import REG\nREG.append(1)\n"}
+    assert _run(tmp_path, old, new) == [
+        "pkg.effects holds import-time effects of pkg.py (statement 1) but an import of pkg does not run it"]
+
+
+def test_an_effect_moved_before_a_side_effect_import_fails(tmp_path: Path) -> None:
+    old = "import plugin_a\nimport registry\nX = registry.get('a')\n"
+    new = {"pkg/__init__.py": "import registry\nX = registry.get('a')\nimport plugin_a\n"}
+    assert _run(tmp_path, old, new) == [
+        "pkg.py statement 0 now runs before the import of plugin_a (an import only for its effects)"]
+
+
+def test_a_copy_of_mutable_state_keeps_its_order(tmp_path: Path) -> None:
+    old = "REG = []\nREG.append(1)\nSNAP = tuple(REG)\n"
+    new = {"pkg/__init__.py": "from pkg.a import REG, SNAP\nfrom pkg import b\n",
+           "pkg/a.py": "REG = []\nSNAP = tuple(REG)\n", "pkg/b.py": "from pkg.a import REG\nREG.append(1)\n"}
+    assert _run(tmp_path, old, new) == [
+        "statements with import-time effects of pkg.py run out of their old order: statement 2 before 1"]
+    old = "A = ('a',)\nB = ('b',)\nREG = []\nREG.append(1)\nAB = A + B\n"     # immutable constants: order free
+    new = {"pkg/__init__.py": "from pkg.a import A, B, AB, REG\nfrom pkg import b\n",
+           "pkg/a.py": "A = ('a',)\nB = ('b',)\nREG = []\nAB = A + B\n",
+           "pkg/b.py": "from pkg.a import REG\nREG.append(1)\n"}
+    assert _run(tmp_path, old, new) == []
+
+
+def test_a_walrus_in_a_comprehension_binds_outside_it(tmp_path: Path) -> None:
+    old = "ok = any((hit := x) > 2 for x in [1, 5])\n\n\ndef f():\n    return hit\n"
+    new = {"pkg/__init__.py": "from pkg.a import ok\nfrom pkg.b import f\n",
+           "pkg/a.py": "ok = any((hit := x) > 2 for x in [1, 5])\n", "pkg/b.py": "def f():\n    return hit\n"}
+    assert _run(tmp_path, old, new) == ["pkg/b.py:1 f: hit resolves to missing hit, was pkg.py statement 0"]
+    old = "def run(xs):\n    seen = [(y := v) for v in xs]\n    if seen:\n        print(y)\n    return seen\n"
+    new = {"pkg/__init__.py": "def _g():\n    print(y)\n\n\ndef run(xs):\n    seen = [(y := v) for v in xs]\n"
+                              "    if seen:\n        _g()\n    return seen\n"}
+    assert _run(tmp_path, old, new) == ["_g: reads locals of run: ['y']"]
+
+
+def test_a_class_body_reads_a_name_it_binds_later_from_the_module(tmp_path: Path) -> None:
+    old = "Y = 1\n\n\nclass C:\n    x = Y\n    Y = 2\n"
+    new = {"pkg/__init__.py": "from pkg.a import Y\nfrom pkg.b import C\n", "pkg/a.py": "Y = 1\n",
+           "pkg/b.py": "class C:\n    x = Y\n    Y = 2\n"}
+    assert _run(tmp_path, old, new) == ["pkg/b.py:1 C: Y resolves to missing Y, was pkg.py statement 0"]
+
+
+def test_an_extracted_class_body_reads_the_class_locals(tmp_path: Path) -> None:
+    old = "def make():\n    class K:\n        y = 1\n        if y:\n            print(y)\n    return K\n"
+    new = {"pkg/__init__.py": "def _g():\n    print(y)\n\n\ndef make():\n    class K:\n        y = 1\n        if y:\n"
+                              "            _g()\n    return K\n"}
+    assert _run(tmp_path, old, new) == ["_g: reads locals of make: ['y']"]
+
+
+def test_annotations_resolve_and_type_checking_imports_may_repeat(tmp_path: Path) -> None:
+    head = "from __future__ import annotations\n\n"
+    old = (head + "from dataclasses import dataclass\nfrom typing import ClassVar\n\n\n@dataclass\nclass C:\n"
+           "    x: ClassVar[int] = 1\n\n\ndef g(v: ClassVar):\n    return v\n")
+    new = {"pkg/__init__.py": head + "from typing import ClassVar\n\nfrom pkg.b import C\n\n\n"
+                                     "def g(v: ClassVar):\n    return v\n",
+           "pkg/b.py": head + "from dataclasses import dataclass\n\n\n@dataclass\nclass C:\n    x: ClassVar[int] = 1\n"}
+    assert _run(tmp_path, old, new) == ["pkg/b.py:7 C: ClassVar resolves to missing ClassVar, was typing.ClassVar"]
+    block = head + "from typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n    from pathlib import Path\n\n\n"
+    old = block + "def f(p: Path) -> None:\n    pass\n\n\ndef g(p: Path) -> None:\n    pass\n"
+    new = {"pkg/__init__.py": head + "from pkg.a import f\nfrom pkg.b import g\n",
+           "pkg/a.py": block + "def f(p: Path) -> None:\n    pass\n",
+           "pkg/b.py": block + "def g(p: Path) -> None:\n    pass\n"}
+    assert _run(tmp_path, old, new) == []
+
+
+def test_a_failure_accepted_on_purpose_is_listed_not_counted(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(split_check, "check", lambda *a, **k: ["changed: f", "callers patch pkg.x"])
+    assert split_check.main(["--old", "R:pkg.py", "pkg", "--accept", r"^callers patch pkg\.x$"]) == 1
+    out = capsys.readouterr().out
+    assert "FAIL changed: f" in out and "accepted on purpose: callers patch pkg.x" in out
+    assert "split check: 1 failure(s)" in out
+    assert split_check.main(["--old", "R:pkg.py", "pkg", "--accept", "^changed", "--accept", "^callers"]) == 0

@@ -6,46 +6,55 @@ The old modules are read from git (``REV:PATH``), the new ones from the working 
 
 (``--old`` once per old module, e.g. SPLIT-1 moved ``db_migration.py`` and ``v84_branching.py`` from 9605e9dd.)
 
-Checked, each failure printed and counted (exit code 1 when any):
+Checked, each failure printed and counted (exit code 1 when any; ``--accept REGEX`` lists a failure reviewed and
+accepted on purpose instead of counting it — name each one in the split's spec):
 
 1. Every top-level statement of the old modules (definitions, assignments, ``if`` blocks) is in the new modules
    exactly once with the same ``ast.dump`` (decorators included, positions excluded).  The new modules add nothing
-   else but imports, module docstrings and ``__all__``.  An import, at the top level or inside a body, is compared
-   by the name it binds and the absolute target it reads (relative imports resolved against the module's package);
-   an import of one of the old (new) modules themselves is compared by what it resolves to (check 2).  Module
-   docstrings are not compared.
-2. Every global name a moved statement reads resolves in its new module to what it resolved to in the old one:
-   the same old statement (followed through imports between the new modules), the same outside object (a
-   different dotted path passes when both import to the identical object), the same builtin.  Module-level code
-   (assignments, decorators, default values, class bodies) sees the bindings made before it; function bodies see
-   the module's last binding.  ``__name__`` / ``__file__`` / … are the module's own, so a moved reader of them
-   fails (``pkg/__main__.py`` counts as ``pkg`` for ``__name__``: ``python -m pkg`` runs it as it ran the old
+   else but imports, ``if TYPE_CHECKING:`` import blocks, module docstrings and ``__all__``.  An import, at the top
+   level or inside a body, is compared by the name it binds and the absolute target it reads (relative imports
+   resolved against the package of the module holding it); an import of one of the old (new) modules themselves
+   is compared by what it resolves to (check 2).  Module docstrings are not compared.
+2. Every global name a moved statement reads (annotations included: dataclasses and ``get_type_hints`` read them)
+   resolves in its new module to what it resolved to in the old one: the same old statement (followed through
+   imports between the new modules and star imports, which bind ``__all__`` or the public names), the same outside
+   object (a different dotted path passes when both import to the identical object; ``import a.b`` is not
+   ``import a``), the same builtin.  Module-level code (assignments, decorators, default values, class bodies up to
+   the class's own binding) sees the bindings made before it; function bodies and annotations see the module's
+   last binding.  ``__name__`` / ``__file__`` / … are the module's own, so a moved reader of them fails
+   (``pkg/__main__.py`` counts as ``pkg`` for ``__name__``: ``python -m pkg`` runs it as it ran the old
    ``if __name__ == '__main__'`` block).  A new module stands for the old one of its dotted name, or for the old
-   module it holds all statements of.  Annotations are not reads.  A name that an old function rebinds with ``global`` is used (read, written,
-   defined) in one new module only: an import elsewhere would hold a stale copy.
+   module it holds all statements of.  A name an old function rebinds with ``global`` (an assignment, an import, a
+   def) is used — read, written, defined, imported or re-exported — in one new module only: an import elsewhere
+   holds a stale copy.  A name callers patch on an old module (``monkeypatch.setattr``, ``mock.patch``, an
+   attribute assignment) is read by moved code in the module of the old name only.
 3. Imports and names kept: every top-level import binding of an old module is bound to the same object in some new
    module; every name of an old module's ``__all__``, and every name the other tracked modules of the repository
-   take from it (``from D import x``, ``D.x``; submodules of the new package aside), resolves in the new module
-   with the old module's dotted name to the same thing; a new module holding statements of an old one has its
-   ``__future__`` features.
+   take from it (``from D import x``, ``D.x``, an alias from ``import_module``; submodules of the new package
+   aside), resolves in the new module with the old module's dotted name (which must exist) to the same thing; a
+   new module holding statements of an old one has its ``__future__`` features.
 4. Order: the statements a new module takes from one old module keep their old relative order; and, simulating
-   the import of the new modules (from the one with the old module's name, each in-set import executed where it
-   stands, then the unreached modules in path order), the statements with import-time effects of each old module
-   run in their old order.  Effect-free (order free): undecorated ``def`` with plain defaults, assignments of
-   literals / names / containers / operators / builtin constructors, undecorated classes of such statements.
+   the import of the new modules (from the ones with the old modules' names, each in-set import executed where it
+   stands, ``try`` / ``if`` bodies included), the statements with import-time effects of each old module run in
+   their old order, in modules that import reaches, after the side-effect-only imports (no statement reads the
+   name) that preceded them.  Effect-free (order free): undecorated ``def`` with such defaults, assignments of
+   literals, names and containers of them, operators and builtin constructors of literals and of immutable
+   constants, undecorated classes of such statements.
 5. Extracted bodies: a new top-level function *g* that is not an old statement must replace a statement list of an
    old function exactly: the new function holds the call ``g(a, b)`` (a whole statement list, *g*'s parameters
    ``a, b``) where the old one held *g*'s body, statement for statement.  The body must read only its parameters and
-   module-level names (no local of the old function, by Python's scope rules: comprehension variables and nested
-   functions' locals are not *g*'s), assign nothing the rest of the old function reads, and hold no ``return`` /
-   ``yield`` / ``break`` / ``continue`` / ``global`` that would act on the old function.  Its global reads are
-   checked as in 2.
+   module-level names — no local of the old function (or of a class inside it), by Python's scope rules
+   (comprehension variables and nested functions' locals are not *g*'s, a ``:=`` in a comprehension is), unless
+   *g* binds it on every path before reading it (``x += 1`` and ``del x`` read) — assign nothing the rest of the
+   old function reads, and hold no ``return`` / ``yield`` / ``break`` / ``continue`` / ``global`` that would act on
+   the old function.  Its global reads are checked as in 2.
 6. Every comment line of the old modules is in the new ones (extra comments are listed, not failed); a comment
    reworded on purpose is named with ``--allow-lost-comment REGEX`` (listed, not failed).
 7. The top-level imports between the new modules have no cycle; with ``--import-check`` each new module imports.
 
-Not covered: dynamic access (``globals()[...]``, ``getattr(module, name)``), names a star import provides beyond
-following the named module, callers outside the new modules.
+Not covered: dynamic access (``globals()[...]``, ``getattr(module, name)`` with a computed name); a function
+called at import time before a later top-level import it reads (ruff E402 flags that layout); ``try`` /
+``except ImportError`` import blocks are statements (one new module holds each).
 """
 from __future__ import annotations
 
@@ -93,6 +102,7 @@ class _Mod:
     tree: ast.Module
     bindings: list[_Binding] = field(default_factory=list)
     future: frozenset[str] = frozenset()
+    all_names: set[str] | None = None      # the literal ``__all__``, if any
     pos: dict[int, int] = field(default_factory=dict)
 
     @property
@@ -111,27 +121,39 @@ def _absolute(node: ast.ImportFrom, package: str) -> str:
 def _make_mod(key: str | Path, dotted: str, is_pkg: bool, file: str, tree: ast.Module) -> _Mod:
     mod = _Mod(key, dotted, is_pkg, file, tree)
     future: set[str] = set()
-    for pos, n in enumerate(tree.body):
-        mod.pos[id(n)] = pos
-        if isinstance(n, ast.Import):
-            for a in n.names:
-                target = a.name if a.asname else a.name.split(".")[0]
-                mod.bindings.append(_Binding(pos, _bound(a, plain=True), "mod", target, "", n))
-        elif isinstance(n, ast.ImportFrom):
-            absmod = _absolute(n, mod.package)
-            if absmod == "__future__":
-                future.update(a.name for a in n.names)
-                continue
-            for a in n.names:
-                if a.name == "*":
-                    mod.bindings.append(_Binding(pos, "*", "star", absmod, "", n))
-                else:
-                    mod.bindings.append(_Binding(pos, _bound(a), "from", absmod, a.name, n))
-        else:
-            for name in sorted(_binds(_scope_nodes([n])[0])):
-                mod.bindings.append(_Binding(pos, name, "def", "", "", n))
+    for pos, top in enumerate(tree.body):
+        mod.pos[id(top)] = pos
+        for n in (top.body if _is_import_block(top) else [top]):
+            if isinstance(n, ast.Import):
+                for a in n.names:   # ``import a.b`` binds ``a`` and loads ``a.b``: attr keeps the full name
+                    target = a.name if a.asname else a.name.split(".")[0]
+                    mod.bindings.append(_Binding(pos, _bound(a, plain=True), "mod", target, a.name, n))
+            elif isinstance(n, ast.ImportFrom):
+                absmod = _absolute(n, mod.package)
+                if absmod == "__future__":
+                    future.update(a.name for a in n.names)
+                    continue
+                for a in n.names:
+                    if a.name == "*":
+                        mod.bindings.append(_Binding(pos, "*", "star", absmod, "", n))
+                    else:
+                        mod.bindings.append(_Binding(pos, _bound(a), "from", absmod, a.name, n))
+            else:
+                for name in sorted(_binds(_scope_nodes([n])[0])):
+                    mod.bindings.append(_Binding(pos, name, "def", "", "", n))
+                if isinstance(n, ast.Assign) and [ast.unparse(t) for t in n.targets] == ["__all__"]:
+                    try:
+                        mod.all_names = set(ast.literal_eval(n.value))
+                    except ValueError:
+                        mod.all_names = None
     mod.future = frozenset(future)
     return mod
+
+
+def _is_import_block(n: ast.stmt) -> bool:
+    """``if TYPE_CHECKING:`` holding only imports: compared as imports (each new module may need its own)."""
+    return (isinstance(n, ast.If) and not n.orelse and ast.unparse(n.test) in ("TYPE_CHECKING", "typing.TYPE_CHECKING")
+            and all(isinstance(x, (ast.Import, ast.ImportFrom)) for x in n.body))
 
 
 def _old_mod(spec: str, text: str) -> _Mod:
@@ -158,6 +180,8 @@ class _NormImports(ast.NodeTransformer):
         self.package, self.inset = package, inset
 
     def visit_Import(self, node: ast.Import) -> ast.AST:
+        if all("=" in a.name for a in node.names):     # normalised already (an extracted body)
+            return node
         return ast.Import(names=[ast.alias(name=f"{_bound(a, plain=True)}=import "
                                                 f"{'<in-set>' if a.name in self.inset else a.name}")
                                  for a in node.names])
@@ -191,7 +215,7 @@ def _is_docstring(node: ast.stmt) -> bool:
 def _units(tree: ast.Module) -> list[ast.stmt]:
     """Top-level statements other than imports and the module docstring."""
     body = tree.body[1:] if tree.body and _is_docstring(tree.body[0]) else tree.body
-    return [n for n in body if not isinstance(n, (ast.Import, ast.ImportFrom))]
+    return [n for n in body if not isinstance(n, (ast.Import, ast.ImportFrom)) and not _is_import_block(n)]
 
 
 def _comments(text: str) -> Counter:
@@ -217,9 +241,10 @@ def _new_files(paths: list[str]) -> list[Path]:
 
 # --- scopes (Python's rules, from the AST: symtable merges inlined comprehensions from 3.12 on) -----------------
 
-def _scope_nodes(nodes: list[ast.AST]) -> tuple[list[ast.AST], list[ast.AST]]:
+def _scope_nodes(nodes: list[ast.AST], anns: list[ast.AST] | None = None) -> tuple[list[ast.AST], list[ast.AST]]:
     """The nodes of *nodes* evaluated in their own scope, and the nested scopes (functions, lambdas, classes,
-    comprehensions) whose defaults, decorators, bases and first iterable belong to it.  Annotations are left out."""
+    comprehensions) whose defaults, decorators, bases and first iterable belong to it.  Annotations are left out
+    of both; with *anns* they are collected there.  A walrus target inside a comprehension binds in this scope."""
     own: list[ast.AST] = []
     subs: list[ast.AST] = []
     stack = list(reversed(nodes))
@@ -229,6 +254,11 @@ def _scope_nodes(nodes: list[ast.AST]) -> tuple[list[ast.AST], list[ast.AST]]:
             if not isinstance(n, ast.Lambda):
                 own.append(n)
                 stack.extend(n.decorator_list)
+                if anns is not None:
+                    a = n.args
+                    anns.extend(x.annotation for x in a.posonlyargs + a.args + a.kwonlyargs
+                                + [v for v in (a.vararg, a.kwarg) if v] if x.annotation is not None)
+                    anns.extend([n.returns] if n.returns is not None else [])
             stack.extend(n.args.defaults + [d for d in n.args.kw_defaults if d is not None])
             subs.append(n)
         elif isinstance(n, ast.ClassDef):
@@ -237,14 +267,39 @@ def _scope_nodes(nodes: list[ast.AST]) -> tuple[list[ast.AST], list[ast.AST]]:
             subs.append(n)
         elif isinstance(n, _COMPS):
             stack.append(n.generators[0].iter)
+            own.extend(_walrus_targets(n))
             subs.append(n)
         elif isinstance(n, ast.AnnAssign):
             own.append(n)
             stack.extend([n.target] + ([n.value] if n.value else []))
+            if anns is not None:
+                anns.append(n.annotation)
         else:
             own.append(n)
             stack.extend(reversed(list(ast.iter_child_nodes(n))))
     return own, subs
+
+
+def _walrus_targets(comp: ast.AST) -> list[ast.Name]:
+    """The ``:=`` targets inside the comprehension *comp* (and its nested comprehensions): they bind outside it."""
+    out: list[ast.Name] = []
+    stack = list(ast.iter_child_nodes(comp))
+    while stack:
+        x = stack.pop()
+        if isinstance(x, (*_FUNCS, ast.Lambda, ast.ClassDef)):
+            continue
+        if isinstance(x, ast.NamedExpr):
+            out.append(x.target)
+        stack.extend(ast.iter_child_nodes(x))
+    return out
+
+
+def _ann_reads(anns: list[ast.AST], visible: set[str], out: _Reads) -> None:
+    """Annotations are read when inspected (dataclasses, typing.get_type_hints): at call time."""
+    for a in anns:
+        for x in ast.walk(a):
+            if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Load) and x.id not in visible:
+                out.add(x.id, False)
 
 
 def _binds(own: list[ast.AST]) -> set[str]:
@@ -269,7 +324,7 @@ def _binds(own: list[ast.AST]) -> set[str]:
 class _Reads:
     reads: dict[str, bool] = field(default_factory=dict)    # global name -> read at import time (else call time)
     global_writes: set[str] = field(default_factory=set)
-    func_locals: set[str] = field(default_factory=set)
+    func_locals: set[str] = field(default_factory=set)      # names local to a function or class scope inside
 
     def add(self, name: str, import_time: bool) -> None:
         self.reads[name] = self.reads.get(name, False) or import_time
@@ -286,7 +341,8 @@ def _scope(n: ast.AST, enclosing: set[str], import_time: bool, out: _Reads) -> N
     if isinstance(n, (*_FUNCS, ast.Lambda)):
         a = n.args
         params = {x.arg for x in a.posonlyargs + a.args + a.kwonlyargs + [v for v in (a.vararg, a.kwarg) if v]}
-        own, subs = _scope_nodes(n.body if isinstance(n.body, list) else [n.body])
+        anns: list[ast.AST] = []
+        own, subs = _scope_nodes(n.body if isinstance(n.body, list) else [n.body], anns)
         gdecl = {x for s in own if isinstance(s, ast.Global) for x in s.names}
         nldecl = {x for s in own if isinstance(s, ast.Nonlocal) for x in s.names}
         local = (_binds(own) | params) - gdecl - nldecl
@@ -299,13 +355,30 @@ def _scope(n: ast.AST, enclosing: set[str], import_time: bool, out: _Reads) -> N
                 elif x.id in gdecl:
                     out.global_writes.add(x.id)
                     out.add(x.id, False)
+            elif _binds([x]) & gdecl:      # ``global np; import numpy as np``, a def or class of a global name
+                out.global_writes |= _binds([x]) & gdecl
+        _ann_reads(anns, visible, out)
+    elif isinstance(n, ast.ClassDef):
+        bound: set[str] = set()
+        subs = []
+        for stmt in n.body:    # a class body reads a name it binds later from the module
+            anns = []
+            own, sub = _scope_nodes([stmt], anns)
+            for x in own:
+                if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Load) and x.id not in bound | enclosing:
+                    out.add(x.id, import_time)
+            _ann_reads(anns, enclosing, out)
+            bound |= _binds(own)
+            subs += sub
+        out.func_locals |= bound
+        visible = enclosing
     else:
-        own, subs = _scope_nodes(n.body if isinstance(n, ast.ClassDef) else _comp_parts(n))
-        local = _binds(own)
+        own, subs = _scope_nodes(_comp_parts(n))
+        local = _binds(own) - {t.id for t in _walrus_targets(n)}
         for x in own:
             if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Load) and x.id not in local | enclosing:
                 out.add(x.id, import_time)
-        visible = enclosing | local if not isinstance(n, ast.ClassDef) else enclosing
+        visible = enclosing | local
     for s in subs:
         _scope(s, visible, import_time and not isinstance(s, (*_FUNCS, ast.Lambda)), out)
 
@@ -313,10 +386,12 @@ def _scope(n: ast.AST, enclosing: set[str], import_time: bool, out: _Reads) -> N
 def _reads(stmt: ast.stmt) -> _Reads:
     """The global names the top-level statement *stmt* reads."""
     out = _Reads()
-    own, subs = _scope_nodes([stmt])
+    anns: list[ast.AST] = []
+    own, subs = _scope_nodes([stmt], anns)
     for x in own:
         if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Load):
             out.add(x.id, True)
+    _ann_reads(anns, set(), out)
     for s in subs:
         _scope(s, set(), not isinstance(s, (*_FUNCS, ast.Lambda)), out)
     return out
@@ -340,16 +415,26 @@ class _Resolver:
         for b in reversed(cands):
             if b.name == name:
                 return self.binding(mod, b, seen)
+            if b.kind == "star" and (b.target, name) not in seen and self._star_binds(b.target, name):
+                t = self.mods.get(b.target)
+                return ("ext", f"{b.target}.{name}") if t is None else self.resolve(t, name, None,
+                                                                                     seen | {(t.dotted, name)})
         if name in _DUNDERS:   # ``python -m pkg`` runs pkg/__main__.py as the old module ran: one __name__ test
             return ("dunder", name, mod.file if name == "__file__" else mod.dotted.removesuffix(".__main__"))
-        for b in reversed(cands):
-            if b.kind == "star":
-                t = self.mods.get(b.target)
-                if t is None:
-                    return ("ext", f"{b.target}.{name}")
-                if any(x.name == name for x in t.bindings) and (t.dotted, name) not in seen:
-                    return self.resolve(t, name, None, seen | {(t.dotted, name)})
         return ("builtin", name) if name in _BUILTINS else ("missing", name)
+
+    def _star_binds(self, target: str, name: str) -> bool:
+        """``from target import *`` binds *name*: in ``__all__``, or without one a public name of the module."""
+        t = self.mods.get(target)
+        if t is not None:
+            if t.all_names is not None:
+                return name in t.all_names
+            return not name.startswith("_") and any(x.name == name and x.kind != "star" for x in t.bindings)
+        obj = _ext_obj(target)
+        if obj is _UNRESOLVED:
+            return False
+        names = getattr(obj, "__all__", None)
+        return name in names if names is not None else not name.startswith("_") and hasattr(obj, name)
 
     def binding(self, mod: _Mod, b: _Binding, seen: frozenset = frozenset()) -> tuple:
         if b.kind == "def":
@@ -357,7 +442,9 @@ class _Resolver:
                 return ("def", *self.ident[id(b.node)])
             return ("new", str(mod.key), b.node.lineno)
         if b.kind == "mod":
-            return ("module", self.module_id[b.target]) if b.target in self.mods else ("ext", b.target)
+            if b.target in self.mods:
+                return ("module", self.module_id[b.target])
+            return ("ext", b.target) if b.attr in (b.target, "") else ("ext", b.target, f"import {b.attr}")
         full = f"{b.target}.{b.attr}"
         t = self.mods.get(b.target)
         if t is not None and any(x.name == b.attr for x in t.bindings) and (t.dotted, b.attr) not in seen:
@@ -405,7 +492,7 @@ def _ext_obj(dotted: str) -> object:
 def _same(a: tuple, b: tuple) -> bool:
     if a == b:
         return True
-    if a[0] == "ext" and b[0] == "ext":
+    if a[0] == "ext" and b[0] == "ext" and a[2:] == b[2:]:
         oa, ob = _ext_obj(a[1]), _ext_obj(b[1])
         return oa is ob and oa is not _UNRESOLVED
     return False
@@ -420,7 +507,7 @@ def _fmt(c: tuple) -> str:
         return f"{c[1]} of {c[2]}"
     if c[0] in ("missing", "module"):
         return f"{c[0]} {c[1]}"
-    return c[1]
+    return c[1] if len(c) == 2 else f"{c[1]} ({c[2]})"
 
 
 # --- extraction --------------------------------------------------------------------------------------------------
@@ -490,6 +577,7 @@ def _check_extraction(old: ast.stmt, new: ast.stmt, names: list[str], extracted:
         gdecl = {x for s in own if isinstance(s, ast.Global) for x in s.names}
         stores = _binds(own) - gdecl
         free = set(_reads(g).reads) - {name}
+        free |= {x for x in stores & old_locals if not _bound_before_read(g.body, x)}
         if free & old_locals:
             errors.append(f"{name}: reads locals of {old.name}: {sorted(free & old_locals)}")
         if (stores - params) & (rest_loads | old_locals - stores):
@@ -504,25 +592,113 @@ def _check_extraction(old: ast.stmt, new: ast.stmt, names: list[str], extracted:
             errors.append(f"{name}: not a plain function of positional parameters")
 
 
+def _bound_before_read(body: list[ast.stmt], name: str) -> bool:
+    """*name* is bound for sure before any read of it in the statements *body* (``x += 1``, ``del x`` and a read
+    in a nested scope count as reads; a binding inside a block counts after it only when every path binds)."""
+    def reads(nodes: list[ast.AST]) -> bool:
+        stack = [n for n in nodes if n is not None]
+        while stack:
+            x = stack.pop()
+            if isinstance(x, _COMPS) and name in _binds([t for g in x.generators for t in ast.walk(g.target)]):
+                stack.append(x.generators[0].iter)      # the comprehension's own variable
+                continue
+            if isinstance(x, (*_FUNCS, ast.Lambda)):
+                inner = _Reads()
+                _scope(x, set(), False, inner)
+                if name not in inner.reads:             # local there, or not read
+                    stack.extend(x.args.defaults + [d for d in x.args.kw_defaults if d is not None])
+                    stack.extend(getattr(x, "decorator_list", []))
+                    continue
+                return True
+            if (isinstance(x, ast.Name) and x.id == name and isinstance(x.ctx, (ast.Load, ast.Del))) or (
+                    isinstance(x, ast.AugAssign) and isinstance(x.target, ast.Name) and x.target.id == name):
+                return True
+            stack.extend(ast.iter_child_nodes(x))
+        return False
+
+    def ends(stmts: list[ast.stmt]) -> bool:
+        """*stmts* never fall through to what follows them."""
+        return bool(stmts) and isinstance(stmts[-1], (ast.Return, ast.Raise, ast.Continue, ast.Break))
+
+    def binds(nodes: list[ast.AST]) -> bool:
+        return name in _binds([x for n in nodes if n is not None for x in ast.walk(n)])
+
+    def scan(stmts: list[ast.stmt], bound: bool) -> tuple[bool, bool]:
+        """(no read before a binding, bound after *stmts*)."""
+        for st in stmts:
+            if isinstance(st, (ast.Assign, ast.AnnAssign)):
+                targets = st.targets if isinstance(st, ast.Assign) else [st.target]
+                if not bound and reads([st.value] + [t for t in targets if not isinstance(t, ast.Name)]):
+                    return False, bound
+                bound = bound or (st.value is not None and binds(targets))
+            elif isinstance(st, (ast.Import, ast.ImportFrom, *_FUNCS, ast.ClassDef)):
+                if not bound and isinstance(st, (*_FUNCS, ast.ClassDef)) and reads([st]):
+                    return False, bound
+                bound = bound or name in _binds([st])
+            elif isinstance(st, (ast.For, ast.AsyncFor, ast.While)):
+                header = [st.iter] if isinstance(st, (ast.For, ast.AsyncFor)) else [st.test]
+                if not bound and reads(header):
+                    return False, bound
+                inner = bound or (isinstance(st, (ast.For, ast.AsyncFor)) and binds([st.target]))
+                if not (scan(st.body, inner)[0] and scan(st.orelse, bound)[0]):
+                    return False, bound
+            elif isinstance(st, ast.If):
+                if not bound and reads([st.test]):
+                    return False, bound
+                ok_b, after_b = scan(st.body, bound)
+                ok_o, after_o = scan(st.orelse, bound)
+                if not (ok_b and ok_o):
+                    return False, bound
+                bound = (after_b or ends(st.body)) and (after_o or ends(st.orelse))
+            elif isinstance(st, (ast.With, ast.AsyncWith)):
+                if not bound and reads([it.context_expr for it in st.items]):
+                    return False, bound
+                ok, bound = scan(st.body, bound or binds([it.optional_vars for it in st.items]))
+                if not ok:
+                    return False, bound
+            elif isinstance(st, ast.Try) or type(st).__name__ == "TryStar":
+                ok, after = scan(st.body, bound)
+                handled = [scan(h.body, bound or h.name == name) for h in st.handlers]
+                ok_e, after_e = scan(st.orelse, after)
+                ok_f, after_f = scan(st.finalbody, bound)
+                if not (ok and all(h[0] for h in handled) and ok_e and ok_f):
+                    return False, bound
+                bound = after_f or (after_e and all(h[1] or ends(h_st.body)
+                                                    for h, h_st in zip(handled, st.handlers)))
+            elif not bound and reads([st]):
+                return False, bound
+            elif binds([st]):
+                bound = True
+        return True, bound
+    return scan(body, False)[0]
+
+
 # --- imports between the new modules -----------------------------------------------------------------------------
 
 def _in_set_imports(n: ast.stmt, mod: _Mod, dotted: set[str]) -> list[str]:
-    """The modules of *dotted* the top-level import *n* of *mod* executes (parent packages first)."""
-    if isinstance(n, ast.Import):
-        targets = [a.name for a in n.names]
-    elif isinstance(n, ast.ImportFrom):
-        absmod = _absolute(n, mod.package)
-        targets = [absmod] + [f"{absmod}.{a.name}" for a in n.names]
-    else:
-        return []
+    """The modules of *dotted* the top-level statement *n* of *mod* imports when it runs (parent packages first)."""
     out: list[str] = []
-    for t in targets:
+    for t in _import_targets(n, mod):
         parts = t.split(".")
         for k in range(1, len(parts) + 1):
             p = ".".join(parts[:k])
             if p in dotted and p not in out:
                 out.append(p)
     return out
+
+
+def _import_targets(n: ast.stmt, mod: _Mod) -> list[str]:
+    """The absolute modules (and ``from`` names) the module-level imports in *n* read, ``TYPE_CHECKING`` aside."""
+    if _is_import_block(n):
+        return []
+    targets: list[str] = []
+    for x in _scope_nodes([n])[0]:
+        if isinstance(x, ast.Import):
+            targets += [a.name for a in x.names]
+        elif isinstance(x, ast.ImportFrom):
+            absmod = _absolute(x, mod.package)
+            targets += [absmod] + [f"{absmod}.{a.name}" for a in x.names]
+    return targets
 
 
 def _import_graph(mods: list[_Mod]) -> dict[str, set[str]]:
@@ -560,11 +736,12 @@ def _cycles(graph: dict[str, set[str]]) -> list[list[str]]:
     return found
 
 
-def _execution_order(mods: list[_Mod], first: set[str]) -> list[ast.stmt]:
-    """The top-level statements of *mods* in the order an import of the package runs them."""
+def _execution_order(mods: list[_Mod], first: set[str]) -> tuple[list[tuple[_Mod, ast.stmt]], set[str]]:
+    """The top-level statements of *mods* in the order an import of the package runs them (starting from the
+    modules named in *first*), and the modules that import reaches."""
     by = {m.dotted: m for m in mods}
     started: set[str] = set()
-    order: list[ast.stmt] = []
+    order: list[tuple[_Mod, ast.stmt]] = []
 
     def run(d: str) -> None:
         parts = d.split(".")
@@ -580,11 +757,14 @@ def _execution_order(mods: list[_Mod], first: set[str]) -> list[ast.stmt]:
             for t in _in_set_imports(n, m, set(by)):
                 if t not in started:
                     run(t)
-            order.append(n)
-    for m in sorted(mods, key=lambda m: (m.dotted not in first, str(m.key))):
+            order.append((m, n))
+    for d in sorted(first & set(by)):
+        run(d)
+    reached = set(started)
+    for m in sorted(mods, key=lambda m: str(m.key)):
         if m.dotted not in started:
             run(m.dotted)
-    return order
+    return order, reached
 
 
 # --- the check ---------------------------------------------------------------------------------------------------
@@ -595,14 +775,32 @@ def check(old_specs: list[str], new_paths: list[str], import_check: bool = False
     files = _new_files(new_paths)
     olds = {spec: _git_show(spec) for spec in old_specs}
     dotteds = {_old_mod(spec, "").dotted for spec in olds}
+    callers, patched = _callers(dotteds, files)
     return check_texts(olds, {f: f.read_text(encoding="utf-8") for f in files}, import_check, allow_lost,
-                       callers=_callers(dotteds, files))
+                       callers=callers, patched=patched)
 
 
-def _callers(dotteds: set[str], exclude: list[Path]) -> dict[str, set[str]]:
+def _callers(dotteds: set[str], exclude: list[Path]) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     """The names the tracked modules of the repository other than *exclude* take from each module of *dotteds*
-    (``from D import x``, ``D.x``, ``alias.x`` after ``import D as alias`` / ``from P import last``)."""
+    (``from D import x``, ``D.x``, ``alias.x`` after ``import D as alias`` / ``from P import last`` /
+    ``alias = importlib.import_module("D")``), and the names they patch on it (``setattr`` / ``monkeypatch.setattr``
+    / ``mock.patch.object`` of an alias, ``mock.patch("D.x")``, ``alias.x = ...``)."""
     out: dict[str, set[str]] = defaultdict(set)
+    patched: dict[str, set[str]] = defaultdict(set)
+
+    def dotted_of(e: ast.AST, alias: dict[str, str]) -> str | None:
+        if isinstance(e, ast.Name) and e.id in alias:
+            return alias[e.id]
+        if isinstance(e, (ast.Attribute, ast.Name)) and ast.unparse(e) in dotteds:
+            return ast.unparse(e)
+        return None
+
+    def by_string(text: str) -> tuple[str, str] | None:
+        for d in dotteds:
+            rest = text[len(d) + 1:] if text.startswith(d + ".") else ""
+            if rest and "." not in rest:
+                return d, rest
+        return None
     skip = {f.resolve() for f in exclude}
     listed = subprocess.run(["git", "-C", str(ROOT), "ls-files", "*.py"], check=True, capture_output=True,
                             text=True, encoding="utf-8").stdout.split()
@@ -629,21 +827,42 @@ def _callers(dotteds: set[str], exclude: list[Path]) -> dict[str, set[str]]:
                 for a in x.names:
                     if a.name in dotteds and a.asname:
                         alias[a.asname] = a.name
+            elif (isinstance(x, ast.Assign) and isinstance(x.value, ast.Call) and x.value.args
+                  and ast.unparse(x.value.func).endswith("import_module")
+                  and isinstance(x.value.args[0], ast.Constant) and x.value.args[0].value in dotteds):
+                alias.update({t.id: x.value.args[0].value for t in x.targets if isinstance(t, ast.Name)})
         for x in ast.walk(tree):
             if isinstance(x, ast.Attribute):
-                if isinstance(x.value, ast.Name) and x.value.id in alias:
-                    out[alias[x.value.id]].add(x.attr)
-                elif isinstance(x.value, (ast.Attribute, ast.Name)) and ast.unparse(x.value) in dotteds:
-                    out[ast.unparse(x.value)].add(x.attr)
-    return out
+                d = dotted_of(x.value, alias)
+                if d is not None:
+                    out[d].add(x.attr)
+                    if isinstance(x.ctx, ast.Store):
+                        patched[d].add(x.attr)
+            elif isinstance(x, ast.Call) and x.args:
+                func = ast.unparse(x.func)
+                first = x.args[0]
+                if isinstance(first, ast.Constant) and isinstance(first.value, str) and (
+                        func.endswith("patch") or func.endswith("setattr")):
+                    hit = by_string(first.value)
+                    if hit:
+                        out[hit[0]].add(hit[1])
+                        patched[hit[0]].add(hit[1])
+                elif (func.endswith("setattr") or func.endswith("patch.object")) and len(x.args) > 1 \
+                        and isinstance(x.args[1], ast.Constant) and isinstance(x.args[1].value, str):
+                    d = dotted_of(first, alias)
+                    if d is not None:
+                        out[d].add(x.args[1].value)
+                        patched[d].add(x.args[1].value)
+    return out, patched
 
 
 def check_texts(old_texts: dict[str, str], new_texts: dict[Path, str], import_check: bool = False,
                 allow_lost: tuple[str, ...] = (), root: Path = ROOT,
-                callers: dict[str, set[str]] | None = None) -> list[str]:
+                callers: dict[str, set[str]] | None = None, patched: dict[str, set[str]] | None = None) -> list[str]:
     """:func:`check` of the old module texts ``{name: text}`` against the new ones ``{path: text}``; the new
     modules' dotted names are taken relative to *root*; *callers* ``{old dotted name: names}`` are the names other
-    modules take from an old module (:func:`_callers`)."""
+    modules take from an old module, *patched* the names they patch on it (``monkeypatch.setattr``,
+    ``mock.patch``, an attribute assignment; :func:`_callers`)."""
     errors: list[str] = []
     files = list(new_texts)
     olds = {spec: _old_mod(spec, text) for spec, text in old_texts.items()}
@@ -674,6 +893,8 @@ def check_texts(old_texts: dict[str, str], new_texts: dict[Path, str], import_ch
     extracted = {n.name: n for _, n in unmatched_new
                  if isinstance(n, ast.FunctionDef) and n.name not in old_names}
     extracted_file = {n.name: f for f, n in unmatched_new if getattr(n, "name", None) in extracted}
+    extracted_norm = {name: _NormImports(news[extracted_file[name]].package, new_set).visit(copy.deepcopy(g))
+                      for name, g in extracted.items()}    # each body's imports read against its own package
     used_all: list[str] = []
     used_by: dict[int, list[str]] = {}
     for spec, i, old in sorted(unmatched_old, key=lambda x: (x[0], x[1])):
@@ -685,7 +906,7 @@ def check_texts(old_texts: dict[str, str], new_texts: dict[Path, str], import_ch
             continue
         f, new = partner
         used: list[str] = []
-        if (_dump(_substitute(new, extracted, used), news[f].package, new_set)
+        if (_dump(_substitute(new, extracted_norm, used), news[f].package, new_set)
                 != _dump(old, olds[spec].package, old_set) or not used):
             errors.append(f"changed: {getattr(old, 'name', '?')} (old line {old.lineno}, now {f}:{new.lineno})")
             continue
@@ -707,8 +928,15 @@ def check_texts(old_texts: dict[str, str], new_texts: dict[Path, str], import_ch
 
     old_res = _Resolver(list(olds.values()), old_ident)
     new_res = _Resolver(list(news.values()), match, _module_ids(olds, news, match))
-    _check_resolution(olds, news, match, old_node, used_by, extracted, extracted_file, old_res, new_res, errors)
+    readers = _check_resolution(olds, news, match, old_node, used_by, extracted, extracted_file, old_res, new_res,
+                                errors)
     _check_kept(olds, news, match, old_res, new_res, callers or {}, errors)
+    for dotted, names in sorted((patched or {}).items()):
+        for name in sorted(names):
+            elsewhere = readers.get(name, set()) - {dotted}
+            if elsewhere:
+                errors.append(f"callers patch {dotted}.{name}, but moved code reading {name} in "
+                              f"{', '.join(sorted(elsewhere))} no longer sees the patch")
     _check_order(olds, news, match, errors)
 
     old_comments = sum((_comments(t) for t in old_texts.values()), Counter())
@@ -757,9 +985,11 @@ def _module_ids(olds: dict[str, _Mod], news: dict[Path, _Mod], match: dict[int, 
 def _check_resolution(olds: dict[str, _Mod], news: dict[Path, _Mod], match: dict[int, tuple[str, int]],
                       old_node: dict[tuple[str, int], ast.stmt], used_by: dict[int, list[str]],
                       extracted: dict[str, ast.FunctionDef], extracted_file: dict[str, Path],
-                      old_res: _Resolver, new_res: _Resolver, errors: list[str]) -> None:
-    """Check 2: the global reads of every moved statement and extracted body resolve as they did."""
+                      old_res: _Resolver, new_res: _Resolver, errors: list[str]) -> dict[str, set[str]]:
+    """Check 2: the global reads of every moved statement and extracted body resolve as they did.  Returns the
+    new modules whose moved code reads each global name."""
     rebound: dict[str, set[str]] = defaultdict(set)     # name rebound by `global` -> new modules using it
+    readers: dict[str, set[str]] = defaultdict(set)     # global name -> new modules whose moved code reads it
     old_writes: set[str] = set()
     for om in olds.values():
         for n in _units(om.tree):
@@ -789,6 +1019,7 @@ def _check_resolution(olds: dict[str, _Mod], news: dict[Path, _Mod], match: dict
                     continue
                 compare(where, nm, om, name, nm.pos[id(n)] if r.reads[name] else None,
                         om.pos[id(old)] if r.reads[name] else None)
+                readers[name].add(nm.dotted)
             got = new_res.nested_imports(n, nm)
             for name in used:
                 got += new_res.nested_imports(extracted[name], news[extracted_file[name]])
@@ -796,17 +1027,23 @@ def _check_resolution(olds: dict[str, _Mod], news: dict[Path, _Mod], match: dict
             if got != want:
                 errors.append(f"{where}: imports inside it bind {sorted((b, _fmt(c)) for b, c in got.elements())}, "
                               f"was {sorted((b, _fmt(c)) for b, c in want.elements())}")
-            for name in (set(r.reads) | _binds(_scope_nodes([n])[0])) & old_writes:
+            for name in (set(r.reads) | r.global_writes | _binds(_scope_nodes([n])[0])) & old_writes:
                 rebound[name].add(nm.dotted)
             for name in used:
                 gf = extracted_file[name]
                 for read in sorted(set(_reads(extracted[name]).reads) - {name}):
                     compare(f"{gf}:{extracted[name].lineno} {name}", news[gf], om, read, None, None)
+                    readers[read].add(news[gf].dotted)
                     if read in old_writes:
                         rebound[read].add(news[gf].dotted)
+    for nm in news.values():     # an import of a rebound name (a re-export, too) holds a stale copy
+        for b in nm.bindings:
+            if b.name in old_writes and b.kind in ("from", "star"):
+                rebound[b.name].add(nm.dotted)
     for name, where in sorted(rebound.items()):
         if len(where) > 1:
             errors.append(f"{name} is rebound by `global` but used in several new modules: {', '.join(sorted(where))}")
+    return readers
 
 
 def _check_kept(olds: dict[str, _Mod], news: dict[Path, _Mod], match: dict[int, tuple[str, int]],
@@ -825,6 +1062,9 @@ def _check_kept(olds: dict[str, _Mod], news: dict[Path, _Mod], match: dict[int, 
                         ast.ImportFrom(module=b.node.module, names=[alias], level=b.node.level))
                 errors.append(f"dropped import: {spec}: {ast.unparse(stmt)}")
         nm = new_by_dotted.get(om.dotted)
+        if nm is None and (callers.get(om.dotted) or om.all_names):
+            errors.append(f"no new module is named {om.dotted}, but callers or its __all__ take names from it: "
+                          f"{', '.join(sorted(set(callers.get(om.dotted, ())) | (om.all_names or set()))[:8])}")
         if nm is not None:
             public = set(callers.get(om.dotted, ()))
             for n in om.tree.body:
@@ -849,31 +1089,75 @@ def _check_kept(olds: dict[str, _Mod], news: dict[Path, _Mod], match: dict[int, 
 _PURE_CALLS = {"frozenset", "tuple", "dict", "set", "list", "str", "int", "float", "bool"}
 
 
-def _pure(e: ast.AST | None) -> bool:
-    """*e* evaluates without effects (literals, names, containers, operators, f-strings, builtin constructors)."""
-    if e is None or isinstance(e, (ast.Constant, ast.Name)):
+def _side_effect_imports(om: _Mod) -> set[str]:
+    """The modules *om* imports at the top level for their effects only: no statement reads the name bound."""
+    read: set[str] = set()
+    for n in _units(om.tree):
+        read |= set(_reads(n).reads)
+    out: set[str] = set()
+    for b in om.bindings:
+        if b.kind in ("mod", "from") and b.name not in read and not _is_import_block(b.node):
+            out.add(b.attr if b.kind == "mod" else b.target)
+    return out
+
+
+def _pure(e: ast.AST | None, consts: set[str], names: bool = True) -> bool:
+    """*e* evaluates without effects and without reading mutable state: literals, containers, operators and
+    builtin constructors of literals and of *consts* (immutable constants); any other name only as a whole value
+    or a container element (*names*: a reference, not a copy)."""
+    if e is None or isinstance(e, ast.Constant):
         return True
+    if isinstance(e, ast.Name):
+        return names or e.id in consts
+    if isinstance(e, (ast.Tuple, ast.List, ast.Set, ast.Dict, ast.Starred)):
+        return all(_pure(c, consts, names) for c in ast.iter_child_nodes(e) if isinstance(c, ast.expr))
     if isinstance(e, ast.Call):
         return (isinstance(e.func, ast.Name) and e.func.id in _PURE_CALLS
-                and all(_pure(a) for a in e.args) and all(_pure(k.value) for k in e.keywords))
-    if isinstance(e, (ast.Attribute, ast.Subscript, ast.Tuple, ast.List, ast.Set, ast.Dict, ast.BinOp, ast.UnaryOp,
-                      ast.BoolOp, ast.Compare, ast.JoinedStr, ast.FormattedValue, ast.Slice, ast.Starred,
+                and all(_pure(a, consts, False) for a in e.args)
+                and all(_pure(k.value, consts, False) for k in e.keywords))
+    if isinstance(e, (ast.BinOp, ast.UnaryOp, ast.BoolOp, ast.Compare, ast.JoinedStr, ast.FormattedValue,
                       ast.IfExp)):
-        return all(_pure(c) for c in ast.iter_child_nodes(e) if isinstance(c, ast.expr))
+        return all(_pure(c, consts, False) for c in ast.iter_child_nodes(e) if isinstance(c, ast.expr))
     return False
 
 
-def _effect_free(n: ast.stmt) -> bool:
+def _immutable(e: ast.AST | None, consts: set[str]) -> bool:
+    """*e* is an immutable constant: numbers, strings, tuples / frozensets of them, operators on them."""
+    if isinstance(e, ast.Constant):
+        return True
+    if isinstance(e, ast.Name):
+        return e.id in consts
+    if isinstance(e, ast.Call):
+        return (isinstance(e.func, ast.Name) and e.func.id in {"frozenset", "tuple", "str", "int", "float", "bool"}
+                and not e.keywords and all(_immutable(a, consts) or _pure(a, consts, False) for a in e.args))
+    if isinstance(e, (ast.Tuple, ast.BinOp, ast.UnaryOp, ast.BoolOp, ast.Compare, ast.JoinedStr,
+                      ast.FormattedValue, ast.IfExp)):
+        return all(_immutable(c, consts) for c in ast.iter_child_nodes(e) if isinstance(c, ast.expr))
+    return isinstance(e, (ast.operator, ast.unaryop, ast.boolop, ast.cmpop))
+
+
+def _constants(om: _Mod) -> set[str]:
+    """The names *om* binds once, at the top level, to an immutable constant."""
+    counts = Counter(b.name for b in om.bindings)
+    out: set[str] = set()
+    for n in om.tree.body:
+        if isinstance(n, (ast.Assign, ast.AnnAssign)) and _immutable(n.value, out):
+            targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+            out |= {t.id for t in targets if isinstance(t, ast.Name) and counts[t.id] == 1}
+    return out
+
+
+def _effect_free(n: ast.stmt, consts: set[str]) -> bool:
     """*n* has no import-time effect beyond binding its names: its order against other modules is free."""
     if isinstance(n, _FUNCS):
-        return not n.decorator_list and all(_pure(d) for d in n.args.defaults + n.args.kw_defaults)
+        return not n.decorator_list and all(_pure(d, consts) for d in n.args.defaults + n.args.kw_defaults)
     if isinstance(n, ast.Assign):
-        return all(isinstance(t, ast.Name) for t in n.targets) and _pure(n.value)
+        return all(isinstance(t, ast.Name) for t in n.targets) and _pure(n.value, consts)
     if isinstance(n, ast.AnnAssign):
-        return isinstance(n.target, ast.Name) and _pure(n.value)
+        return isinstance(n.target, ast.Name) and _pure(n.value, consts)
     if isinstance(n, ast.ClassDef):
-        return (not n.decorator_list and not n.keywords and all(_pure(b) for b in n.bases)
-                and all(_effect_free(x) or _is_docstring(x) or isinstance(x, ast.Pass) for x in n.body))
+        return (not n.decorator_list and not n.keywords and all(_pure(b, consts) for b in n.bases)
+                and all(_effect_free(x, consts) or _is_docstring(x) or isinstance(x, ast.Pass) for x in n.body))
     return False
 
 
@@ -889,11 +1173,32 @@ def _check_order(olds: dict[str, _Mod], news: dict[Path, _Mod], match: dict[int,
         for spec, idx in by_spec.items():
             if idx != sorted(idx):
                 errors.append(f"{f}: statements from {spec} out of their old order")
+    entries = {m.dotted for m in olds.values()}
+    consts = {spec: _constants(om) for spec, om in olds.items()}
+    order, reached = _execution_order(list(news.values()), entries)
     seq: dict[str, list[int]] = defaultdict(list)
-    for n in _execution_order(list(news.values()), {m.dotted for m in olds.values()}):
-        if id(n) in match and not _effect_free(n):
+    imported: set[str] = set()
+    before: dict[tuple[str, int], set[str]] = {}       # side-effect imports run before an effectful statement
+    for nm, n in order:
+        imported.update(_import_targets(n, nm))
+        if id(n) in match and not _effect_free(n, consts[match[id(n)][0]]):
             spec, i = match[id(n)]
             seq[spec].append(i)
+            before[(spec, i)] = set(imported)
+            if entries & set(reached) and nm.dotted not in reached and not nm.dotted.endswith(".__main__"):
+                errors.append(f"{nm.dotted} holds import-time effects of {spec} (statement {i}) but an import of "
+                              f"{', '.join(sorted(entries & reached))} does not run it")
+    for spec, om in sorted(olds.items()):
+        effect_imports = _side_effect_imports(om)
+        done: set[str] = set()
+        units = {id(n): i for i, n in enumerate(_units(om.tree))}
+        for n in om.tree.body:
+            if id(n) in units and (spec, units[id(n)]) in before:
+                late = (done & effect_imports & imported) - before[(spec, units[id(n)])]   # dropped: check 3
+                if late:
+                    errors.append(f"{spec} statement {units[id(n)]} now runs before the import of "
+                                  f"{', '.join(sorted(late))} (an import only for its effects)")
+            done.update(_import_targets(n, om))
     for spec, idx in sorted(seq.items()):
         bad = next(((a, b) for a, b in zip(idx, idx[1:]) if b < a), None)
         if bad:
@@ -908,10 +1213,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--import-check", action="store_true", help="also import every new module")
     parser.add_argument("--allow-lost-comment", action="append", default=[], metavar="REGEX",
                         help="an old comment matching REGEX may be missing (reworded on purpose; repeatable)")
+    parser.add_argument("--accept", action="append", default=[], metavar="REGEX",
+                        help="a failure matching REGEX is a change reviewed and accepted on purpose: listed, not "
+                             "counted (repeatable; name it in the split's spec)")
     args = parser.parse_args(argv)
-    errors = check(args.old, args.new, args.import_check, tuple(args.allow_lost_comment))
-    for e in errors:
-        print(f"FAIL {e}")
+    found = check(args.old, args.new, args.import_check, tuple(args.allow_lost_comment))
+    accepted = [re.compile(r) for r in args.accept]
+    errors = [e for e in found if not any(r.search(e) for r in accepted)]
+    for e in found:
+        print(f"{'FAIL' if e in errors else 'accepted on purpose:'} {e}")
     print("split check: " + ("OK" if not errors else f"{len(errors)} failure(s)"))
     return 1 if errors else 0
 
