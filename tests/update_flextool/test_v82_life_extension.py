@@ -21,6 +21,7 @@ from spinedb_api.exception import NothingToCommit
 from flextool._resources import package_data_path
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import v82
 from tests.update_flextool._rerun import patch_migration
 from flextool.update_flextool.db_migration import migrate_database
 
@@ -94,7 +95,7 @@ def test_the_step_adds_the_six_definitions(migrated) -> None:
         text, types, group, value_list, default, default_type = after[key]
         assert (types, group, value_list, default, default_type) == (("float", "1d_map"), "investment", None, None,
                                                                      None), key
-        assert text.startswith(unit) and text == m._v82_texts()[key] == shipped[key][0], key
+        assert text.startswith(unit) and text == v82._v82_texts()[key] == shipped[key][0], key
         assert shipped[key][1:] == ((("float", 0), ("map", 1)), "investment", None, None), key
     # Both ends of the migration agree: from 81, and at 82 completed by the refresh.
     assert after == migrated["refreshed"]["defs"]
@@ -105,8 +106,8 @@ def test_descriptions_say_what_an_extension_does() -> None:
     salvage value given up and received at the extended end of life, financed at discount_rate, retirable, never
     extended again, capacity and not investment in the limits, the period the extension starts in."""
     for cls in CLASSES:
-        cost = m._v82_texts()[(cls, "life_extension_cost")]
-        years = m._v82_texts()[(cls, "life_extension_years")]
+        cost = v82._v82_texts()[(cls, "life_extension_cost")]
+        years = v82._v82_texts()[(cls, "life_extension_years")]
         for phrase in ("paid when the extension starts", "at most all of it", "no invest_method is needed",
                        "net_salvage_value the capacity would have received at its end of life (given up",
                        "net_salvage_value received at the extended end of life", "financed at discount_rate",
@@ -142,7 +143,7 @@ def _no_commit(db, step, monkeypatch) -> None:
 
     patch_migration(monkeypatch, "_commit_step", commit_must_be_empty)
     step(db)
-    if step is m._migrate_v82_schema_batch:
+    if step is v82._migrate_v82_schema_batch:
         assert len(commits) == 1, commits
     else:
         assert commits == []
@@ -156,7 +157,7 @@ def _no_commit(db, step, monkeypatch) -> None:
 def test_rerun_commits_nothing(migrated, part, which, monkeypatch) -> None:
     before = _state(migrated[which])
     with DatabaseMapping(migrated[which]) as db:
-        _no_commit(db, getattr(m, part), monkeypatch)
+        _no_commit(db, getattr(m if part == "_refresh_head_schema" else v82, part), monkeypatch)
     assert _state(migrated[which]) == before
 
 
@@ -165,7 +166,7 @@ def test_a_class_the_database_lacks_gets_no_definition() -> None:
     with DatabaseMapping("sqlite://", create=True) as db:
         for cls in ("unit", "connection", "model"):
             db.add_item("entity_class", name=cls)
-        m._v82_definitions_part(db)
+        v82._v82_definitions_part(db)
         names = {(d["entity_class_name"], d["name"]) for d in db.get_items("parameter_definition")}
     assert {k for k in SIX if k[0] != "node"} <= names
     assert not [k for k in names if k[0] == "node"]
@@ -177,7 +178,7 @@ def test_head_refresh_replaces_the_superseded_extension_text(tmp_path_factory, e
     that build's life_extension_cost description: it gets the current one (no extension of reinvest_automatic
     capacity); a description the user edited is kept."""
     url = _seed(tmp_path_factory, f"le_dev_text_{edited}", FLEXTOOL_DB_VERSION)
-    old = {cls: m._v82_superseded()[(cls, "life_extension_cost")][1] + (" My note." if edited else "")
+    old = {cls: v82._v82_superseded()[(cls, "life_extension_cost")][1] + (" My note." if edited else "")
            for cls in CLASSES}
     with DatabaseMapping(url) as db:
         for cls, text in old.items():

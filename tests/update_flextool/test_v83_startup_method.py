@@ -19,6 +19,7 @@ from spinedb_api import DatabaseMapping, to_database
 from spinedb_api.exception import NothingToCommit
 
 from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import v83
 from tests.update_flextool._rerun import patch_migration
 
 MEMBERS = ["no_startup", "linear", "linear_fix_in_uc", "integer", "integer_fix_in_uc"]
@@ -166,7 +167,7 @@ def test_binary_values_and_members(v82_schema_db_url: str, tmp_path: Path, capsy
     with DatabaseMapping(url) as db:
         assert _members(db) == ["no_startup", "linear", "binary"]
         assert _values(db)[("unit", "u4", "startup_method", "alt")] == "binary"
-        m._v83_startup_method(db)
+        v83._v83_startup_method(db)
         assert _members(db) == MEMBERS
         assert _values(db) == AFTER
         db.commit_session("v83 part 2")
@@ -190,7 +191,7 @@ def test_binary_default_is_rewritten(v82_schema_db_url: str, tmp_path: Path) -> 
         db.commit_session("binary default")
     with DatabaseMapping(url) as db:
         assert _default(db, "unit") == "binary"
-        m._v83_startup_method(db)
+        v83._v83_startup_method(db)
         db.commit_session("v83 part 2")
     with DatabaseMapping(url) as db:
         assert (_default(db, "unit"), _default(db, "connection")) == ("integer_fix_in_uc", "no_startup")
@@ -205,7 +206,7 @@ def test_null_default_gets_the_new_text(v82_schema_db_url: str, tmp_path: Path) 
     with DatabaseMapping(url) as db:
         assert _default(db, "unit") is None
         assert _description(db, "unit", "startup_method") == OLD_UNIT_STARTUP
-        m._v83_startup_method(db)
+        v83._v83_startup_method(db)
         assert _default(db, "unit") is None
         assert _description(db, "unit", "startup_method") == NEW[("unit", "startup_method")]
 
@@ -215,7 +216,7 @@ def test_each_old_text_is_replaced(v82_schema_db_url: str, tmp_path: Path) -> No
         reduce_old = _description(db, "solve", "reduce_unit_detail_method")
         assert REDUCE_OLD in reduce_old
         assert not any(_description(db, *key) == text for key, text in NEW.items())
-        m._v83_startup_method(db)
+        v83._v83_startup_method(db)
         for key, text in NEW.items():
             assert _description(db, *key) == text, key
         assert _description(db, "solve", "reduce_unit_detail_method") == reduce_old.replace(REDUCE_OLD, REDUCE_NEW)
@@ -225,7 +226,7 @@ def test_edited_description_is_kept(v82_schema_db_url: str, tmp_path: Path) -> N
     with DatabaseMapping(_copy(v82_schema_db_url, tmp_path)) as db:
         pdef = db.get_item("parameter_definition", entity_class_name="unit", name="startup_method")
         db.update_item("parameter_definition", id=pdef["id"], description=OLD_UNIT_STARTUP + " My note.")
-        m._v83_startup_method(db)
+        v83._v83_startup_method(db)
         assert _description(db, "unit", "startup_method") == OLD_UNIT_STARTUP + " My note."
         assert _description(db, "connection", "startup_method") == NEW[("connection", "startup_method")]
 
@@ -235,12 +236,12 @@ def test_rerun_writes_nothing(v82_schema_db_url: str, tmp_path: Path) -> None:
     url = _copy(v82_schema_db_url, tmp_path)
     _seed(url)
     with DatabaseMapping(url) as db:
-        m._v83_startup_method(db)
-        m._v83_startup_method(db)
+        v83._v83_startup_method(db)
+        v83._v83_startup_method(db)
         assert (_members(db), _values(db)) == (MEMBERS, AFTER)
         db.commit_session("v83 part 2")
     with DatabaseMapping(url) as db:
-        m._v83_startup_method(db)
+        v83._v83_startup_method(db)
         assert (_members(db), _values(db)) == (MEMBERS, AFTER)
         with pytest.raises(NothingToCommit):
             db.commit_session("rerun")
@@ -261,7 +262,7 @@ def test_guard_stops_on_a_changed_member_without_a_commit(v82_schema_db_url: str
         with pytest.raises(m.FlexToolMigrationError,
                            match=r"A version 83 upgrade step changed an existing member of the value list "
                                  r"startup_methods \('no_startup'\); the upgrade stops"):
-            m._v83_startup_method(db)
+            v83._v83_startup_method(db)
     with DatabaseMapping(url) as db:
         assert _members(db) == ["no_startup", "linear", "binary"]
         assert _values(db)[("unit", "u1", "startup_method", "base")] == "binary"
@@ -271,7 +272,7 @@ def test_binary_removal_passes_the_guard(v82_schema_db_url: str, tmp_path: Path,
                                          monkeypatch: pytest.MonkeyPatch) -> None:
     """The last guard call is the removal form with exactly the id of binary."""
     calls = []
-    check = m._v83_check_members
+    check = v83._v83_check_members
 
     def recording(db, name, before, removed=frozenset()):
         calls.append({before[i][1] for i in removed})
@@ -279,7 +280,7 @@ def test_binary_removal_passes_the_guard(v82_schema_db_url: str, tmp_path: Path,
 
     patch_migration(monkeypatch, "_v83_check_members", recording)
     with DatabaseMapping(_copy(v82_schema_db_url, tmp_path)) as db:
-        m._v83_startup_method(db)
+        v83._v83_startup_method(db)
         assert _members(db) == MEMBERS
     assert calls == [set(), {b'"binary"'}]
 
@@ -303,7 +304,7 @@ def test_leftover_default_reference_stops_the_removal(v82_schema_db_url: str, tm
         with pytest.raises(m.FlexToolMigrationError,
                            match=r"remove the member\(s\) 'binary' of the value list startup_methods while still "
                                  r"in use \(unit\.startup_method default\)"):
-            m._v83_startup_method(db)
+            v83._v83_startup_method(db)
         assert "binary" in _members(db)
 
 
@@ -314,5 +315,5 @@ def test_leftover_value_reference_stops_the_removal(v82_schema_db_url: str, tmp_
     with DatabaseMapping(url) as db:
         db.update_parameter_value = lambda **kwargs: None
         with pytest.raises(m.FlexToolMigrationError, match=r"unit u1 \[base\] = binary \(startup_method\)"):
-            m._v83_startup_method(db)
+            v83._v83_startup_method(db)
         assert "binary" in _members(db)

@@ -16,7 +16,11 @@
         "flextool/update_flextool/db_migration/v77.py",
         "flextool/update_flextool/db_migration/v78.py",
         "flextool/update_flextool/db_migration/v79.py",
-        "flextool/update_flextool/v84_branching.py",
+        "flextool/update_flextool/db_migration/v80.py",
+        "flextool/update_flextool/db_migration/v81.py",
+        "flextool/update_flextool/db_migration/v82.py",
+        "flextool/update_flextool/db_migration/v83.py",
+        "flextool/update_flextool/db_migration/v84_branching.py",
         "flextool/update_flextool/__init__.py"
     ],
     "description": "Update/migrate the active input database to the latest version. Take a backup if unsure (there is no going back).",

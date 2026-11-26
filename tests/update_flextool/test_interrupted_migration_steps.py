@@ -16,6 +16,7 @@ import pytest
 from spinedb_api import from_database, import_data
 
 from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import v81
 from flextool.update_flextool.db_migration import v70_v76
 from flextool.update_flextool.db_migration import v56_methods, v57_v69
 from flextool.update_flextool.db_migration import common
@@ -292,8 +293,8 @@ def _v80_file(tmp_path: Path) -> tuple[Path, str]:
 
 def _failing_v81(db) -> None:
     """The v81 step, then a failure after it has committed."""
-    m._v81_value_lists(db)
-    m._v81_definitions_part(db)
+    v81._v81_value_lists(db)
+    v81._v81_definitions_part(db)
     common._commit_step(db, "v81 part")
     raise RuntimeError("step failed")
 

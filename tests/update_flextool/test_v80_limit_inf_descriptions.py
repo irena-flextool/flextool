@@ -32,7 +32,7 @@ from spinedb_api import DatabaseMapping, Map, from_database, to_database
 from spinedb_api.exception import NothingToCommit
 
 from flextool._resources import package_data_path
-from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import v80, v83
 from flextool.update_flextool.db_migration import v79
 from flextool.update_flextool.db_migration import v57_v69
 from tests.update_flextool._rerun import patch_migration
@@ -40,7 +40,7 @@ from flextool.update_flextool.db_migration import migrate_database
 from tests.db_utils import json_to_db
 from tests.update_flextool._rerun import v75b_url
 
-RENAMED = {("group", old): ("group", new) for old, new in m.V80_CAPACITY_MARGIN_RENAMES.items()}
+RENAMED = {("group", old): ("group", new) for old, new in v80.V80_CAPACITY_MARGIN_RENAMES.items()}
 #: Stored before the step: (alternative index, parameter, value) on group stoch_g.
 STORED = [
     (0, "capacity_margin_method", "manual"),
@@ -78,7 +78,7 @@ def _shipped() -> tuple[dict, dict[str, list[str]]]:
     lists: dict[str, list[str]] = {}
     for name, value in schema["parameter_value_lists"]:
         lists.setdefault(name, []).append(value)
-    v83_back = {key: old for key, (old, _new) in m._v83_superseded_texts().items()}
+    v83_back = {key: old for key, (old, _new) in v83._v83_superseded_texts().items()}
     return {(r[0], r[1]): v83_back.get((r[0], r[1]), r[4]) for r in schema["parameter_definitions"]}, lists
 
 
@@ -105,7 +105,7 @@ def migrated(tmp_path_factory: pytest.TempPathFactory) -> dict:
 def test_appends_the_limit_sentences_once(migrated) -> None:
     before, after = migrated["before"]["defs"], migrated["after"]["defs"]
     shipped, _ = _shipped()
-    suffixes = m._v80_suffixes()
+    suffixes = v80._v80_suffixes()
     assert ("group", "co2_max_period") in suffixes and ("constraint", "constant") in suffixes
     assert len(suffixes[("flowGroup", "max_instant_flow")]) == 2
     for key, sentences in suffixes.items():
@@ -120,9 +120,9 @@ def test_appends_the_limit_sentences_once(migrated) -> None:
 
 def test_append_completes_a_partly_written_suffix() -> None:
     sentences = (" first.", " second.")
-    assert m._v80_append_sentences("Text.", sentences) == "Text. first. second."
-    assert m._v80_append_sentences("Text. first.", sentences) == "Text. first. second."
-    assert m._v80_append_sentences("Text. first. second.  ", sentences) == "Text. first. second."
+    assert v80._v80_append_sentences("Text.", sentences) == "Text. first. second."
+    assert v80._v80_append_sentences("Text. first.", sentences) == "Text. first. second."
+    assert v80._v80_append_sentences("Text. first. second.  ", sentences) == "Text. first. second."
 
 
 def test_renames_the_capacity_margin_definitions(migrated) -> None:
@@ -131,7 +131,7 @@ def test_renames_the_capacity_margin_definitions(migrated) -> None:
     for old, new in RENAMED.items():
         assert old in before and new not in before
         assert old not in after and old not in shipped
-        assert after[new][0] == shipped[new] == m._v80_texts()[new]
+        assert after[new][0] == shipped[new] == v80._v80_texts()[new]
         assert after[new][1:] == before[old][1:]
     assert after[("group", "capacity_margin_absolute")][0].startswith("[MW] ")
     assert "capacity_margin_method relative_of_peak_demand" in after[("group", "capacity_margin_relative")][0]
@@ -144,7 +144,7 @@ def test_renames_the_method_values(migrated) -> None:
     assert after["lists"]["capacity_margin_methods"] == ["none", "absolute", "relative_of_peak_demand"]
     assert after["lists"]["capacity_margin_methods"] == shipped_lists["capacity_margin_methods"]
     key = ("group", "capacity_margin_method")
-    assert after["defs"][key][0] == _shipped()[0][key] == m._v80_texts()[key]
+    assert after["defs"][key][0] == _shipped()[0][key] == v80._v80_texts()[key]
     assert after["defs"][key][1:] == before["defs"][key][1:]
     for word in ("absolute: capacity_margin_absolute MW", "relative_of_peak_demand: capacity_margin_relative"):
         assert word in after["defs"][key][0]
@@ -157,8 +157,8 @@ def test_rewrites_every_stored_value_and_keeps_the_data(migrated) -> None:
     expected = {}
     for (cls, byname, param, alt), (value, typ) in old.items():
         if cls == "group" and param == "capacity_margin_method":
-            value, typ = to_database(m.V80_CAPACITY_MARGIN_METHODS[json.loads(value)])
-        expected[(cls, byname, m.V80_CAPACITY_MARGIN_RENAMES.get(param, param) if cls == "group" else param,
+            value, typ = to_database(v80.V80_CAPACITY_MARGIN_METHODS[json.loads(value)])
+        expected[(cls, byname, v80.V80_CAPACITY_MARGIN_RENAMES.get(param, param) if cls == "group" else param,
                   alt)] = (bytes(value), typ)
     assert new == expected
     stored = {(i, param) for i, param, _ in STORED}
@@ -198,11 +198,11 @@ def test_an_old_method_default_is_renamed(tmp_path_factory, old, new) -> None:
         key = ("group", "capacity_margin_method")
         assert from_database(*after[key][4:]) == new
         assert after[key][1:4] == before[key][1:4]
-        assert after[key][0] == m._v80_texts()[key]
+        assert after[key][0] == v80._v80_texts()[key]
     with DatabaseMapping(url) as db:
         with pytest.raises(NothingToCommit):
-            m._v80_capacity_margin_rename(db)
-            m._v80_descriptions(db)
+            v80._v80_capacity_margin_rename(db)
+            v80._v80_descriptions(db)
             db.commit_session("rerun")
 
 
@@ -210,7 +210,7 @@ def test_replaces_the_solver_descriptions(migrated) -> None:
     after = migrated["after"]["defs"]
     shipped, _ = _shipped()
     for key in (("solve", "solver_precommand"), ("solve", "solver_arguments")):
-        assert after[key][0] == shipped[key] == m._v80_texts()[key] != migrated["before"]["defs"][key][0]
+        assert after[key][0] == shipped[key] == v80._v80_texts()[key] != migrated["before"]["defs"][key][0]
     assert "Set a solver wrapper on your computer instead" in after[("solve", "solver_precommand")][0]
     arguments = after[("solve", "solver_arguments")][0]
     assert "solver's own option names" in arguments and "whichever solver the solve uses" in arguments
@@ -224,7 +224,7 @@ def test_replaces_the_reduce_unit_detail_description(migrated) -> None:
     before, after = migrated["before"]["defs"], migrated["after"]["defs"]
     shipped, _ = _shipped()
     key = ("solve", "reduce_unit_detail_method")
-    assert after[key][0] == shipped[key] == m._v80_texts()[key] != before[key][0]
+    assert after[key][0] == shipped[key] == v80._v80_texts()[key] != before[key][0]
     assert before[key][0] == v79._V79_REDUCE_DESCRIPTIONS["reduce_unit_detail_method"]
     assert after[key][1:] == before[key][1:]
     text = after[key][0]
@@ -241,7 +241,7 @@ def test_replaces_the_print_dispatch_description(migrated) -> None:
     before, after = migrated["before"]["defs"], migrated["after"]["defs"]
     shipped, _ = _shipped()
     key = ("group", "print_dispatch")
-    assert after[key][0] == shipped[key] == m._v80_texts()[key] != before[key][0]
+    assert after[key][0] == shipped[key] == v80._v80_texts()[key] != before[key][0]
     assert before[key][0] == "[yes/no] " + v57_v69._V58_GROUP_OUTPUT_FLAG_DESCRIPTIONS["print_dispatch"]
     assert after[key][1:] == before[key][1:]
     assert after[key][0].startswith(before[key][0] + " ")
@@ -268,7 +268,7 @@ def test_adds_the_piecewise_linear_efficiency_definition(migrated) -> None:
     description, types, group, value_list, default, default_type = after[PIECEWISE]
     assert types == ("1d_map", "2d_map") and group == "basics" and value_list is None
     assert default is None and default_type is None
-    assert description == shipped[PIECEWISE] == m.V80_PIECEWISE_LINEAR_EFFICIENCY_DESCRIPTION
+    assert description == shipped[PIECEWISE] == v80.V80_PIECEWISE_LINEAR_EFFICIENCY_DESCRIPTION
     for words in ("The last point must be at load 1", "the message gives the nearest curve that is accepted",
                   "gets linear start-ups (an info line says so)", "does not use efficiency or efficiency_at_min_load",
                   "a curve per period (map: period → load share → efficiency)"):
@@ -279,17 +279,17 @@ def test_piecewise_linear_descriptions(migrated) -> None:
     before, after = migrated["before"]["defs"], migrated["after"]["defs"]
     shipped, _ = _shipped()
     key = ("unit", "conversion_method")
-    assert after[key][0] == shipped[key] == m._v80_texts()[key] != before[key][0]
+    assert after[key][0] == shipped[key] == v80._v80_texts()[key] != before[key][0]
     assert "piecewise_linear: the fuel use follows the part-load curve piecewise_linear_efficiency" in after[key][0]
     assert after[key][1:] == before[key][1:]
-    for key, sentences in m._v80_piecewise_sentences().items():
+    for key, sentences in v80._v80_piecewise_sentences().items():
         assert after[key][0] == before[key][0].rstrip() + "".join(sentences) == shipped[key]
         assert after[key][1:] == before[key][1:]
 
 
 def test_changes_nothing_else(migrated) -> None:
     before, after = migrated["before"], migrated["after"]
-    touched = (set(m._v80_suffixes()) | set(m._v80_texts()) | set(RENAMED) | set(m._v80_piecewise_sentences())
+    touched = (set(v80._v80_suffixes()) | set(v80._v80_texts()) | set(RENAMED) | set(v80._v80_piecewise_sentences())
                | {PIECEWISE, ("model", "version")})
     assert ({k: v for k, v in after["defs"].items() if k not in touched}
             == {k: v for k, v in before["defs"].items() if k not in touched})
@@ -308,7 +308,7 @@ def test_rerun_commits_nothing(migrated, monkeypatch) -> None:
 
     patch_migration(monkeypatch, "_commit_step", commit_must_be_empty)
     with DatabaseMapping(migrated["url"]) as db:
-        m._migrate_v80_schema_batch(db)
+        v80._migrate_v80_schema_batch(db)
         assert len(commits) == 1
         assert _defs(db) == migrated["after"]["defs"] and _values(db) == migrated["after"]["values"]
 

@@ -15,7 +15,8 @@ def v82_schema_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
     [no_startup, linear, binary], ``dispatch_realization_methods`` [within_solve, separate_dispatch] with the default
     within_solve, and the descriptions the v83 parts replace are the shipped v82 texts."""
     from flextool._resources import package_data_path
-    from flextool.update_flextool.db_migration import _v83_superseded_texts, migrate_database
+    from flextool.update_flextool.db_migration import migrate_database
+    from flextool.update_flextool.db_migration.v83 import _v83_superseded_texts
     from flextool.update_flextool.initialize_database import initialize_database
 
     path = tmp_path_factory.mktemp("v82_schema_db") / "v82.sqlite"

@@ -57,6 +57,7 @@ from spinedb_api.exception import NothingToCommit
 
 from flextool._resources import package_data_path
 from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import v80, v81, v82, v83
 from flextool.update_flextool.db_migration import v78, v79 as dm_v79
 from flextool.update_flextool.db_migration import v57_v69
 from flextool.update_flextool.db_migration import common
@@ -149,10 +150,10 @@ def _shipped() -> dict:
     text."""
     with open(package_data_path("schemas/spinedb_schema.json"), encoding="utf-8") as f:
         schema = json.load(f)
-    v83_back = {key: old for key, (old, _new) in m._v83_superseded_texts().items()}
+    v83_back = {key: old for key, (old, _new) in v83._v83_superseded_texts().items()}
     later = {key: "".join(sentences)
-             for key, sentences in {**m._v80_suffixes(), **m._v80_piecewise_sentences()}.items()}
-    old_names = {("group", new): ("group", old) for old, new in m.V80_CAPACITY_MARGIN_RENAMES.items()}
+             for key, sentences in {**v80._v80_suffixes(), **v80._v80_piecewise_sentences()}.items()}
+    old_names = {("group", new): ("group", old) for old, new in v80.V80_CAPACITY_MARGIN_RENAMES.items()}
     old_names.update({(cls, "lifetime_technical"): (cls, "lifetime") for cls in dm_v79._V79_LIFETIME_DESCRIPTIONS})
     v81_back = {**{(cls, "lifetime"): text for cls, text in dm_v79._V79_LIFETIME_DESCRIPTIONS.items()},
                 **{(cls, "discount_rate"): dm_v79._V79_DISCOUNT_RATE_DESCRIPTION for cls in dm_v79._V79_LIFETIME_DESCRIPTIONS},
@@ -167,10 +168,10 @@ def _shipped() -> dict:
         text, suffix = v83_back.get(key, r[4]), later.get(key)
         key = old_names.get(key, key)
         if key in v81_back:
-            assert key in m._v81_texts() or (key[0], "lifetime_technical") in m._v81_texts(), key
+            assert key in v81._v81_texts() or (key[0], "lifetime_technical") in v81._v81_texts(), key
             text = v81_back[key]
         elif key in v79_texts:
-            assert (key[0], m.V80_CAPACITY_MARGIN_RENAMES.get(key[1], key[1])) in m._v80_texts(), key
+            assert (key[0], v80.V80_CAPACITY_MARGIN_RENAMES.get(key[1], key[1])) in v80._v80_texts(), key
             text = v79_texts[key]
         elif suffix and text and text.endswith(suffix):
             text = text[:-len(suffix)]
@@ -567,7 +568,7 @@ def test_rewrites_the_rp_descriptions(plain) -> None:
     shipped = _shipped()
     # v82 rewrites the storage_binding_method description again (the rolling storage carry): the shipped text is
     # v82's, the v79 step still writes its own.
-    later = m._v82_storage_texts()
+    later = v82._v82_storage_texts()
     for key in RP_CHANGED:
         assert plain["after"][key][2] == dm_v79._v79_rp_texts()[key] != plain["before"][key][2]
         assert shipped[key] == later.get(key, dm_v79._v79_rp_texts()[key])

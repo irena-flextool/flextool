@@ -16,7 +16,7 @@ import json
 
 import pytest
 
-from flextool.update_flextool.db_migration import V82_PARAMETER_RENAMES
+from flextool.update_flextool.db_migration.v82 import V82_PARAMETER_RENAMES
 from tests.engine._unit_db import FLEXTOOL_ROOT, add_override_alternative, b64
 from tests.engine.test_lifetime_shapes import _lp
 from tests.engine.test_v81_names_end_to_end import _schema_and_values

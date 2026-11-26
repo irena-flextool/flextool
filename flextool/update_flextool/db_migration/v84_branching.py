@@ -7,7 +7,7 @@ import json
 
 from spinedb_api import Map, to_database
 
-from flextool.update_flextool.db_migration import (
+from flextool.update_flextool.db_migration.common import (
     _already_applied,
     _append_list_members,
     _commit_step,
@@ -15,10 +15,9 @@ from flextool.update_flextool.db_migration import (
     _pdef_or_none,
     _remove_items_bounded,
     _replace_text_pairs,
-    _v77_set_marker,
-    _v83_dispatch_realization_texts,
-    _v83_write_values,
 )
+from flextool.update_flextool.db_migration.v77 import _v77_set_marker
+from flextool.update_flextool.db_migration.v83 import _v83_dispatch_realization_texts, _v83_write_values
 
 
 #: The value list and the members of ``solve.invest_solve_branching_method``, default first (the engine's

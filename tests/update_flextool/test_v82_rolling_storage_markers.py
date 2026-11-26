@@ -22,6 +22,7 @@ import json
 from spinedb_api import Array, DatabaseMapping, to_database
 
 from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import v82
 
 
 def _db(*, rolling: bool = True, nested: bool = True) -> DatabaseMapping:
@@ -64,20 +65,20 @@ def _marker(db, change: str) -> dict | None:
 
 def test_markers_name_the_rolling_and_nested_storage_nodes() -> None:
     with _db() as db:
-        m._v82_rolling_storage_markers(db)
+        v82._v82_rolling_storage_markers(db)
         assert _marker(db, "rolling_cyclic_storage_anchored") == {"since": 82,
                                                                   "nodes": ["blend", "blocks", "cyc", "wp"]}
         assert _marker(db, "nested_storage_start_borrowed") == {"since": 82, "nodes": ["cyc", "fwd", "wp"]}
         assert _marker(db, "nested_storage_fix_cumulative") == {"since": 82, "nodes": ["cyc", "wp"]}
         # Idempotent: a rerun writes the same markers.
-        m._v82_rolling_storage_markers(db)
+        v82._v82_rolling_storage_markers(db)
         assert _marker(db, "rolling_cyclic_storage_anchored") == {"since": 82,
                                                                   "nodes": ["blend", "blocks", "cyc", "wp"]}
 
 
 def test_no_marker_without_rolling_or_nested_solves() -> None:
     with _db(rolling=False, nested=False) as db:
-        m._v82_rolling_storage_markers(db)
+        v82._v82_rolling_storage_markers(db)
         assert _marker(db, "rolling_cyclic_storage_anchored") is None
         assert _marker(db, "nested_storage_start_borrowed") is None
         assert _marker(db, "nested_storage_fix_cumulative") is None
@@ -106,5 +107,5 @@ def test_reference_start_marker_names_reference_nodes_without_fix_start() -> Non
                 raw, typ = to_database(value)
                 db.add_item("parameter_value", entity_class_name="node", entity_byname=(entity,),
                             parameter_definition_name=name, alternative_name="base", value=raw, type=typ)
-        m._v82_storage_accounting_markers(db)
+        v82._v82_storage_accounting_markers(db)
         assert _marker(db, "storage_reference_start") == {"since": 82, "nodes": ["ref"]}

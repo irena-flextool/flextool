@@ -33,11 +33,12 @@ from spinedb_api import DatabaseMapping, Map, to_database
 from spinedb_api.exception import NothingToCommit
 
 from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import v83
 from flextool.update_flextool.db_migration import v77
 from flextool.update_flextool.db_migration import common
 from tests.update_flextool._rerun import patch_migration
 
-MARKER = m.BEHAVIOUR_CHANGE_MARKER_PREFIX + m.V83_MIN_TIME_MARKER
+MARKER = m.BEHAVIOUR_CHANGE_MARKER_PREFIX + v83.V83_MIN_TIME_MARKER
 RISING = Map([0.4, 0.7, 1.0], [0.30, 0.40, 0.42])  # fuel 1.33, 1.75, 2.38: two lines, rising efficiency
 FLAT = Map([0.5, 1.0], [0.4, 0.4])  # fuel 1.25, 2.5: one line through 0, no fuel at zero output → no auto_startup
 BAD = Map([0.5, 0.9], [0.4, 0.4])  # ends at 0.9, not 1.0: a curve with a problem counts as no curve
@@ -172,7 +173,7 @@ def _planner_values(units: dict[str, dict]) -> dict:
 @pytest.mark.parametrize("name", list(CASES))
 def test_m1_planner(name: str) -> None:
     values, scenarios, defaults, writes, undecided, _db = CASES[name]
-    plan = m.plan_minimum_time_method(["u"], _planner_values({"u": values}), scenarios, defaults)
+    plan = v83.plan_minimum_time_method(["u"], _planner_values({"u": values}), scenarios, defaults)
     assert {a: method for _u, a, method in plan.writes} == writes
     expected = () if undecided is None else (("u", undecided[0], undecided[1]),)
     assert tuple((u, r, c) for u, r, c, _n in plan.undecided) == expected
@@ -255,7 +256,7 @@ def test_m1_part_on_a_v82_database(name: str, v82_schema_db_url: str, tmp_path: 
     with DatabaseMapping(_schema_copy(v82_schema_db_url, tmp_path)) as db:
         _fill(db, {"u": values}, scenarios, defaults)
         own = _methods(db)
-        m._v83_minimum_time_method(db)
+        v83._v83_minimum_time_method(db)
         assert _methods(db) == own | {("u", a): method for a, method in writes.items()}
         expected = {"since": 83, "writes": [["u", a, method] for a, method in sorted(writes.items())],
                     "undecided": [] if undecided is None else [["u", undecided[0], list(undecided[1])]]}
@@ -275,9 +276,9 @@ def test_m3_planner_model_matches_the_engine(name: str, v82_schema_db_url: str, 
     with DatabaseMapping(url) as db:
         _fill(db, {"u": values}, scenarios, defaults)
         db.commit_session("M3")
-        units, vals, scen, dflt, _inactive = m._v83_unit_inputs(db)
+        units, vals, scen, dflt, _inactive = v83._v83_unit_inputs(db)
     for s in scenarios:
-        online, need, *_r = m._v83_unit_state("u", scen[s], vals, dflt)
+        online, need, *_r = v83._v83_unit_state("u", scen[s], vals, dflt)
         reader = SpineDbReader(url, s)
         cls = drv._classify_process_method(reader)
         engine_online = any(str(r["p"]) == "u" and r["startup"] != "no_startup" for r in cls.to_dicts())
@@ -304,9 +305,9 @@ def test_m3_gated_rows_after_part_1_keep_the_needed_times(name: str, v82_schema_
     with DatabaseMapping(url) as db:
         _fill(db, {"u": values}, scenarios, defaults)
         db.commit_session("M3")
-        _units, vals, scen, dflt, _inactive = m._v83_unit_inputs(db)
-        before = {s: m._v83_unit_state("u", scen[s], vals, dflt) for s in scenarios}
-        m._v83_minimum_time_method(db)
+        _units, vals, scen, dflt, _inactive = v83._v83_unit_inputs(db)
+        before = {s: v83._v83_unit_state("u", scen[s], vals, dflt) for s in scenarios}
+        v83._v83_minimum_time_method(db)
         undecided = {s for row in (_marker(db) or {}).get("undecided", []) for s in row[2]}
         try:
             db.commit_session("v83 part 1")
@@ -330,7 +331,7 @@ FT2_OFF = CASES["ft2_off"][0]
 def test_a_both_default_writes_nothing(v82_schema_db_url: str, tmp_path: Path) -> None:
     with DatabaseMapping(_schema_copy(v82_schema_db_url, tmp_path)) as db:
         _fill(db, {"u": PLAIN, "f": FT2_OFF}, {"S1": ["base"], "S2": ["base", "off"]}, {"minimum_time_method": "both"})
-        m._v83_minimum_time_method(db)
+        v83._v83_minimum_time_method(db)
         assert _methods(db) == {}
         assert _marker(db) is None
 
@@ -349,7 +350,7 @@ def test_a_raw_null_default_is_no_default(v82_schema_db_url: str, tmp_path: Path
     finally:
         con.close()
     with DatabaseMapping(url) as db:
-        m._v83_minimum_time_method(db)
+        v83._v83_minimum_time_method(db)
         assert _methods(db) == {("u", "base"): "min_uptime"}
 
 
@@ -370,7 +371,7 @@ def test_a_list_without_none_gets_it_and_off_reads_none(v82_schema_db_url: str, 
     with DatabaseMapping(url) as db:
         assert _members(db) == ["min_uptime", "min_downtime", "both"]
         _fill(db, {"u": FT2_OFF}, {"S1": ["base"], "S2": ["base", "off"]}, {})
-        m._v83_minimum_time_method(db)
+        v83._v83_minimum_time_method(db)
         assert _members(db) == ["min_uptime", "min_downtime", "both", "none"]
         assert _methods(db) == {("u", "base"): "min_downtime", ("u", "off"): "none"}
         db.commit_session("v83 part 1")
@@ -392,7 +393,7 @@ def test_a_corrupted_list_gets_min_uptime_back(v82_schema_db_url: str, tmp_path:
     with DatabaseMapping(url) as db:
         assert _members(db) == ["none", "min_downtime", "both"]
         assert _methods(db) == {("old", "base"): "none"}
-        m._v83_minimum_time_method(db)
+        v83._v83_minimum_time_method(db)
         assert _members(db) == ["none", "min_downtime", "both", "min_uptime"]
         assert _methods(db) == {("old", "base"): "none", ("u", "base"): "min_uptime"}
 
@@ -402,14 +403,14 @@ def test_a_scenario_where_the_unit_is_inactive_is_ignored(v82_schema_db_url: str
     with DatabaseMapping(_schema_copy(v82_schema_db_url, tmp_path)) as db:
         _fill(db, {"u": {"min_downtime": {"base": 2.0}, "startup_method": {"base": "linear", "dead": "no_startup"}}},
               {"S1": ["base"], "S2": ["base", "dead"]}, {}, inactive={"u": {"dead"}})
-        m._v83_minimum_time_method(db)
+        v83._v83_minimum_time_method(db)
         assert _methods(db) == {("u", "base"): "min_downtime"}
 
 
 def test_no_scenario_reads_all_alternatives_as_one(v82_schema_db_url: str, tmp_path: Path) -> None:
     with DatabaseMapping(_schema_copy(v82_schema_db_url, tmp_path)) as db:
         _fill(db, {"u": PLAIN}, {}, {})
-        m._v83_minimum_time_method(db)
+        v83._v83_minimum_time_method(db)
         assert _methods(db) == {("u", "base"): "min_uptime"}
 
 
@@ -417,9 +418,9 @@ def test_marker_merges_writes_and_replaces_undecided(v82_schema_db_url: str, tmp
     masking = CASES["masking_conflict"][0]
     with DatabaseMapping(_schema_copy(v82_schema_db_url, tmp_path)) as db:
         _fill(db, {"u": PLAIN, "mc": masking}, {"S1": ["E", "base"], "S2": ["base"]}, {})
-        v77._v77_set_marker(db, m.V83_MIN_TIME_MARKER, json.dumps(
+        v77._v77_set_marker(db, v83.V83_MIN_TIME_MARKER, json.dumps(
             {"since": 83, "writes": [["x", "A", "both"]], "undecided": [["y", "gone", ["S9"]]]}))
-        m._v83_minimum_time_method(db)
+        v83._v83_minimum_time_method(db)
         # u: S1 [E, base] and S2 [base] both candidates (u has no method) → base: min_uptime.
         assert _marker(db) == {
             "since": 83, "writes": [["x", "A", "both"], ["u", "base", "min_uptime"]],
@@ -435,13 +436,13 @@ def test_rerun_writes_nothing_and_logs_already_applied(v82_schema_db_url: str, t
         _fill(db, {"u": FT2_OFF, "mc": CASES["masking_conflict"][0]},
               {"S1": ["base"], "S2": ["base", "off"], "S3": ["E", "base"]}, {})
         with caplog.at_level(logging.INFO):
-            m._v83_minimum_time_method(db)
+            v83._v83_minimum_time_method(db)
         assert not [r for r in caplog.records if r.getMessage().startswith(m.ALREADY_APPLIED_PREFIX)]
         methods, marker = _methods(db), _marker(db)
         assert methods[("u", "base")] == "min_downtime" and marker["undecided"]
         caplog.clear()
         with caplog.at_level(logging.INFO):
-            m._v83_minimum_time_method(db)
+            v83._v83_minimum_time_method(db)
         assert (_methods(db), _marker(db)) == (methods, marker)
         assert [r.getMessage() for r in caplog.records if r.getMessage().startswith(m.ALREADY_APPLIED_PREFIX)] == [
             f"{m.ALREADY_APPLIED_PREFIX} v83 minimum_time_method: already written"]
@@ -449,7 +450,7 @@ def test_rerun_writes_nothing_and_logs_already_applied(v82_schema_db_url: str, t
     caplog.clear()
     with DatabaseMapping(url) as db:
         with caplog.at_level(logging.INFO):
-            m._v83_minimum_time_method(db)
+            v83._v83_minimum_time_method(db)
         assert (_methods(db), _marker(db)) == (methods, marker)
         with pytest.raises(NothingToCommit):
             db.commit_session("rerun")
@@ -474,7 +475,7 @@ def test_guard_stops_on_a_changed_member_without_a_commit(v82_schema_db_url: str
         with pytest.raises(m.FlexToolMigrationError,
                            match=r"A version 83 upgrade step changed an existing member of the value list "
                                  r"minimum_time_methods \('min_uptime'\); the upgrade stops"):
-            m._v83_minimum_time_method(db)
+            v83._v83_minimum_time_method(db)
     with DatabaseMapping(url) as db:
         assert _members(db) == ["min_uptime", "min_downtime", "both", "none"]
         assert _methods(db) == {}
@@ -487,19 +488,19 @@ def test_guard_removal_form(v82_schema_db_url: str, tmp_path: Path) -> None:
         before = common._list_members(db, ["minimum_time_methods"])
         none_id = next(i for i, (_l, v, _t) in before.items() if v == b'"none"')
         with pytest.raises(m.FlexToolMigrationError, match=r"\('none' \(its planned removal did not happen\)\)"):
-            m._v83_check_members(db, "minimum_time_methods", before, removed={none_id})
+            v83._v83_check_members(db, "minimum_time_methods", before, removed={none_id})
         item = next(x for x in db.get_items("list_value", parameter_value_list_name="minimum_time_methods")
                     if x["parsed_value"] == "none")
         db.remove_item("list_value", item["id"])
-        m._v83_check_members(db, "minimum_time_methods", before, removed={none_id})
+        v83._v83_check_members(db, "minimum_time_methods", before, removed={none_id})
         with pytest.raises(m.FlexToolMigrationError, match="'none'"):
-            m._v83_check_members(db, "minimum_time_methods", before)
+            v83._v83_check_members(db, "minimum_time_methods", before)
 
 
 def test_undecided_unit_is_printed(v82_schema_db_url: str, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
     with DatabaseMapping(_schema_copy(v82_schema_db_url, tmp_path)) as db:
         _fill(db, {"mc": CASES["masking_conflict"][0]}, {"S1": ["E", "base"], "S2": ["base"]}, {})
-        m._v83_minimum_time_method(db)
+        v83._v83_minimum_time_method(db)
     assert ("v83: minimum_time_method not written for unit mc: a value in alternative base would replace your "
             "minimum_time_method in alternative E in scenario S1. In scenario S2 its min_downtime no longer applies "
             "(results change). Set minimum_time_method yourself (both, min_uptime or min_downtime) where it should "

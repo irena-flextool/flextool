@@ -23,7 +23,7 @@ from spinedb_api import Array, DatabaseMapping, Map, to_database
 from flextool.engine.input._solve_config import INVEST_SOLVE_BRANCHING_METHODS
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool import db_migration as dm
-from flextool.update_flextool import v84_branching as m
+from flextool.update_flextool.db_migration import v84_branching as m
 from flextool.update_flextool.db_migration import migrate_database
 
 AFTER = "investments_after_reveal_period"

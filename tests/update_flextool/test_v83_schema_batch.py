@@ -27,6 +27,7 @@ from spinedb_api.exception import NothingToCommit
 
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool import db_migration as m
+from flextool.update_flextool.db_migration import v83
 from flextool.update_flextool import list_default_restore as ldr
 from flextool.update_flextool.db_migration import migrate_database
 from flextool.update_flextool.fixture_schema import unpack_value
@@ -191,8 +192,8 @@ def test_v75_seed_to_83_lists_no_realization_notice(tmp_path: Path, tmp_path_fac
     nothing.  Neither marker is written (a marker is written only when its list is non-empty)."""
     url = v75b_url(tmp_path_factory, tmp_path / "seed.sqlite")
     _migrate(url)
-    names = {f"flextool_behaviour_change:{m.V83_WITHIN_SOLVE_MARKER}",
-             f"flextool_behaviour_change:{m.V83_SEPARATE_DISPATCH_MARKER}"}
+    names = {f"flextool_behaviour_change:{v83.V83_WITHIN_SOLVE_MARKER}",
+             f"flextool_behaviour_change:{v83.V83_SEPARATE_DISPATCH_MARKER}"}
     with DatabaseMapping(url) as db:
         assert db.get_item("parameter_value", entity_class_name="solve", entity_byname=("stoch_2p",),
                            parameter_definition_name="solve_mode", alternative_name="init")["parsed_value"] \

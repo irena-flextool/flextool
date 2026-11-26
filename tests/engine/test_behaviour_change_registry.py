@@ -14,6 +14,7 @@ from pathlib import Path
 
 from flextool.engine._behaviour_changes import BEHAVIOUR_CHANGES, MARKER_PREFIX, BehaviourChange
 from flextool.update_flextool import db_migration
+from flextool.update_flextool.db_migration import v83
 from flextool.update_flextool.db_migration import v77
 
 CHANGELOG = Path(__file__).resolve().parents[2] / "CHANGELOG.md"
@@ -81,8 +82,8 @@ def test_migration_markers_are_registered() -> None:
                                                               "storage_end_matches_start",
                                                               "storage_reference_start",
                                                               "minimum_time_method_written",
-                                                              db_migration.V83_WITHIN_SOLVE_MARKER,
-                                                              db_migration.V83_SEPARATE_DISPATCH_MARKER}
+                                                              v83.V83_WITHIN_SOLVE_MARKER,
+                                                              v83.V83_SEPARATE_DISPATCH_MARKER}
     assert written <= set(BEHAVIOUR_CHANGES)
 
 

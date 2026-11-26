@@ -303,7 +303,7 @@ def test_v55_post_migration_description_matches_canonical(tmp_path: Path) -> Non
     # Database version 77 appends one sentence to the v55 text; version 78
     # puts the [choice] marker in front of it; version 82 rewrites it (the
     # rolling storage carry), so the shipped fixture carries the v82 text.
-    from flextool.update_flextool.db_migration import _v82_storage_texts
+    from flextool.update_flextool.db_migration.v82 import _v82_storage_texts
     assert description == _v82_storage_texts()[("node", "storage_binding_method")], (
         "node.storage_binding_method description does not match the "
         "canonical (v82) text.\n"
