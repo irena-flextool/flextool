@@ -10607,15 +10607,9 @@ def _migrate_v56_reactivate_is_enabled_parameter(db) -> None:
             flipped_classes.append(cls_name)
 
     # ---- Step 6: drop the ``is_active`` value list ------------------
-    # In most databases no parameter_definition references the list any
-    # more.  In a database made from a FlexTool 3 shipped file (the four
-    # release seeds), both reserve classes still have their ``is_active``
-    # definition on it: v19's ``remove_parameters_manual`` looks the
-    # definitions up among object classes only, so it misses those two.
-    # Removing the list removes them with it, and spinedb_api's
-    # ``is_active`` compatibility transformations run on this step's
-    # commit, after that, so they find no definition left to act on.
-    # Safe regardless of presence (idempotent skip when absent).
+    # In a database made from a FlexTool 3 shipped file both reserve classes still have their ``is_active``
+    # definition on it (v19's ``remove_parameters_manual`` searches object classes only).  Removing the list removes
+    # them, before this step's commit runs spinedb_api's ``is_active`` transformations.  Safe when absent.
     pvl_table = db.mapped_table("parameter_value_list")
     dropped_is_active_vl = False
     try:
