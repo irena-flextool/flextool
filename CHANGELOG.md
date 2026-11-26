@@ -1,6 +1,13 @@
-## Unreleased (4.7.1)
+## Release 4.7.1 (26.11.2026) — Benders master solves units with nodes in several regions; flowGroup cumulative limits carry across rolls and solves; `co2_max_total` needs a solve that sees every period; stochastic forecasts must cover the horizon; FlexTool 2 import gaps closed; easier to read Excel workbooks; stochastic and demand response examples (no schema change)
 
-### Behaviour changes
+No schema change: databases stay at data version 84. Requires `polar-high>=3.16.1`. Results change for Benders
+models with units whose nodes are in more than one region, for rolling and multi-solve models with flowGroup
+cumulative limits, for chains of solves that split a period under `co2_max_total`, for databases whose
+`node_type` default is empty, and for models imported from FlexTool 2 again. Some models that ran before now stop
+with an error that says what to change: `co2_max_total` in a solve that does not see every period, a stochastic
+forecast shorter than its solve's horizon, and a Benders group limit over both the master and a region.
+
+### Behaviour changes — read before upgrading
 
 - **Benders: a unit with nodes in more than one region is solved in the master.** A unit that converts through the
   unit itself (several inputs or outputs, or a `piecewise_linear_efficiency` curve of two or more segments) and has
