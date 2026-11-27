@@ -674,7 +674,7 @@ def test_start_up_node_in_the_master_is_refused() -> None:
     draw would be in the master's balance, the start-ups in the region subproblem."""
     from types import SimpleNamespace
 
-    from flextool.engine.solve._region_filter import _validate_startup_nodes
+    from flextool.engine.solve._region_filter._checks import _validate_startup_nodes
 
     nodes, procs = {"A": {"fuel_A", "elec_A", "oil_A"}}, {"A": {"u"}}
     data = SimpleNamespace(process_startup_node=pl.DataFrame({"p": ["u"], "n": ["oil_M"]}))
@@ -689,7 +689,7 @@ def test_start_up_node_of_another_region_is_refused() -> None:
     B's balance, the start-ups in A's subproblem); a node of no region (a commodity node) is fine."""
     from types import SimpleNamespace
 
-    from flextool.engine.solve._region_filter import _validate_startup_nodes
+    from flextool.engine.solve._region_filter._checks import _validate_startup_nodes
 
     nodes, procs = {"A": {"elec_A"}, "B": {"heat_B"}}, {"A": {"u"}, "B": {"v"}}
     data = SimpleNamespace(process_startup_node=pl.DataFrame({"p": ["u"], "n": ["heat_B"]}))
@@ -876,7 +876,7 @@ def test_co2_cap_partition_counts_the_start_up_draws() -> None:
     of master-local flows straddles the boundary and is refused."""
     from types import SimpleNamespace
 
-    from flextool.engine.solve._region_filter import _co2_master_partition
+    from flextool.engine.solve._region_filter._master_side import _co2_master_partition
 
     flows = pl.DataFrame({"p": ["liq"], "source": ["h2_M"], "sink": ["lh2_M"], "c": ["c"], "g": ["cap"]})
     ml = {("liq", "h2_M", "lh2_M")}
