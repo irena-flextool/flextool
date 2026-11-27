@@ -93,7 +93,7 @@ MASTER_ALL6 = frozenset(
 # Fixtures.  Every cascade runs BEFORE any FlexData load (the ``_runs``
 # indirection): interleaving a load with a later same-process cascade
 # build is a known pre-existing global-axis-enum hazard (documented at
-# ``_region_filter.py`` "Base the widening ...").
+# ``_region_filter._split.split`` "Base the widening ...").
 # ---------------------------------------------------------------------------
 
 

@@ -2526,8 +2526,8 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     )
     # A region↔master boundary connection may join nodes of different time resolutions: a cross-region arc keeps
     # the solve's steps in every region and in the master (only a region's own coarse processes take a coarse
-    # step, _region_filter._build_region_data) and a coarse node sums its fine flows (nodeBalanceCoarse_eq), so
-    # the pinned half-flows describe the same physical flow on both sides.
+    # step, _region_filter._region_data._build_region_data) and a coarse node sums its fine flows
+    # (nodeBalanceCoarse_eq), so the pinned half-flows describe the same physical flow on both sides.
     region_duals = _resolve_benders_region_duals()
     subproblems = [Problem() for _ in splits]
     # Full autoscale (Layer-2 per-type rescale + Layer-3 HiGHS-native top-up)

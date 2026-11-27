@@ -680,7 +680,7 @@ CI-enforced verify chain (`tests.yml::template-check`):
 group and prepare sub-problems for the Benders solve mode (the filter-only
 `--region` CLI entry point that materialises one region's standalone input
 directory). The in-engine slicer used by the live Benders driver lives at
-`engine/solve/_region_filter.py`; the master + cut loop is in
+`engine/solve/_region_filter/` (map in its `__init__.py`); the master + cut loop is in
 `engine/solve/_benders.py`.
 
 ### `flextool/model_builder/` and `flextool/representative_periods/`

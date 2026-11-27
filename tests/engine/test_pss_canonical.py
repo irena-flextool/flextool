@@ -9,7 +9,7 @@ The Δ.3 schematic offered two options for the partition family:
 
 Δ.3 picks (a-prime) since the partitions appear in 17+ consumer sites
 across model/core/ / _group_slack.py / _cumulative_invest.py /
-_region_filter.py / chain.py / _dump_csvs.py — option (b) would
+_region_filter/ / chain.py / _dump_csvs.py — option (b) would
 cascade widely.  The canonical frame is :func:`process_source_sink_canonical`
 in ``_projection.py``; this test asserts the invariants:
 

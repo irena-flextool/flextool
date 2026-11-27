@@ -15,3 +15,8 @@
   and sets up each sub-solve; the storage steps it calls live in `_rolling_storage`, `_nested_storage`,
   `_rp_methods` and `_storage_frames`, the run-scoped timelines in `_run_timelines` (map in
   `_run_model/__init__.py`).  Tests patch the seams (`_roll_tail_plans`, `make_step_jump`) on `_native_run_model`.
+- **The Benders region split** is `_region_filter/` (a package): `_split.split` slices a whole-system `FlexData`
+  into regions (`_region_data` builds one region and injects its half-flows), `_master_network.master_network_data`
+  builds the master's reduced `FlexData`; arcs, master side, checks and region membership have their own modules
+  (map in `_region_filter/__init__.py`).  `_benders` reads the public names through the package, so tests patch
+  `master_network_data` on the package (or `_benders._region_filter`); private names live on their submodule.
