@@ -929,7 +929,7 @@ def read_sets(
 
     # ramp_carry — the ramp_link rows of a continuation roll's first step that continue from the previous roll's
     # last realized step (dt_ramp_carry, without the steps that also have an adjacent link): the model builds
-    # their ramp rows whatever the ramp room (``core._ramp_rows``); the ramp envelope reads them for the same rule.
+    # their ramp rows whatever the ramp room (``core._ramp._ramp_rows``); the ramp envelope reads them for the same rule.
     carry = getattr(flex_data, "dt_ramp_carry", None)
     if carry is not None and carry.height > 0:
         cols = ("d", "t", "d_previous", "t_previous")
@@ -950,7 +950,7 @@ def read_sets(
 
     # node_state_prev — (solve, node, period, time, period_prev, time_prev): the step whose state each storage
     # step starts from in the storage balance (_self_discharge.state_links / previous_steps, the lags of
-    # core._state_change_terms): the chronological predecessor, or the step a binding method relinks it to
+    # core._node_balance._state_change_terms): the chronological predecessor, or the step a binding method relinks it to
     # (bind_within_timeblock wraps the first step of a timeblock to the timeblock's last step).  A step without a
     # row starts from a fixed / carried state or the free state of a representative block.  The ramp envelope
     # caps the storage room toward a step with the state that step starts from.
@@ -1026,7 +1026,7 @@ def read_sets(
     #
     # Walk every storage_bind_* projection exposed by FlexData.  The four
     # frames below mirror the entries in ``_projection.py:1858-1861``
-    # and the FlexData declarations in ``flex_data.py:579-582``.  Pre-fix this
+    # and the FlexData declarations in ``flex_data/_container.py``.  Pre-fix this
     # block walked only ``storage_bind_within_solve`` and
     # ``storage_bind_forward_only`` (audit §5.2), which silently dropped the
     # ``bind_within_timeblock`` and ``bind_within_solve_blended_weights`` methods and
@@ -1082,7 +1082,7 @@ def read_sets(
     # The collapsed process_source_sink includes reverse arcs for 2-way
     # connections AND intermediate (p, p) arcs for indirect units, so it
     # cannot be projected directly.  Use the pre-computed canonical fields
-    # (populated in flex_data.py from the raw entity tables) when available; fall
+    # (populated in preprocess/flex_data/ from the raw entity tables) when available; fall
     # back to a pss-based derivation that filters out process-as-node arcs.
     if (flex_data.process_source_canonical is not None
             and flex_data.process_source_canonical.height > 0):

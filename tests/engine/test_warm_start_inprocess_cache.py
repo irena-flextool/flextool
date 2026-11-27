@@ -40,9 +40,7 @@ import polar_high  # noqa: E402
 from db_utils import json_to_db  # noqa: E402
 
 from flextool.engine import run_chain_from_db  # noqa: E402
-from flextool.engine.solve._orchestration import (  # noqa: E402
-    _basis_cache_active,
-)
+from flextool.engine.solve._orchestration._highs_options import _basis_cache_active  # noqa: E402
 from flextool.update_flextool.db_migration import migrate_database  # noqa: E402
 
 FIXTURES = TESTS_DIR / "fixtures"
@@ -221,7 +219,7 @@ def test_gate_predicate_benders_and_solver(
     whenever the opt-in is off.
 
     A full Benders cascade is NOT built here because it cannot reach the
-    warm-start code at all: ``_orchestration.run`` returns early through
+    warm-start code at all: ``run`` (``_orchestration._cascade``) returns early through
     ``_run_benders_solve`` when ``decomposition_for(...) == "benders"``,
     BEFORE the warm branch that hosts the capture/inject blocks.  The
     ``decomposition != "benders"`` term in this predicate is the explicit

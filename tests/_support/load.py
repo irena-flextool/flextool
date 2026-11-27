@@ -1,6 +1,6 @@
 """Rebuild a finished cascade's FlexData through the production loader call.
 
-Production builds every sub-solve's FlexData with one call (``_orchestration.py``, the per-solve loop)::
+Production builds every sub-solve's FlexData with one call (``_orchestration/_cascade.py``, the per-solve loop)::
 
     load_flextool(work_folder, provider=<the sub-solve's provider>,
                   db_reader=SpineDbReader(db_url, scenario), handoff=<prior solve's SolveHandoff>)

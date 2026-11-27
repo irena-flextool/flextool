@@ -32,7 +32,7 @@ isolation; ``_run_model`` calls it at step 3.5.
 
 Warnings go through a MODULE-level logger, not the run's ``state.logger``:
 the orchestrator raises ``state.logger`` to ERROR for the whole cascade
-(``_orchestration._drive_cascade``) to silence per-solve chatter, so a
+(``_orchestration._cascade._drive_cascade``) to silence per-solve chatter, so a
 WARNING sent there would never be seen.  Same pattern as
 ``_recursive_solve._warn_if_rolling_carries_invest``.
 """

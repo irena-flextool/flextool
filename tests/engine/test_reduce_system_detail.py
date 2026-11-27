@@ -358,7 +358,7 @@ def test_dc_lines_become_lossless_transport(tmp_path_factory, level, delivered, 
         for name in DC_FIELDS:
             assert getattr(step.flex_data, name) is None, name
         # Each line keeps its reverse flow as v_flow_back (the method_2way_1var_off arcs), not a free column.
-        from flextool.engine.model.core import _two_way_one_var_arcs
+        from flextool.engine.model.core._prepare import _two_way_one_var_arcs
         arcs = utf8(_two_way_one_var_arcs(step.flex_data))
         assert set(arcs["p"].to_list()) == {"c12", "c23", "c13"}
     c12, c23, c13 = (_net_flow(step, c) for c in ("c12", "c23", "c13"))

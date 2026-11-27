@@ -84,14 +84,14 @@ def _spy_layer2(mp: pytest.MonkeyPatch) -> list:
     from flextool.engine.solve import _orchestration
 
     plans: list = []
-    orig = _orchestration._autoscale_apply_layer2_pre_solve
+    orig = _orchestration._cascade._autoscale_apply_layer2_pre_solve
 
     def spy(*args, **kwargs):
         plan, ranges = orig(*args, **kwargs)
         plans.append(plan)
         return plan, ranges
 
-    mp.setattr(_orchestration, "_autoscale_apply_layer2_pre_solve", spy)
+    mp.setattr(_orchestration._cascade, "_autoscale_apply_layer2_pre_solve", spy)
     return plans
 
 

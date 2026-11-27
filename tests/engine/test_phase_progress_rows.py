@@ -6,7 +6,7 @@ import re
 
 import pytest
 
-from flextool.engine.solve._orchestration import _MemoryRecorder as M
+from flextool.engine.solve._orchestration._memory import _MemoryRecorder as M
 
 GB = 1024.0
 

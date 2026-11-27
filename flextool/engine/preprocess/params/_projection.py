@@ -252,7 +252,7 @@ def process_source_sink(source: "InputSource") -> pl.DataFrame:
 #   * Connections: always ``(c, node_1, node_2)`` (already 1-arc form).
 #
 # Internal method comes from the classifier (input_writer.METHODS_MAPPING).
-# We reuse the classifier from ``_derived.py``.
+# We reuse the classifier from ``_derived/_process_method.py``.
 
 
 _METHOD_2WAY_NVAR_LOCAL = frozenset(("method_2way_nvar_off",))
@@ -281,7 +281,7 @@ def process_source_sink_collapsed(source: "InputSource",
     :func:`process_source_sink_canonical` minus the ``method`` column.
     Schema: ``[p, source, sink]``.
 
-    Δ.17b Gap B closure.  Prior to this, ``flex_data.py:_load_process_topology``
+    Δ.17b Gap B closure.  Prior to this, ``flex_data/_load_topology.py:_load_process_topology``
     had to read the three preprocessed ``process_source_sink*.csv`` files
     from disk because the canonical helper produced the *expanded*
     ``process_source_sink`` shape (``unit__inputNode`` ∪ ``unit__outputNode``
@@ -336,7 +336,7 @@ def process_source_sink_canonical(source: "InputSource",
     del pss  # legacy parameter
 
     # Late import to avoid a circular reference.
-    from flextool.engine.preprocess.params._derived import _classify_process_method
+    from flextool.engine.preprocess.params._derived._process_method import _classify_process_method
     classified = _classify_process_method(source)
 
     # Connections are always noEff and 1-arc.
@@ -695,8 +695,8 @@ def single_input_curve_arc_remap(source: "InputSource") -> pl.DataFrame:
     ramp limit, ramp cost, profile and ``constraint_flow_coeff`` (moved to the output arc at the load boundary,
     ``params/_piecewise.remap_input_items``) and its ``input_share_max`` (an output cap
     ``min(capacity_max_coeff, input_share_max)``; the input's own share is 1 —
-    ``_derived._arc_max_capacity_coef_lf`` and ``_direct._p_side_scalar`` read it so).  The rule for the arc
-    counts is the classifier's (``_derived._classify_process_method`` step 6)."""
+    ``_derived._arc_capacity._arc_max_capacity_coef_lf`` and ``_direct._p_side_scalar`` read it so).  The rule for the arc
+    counts is the classifier's (``_derived._process_method._classify_process_method`` step 6)."""
     from flextool.engine.input._param_shapes import _run_memo
 
     return _run_memo(source, ("single_input_curve_arc_remap",), lambda: _single_input_curve_arcs(source))
@@ -707,7 +707,7 @@ def _single_input_curve_arcs(source: "InputSource") -> pl.DataFrame:
     cm = _try_param(source, "unit", "conversion_method")
     if cm is None or not (cm.get_column("value").cast(pl.Utf8) == "piecewise_linear").any():
         return empty
-    from flextool.engine.preprocess.params._derived import _piecewise_flags
+    from flextool.engine.preprocess.params._derived._process_method import _piecewise_flags
 
     units = set(cm.filter(pl.col("value").cast(pl.Utf8) == "piecewise_linear")
                 .get_column("name").cast(pl.Utf8).to_list())
@@ -752,7 +752,7 @@ def remap_capacity_coef(source: "InputSource", frame: "pl.DataFrame | pl.LazyFra
                .join(drop.rename({k: f"__{k}" for k in keys}), on=[f"__{k}" for k in keys], how="anti")
                .select(f.columns))
         return out.lazy() if lazy else out
-    from flextool.engine.preprocess.params._derived import _try_param_explicit
+    from flextool.engine.preprocess.params._derived._scope import _try_param_explicit
 
     ism = _try_param_explicit(source, "unit__inputNode", "input_share_max")
     if ism is None or ism.height == 0:
@@ -878,13 +878,13 @@ def process_source_sink_2way_1var(source: "InputSource") -> pl.DataFrame:
     these arcs need a non-negative reverse auxiliary ``v_flow_back`` to
     carry sink→source flow.  This set is the union of DC-power-flow and
     non-DC ``method_2way_1var_off`` arcs (the classifier doesn't gate on
-    the DC feature); ``model/core.py`` declares the shared ``v_flow_back`` over
+    the DC feature); ``model/core/`` declares the shared ``v_flow_back`` over
     it and ``_dc_power_flow`` consumes the same Var on the DC subset.
 
     Schema: ``[p, source, sink]`` in the canonical forward orientation
     (matching ``process_source_sink``).
     """
-    from flextool.engine.preprocess.params._derived import _classify_process_method
+    from flextool.engine.preprocess.params._derived._process_method import _classify_process_method
 
     classified = _classify_process_method(source)
     if classified is None or classified.height == 0:
@@ -1305,12 +1305,12 @@ def _online_by_startup(source: "InputSource", methods: tuple[str, ...], *, fix_i
     """Modelled units and connections whose startup method is in ``methods`` (with ``fix_in_uc``: only those whose
     ``startup_method`` is a ``_fix_in_uc`` member).  Schema: ``[p]``.
 
-    The startup method is the classifier's (``_derived._classify_process_method``): the startup class of
+    The startup method is the classifier's (``_derived._process_method._classify_process_method``): the startup class of
     ``startup_method`` of units and connections, promoted to ``linear`` by a unit's ``minimum_time_method``;
     processes whose method triplet is not modelled are left out.  Online-ness comes from the startup method, not
     from the internal method, so a two-way connection keeps its flow shape (and ``exact`` its direction switch).
     """
-    from flextool.engine.preprocess.params._derived import _classify_process_method
+    from flextool.engine.preprocess.params._derived._process_method import _classify_process_method
     classified = _classify_process_method(source)
     if classified.height == 0:
         return _empty({"p": pl.Utf8})
@@ -2060,10 +2060,10 @@ SIMPLE_PROJECTIONS: dict[str, callable] = {
     "process_online_fix_in_uc": process_online_fix_in_uc,
     "process_delayed": process_delayed,
     # Every storage_bind_* set (plain and blended) is derived authoritatively in
-    # ``flex_data._load_storage`` from the per-solve
+    # ``flex_data._load_storage._load_storage`` from the per-solve
     # ``solve_data/node__storage_binding_method`` frame, so that the
     # cascade-applied silent downgrade
-    # (``_run_model._downgrade_rp_methods_for_non_rp_solve``) is honoured.
+    # (``_run_model._rp_methods._downgrade_rp_methods_for_non_rp_solve``) is honoured.
     # A DB-source projection of the raw method would drop the downgraded
     # nodes (item 127: a downgraded bind_within_solve_blended_weights node
     # lost its storage chain next to plain bind_within_solve nodes).  The

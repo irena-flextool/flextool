@@ -1,7 +1,7 @@
 """Regression: a ``cumulative_limits`` entity with only ``cumulative_min_capacity`` (no
 ``cumulative_max_capacity`` at all) is unconstrained above, not pinned to ``v_invest = 0``.
 
-``p_entity_max_units_from_source`` (``flextool/engine/preprocess/params/_derived.py``) computes a
+``p_entity_max_units_from_source`` (``flextool/engine/preprocess/params/_derived/_invest_sets.py``) computes a
 per-(entity, period) ceiling on invested units: for a ``cumulative_limits`` entity it used the
 authored ``cumulative_max_capacity`` directly as the ceiling, defaulting to 0 when the entity
 authors no value at all.  A ``cumulative_limits`` entity that only sets a floor
@@ -93,8 +93,8 @@ def min_only_source(tmp_path_factory: pytest.TempPathFactory) -> SpineDbReader:
 
 def test_wind_plant_is_cumulative_with_no_max_authored(min_only_source: SpineDbReader) -> None:
     """Root-cause pin: the override lands, and no ``cumulative_max_capacity`` is set anywhere."""
-    assert dp._try_param(min_only_source, "unit", "cumulative_max_capacity") is None
-    got = dp._try_param(min_only_source, "unit", "cumulative_min_capacity")
+    assert dp._scope._try_param(min_only_source, "unit", "cumulative_max_capacity") is None
+    got = dp._scope._try_param(min_only_source, "unit", "cumulative_min_capacity")
     assert got is not None and got.height == 1
     assert float(got["value"][0]) == pytest.approx(MIN_CAPACITY)
 
@@ -139,7 +139,7 @@ class _FakeProvider:
 
 
 def test_chain_params_cumulative_min_only_ceiling_is_unconstrained() -> None:
-    """Mirrors the ``_derived.py`` case above, but for the chain-cluster emitter
+    """Mirrors the ``_derived/_invest_sets.py`` case above, but for the chain-cluster emitter
     (``_chain_params._compute_p_entity_capacity_max_chain``) used across a continuation/rolling
     solve boundary, which carried the exact same pre-fix bug independently:
     a ``cumulative_limits`` entity that never authors ``cumulative_max_capacity`` (floor only)

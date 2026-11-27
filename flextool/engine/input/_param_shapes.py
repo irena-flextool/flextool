@@ -430,7 +430,7 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     # the full (period, time) shape family exactly like ``availability``.
     # Consumed by :func:`._derived.p_slope_from_source` /
     # :func:`._derived.p_section_from_source` via
-    # :func:`._derived._eff_param_to_pdt`.  ``efficiency`` is
+    # :func:`._derived._process_flows._eff_param_to_pdt`.  ``efficiency`` is
     # authored on both unit and connection; ``efficiency_at_min_load`` /
     # ``min_load`` only feed the unit ``min_load_efficiency`` linearisation.
     ("unit", "efficiency"): {
@@ -547,7 +547,7 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     # ``solve.years_represented`` — a 1-D Map period -> years (schema: map rank 1).  The index is ``period``, or
     # Spine's silent ``x`` (the only shape, so it resolves to ``period``).  Read through
     # :func:`solve_years_represented` by the investment annuities, the period start years and the inflation factors
-    # (``params/_derived.py``, ``params/_existing.py``); the operations side reads the SolveConfig-written
+    # (``params/_derived/``, ``params/_existing.py``); the operations side reads the SolveConfig-written
     # ``p_years_represented``.  Before this entry the readers tested for a ``period`` column, so a map without an
     # index name gave investments one year per period.
     ("solve", "years_represented"): {Shape.MAP_PERIOD},
@@ -3271,8 +3271,8 @@ def promote_param_to_dt(
     t)``).  Polar_high algebra handles the broadcast lazily at
     constraint emission, but a small number of consumers in the cascade
     do eager ``.frame.join(..., on=["x", "d", "t"], how="left")`` style
-    densification (e.g. ``model/core.py`` flow_upper_rhs availability fold,
-    ``_region_filter.py`` half-flow injection).  Those consumers need a
+    densification (e.g. ``model/core/`` flow_upper_rhs availability fold,
+    ``_region_filter._region_data._inject_half_flows``).  Those consumers need a
     (entity, d, t)-shaped LazyFrame on the right-hand side; this helper
     gives it to them without forcing the source Param to materialise
     eagerly.

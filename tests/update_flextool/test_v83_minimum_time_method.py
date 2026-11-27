@@ -278,11 +278,11 @@ def test_m3_planner_model_matches_the_engine(name: str, v82_schema_db_url: str, 
     for s in scenarios:
         online, need, *_r = v83._v83_unit_state("u", scen[s], vals, dflt)
         reader = SpineDbReader(url, s)
-        cls = drv._classify_process_method(reader)
+        cls = drv._process_method._classify_process_method(reader)
         engine_online = any(str(r["p"]) == "u" and r["startup"] != "no_startup" for r in cls.to_dicts())
         engine_need = set()
         for k in ("min_uptime", "min_downtime"):
-            df = drv._try_param(reader, "unit", k)
+            df = drv._scope._try_param(reader, "unit", k)
             if df is not None and engine_online and any(r["name"] == "u" and float(r["value"]) > 0
                                                         for r in df.iter_rows(named=True)):
                 engine_need.add(k)
@@ -313,7 +313,7 @@ def test_m3_gated_rows_after_part_1_keep_the_needed_times(name: str, v82_schema_
             pass
     for s, state in before.items():
         reader = SpineDbReader(url, s)
-        gated = {k for k in ("min_uptime", "min_downtime") if any(p == "u" for p, _v in drv._process_min_time(reader, k))}
+        gated = {k for k in ("min_uptime", "min_downtime") if any(p == "u" for p, _v in drv._lookbacks._process_min_time(reader, k))}
         if state.resolves or s in undecided:
             assert gated <= set(state.need), s
         else:

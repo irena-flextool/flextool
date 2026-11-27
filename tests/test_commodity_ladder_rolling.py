@@ -824,14 +824,14 @@ def test_same_level_cold_rebuild_releases_prior_highs(
     from flextool.engine.solve import _orchestration
 
     monkeypatch.setenv("FLEXTOOL_LEVEL_RELEASE_AUDIT", "1")
-    _orchestration._LEVEL_RELEASE_AUDIT.clear()
+    _orchestration._memory._LEVEL_RELEASE_AUDIT.clear()
 
     run_chain_from_db(
         cumulative_within_period_db_url, "coal_cum_within_period",
         warm=True, keep_solutions=False,
     )
 
-    audit = _orchestration._LEVEL_RELEASE_AUDIT
+    audit = _orchestration._memory._LEVEL_RELEASE_AUDIT
     cold = [r for r in audit if r.get("kind") == "cold_rebuild"]
     assert cold, (
         "no cold-rebuild audit records — scenario did not cold-rebuild "

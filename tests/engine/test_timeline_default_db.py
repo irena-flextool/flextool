@@ -10,7 +10,7 @@ structure is incomplete:
   timeset uses the sole timeline.
 
 The three DB-side timeline readers (``_derived.dt_and_step_duration_from_source``,
-``_derived._dt_period_active_steps``, ``_per_solve_sets.derive_per_solve_aggregates``) had no
+``_derived._active_steps._dt_period_active_steps``, ``_per_solve_sets.derive_per_solve_aggregates``) had no
 such defaults: each re-reads ``timeset.timeset_duration`` / ``timeset.timeline`` directly and
 returns ``None`` the moment either is absent, so ``apply_derived_a`` bails before
 ``p_period_share``, ``p_inflation_op``, ``p_timestep_weight``, ``pd_branch_weight``,
@@ -101,7 +101,7 @@ def _run_ablated(url: str, scenario: str, work_folder: Path):
     ``_apply_db_overrides`` call, so the only way they end up populated is through the DB-side
     timeline readers this commit fixes -- no leftover CSV seed can paper over a gap.  Returns the
     last sub-solve's ``FlexData``."""
-    from flextool.engine.preprocess import flex_data as _fd
+    from flextool.engine.preprocess.flex_data import _load as _fd
     from flextool.engine.solve._orchestration import run_chain_from_db
 
     original = _fd._apply_db_overrides
@@ -132,10 +132,8 @@ def test_producers_match_the_explicit_full_timeline_twin(tmp_path):
     ``derive_per_solve_aggregates`` give the same result whether the whole-timeline block comes
     from Rule 2's default or from an equivalent explicit Map.  Before the fix every producer
     returns ``None`` for ``timeline_default`` (no ``timeset_duration`` anywhere, Rule 2 absent)."""
-    from flextool.engine.preprocess.params._derived import (
-        _dt_period_active_steps,
-        dt_and_step_duration_from_source,
-    )
+    from flextool.engine.preprocess.params._derived import dt_and_step_duration_from_source
+    from flextool.engine.preprocess.params._derived._active_steps import _dt_period_active_steps
     from flextool.engine.preprocess.params._per_solve_sets import derive_per_solve_aggregates
 
     url = _build_db(tmp_path, _timeline_default_data())

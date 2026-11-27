@@ -23,7 +23,7 @@ from flextool.engine.model._common import _entity_rows, _has_rows, _var_view
 from flextool.engine.preprocess.params._cohorts import KIND_EXTEND
 
 if TYPE_CHECKING:
-    from flextool.engine.model.core import _Build
+    from flextool.engine.model.core._context import _Build
 
 
 def _members(d, axis: str) -> pl.DataFrame | None:

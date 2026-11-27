@@ -5,7 +5,7 @@ and period is split into tiers (v_trade).  A balance row ties the tiers to the c
 limit each tier per period (annual) or over the horizon (cumulative), and the objective prices each tier,
 weighted by the branch weight of the period in stochastic solves.  The forecast branch periods of a
 stochastic solve use the annual ladder of their anchor period.  The single commodity price term in
-model/core.py skips these commodities.  Earlier solves of a chain enter
+model/core/ skips these commodities.  Earlier solves of a chain enter
 through f_d_k (share of the period simulated so far) and the tier MWh they already bought.
 """
 
@@ -24,7 +24,7 @@ from flextool.engine.model._common import (
 from flextool.engine.preprocess.params._branch import branch_anchor_pairs, inherit_anchor_period
 
 if TYPE_CHECKING:
-    from flextool.engine.model.core import _Build
+    from flextool.engine.model.core._context import _Build
 
 
 # Tier quantities at or above this are unlimited (+Inf is written as 1e30) and get no cap row.
@@ -336,14 +336,14 @@ def _eq_ladder_balance(b: _Build) -> None:
     #   + Σ_{(p,n,k,c) ∈ flow_from_commodity_noEff, t} v_flow[p,n,k,d,t] · unitsize[p] · w[d,t]
     #   − Σ_{(p,s,n,c) ∈ flow_to_commodity, t}         v_flow[p,s,n,d,t] · unitsize[p] · w[d,t]
     #   + Σ_{(p,n,c) ∈ startup_from_commodity, t} v_startup[p,d,t] · startup_energy[p,n,d] · unitsize[p]
-    #       · timestep_weight[d,t]   (start-up energy, MWh per event: no step_duration; core._startup_draw)
+    #       · timestep_weight[d,t]   (start-up energy, MWh per event: no step_duration; core._conversion._startup_draw)
     #   ∀ (c,n,d) ∈ cnd_ladder;   w = step_duration · timestep_weight
     # The period's net purchase of commodity c at node n (buy − sell, MWh) is split into price tiers.
-    # The efficiency-arc term uses the shared fuel measure _eff_fuel_input (core.py), so min_load_efficiency
+    # The efficiency-arc term uses the shared fuel measure _eff_fuel_input (core/_conversion.py), so min_load_efficiency
     # units' part-load section fuel counts toward the tiers too, same as commodity_cost_eff / co2_price_eff
     # / the CO2 caps (#56) — before this fix a ladder commodity bought by such a unit was under-counted by
     # the part-load fuel.  A term is absent when its flow set is empty or there are no processes.
-    from flextool.engine.model.core import _eff_fuel_input, _startup_draw
+    from flextool.engine.model.core._conversion import _eff_fuel_input, _startup_draw
 
     rhs: dict = {}
     weight = d.p_step_duration * d.p_timestep_weight

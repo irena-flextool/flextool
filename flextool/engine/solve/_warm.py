@@ -22,7 +22,7 @@ they are always rebuilt.  The solver configuration (HiGHS options, autoscale
 mode, ``user_bound_scale``, objective scale) is compared by the orchestrator,
 which owns it.
 
-Consumed by ``_orchestration.py::_drive_cascade``.  Re-exported as module
+Consumed by ``_orchestration/_cascade.py::_drive_cascade``.  Re-exported as module
 attributes on ``chain.py`` for backward compatibility.
 """
 from __future__ import annotations
@@ -512,7 +512,7 @@ def _build_warm_problem(
     build skips polar-high's per-cell tracking pass.
 
     Late-imports ``build_flextool`` to avoid a build-time cycle between
-    this module and ``model/core.py``.
+    this module and ``model/core/``.
     """
     from flextool.engine.model.core import build_flextool
 

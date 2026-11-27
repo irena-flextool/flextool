@@ -31,10 +31,10 @@ entry point.
 | Folder | What |
 |---|---|
 | `input/` | Database and in-memory readers, solve settings, timeline, `RunnerState`, parameter shapes, constants |
-| `preprocess/` | `FlexData` (`flex_data.py`), the Provider and its keys, input writer, per-solve context |
+| `preprocess/` | `FlexData` (the `flex_data/` package), the Provider and its keys, input writer, per-solve context |
 | `preprocess/params/` | Parameter cascade: direct, projected and derived parameters |
 | `preprocess/emit/` | Per-solve sets and parameters written into the Provider |
-| `model/` | The LP: `core.py` plus one module per optional feature; `_capacity.py` the capacity in service |
+| `model/` | The LP: `core/` plus one module per optional feature; `_capacity.py` the capacity in service |
 | `solve/` | Orchestration, sub-solve expansion, solvers, warm start, Benders, handoff |
 | `output/` | Solution to output parquet files; CSV dumps |
 | `_csv_reload/` | Unsupported, opt-in: reload a model from a CSV dump; offline outputs from MPS + solution. Imports the engine; nothing imports it. |
@@ -44,7 +44,7 @@ entry point.
 
 Imports point down the pipeline: solve → model → preprocess → input
 (`output/` and `autoscale/` are used by `solve/`). Known exceptions:
-`preprocess/flex_data.py` imports model feature modules at top level and,
+`preprocess/flex_data/` imports model feature modules at top level and,
 inside functions, `solve/_orchestration`, `solve/_handoff` and
 `output/_dump_csvs`; `input/_timeline.py` imports `preprocess/_provider_io`;
 several modules import `SolveHandoff` from `solve/_handoff` inside functions.
@@ -53,7 +53,7 @@ module outside it may import it.
 
 ## Finding things
 
-- An equation: grep `EQ. ─── <name>` (map in the `model/core.py` docstring).
+- An equation: grep `EQ. ─── <name>` (map in the `model/core/__init__.py` docstring).
 - A Provider key: `preprocess/_provider_keys.py`.
 - Did my change alter the LP? `tools/lp_snapshot.py` (snapshot, then compare).
 - More depth: `docs/dev/engine.md` (engine internals; "Where to read" table at the top),

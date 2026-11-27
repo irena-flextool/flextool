@@ -205,7 +205,7 @@ def test_guard_that_cannot_run_says_so_once(dbs, tmp_path, monkeypatch, coded_lo
     def broken(*a, **k):
         raise RuntimeError("readout failed")
 
-    monkeypatch.setattr(_orchestration, "_autoscale_run_guard", broken)
+    monkeypatch.setattr(_orchestration._autoscale_hooks, "_autoscale_run_guard", broken)
     _run(dbs["roll_adjust"], "roll_adjust", tmp_path)
     assert coded_log().count("Warning: scaling guard could not run") == 1
 
@@ -216,7 +216,7 @@ def test_error_is_not_swallowed_when_layer3_apply_fails(dbs, tmp_path, monkeypat
     def broken(*a, **k):
         raise RuntimeError("apply failed")
 
-    monkeypatch.setattr(_orchestration, "_autoscale_apply_scaling", broken)
+    monkeypatch.setattr(_orchestration._autoscale_hooks, "_autoscale_apply_scaling", broken)
     with pytest.raises(ScalingRangeError, match="cannot be scaled"):
         _run(dbs["placeholder_1e18"], "placeholder_1e18", tmp_path)
 
@@ -259,7 +259,7 @@ def test_warning_prints_once_across_rolls_without_naming_walks_on_hits(
 def test_off_checks_nothing_but_layer3_still_clips(dbs, tmp_path, monkeypatch, coded_log):
     monkeypatch.setenv("FLEXTOOL_SCALING", "basic")
     monkeypatch.setenv("FLEXTOOL_SCALING_GUARD", "off")
-    planned = _Count(monkeypatch, _orchestration, "_autoscale_emit_layer1")
+    planned = _Count(monkeypatch, _orchestration._cascade, "_autoscale_emit_layer1")
     _run(dbs["roll_adjust"], "roll_adjust", tmp_path)
     assert "limits and bounds span" not in coded_log()
     exps = [k["layer3_plan"].user_bound_scale for _a, k in planned.calls]
@@ -273,7 +273,7 @@ def test_off_checks_nothing_but_layer3_still_clips(dbs, tmp_path, monkeypatch, c
 @pytest.mark.parametrize("warm", [True, False], ids=["warm_first_build", "cold_save_memory"])
 def test_roll_recheck_moves_roll_2_only(dbs, tmp_path, monkeypatch, coded_log, warm):
     monkeypatch.setenv("FLEXTOOL_SCALING", "basic")
-    planned = _Count(monkeypatch, _orchestration, "_autoscale_emit_layer1")
+    planned = _Count(monkeypatch, _orchestration._cascade, "_autoscale_emit_layer1")
     _run(dbs["roll_adjust"], "roll_adjust", tmp_path, warm=warm)
     assert [k["layer3_plan"].user_bound_scale for _a, k in planned.calls] == [-19, -9]
     printed = coded_log()

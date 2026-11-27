@@ -566,7 +566,7 @@ def hints(inputs: dict[str, Any], blocks: dict[str, dict], groups: list[str]) ->
                                                            limit=_shown_number(limit)))
     # A minimum binds under the methods that use the limit of its kind, as the engine builds them
     # (engine/model/_cumulative_invest.py: minInvest_entity_total over e_invest_total, minInvest_entity_period
-    # over ed_invest_period_set; the method sets in engine/preprocess/params/_derived.py): never under *_no_limit.
+    # over ed_invest_period_set; the method sets in engine/preprocess/params/_derived/_invest_sets.py): never under *_no_limit.
     total_hint("hint_min_total", invested, "invest_min_total", method in m.invest_total, "invested")
     period_hints("hint_min_period", "invested", "invest_min_period", method in m.invest_period, "invested",
                  zero=False)

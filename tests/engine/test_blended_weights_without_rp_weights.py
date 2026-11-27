@@ -1,7 +1,7 @@
 """Phase C regression: silent-degrade replaces the Phase 5 strict check.
 
 Covers the
-:func:`flextool.engine.solve._run_model._downgrade_rp_methods_for_non_rp_solve`
+:func:`flextool.engine.solve._run_model._rp_methods._downgrade_rp_methods_for_non_rp_solve`
 helper introduced in Phase C of the
 ``storage-binding-methods-restructure`` migration.
 
@@ -17,7 +17,7 @@ per-solve downgrade — the offending method is rewritten to its non-RP
 equivalent in the per-solve provider only, leaving the on-disk DB and
 upstream CSVs untouched.
 
-Note: Phase C also originally hosted a ``model/core.py`` not-yet-implemented
+Note: Phase C also originally hosted a ``model/core/`` not-yet-implemented
 guard for the two RP variants whose constraint implementations were
 still pending.  Phase D landed ``bind_forward_only_blended_weights``
 and Phase E landed ``bind_within_period_blended_weights``; the guard's
@@ -32,9 +32,7 @@ import polars as pl
 import pytest
 
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-from flextool.engine.solve._run_model import (
-    _downgrade_rp_methods_for_non_rp_solve,
-)
+from flextool.engine.solve._run_model._rp_methods import _downgrade_rp_methods_for_non_rp_solve
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +259,7 @@ def test_multi_solve_same_node_drives_both_paths(
 
 
 # ---------------------------------------------------------------------------
-# Test 4 — Phase D + Phase E retired the model/core.py not-yet-implemented guard
+# Test 4 — Phase D + Phase E retired the model/core/ not-yet-implemented guard
 # for the two RP variants whose constraint implementations have now landed:
 #   * Phase D: bind_forward_only_blended_weights
 #   * Phase E: bind_within_period_blended_weights

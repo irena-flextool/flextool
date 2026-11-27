@@ -190,7 +190,7 @@ class TestCsvDumpRoundTrip:
         ``solve_data/scale_the_objective.csv`` in the work folder must hold the same value.
         """
         scale = 0.25
-        monkeypatch.setattr(_orchestration, "_resolve_effective_obj_scale", lambda _value: scale)
+        monkeypatch.setattr(_orchestration._cascade, "_resolve_effective_obj_scale", lambda _value: scale)
         workdir = tmp_path_factory.mktemp("scale_work")
         steps = _run(small_db_url, "coal", workdir, csv_dump=True, keep_solutions=True)
         last_step = next(reversed(list(steps.values())))

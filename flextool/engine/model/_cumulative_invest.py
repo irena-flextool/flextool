@@ -3,7 +3,7 @@
 Owns the rows that bound investment from below per entity (per period and over the horizon), bound the
 cumulative capacity (existing + invested − divested) of an entity, bound what a group of entities invests
 or divests (per period, over the horizon, cumulatively), and bound the flow into a flow group (over the
-solve, per period, per step).  The per-entity investment maxima are core rows in model/core.py.  The module
+solve, per period, per step).  The per-entity investment maxima are core rows in model/core/.  The module
 declares no variables and adds no objective terms: it reads v_invest_*, v_divest_* and v_flow from the
 build context, and its rows are emitted only when some of its data is populated (has_feature).
 """
@@ -37,7 +37,7 @@ from flextool.engine.model._common import (
 )
 
 if TYPE_CHECKING:
-    from flextool.engine.model.core import _Build
+    from flextool.engine.model.core._context import _Build
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +136,7 @@ def _group_flow(b: _Build) -> Expr | None:
         arcs = (d.flow_from_n.join(d.process_source_sink_eff, on=["p", "source", "sink"], how="inner")
                 .join(gpn, on=["p", "n"], how="inner"))
         if arcs.height > 0:
-            from flextool.engine.model.core import _eff_fuel_input
+            from flextool.engine.model.core._conversion import _eff_fuel_input
 
             for _key, term in _eff_fuel_input(b, arcs):
                 parts.append(-Sum(term, over=("p", "source", "sink", "n")))
@@ -248,7 +248,7 @@ def _eq_min_entity_period(b: _Build) -> None:
     #   R[e,d] = v_divest[e,d] + Σ_c v_divest_built[e,c,d] (existing and model-built capacity retired in d);
     #   B = the (e,d) of cd_divest_built (_retire_built)
     # Forces a minimum capacity to come online or be retired in a period; the floor twin of
-    # max{Invest,Divest}_entity_period in model/core.py.  Capacity in MW (MWh for storage nodes).  Without a
+    # max{Invest,Divest}_entity_period in model/core/_invest.py.  Capacity in MW (MWh for storage nodes).  Without a
     # construction lead time c(o) = o: v_invest_p[p,d] · unitsize[p] ≥ invest_min_period[p,d] over
     # ed_invest_period_set ∩ pd_invest_set.  With one, a period of an entity with a lead time where nothing can
     # come online (no decision early enough in the solve) and the carried capacity is below the floor is a
@@ -911,7 +911,7 @@ def _eq_cumulative_flow_solve(b: _Build) -> None:
             if cap is not None and cap.frame.height > 0]
     if not caps:
         return
-    from flextool.engine.model.core import _check_covers_dt
+    from flextool.engine.model.core._context import _check_covers_dt
 
     _check_covers_dt(d, "p_timestep_weight", "flow-group cumulative flow limits")
     _check_covers_dt(d, "p_period_share", "flow-group cumulative flow limits", positive=True)
@@ -996,7 +996,7 @@ def _eq_cumulative_flow_period(b: _Build) -> None:
             if cap is not None and cap.frame.height > 0]
     if not caps:
         return
-    from flextool.engine.model.core import _check_covers_dt
+    from flextool.engine.model.core._context import _check_covers_dt
 
     _check_covers_dt(d, "p_timestep_weight", "flow-group cumulative flow limits")
 

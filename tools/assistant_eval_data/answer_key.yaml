@@ -32,9 +32,9 @@ sources:
   - flextool/process_outputs/_output_meta.py (table names, units)
   - flextool/process_outputs/out_costs.py (cost column labels only)
   - flextool/input_derivation/_validators.py (validate_node_inflow_not_period message text)
-  - flextool/engine/model/core.py (EQ./OBJ. headers nodeBalance_eq, balance_slack_penalty, commodity and CO2 cost,
+  - flextool/engine/model/core/ (EQ./OBJ. headers nodeBalance_eq, balance_slack_penalty, commodity and CO2 cost,
     invest_cost_p, existing_fixed_cost, invest period and total caps)
-  - flextool/engine/preprocess/params/_npv.py, _derived.py (annuity formula, which invest_method values get
+  - flextool/engine/preprocess/params/_npv.py, _derived/_invest_sets.py (annuity formula, which invest_method values get
     a per-period cap)
 questions:
   G01:
@@ -343,7 +343,7 @@ questions:
         criterion: "States that the upward slack (vq_state_up) enters each node balance (nodeBalance_eq) on the supply
           side, + (vq_state_up - vq_state_down) x step duration, so it covers demand the flows cannot meet, per node
           and time step, as a non-negative variable."
-        derivation: "core.py EQ. nodeBalance_eq: ... + (vq_state_up[n,d,t] - vq_state_down[n,d,t]) * dt ... =
+        derivation: "core/_node_balance.py EQ. nodeBalance_eq: ... + (vq_state_up[n,d,t] - vq_state_down[n,d,t]) * dt ... =
           -inflow[n,d,t]; slack_convention.md: single non-negative variable"
       - id: objective
         kind: statement
@@ -351,7 +351,7 @@ questions:
         criterion: "States the objective term: vq_state_up x penalty_up (CUR/MWh) x step duration x timestep weight x
           operational discount factor / period share of year (x branch weight), i.e. the penalty per MWh scaled to a
           year and to the price base."
-        derivation: "core.py OBJ. balance_slack_penalty: Σ vq_state_up * penalty_up * w_op, with w_op[d,t] =
+        derivation: "core/_objective.py OBJ. balance_slack_penalty: Σ vq_state_up * penalty_up * w_op, with w_op[d,t] =
           step_duration * timestep_weight * inflation_op (the social discount factor) / period_share * branch_weight"
       - id: penalty_parameter
         kind: token
@@ -495,7 +495,7 @@ questions:
         critical: false
         criterion: "Says no investment limit binds (invest_max_total 700 > 372), and does not claim invest_max_period
           250 caps the build (it is not used with invest_method invest_total)."
-        derivation: "core.py maxInvest_entity_period applies to ed_invest_period_set (invest_method with 'period');
+        derivation: "core/_invest.py maxInvest_entity_period applies to ed_invest_period_set (invest_method with 'period');
           maxInvest_entity_total applies to invest_total: 372 <= 700"
       - id: slack_after
         kind: statement

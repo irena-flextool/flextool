@@ -279,7 +279,7 @@ def test_gap_counter_counts_blocks_per_period():
     from types import SimpleNamespace
 
     from flextool.engine.input._solve_state import ActiveTimeEntry, FlexToolConfigError
-    from flextool.engine.solve._run_model import _reject_rolling_with_gaps
+    from flextool.engine.solve._run_model._rolling_storage import _reject_rolling_with_gaps
 
     state = SimpleNamespace(solve=SimpleNamespace(solve_modes={"st": "rolling_window", "one": "single_solve"}))
 
@@ -301,7 +301,7 @@ def test_many_storage_nodes_print_one_line(coded_log):
     from types import SimpleNamespace
 
     from flextool.engine import _behaviour_changes
-    from flextool.engine.solve._run_model import _timeblock_binds_within_period_in_roll
+    from flextool.engine.solve._run_model._rolling_storage import _timeblock_binds_within_period_in_roll
 
     class Provider:
         def __init__(self, frame):
@@ -326,7 +326,7 @@ def test_many_storage_nodes_print_one_line(coded_log):
                                                provider=provider)
         assert set(provider.get("input/node__storage_binding_method")["storage_binding_method"].to_list()) == {
             "bind_within_period"}
-    from flextool.engine.solve._run_model import _warn_storages
+    from flextool.engine.solve._run_model._storage_frames import _warn_storages
     for roll in range(3):
         _warn_storages("W-0582", f"st_roll_{roll}", names, f"roll st_roll_{roll}")
     log = coded_log()
@@ -419,7 +419,7 @@ def test_upper_level_interpolation_helper():
     start level for the first step) to its end; the end level where a step ends; the start at the first step."""
     from types import SimpleNamespace
 
-    from flextool.engine.solve._run_model import _upper_level_interp
+    from flextool.engine.solve._run_model._nested_storage import _upper_level_interp
 
     handoff = SimpleNamespace(
         storage_level=pl.DataFrame({"node": ["n", "n"], "period": ["p", "p"], "step": ["a", "b"],
@@ -620,7 +620,8 @@ def test_model_start_is_kept_per_nesting_level():
     nearest one."""
     from types import SimpleNamespace
 
-    from flextool.engine.solve._run_model import _RollingStorage, _record_model_start
+    from flextool.engine.solve._run_model._storage_frames import _RollingStorage
+    from flextool.engine.solve._run_model._nested_storage import _record_model_start
 
     store = _RollingStorage()
     for level, value in ((0, 80.0), (1, 30.0)):
@@ -682,7 +683,7 @@ def test_core_storage_notices_print_one_line_per_solve(coded_log):
     from types import SimpleNamespace
 
     from flextool.engine import _behaviour_changes
-    from flextool.engine.model.core import _notice_nodes
+    from flextool.engine.model.core._storage_links import _notice_nodes
 
     marker = '{"since": 82}'
     _behaviour_changes.start_run({"rp_storage_chain_pinned": marker, "storage_end_matches_start": marker,

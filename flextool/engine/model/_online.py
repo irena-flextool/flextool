@@ -17,7 +17,7 @@ start-up / shut-down per coarse step at its start (events registered at the step
 capacity and minimum-load rows are averaged over the step (``_coarse_flows.add_cstr``).  With ramp limits, its
 start-up / shut-down capacity reduction uses the coarse step (``_cap_reduction``: the mean share over the whole
 step of a unit that starts at the step's start or stops at its end) and its units online ramp between coarse steps
-(``core._eq_ramp``).
+(``core._ramp._eq_ramp``).
 """
 
 from typing import TYPE_CHECKING
@@ -35,7 +35,7 @@ from flextool.engine.model._common import (
 )
 
 if TYPE_CHECKING:
-    from flextool.engine.model.core import _Build
+    from flextool.engine.model.core._context import _Build
 
 
 def add_variables(b: "_Build") -> None:
@@ -460,7 +460,7 @@ def add_constraints(b: "_Build") -> None:
         # The reverse flow of a one-variable connection is limited by the units online, as its v_flow is by
         # maxFlow_online: one online status covers both directions (the mirror of maxFlow_back).  No reserve
         # term (connection reserve has its own rows, connection_reserve_*).  DC power-flow lines never get here
-        # (a startup_method on them raises in core._prepare).
+        # (a startup_method on them raises in core._prepare._prepare).
         if b.v_flow_back is not None and _has_rows(b.twoway1var_arcs):
             keys = ["p", "source", "sink"]
             back_on = (_utf8_keys(b.twoway1var_arcs.lazy().select(keys), ["p"])
@@ -550,7 +550,7 @@ def add_constraints(b: "_Build") -> None:
         #   ∀ (p,d,t) ∈ pdt_uptime_set ∩ this class ∩ online_rows
         # A unit started within the minimum uptime stays online.
         # pdt_uptime_set = the steps of the units with minimum_time_method ∈ {min_uptime, both} and min_uptime > 0
-        #   (_derived._process_min_time; an unset method is none, which builds no row).
+        #   (_derived._lookbacks._process_min_time; an unset method is none, which builds no row).
         # uptime_lookback = {(p,d′,t′,d,t) : (d′,t′) = (d,t), or (d′,t′) an ancestor of (d,t) along dt_ramp_link
         #   with elapsed(d′,t′ → d,t) = Σ step_duration over the chain from (d′,t′) up to, not including, (d,t)
         #   < min_uptime[p]} — the chain stops at a step without a ramp predecessor (solve start, a period that
@@ -609,7 +609,7 @@ def add_constraints(b: "_Build") -> None:
         # Σ v_shutdown, with the invest/divest terms of maxOnline (without them an invest-only
         # unit with existing = 0 could never be online).
         # pdt_downtime_set = the steps of the units with minimum_time_method ∈ {min_downtime, both} and
-        #   min_downtime > 0 (_derived._process_min_time).
+        #   min_downtime > 0 (_derived._lookbacks._process_min_time).
         # downtime_lookback: as uptime_lookback with min_downtime[p] (a coarse process as in minimum_uptime; a row
         #   whose look-back holds only its own step and no carry is implied by maxShutdown / online_change).
         # carry_dn: as carry_up with shutdown[p,h] and min_downtime[p] (d.downtime_carry, 0-filled).

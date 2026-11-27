@@ -194,7 +194,7 @@ def _rename_invest_columns(sol: "Solution", h: object | None = None) -> None:
     ``v_divest[<entity>,<period>]`` family.  Since the entity sets for
     ``_p`` and ``_n`` are disjoint (one is process-only, the other
     node-only, by construction in
-    ``flextool/engine/model/core.py``), the union of the renamed
+    ``flextool/engine/model/core/``), the union of the renamed
     columns is itself a well-formed ``v_invest`` family.
 
     ``passColName`` is invoked per column-id derived from the polars
@@ -370,7 +370,7 @@ def write_outputs_for_solve(
     # ``scale_the_objective`` — the polars LP now applies the resolved
     # per-solve ``scale_the_objective`` at LP construction (engine/
     # scaling.py auto-apply, commits 19aca81b / 2682cea1 / 4c3b49ca /
-    # 8bac7d70).  ``_orchestration._write_scale_csv_and_report`` already
+    # 8bac7d70).  ``_orchestration._steps._write_scale_csv`` already
     # writes ``solve_data/scale_the_objective.csv`` with the effective
     # value before this adapter runs; the downstream writers' multiplier
     # (``_resolve_inv_scale_the_objective``) then un-scales objective /

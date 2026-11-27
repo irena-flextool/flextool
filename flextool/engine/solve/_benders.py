@@ -174,7 +174,7 @@ def _silence_if_quiet(wp: WarmProblem) -> None:
 # whose FIRST element is the entity axis ("p" for process / connection vars,
 # "n" for node vars) and whose last is the period axis "d":
 # ``v_invest`` / ``v_divest`` (existing capacity) over ``(entity, d)``
-# (``model/core.py``), and the retirements of model-built capacity
+# (``model/core/``), and the retirements of model-built capacity
 # (``model/_retire_built.py``): ``v_divest_built`` per cohort over
 # ``(entity, "cohort", d)`` (the handoff carries them per cohort in
 # ``realized_retire``) and ``v_divested_built`` over ``(entity, d)`` (the
@@ -494,8 +494,8 @@ def _apply_region_autoscale(
     :class:`Layer2Plan` (or ``None`` when Layer-2 was skipped/failed).
 
     Mirrors the monolith's two pre-solve hooks
-    (:func:`_orchestration._autoscale_apply_layer2_pre_solve` +
-    :func:`_orchestration._autoscale_apply_layer3_pre_solve`) so the region
+    (:func:`_orchestration._autoscale_hooks._autoscale_apply_layer2_pre_solve` +
+    :func:`_orchestration._autoscale_hooks._autoscale_apply_layer3_pre_solve`) so the region
     subproblems condition exactly like the monolith LP — which runs this same
     ``scale_the_objective`` + Layer-2 + Layer-3 stack on every solve.
 
@@ -2526,8 +2526,8 @@ def _solve_benders_inner(data, regions, *, max_iters, tol, monolith_objective,
     )
     # A region↔master boundary connection may join nodes of different time resolutions: a cross-region arc keeps
     # the solve's steps in every region and in the master (only a region's own coarse processes take a coarse
-    # step, _region_filter._build_region_data) and a coarse node sums its fine flows (nodeBalanceCoarse_eq), so
-    # the pinned half-flows describe the same physical flow on both sides.
+    # step, _region_filter._region_data._build_region_data) and a coarse node sums its fine flows
+    # (nodeBalanceCoarse_eq), so the pinned half-flows describe the same physical flow on both sides.
     region_duals = _resolve_benders_region_duals()
     subproblems = [Problem() for _ in splits]
     # Full autoscale (Layer-2 per-type rescale + Layer-3 HiGHS-native top-up)

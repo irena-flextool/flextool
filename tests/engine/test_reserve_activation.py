@@ -152,7 +152,7 @@ def test_dynamic_only_reports_reserve_price(dynamic_only) -> None:
     by curtailing wind: 2 MW less wind (−1 MW requirement) replaced by coal at 50 CUR/MWh costs **100** per MW of
     reserve.  So every price is 1000 or 100, 100 at exactly 21 steps."""
     from flextool.engine.output._prices import price_weight_dt
-    from flextool.engine.solve._orchestration import _LEGACY_DEFAULT_OBJECTIVE_SCALE
+    from flextool.engine.solve._orchestration._highs_options import _LEGACY_DEFAULT_OBJECTIVE_SCALE
     from flextool.lean_parquet import read_lean_parquet
 
     step, wf = dynamic_only

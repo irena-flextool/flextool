@@ -224,9 +224,14 @@ def test_dc_line_at_a_node_with_a_fine_line_keeps_per_step_rows(tmp_path_factory
 def _per_step_angles(monkeypatch) -> None:
     """Build every model with every voltage angle per solve step (no coarse-angle node); flows stay coarse."""
     import flextool.engine.preprocess.flex_data as fdm
+    from flextool.engine.preprocess.flex_data import _coarse
 
-    monkeypatch.setattr(fdm, "coarse_angle_steps",
-                        lambda d: pl.DataFrame(schema={c: pl.Utf8 for c in ("n", "d", "b_first", "t")}))
+    def no_coarse_angle(d):
+        return pl.DataFrame(schema={c: pl.Utf8 for c in ("n", "d", "b_first", "t")})
+
+    # The package for the readers outside it, _coarse for its own reader (the DC-line notice).
+    for module in (fdm, _coarse):
+        monkeypatch.setattr(module, "coarse_angle_steps", no_coarse_angle)
 
 
 @pytest.mark.parametrize("buses, buses_4h, load3", [

@@ -7,7 +7,7 @@ through ``(min_load, efficiency_at_min_load) = (ℓ₀, η₀)`` and ``(1, effic
 
     β = ℓ₀ · (1/η₀ − 1/η₁) · (1/(1 − ℓ₀)),   α = 1/η₁ − β
 
-the same float operations as ``_derived._mle_section`` / ``_mle_slope``.  So the two units give the same model,
+the same float operations as ``_derived._process_flows._mle_section`` / ``_mle_slope``.  So the two units give the same model,
 bit for bit: the same ``p_slope`` / ``p_section`` / ``process_min_load_eff``, the same capacity parameters
 derived from them (``p_indirect_input_cap``, ``p_flow_upper``) and the same LP (every row, column, bound and
 coefficient; the written MPS byte for byte), in
@@ -426,7 +426,7 @@ def test_E11_rolling_names_the_user_solve_at_the_first_roll(tmp_path_factory, mo
     original = _piecewise.apply_piecewise_curves
 
     def spy(flex_data, db_reader, provider=None):
-        loads.append(str(_derived._read_active_solve(_Path("."), provider=provider)))
+        loads.append(str(_derived._scope._read_active_solve(_Path("."), provider=provider)))
         return original(flex_data, db_reader, provider)
 
     monkeypatch.setattr(_piecewise, "apply_piecewise_curves", spy)

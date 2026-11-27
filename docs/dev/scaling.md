@@ -223,7 +223,7 @@ judged on the coefficient's own, unscaled value):
   becomes 0. It does not apply to the objective.
 - **Tiny cost coefficients (objective)** — polar-high
   `Problem.obj_coef_zero_rel_threshold`, which FlexTool sets to
-  `OBJ_COEF_ZERO_REL_THRESHOLD = 1e-14` (`flextool/engine/model/core.py`,
+  `OBJ_COEF_ZERO_REL_THRESHOLD = 1e-14` (`flextool/engine/model/core/_context.py`,
   not a database parameter). A variable's total cost coefficient below
   `2**floor(log2(1e-14 · max|cost|))` becomes 0. Layer 3 centres the
   objective on the cost range `[min|c|, max|c|]`; one float leftover

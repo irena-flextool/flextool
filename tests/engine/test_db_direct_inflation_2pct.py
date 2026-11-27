@@ -40,7 +40,7 @@ For the operations cascade ``offset = discount_offset_operations``
 The fixture's offsets are at their defaults.
 
 Lifetime cascade for ``ed_entity_annual_discounted`` (per
-``flextool/_derived.py:5848-5885``):
+``params/_npv.py::ed_entity_annual_discounted_from_source``):
 
   - annuity = invest_cost × 1000 × r / (1 - (1/(1+r))^lifetime)
   - For ``reinvest_automatic`` (default lifetime_method):

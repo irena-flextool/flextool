@@ -98,7 +98,7 @@ def test_coarse_node_dual_broadcast(scenario_run):
     # Item 163: the writer and the oracle's extractor no longer read
     # ``solve_data/scale_the_objective.csv`` off disk — ``build_flextool(pb,
     # data)`` built this LP at the default ``scale_the_objective=1.0``
-    # (``core.py`` l.336), so that is the scale to pass explicitly, not the
+    # (``build_flextool``'s default), so that is the scale to pass explicitly, not the
     # (removed) work-folder read, which only happened to cancel out before.
     p = write_v_dual_node_balance(
         h, solve_name=solve, output_dir=out,

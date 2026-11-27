@@ -127,7 +127,7 @@ def test_author_declared_realization_keeps_two_solves(tmp_path, monkeypatch):
     (``_realization.configured_realization_solve``).  The §2.1 gate gives no solve a plan (no realization roll), no
     realization solve is spawned, both solves run their 2 rolls (4 builds), and no W3 error or W-0635 / W-0636
     notice is raised."""
-    from flextool.engine.solve import _run_model
+    from flextool.engine.solve._run_model import _native_run_model
     from tests._support.coded_warnings import capture_coded
 
     wind = {"R": {"t01": {"t01": 0.0, "t02": 0.0}, "t02": {"t02": 0.0}},
@@ -145,14 +145,14 @@ def test_author_declared_realization_keeps_two_solves(tmp_path, monkeypatch):
             ("realized_periods", scm.array(["p1"])),
             ("years_represented", pack(pmap([("p1", 1.0)], index_name="period"), "map")),
             ("rolling_solve_jump", pack(1.0, "float")), ("rolling_solve_horizon", pack(2.0, "float")))]
-    live = _run_model._roll_tail_plans
+    live = _native_run_model._roll_tail_plans
     plans: list = []
 
     def recording(solve_cfg, rolls, timelines):
         plans.append(live(solve_cfg, rolls, timelines))
         return plans[-1]
 
-    monkeypatch.setattr(_run_model, "_roll_tail_plans", recording)
+    monkeypatch.setattr(_native_run_model, "_roll_tail_plans", recording)
     with capture_coded() as got:
         built, steps = scm.run_spec(spec, tmp_path)
     assert plans and all(p == {} for p in plans), plans
@@ -174,11 +174,11 @@ SD2_FAN = _fan([("p1", "R", {"t01": 0.0}, "yes"), ("p1", "A", {"t01": 0.5}, "no"
 
 
 def _sd2_run(folder, monkeypatch, *, today: bool):
-    from flextool.engine.preprocess import flex_data
+    from flextool.engine.preprocess.flex_data import _load
 
     if today:
         # Before D3 solve (1) tied every non-anticipative family across its forecasts (no uc_only role).
-        monkeypatch.setattr(flex_data, "_na_online_fix_in_uc", lambda sd, provider=None: False)
+        monkeypatch.setattr(_load, "_na_online_fix_in_uc", lambda sd, provider=None: False)
     spec = _spec(SD2_PERIODS, mode="single_solve", method="separate_dispatch", realized=["p1"], fan=SD2_FAN,
                  wind=SD2_WIND, gas={"t01": 10.0, "t02": 30.0})
     return scm.run_spec(spec, folder)

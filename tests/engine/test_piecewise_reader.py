@@ -5,7 +5,7 @@
   keys bit-equal to the authored floats, with the axis enums on (a key is never cast or trimmed against the
   period vocabulary); a constant or a deeper value is the shape resolver's error.
 * A constant curve and the equivalent period map classify the same and give the same lines in every period.
-* The engine classifier (``params/_derived._classify_process_method``) and the input derivation's
+* The engine classifier (``params/_derived._process_method._classify_process_method``) and the input derivation's
   (``derive_process_method``) give every unit the same flags and the same method.
 * The ``seg`` axis vocabulary is ``"0"`` .. the most points of a curve.
 
@@ -118,7 +118,7 @@ def test_constant_curve_equals_its_period_map(built) -> None:
 
 def test_both_classifiers_agree(built) -> None:
     """Flags and methods: engine (SpineDbReader) = input derivation (DatabaseMapping)."""
-    from flextool.engine.preprocess.params._derived import _classify_process_method, _piecewise_flags
+    from flextool.engine.preprocess.params._derived._process_method import _classify_process_method, _piecewise_flags
     from flextool.input_derivation._piecewise import parse_piecewise_curves
     from flextool.input_derivation._process_method import derive_process_method
 

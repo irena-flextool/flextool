@@ -10,11 +10,11 @@ import polars as pl
 import pytest
 
 import flextool.engine.preprocess.params._derived as dp
-from flextool.engine.preprocess.params._derived import (
+from flextool.engine.preprocess.params._derived._invest_apply import (
     _anchor_expand_explicit,
     _build_recourse_anchor_pairs,
-    _expand_invest_branch_periods,
 )
+from flextool.engine.preprocess.params._derived._periods import _expand_invest_branch_periods
 from flextool.engine.preprocess.emit._solve_writers import (
     emit_stochastic_invest_method,
 )
@@ -23,11 +23,11 @@ from flextool.engine.preprocess.emit._solve_writers import (
 @pytest.fixture(autouse=True)
 def _reset_anchor_scope():
     """Never leak the module-global recourse holders to another test."""
-    dp._RECOURSE_ANCHOR_PAIRS = None
-    dp._FAN_WALK_PROVIDER = None
+    dp._invest_apply._RECOURSE_ANCHOR_PAIRS = None
+    dp._invest_apply._FAN_WALK_PROVIDER = None
     yield
-    dp._RECOURSE_ANCHOR_PAIRS = None
-    dp._FAN_WALK_PROVIDER = None
+    dp._invest_apply._RECOURSE_ANCHOR_PAIRS = None
+    dp._invest_apply._FAN_WALK_PROVIDER = None
 
 
 def _emit(prov, key, cols, rows):
@@ -102,7 +102,7 @@ def test_anchor_pairs_flag_off_none(tmp_path):
 
 def test_anchor_expand_inherits_branch_rows(tmp_path):
     prov = _provider(tmp_path, flag="recourse", pb=PB, piu=PIU)
-    dp._enter_recourse_anchor_scope(tmp_path, provider=prov)
+    dp._invest_apply._enter_recourse_anchor_scope(tmp_path, provider=prov)
     explicit = pl.LazyFrame({
         "e": ["peaker", "peaker"],
         "d": ["p2035", "p2040"],
@@ -118,7 +118,7 @@ def test_anchor_expand_inherits_branch_rows(tmp_path):
 
 def test_anchor_expand_noop_when_scope_none(tmp_path):
     prov = _provider(tmp_path, flag="none", pb=PB, piu=PIU)
-    dp._enter_recourse_anchor_scope(tmp_path, provider=prov)  # sets None
+    dp._invest_apply._enter_recourse_anchor_scope(tmp_path, provider=prov)  # sets None
     explicit = pl.LazyFrame({"e": ["peaker"], "d": ["p2035"], "value": [7.0]})
     out = _anchor_expand_explicit(explicit).collect()
     assert out.height == 1 and out["d"].to_list() == ["p2035"]

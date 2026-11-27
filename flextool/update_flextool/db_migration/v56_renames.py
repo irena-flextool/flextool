@@ -329,7 +329,7 @@ def _migrate_v56_rename_flow_coefficient_to_conversion_flow_coeff(db) -> None:
     role: it scales the conversion of input → output energy in the
     unit dispatch / node-balance / ``conversion_indirect`` equations
     (see flextool.mod:2557-2580 and the engine dispatch path
-    in ``model/core.py`` §F.4).
+    in ``model/core/`` §F.4).
 
     Pure name change: every other column on the
     ``parameter_definition`` row (description, default value of 1.0,
@@ -1032,7 +1032,7 @@ def _migrate_v56_fold_highs_method_into_solver_arguments(db) -> None:
     """Fold ``solve.highs_method`` values into
     ``solver_arguments['solver']`` (HiGHS' name for the method-
     selection option, per ``DETERMINISM_OPTIONS`` and the
-    ``flex_data.py:_HIGHS_PARAM_MAP`` table).
+    the former ``_HIGHS_PARAM_MAP`` table of the flex_data loader).
 
     Batch C.3 — first of the three ``highs_*`` shortcut folds.  The
     parameter values in flextool fixtures (``"simplex"``,
@@ -1080,7 +1080,7 @@ def _migrate_v56_fold_highs_parallel_into_solver_arguments(db) -> None:
     """Fold ``solve.highs_parallel`` values into
     ``solver_arguments['parallel']`` (HiGHS' own option name for
     parallelism control, per ``DETERMINISM_OPTIONS`` and the
-    ``flex_data.py:_HIGHS_PARAM_MAP`` table).
+    the former ``_HIGHS_PARAM_MAP`` table of the flex_data loader).
 
     Batch C.4 — second of the three ``highs_*`` shortcut folds.
     Fixture values (``"on"``, ``"off"``) are HiGHS-canonical so no
@@ -1123,7 +1123,7 @@ def _migrate_v56_fold_highs_presolve_into_solver_arguments(db) -> None:
     """Fold ``solve.highs_presolve`` values into
     ``solver_arguments['presolve']`` (HiGHS' own option name for
     presolve control, per ``DETERMINISM_OPTIONS`` and the
-    ``flex_data.py:_HIGHS_PARAM_MAP`` table).
+    the former ``_HIGHS_PARAM_MAP`` table of the flex_data loader).
 
     Batch C.5 — third (and last) of the ``highs_*`` shortcut folds.
     Fixture values (``"on"``, ``"off"``, ``"choose"``) are

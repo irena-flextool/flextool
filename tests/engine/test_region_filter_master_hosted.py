@@ -47,9 +47,14 @@ from polar_high import Param, Problem
 from flextool.engine import build_flextool
 from flextool.engine.model._pdt_join import compute_pss_dt
 from flextool.engine.solve._region_filter import (
-    _BENDERS_UNCAP_SENTINEL,
-    _GROUP_FEATURE_PARAM_FIELDS,
-    _GROUP_FEATURE_SET_FIELDS,
+    compute_master_hosted_nodes,
+    load_region_membership,
+    master_network_data,
+    split,
+)
+from flextool.engine.solve._region_filter._region_data import _BENDERS_UNCAP_SENTINEL
+from flextool.engine.solve._region_filter._master_side import _GROUP_FEATURE_PARAM_FIELDS, _GROUP_FEATURE_SET_FIELDS
+from flextool.engine.solve._region_filter._master_network import (
     _MASTER_CN_KEYED_FIELDS,
     _MASTER_CO2_ARC_FIELDS,
     _MASTER_CO2_GROUP_FIELDS,
@@ -57,10 +62,6 @@ from flextool.engine.solve._region_filter import (
     _MASTER_GROUP_PROC_FIELDS,
     _MASTER_N_KEYED_FIELDS,
     _MASTER_NODE_FIELDS,
-    compute_master_hosted_nodes,
-    load_region_membership,
-    master_network_data,
-    split,
 )
 from tests._support.load import load_scenario
 
@@ -92,7 +93,7 @@ MASTER_ALL6 = frozenset(
 # Fixtures.  Every cascade runs BEFORE any FlexData load (the ``_runs``
 # indirection): interleaving a load with a later same-process cascade
 # build is a known pre-existing global-axis-enum hazard (documented at
-# ``_region_filter.py`` "Base the widening ...").
+# ``_region_filter._split.split`` "Base the widening ...").
 # ---------------------------------------------------------------------------
 
 

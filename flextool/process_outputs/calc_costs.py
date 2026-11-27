@@ -236,7 +236,7 @@ def compute_costs(par, s, v, r) -> None:
     # Commodities priced on a price ladder (price_ladder_annual /
     # price_ladder_cumulative) are excluded here and priced from v_trade
     # below instead (#57) — the LP objective skips them in the flat
-    # commodity-price term (model/core.py _obj_commodity), so the flat-price
+    # commodity-price term (model/core/_objective.py _obj_commodity), so the flat-price
     # output must too, or the ladder commodity would be double-priced (or,
     # without a flat `price` authored, silently cost nothing at all).
     ladder_commodities = getattr(s, 'commodity_with_ladder', pd.Index([], name='commodity'))
@@ -489,7 +489,7 @@ def compute_costs(par, s, v, r) -> None:
         r.cost_startup_dt[valid_processes] = cost.mul(period_costs).mul(par.timestep_weight, axis=0)
 
     # --- Ramp costs ---
-    # The LP objective (model/core.py _obj_ramp_cost): (v_ramp_up + v_ramp_down) × unitsize × ramp_cost
+    # The LP objective (model/core/_objective.py _obj_ramp_cost): (v_ramp_up + v_ramp_down) × unitsize × ramp_cost
     # × timestep_weight × inflation / period_share × pdt_branch_weight.  No step_duration: a change of the flow is
     # a per-event cost, as a start-up.  Up + down, never |up − down| (the objective's value, also when an
     # interior-point solution leaves both slightly > 0).  A coarse process's change sits at the first fine step of

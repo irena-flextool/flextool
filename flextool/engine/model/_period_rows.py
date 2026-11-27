@@ -49,7 +49,7 @@ _INVEST_NAMES = (
     "non_anticipativity_divest_built_n", "non_anticipativity_divest_built_p",
     "non_anticipativity_divest_n", "non_anticipativity_divest_p",
     "non_anticipativity_invest_n", "non_anticipativity_invest_p",
-    # rows of invest and capacity terms only (core._eq_user_constraints)
+    # rows of invest and capacity terms only (core._user_constraints._eq_user_constraints)
     "process_constraint_equal_period", "process_constraint_less_than_period",
     "process_constraint_greater_than_period",
 )

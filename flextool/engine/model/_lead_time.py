@@ -5,8 +5,8 @@ An investment decision ``v_invest[e,o]`` with a construction lead time starts to
 construction from ``o`` until ``c(o)`` (``edd_invest_in_construction``).  Investments realized by earlier solves of
 a chain enter as constants (``p_entity_carried_commission`` / ``p_entity_carried_in_construction``).
 
-The helpers here are used by the per-period investment limits (model/core.py, model/_cumulative_invest.py) and
-the user constraints (model/core.py).  They are active only when the solve has a decision with a lead time
+The helpers here are used by the per-period investment limits (model/core/, model/_cumulative_invest.py) and
+the user constraints (model/core/).  They are active only when the solve has a decision with a lead time
 (:func:`active`); without one the rows keep the formulation over ``v_invest[e,d]`` (byte-identical LP).  The
 module declares no variables and adds no constraint families of its own.
 """

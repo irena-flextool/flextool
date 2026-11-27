@@ -286,7 +286,7 @@ def test_p_entity_max_units_config_error_propagates(tmp_path_factory, monkeypatc
         calls.append(1)
         raise (FlexToolConfigError("bad shape") if exc == "config" else RuntimeError("legacy path"))
 
-    monkeypatch.setattr(D, "p_entity_max_units_from_source", boom)
+    monkeypatch.setattr(D._invest_apply, "p_entity_max_units_from_source", boom)
     values = [method("peaker", "invest_period"), ["unit", "peaker", "invest_max_period", M(20)]]
     url, scen = make_db(tmp_path_factory, alt=f"c7_raise_{exc}", values=values, base_chain=DET,
                         fixture_json=RECOURSE_JSON)

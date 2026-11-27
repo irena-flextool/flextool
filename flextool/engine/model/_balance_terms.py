@@ -14,7 +14,7 @@ from flextool.engine.model import _dc_power_flow
 from flextool.engine.model._common import _has_rows, _var_view
 
 if TYPE_CHECKING:
-    from flextool.engine.model.core import _Build
+    from flextool.engine.model.core._context import _Build
 
 
 def _at_nodes(frame: "pl.DataFrame | None", names: "list[str] | None", col: str = "n") -> "pl.DataFrame | None":
@@ -53,7 +53,7 @@ def balance_flow_terms(b: "_Build", *, at_branch: bool = False, nodes: "pl.DataF
                                     (_dc_power_flow.nodeBalance_back_flow_terms; at the source × slope on an
                                     arc of process_source_sink_eff, as the forward flow draws there)
     startup_su_{lin,int}[n,d,t] = − Σ_{(p,n) ∈ startup_to_balance} v_startup[p,d,t] · startup_energy[p,n,d]
-                                    · unitsize[p]   (an event: no Δt; core._startup_draw)
+                                    · unitsize[p]   (an event: no Δt; core._conversion._startup_draw)
     A unit with an efficiency draws flow · slope from its source node; a min_load_efficiency unit also draws its
     section input per online unit; a unit with a start-up input node draws startup_energy per MW started from it.
     v_flow_back adds to the source node and takes from the sink node.
@@ -122,7 +122,7 @@ def balance_flow_terms(b: "_Build", *, at_branch: bool = False, nodes: "pl.DataF
             energy(Where(v_flow * d.p_unitsize, from_noEff)),
             over=("p", "source", "sink"))
     if b.has_startup_draw and not per_step and group_nodes is None:
-        from flextool.engine.model.core import _startup_draw
+        from flextool.engine.model.core._conversion import _startup_draw
         startup_pn = _at_nodes(getattr(d, "startup_to_balance", None), names)
         for key, term in _startup_draw(b, startup_pn, at_branch=at_branch):
             terms[f"startup_{key}"] = -Sum(term, over=("p",))
@@ -150,7 +150,7 @@ def balance_flow_values(d, sol, *, group_nodes: pl.DataFrame,
     ``source_section_lin`` / ``_int``, ``source_noEff``, ``back_at_sink``, ``back_at_source``).
 
     The same arcs as the LP's terms (:func:`_at_nodes`, :func:`_arcs_for`, the reverse-flow arcs of
-    ``core._two_way_one_var_arcs``) and the same coefficients:
+    ``core._prepare._two_way_one_var_arcs``) and the same coefficients:
 
         sink_flow = v_flow · unitsize;  source_eff = − v_flow · unitsize · slope;
         source_section = − v_online · section · unitsize;  source_noEff = − v_flow · unitsize;
@@ -162,7 +162,7 @@ def balance_flow_values(d, sol, *, group_nodes: pl.DataFrame,
     The variables of coarse processes are read on every fine step (``engine.output._coarse_flows.var_values``),
     as the fine rows of the LP read them.  The capacity margin's output breakdown
     (``_group_slack.capacity_margin_report``) sums these per step."""
-    from flextool.engine.model.core import _two_way_one_var_arcs
+    from flextool.engine.model.core._prepare import _two_way_one_var_arcs
     from flextool.engine.output._coarse_flows import var_values
 
     key = ["g", "n", "p", "source", "sink", "d", "t"]

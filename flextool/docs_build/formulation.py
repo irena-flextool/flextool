@@ -44,10 +44,10 @@ class Header:
     names: tuple[str, ...]      # the expanded names
     formula: str                # the formula lines (the leading run of the body)
     notes: str                  # the prose lines after the formula
-    file: str                   # "flextool/engine/model/core.py"
+    file: str                   # "flextool/engine/model/core/_ramp.py"
     line: int                   # 1-based line of the header in the installed code
     function: str | None        # the enclosing function
-    module: str                 # "core", "_online", …, "_benders"
+    module: str                 # "core" (a package: one module), "_online", …, "_benders"
 
 
 # ---------------------------------------------------------------------------
@@ -211,29 +211,108 @@ def _rel(path: Path) -> str:
     return path.resolve().relative_to(PACKAGE_DIR.parent).as_posix()
 
 
-def module_order() -> list[str]:
-    """Model modules in the ``build_flextool`` table-of-contents order (core first), then the modules with
-    headers that the table does not name, alphabetically."""
-    tree = ast.parse((MODEL_DIR / "core.py").read_text(encoding="utf-8"))
-    order = ["core"]
+#: The model module whose ``build_flextool`` step table orders the page: a file ``model/<name>.py`` or a package
+#: ``model/<name>/`` (then the one of its files that defines ``build_flextool``).
+TOC_MODULE = "core"
+_MODEL_PACKAGE = "flextool.engine.model"
+
+
+def _module_of(path: Path) -> str:
+    """The model module of a source file: its stem, or for a file of a package under ``model/`` the package's name."""
+    first = path.relative_to(MODEL_DIR).parts[0]
+    return first[:-3] if first.endswith(".py") else first
+
+
+def _model_modules() -> list[str]:
+    """Every model module, alphabetically: the files ``model/*.py`` and the packages ``model/<name>/``."""
+    files = [p.stem for p in MODEL_DIR.glob("*.py") if p.stem != "__init__"]
+    packages = [p.parent.name for p in MODEL_DIR.glob("*/__init__.py")]
+    return sorted(files + packages)
+
+
+def _dotted_path(dotted: str) -> Path | None:
+    """The source file of a dotted module under ``flextool.engine.model`` (a package: its ``__init__.py``); None for
+    another module or a name that is no module."""
+    if not dotted.startswith(_MODEL_PACKAGE + "."):
+        return None
+    base = MODEL_DIR.joinpath(*dotted[len(_MODEL_PACKAGE) + 1:].split("."))
+    path = base / "__init__.py" if base.is_dir() else base.with_suffix(".py")
+    return path if path.is_file() else None
+
+
+def _toc_tree() -> tuple[Path, ast.Module]:
+    single = MODEL_DIR / f"{TOC_MODULE}.py"
+    candidates = [single] if single.is_file() else sorted((MODEL_DIR / TOC_MODULE).rglob("*.py"))
+    for path in candidates:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        if any(isinstance(n, ast.FunctionDef) and n.name == "build_flextool" for n in tree.body):
+            return path, tree
+    raise ValueError(f"no build_flextool in model module {TOC_MODULE!r}")
+
+
+def _step_files() -> list[Path]:
+    """The source file of each step of the ``build_flextool`` table, in table order: a bare name is the file it is
+    imported from (or the table's own file), ``module.function`` the file of that module."""
+    toc, tree = _toc_tree()
+    bound: dict[str, Path] = {}
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            for alias in node.names:
+                target = _dotted_path(f"{node.module}.{alias.name}") or _dotted_path(node.module)
+                if target is not None:
+                    bound[alias.asname or alias.name] = target
+    files: list[Path] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "build_flextool":
             for sub in ast.walk(node):
                 if isinstance(sub, ast.For) and isinstance(sub.iter, ast.Tuple):
                     for elt in sub.iter.elts:
-                        if (isinstance(elt, ast.Attribute) and isinstance(elt.value, ast.Name)
-                                and elt.value.id not in order):
-                            order.append(elt.value.id)
-    rest = sorted(p.stem for p in MODEL_DIR.glob("*.py") if p.stem not in order and p.stem != "__init__")
-    return order + rest
+                        if isinstance(elt, ast.Name):
+                            files.append(bound.get(elt.id, toc))
+                        elif isinstance(elt, ast.Attribute) and isinstance(elt.value, ast.Name):
+                            if elt.value.id not in bound:
+                                raise ValueError(
+                                    f"{_rel(toc)}: the step {ast.unparse(elt)} names a module that is not imported "
+                                    f"with 'from {_MODEL_PACKAGE} import {elt.value.id}'; the formulation page "
+                                    f"cannot place it")
+                            files.append(bound[elt.value.id])
+    return files
+
+
+def module_order() -> list[str]:
+    """Model modules in the ``build_flextool`` table-of-contents order (the table's own module first), then the
+    modules with headers that the table does not name, alphabetically."""
+    order = [_module_of(_toc_tree()[0])]
+    for path in _step_files():
+        if (module := _module_of(path)) not in order:
+            order.append(module)
+    return order + [m for m in _model_modules() if m not in order]
+
+
+def module_files(module: str) -> list[Path]:
+    """The source files of a model module in page order.  A package is one module: its ``__init__.py``, then its
+    files in the order in which the ``build_flextool`` table first names a step of each, then the rest by name."""
+    package = MODEL_DIR / module
+    if not (package / "__init__.py").is_file():
+        return [MODEL_DIR / f"{module}.py"]
+    files = [package / "__init__.py"]
+    for path in _step_files() + sorted(package.rglob("*.py")):
+        if package in path.parents and path not in files:
+            files.append(path)
+    return files
+
+
+def model_sources() -> list[tuple[str, Path]]:
+    """``(module, file)`` of every model source file, in page order within each module."""
+    return [(module, path) for module in _model_modules() for path in module_files(module)]
 
 
 def collect_headers() -> dict[str, list[Header]]:
     """Headers by module, in page order; modules without a header are left out."""
     out: dict[str, list[Header]] = {}
     for module in module_order():
-        path = MODEL_DIR / f"{module}.py"
-        hs = parse_headers(path.read_text(encoding="utf-8"), _rel(path), module)
+        hs = [h for path in module_files(module)
+              for h in parse_headers(path.read_text(encoding="utf-8"), _rel(path), module)]
         if hs:
             out[module] = hs
     out["_benders"] = parse_headers(BENDERS_FILE.read_text(encoding="utf-8"), _rel(BENDERS_FILE), "_benders")
@@ -257,7 +336,7 @@ def _module_title(module: str) -> tuple[str, str]:
     if module == "_benders":
         path = BENDERS_FILE
     else:
-        path = MODEL_DIR / f"{module}.py"
+        path = module_files(module)[0]
     doc = ast.get_docstring(ast.parse(path.read_text(encoding="utf-8"))) or ""
     first = doc.strip().splitlines()[0] if doc.strip() else ""
     if module == "core":

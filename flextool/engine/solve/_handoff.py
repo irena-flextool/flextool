@@ -147,15 +147,15 @@ class SolveHandoff:
     # End-of-roll flow for the ramp carry-in: v_flow (units of unitsize) of every ramp-limited arc at the
     # roll's last realized step, with that step and its duration.  The next roll's first step of a period
     # ramps from it when that step precedes it, adjacent, in the un-rolled solve (``_load_ramp_carry``).
-    # Producer: ``flex_data._roll_end_flow``.  Consumer: next roll's ``p_roll_continue_flow`` /
-    # ``dt_ramp_carry`` (``model.core._eq_ramp``).  In-memory only.
+    # Producer: ``flex_data._handoff_inputs._roll_end_flow``.  Consumer: next roll's ``p_roll_continue_flow`` /
+    # ``dt_ramp_carry`` (``model.core._ramp._eq_ramp``).  In-memory only.
     # The carry is keyed on ``roll_end_step``: an override of ``roll_end_flow`` without ``roll_end_step`` is
     # ignored, and one whose step differs from ``roll_end_step`` raises (``params._ramp_links.ramp_roll_carry``).
     roll_end_flow: pl.DataFrame | None = None
 
     # The roll's last realized step in time (with its duration): the step the next roll's first step ramps
     # from (``_load_ramp_carry`` → ``dt_ramp_carry``, also read by the ramp output without ramp limits).
-    # Producer: ``flex_data._last_realized_step``.  In-memory only.  The carry routing
+    # Producer: ``flex_data._handoff_inputs._last_realized_step``.  In-memory only.  The carry routing
     # (``solve._carry_routing.with_end_position``) adds where the step ends on the base timeline (``end_rank``,
     # ``end_root``, ``end_index``, ``end_branch``), so a solve with other step lengths continues it by position; an
     # override without those columns is matched by the step name only.
@@ -256,7 +256,8 @@ class SolveHandoff:
     # The level (MWh) each cyclic scope that starts in this solve starts from: every period of a bind_within_period
     # node, every timeblock of a bind_within_timeblock node (the state of its first step's wrap target) and every
     # period a rolling roll holds only in part of a bind_intraperiod_blocks node, keyed by the scope's first step:
-    # ``[node, period, step, value]``.  Read by the cascade (``solve._run_model._anchor_cyclic_in_rolling``): the
+    # ``[node, period, step, value]``.  Read by the cascade
+    # (``solve._run_model._rolling_storage._anchor_cyclic_in_rolling``): the
     # level a later roll that continues the scope closes it to.  Producer and consumer as ``cycle_start_state``.
     # Not a carrier.
     scope_start_state: pl.DataFrame | None = None
@@ -264,7 +265,8 @@ class SolveHandoff:
     # The net energy (MWh) this solve drew in its realised steps from each storage node an upper-level solve caps by
     # fix_usage: ``[node, period, value]``.  The cascade sums it over the rolls of a solve instance, so that a roll's
     # cap is the upper solve's usage from the start of the period less what the earlier rolls used
-    # (``solve._run_model._usage_cap``).  Producer: ``build_handoff_from_solution``.  Not a carrier.
+    # (``solve._run_model._nested_storage._record_usage``, ``_nested_end_rows``).  Producer:
+    # ``build_handoff_from_solution``.  Not a carrier.
     realised_storage_usage: pl.DataFrame | None = None
 
     _FIELDS = (

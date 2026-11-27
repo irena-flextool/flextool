@@ -508,13 +508,13 @@ def pdt_branch_weight_lf(
             AND (b, t) ∈ dt
             AND (d2, d) ∈ period__branch
 
-    The output is dense over ``dt`` (the ``flex_data.py`` cascade
+    The output is dense over ``dt`` (the flex_data loaders' cascade
     overrides any helper output with a dt × value left-join, so we
     must supply at least every (d, t) in dt).  When no
     ``period__branch`` rows are present, defaults to 1.0 per (d, t).
 
     The denominator-zero rows fall through to 1.0 so dense semantics
-    are preserved (matching ``flex_data.py``'s coalesce default).
+    are preserved (matching the flex_data loaders' coalesce default).
 
     Returns a lazy ``(d, t, value)`` frame.
     """
@@ -610,7 +610,7 @@ def dt_non_anticipativity_lf(workdir: Path | None,
     * unset window  -> the committed window, ``realized_dispatch ∪
       committed_in_fan ∪ fix_storage`` (a dispatch solve);
     * empty window  -> a header-only (present-but-empty) CSV -> the
-      model's ``if dtna.height == 0: return`` (``model/core.py``) skips ALL
+      model's ``if dtna.height == 0: return`` (``model/core/``) skips ALL
       four families -> operations free from t0 (an investment solve).
 
     The four ``non_anticipativity_*`` constraints fire on this set
@@ -1070,7 +1070,7 @@ def _classify_lineage(
       ``d != b``).
 
     Failure semantics (design §3.1.1, mirroring ``dtttdt_from_source``
-    ``_derived.py:6634-6650``): a synthetic ``period_in_use``
+    in ``_derived/_dtttdt.py``): a synthetic ``period_in_use``
     member without a ``period__branch`` fan row, with an anchor that
     has no in-use self-row, or without an SBTB time-branch entry means
     the per-solve artefacts are inconsistent — RAISE instead of
@@ -1424,7 +1424,7 @@ def d_leaf_lf(
     is well-defined and the per-leaf invest sums are disjoint.
 
     Consumed by the per-path total caps
-    (``maxInvest/maxDivest_entity_total_path`` — ``model/core.py`` — and the
+    (``maxInvest/maxDivest_entity_total_path`` — ``model/core/`` — and the
     divest ``maxDivestGroup_entity_total_path`` — ``_cumulative_invest.py``):
     the leaf column joins into each cap row's key so a total cap applies
     once per scenario path, never cross-scenario double-counting.
@@ -1988,7 +1988,7 @@ def apply_branch_cluster(
                          ctx=ctx, provider=provider)
 
     # 3-4. Branch-weight Params (lazy ports of the previous eager
-    # helpers in ``_derived.py``).
+    # helpers in ``_derived/_time.py``).
     _new_pd_bw = pd_branch_weight_param(
         workdir, source, active_solve, ctx=ctx, provider=provider)
     if _new_pd_bw is not None or getattr(flex_data, "pd_branch_weight", None) is None:
@@ -1997,10 +1997,10 @@ def apply_branch_cluster(
     pdt_bw = pdt_branch_weight_param(workdir, source, active_solve, dt,
                                           ctx=ctx, provider=provider)
     if pdt_bw is not None and dt is not None and dt.height > 0:
-        # Match flex_data.py's dense-dt semantics: when dt is supplied,
+        # Match the flex_data loaders' dense-dt semantics: when dt is supplied,
         # build a (d, t)-dense Param via left-join + coalesce default
         # of 1.0.  This mirrors the previous CSV-cascade behaviour at
-        # flex_data.py:2845-2870 (preserves exact frame shape).
+        # the flex_data loaders (preserves exact frame shape).
         # Defensive re-cast: cast d/t to canonical Enum so the left-join
         # against ``pdt_bw.lazy`` (Enum d/t) composes cleanly even when
         # ``dt`` arrives with Utf8 columns.

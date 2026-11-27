@@ -8,7 +8,7 @@ real Spine solve) crashed in ``build_flextool`` with::
     populated (None): ['p_section']
 
 Cause: the synthetic-solve early-return in
-``flextool/engine/preprocess/flex_data.py::_apply_db_overrides`` skips the
+``flextool/engine/preprocess/flex_data/_db_overrides.py::_apply_db_overrides`` skips the
 ``apply_derived_*`` passes, and ``apply_derived_c`` is the *sole*
 producer of ``flex_data.p_section`` after the Δ.12-drop deleted the
 ``pdtProcess_section.csv`` loader seed.  ``process_min_load_eff`` (a
@@ -20,7 +20,7 @@ mirroring the existing RESERVE-1 patch.
 The ``MINLOAD_EFF`` check fires for *every* MLE unit on the synthetic
 path, so a successful optimal solve of a rolling MLE scenario is a
 sufficient correctness pin: it can only complete if ``p_section`` was
-populated AND the section energy-balance term (``model/core.py`` online
+populated AND the section energy-balance term (``model/core/`` online
 cost / flow, gated on ``p_section is not None``) was built.  Pre-fix
 this test raises ``ValueError(... ['p_section'])``; post-fix it solves
 to optimality.

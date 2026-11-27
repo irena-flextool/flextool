@@ -29,7 +29,7 @@ guard, so the rolling solve runs to a strict optimum on every roll and
 ``test_rolling_stochastic_solve_completes`` asserts for real.
 
 W3 HAS NOW LANDED too.  Root cause: the synthetic-solve early-return in
-``_apply_db_overrides`` (``flextool/engine/preprocess/flex_data.py``) fires for every
+``_apply_db_overrides`` (``flextool/engine/preprocess/flex_data/_db_overrides.py``) fires for every
 rolling sub-solve (``1week_rolling_roll_N`` is not declared in Spine), so
 passes 3-10 — including ``apply_derived_g`` → ``apply_branch_cluster``, the
 sole producer of ``period_branch_full`` / ``dt_non_anticipativity`` — never
@@ -226,7 +226,7 @@ def test_rolling_handoff_carries_trunk_committed_jump_end_storage(rolling_result
     Since 4.7.0 each roll realizes its jump under the period ``period1`` itself, so it produces the carry: its
     own ``v_state`` at the COMMITTED JUMP-END (``period1``, t(24k+24)) × the state unitsize, consumed by the next
     roll as ``p_roll_continue_state``.  It must not carry a forecast branch's state at the discarded look-ahead
-    HORIZON-END: the ``roll_end_state`` producer (``flex_data.py``) reads the Provider anchor
+    HORIZON-END: the ``roll_end_state`` producer (``flex_data/_handoff.py``) reads the Provider anchor
     ``solve_data/realized_dispatch`` (the realized jump only), not the forecast-expanded
     ``flex_data.realized_dispatch``, whose lexically-last ``(d, t)`` is a forecast at the window horizon.
 

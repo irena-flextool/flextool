@@ -32,13 +32,10 @@ import pytest
 from flextool.engine.preprocess.params import _discount as discount
 from flextool.engine.preprocess.params import _fixed_costs as fixed_costs
 from flextool.engine.preprocess.params import _npv as npv
-from flextool.engine.preprocess.params._derived import (
-    _read_active_solve,
-    _solve_periods,
-    _period_in_use_set,
-    _periodAll_from_source,
-    _read_period_with_history,
-)
+from flextool.engine.preprocess.params._derived._scope import _read_active_solve
+from flextool.engine.preprocess.params._derived._periods import _solve_periods, _period_in_use_set
+from flextool.engine.preprocess.params._derived._inflation import _periodAll_from_source
+from flextool.engine.preprocess.params._derived._handoff_state import _read_period_with_history
 from flextool.engine.preprocess.params._existing import INVEST_NOT_ALLOWED
 from tests._support.load import ScenarioRun, clone_provider, load_scenario
 

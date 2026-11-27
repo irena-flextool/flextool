@@ -131,7 +131,7 @@ def var_is_integer(sol, name: str) -> bool:
 def var_zero_tolerance(sol, name: str) -> float:
     """The largest ``|x|`` of a column of the solution's variable *name* that the solve cannot tell from 0: its
     primal feasibility tolerance in the LP's own scale, ``tol_p / cf``.  ``tol_p`` is the tolerance the solve used
-    (``sol.flextool_primal_tolerance``, recorded by ``solve._orchestration._autoscale_unscale_post_solve``;
+    (``sol.flextool_primal_tolerance``, recorded by ``solve._orchestration._autoscale_hooks._autoscale_unscale_post_solve``;
     HiGHS' default 1e-7 on a solution without it), ``cf`` the variable's Layer-2 column factor
     (``x_scaled = cf · x``, one factor per variable family, ``sol.layer2_col_factors`` set by
     ``autoscale._layer2.unscale_solution``; 1 without Layer 2).  Moving such a value to 0 moves the scaled column by

@@ -1,7 +1,8 @@
 """The realization-roll plan (``solve._realization_tail``): the gate, ``roll_tail_plan``, the rows each roll reads,
 the plan errors and G2b.
 
-Most tests call the builder directly; the seam tests stop a real run at ``_run_model._roll_tail_plans``.
+Most tests call the builder directly; the seam tests stop a real run at
+``_run_model._native_run_model._roll_tail_plans``.
 Every expected value is derived by hand from the roll windows below (comment at each test): a roll realizes its
 jump ``[s_k, s_{k+1})`` and looks ahead from ``s_{k+1}``, the first step of its horizon after the jump, with the
 forecasts made there (weight > 0, not realized, in database order).  The jump reads the one realized branch
@@ -346,7 +347,7 @@ def _seam_input(tmp_path, monkeypatch, fixture: str, scenario: str):
         sys.path.insert(0, tests_dir)
     from db_utils import json_to_db
     from flextool.engine import run_chain_from_db
-    from flextool.engine.solve import _run_model
+    from flextool.engine.solve._run_model import _native_run_model
     from flextool.update_flextool.db_migration import migrate_database
 
     url = json_to_db(FIXTURES / fixture, tmp_path / "db.sqlite")
@@ -354,12 +355,12 @@ def _seam_input(tmp_path, monkeypatch, fixture: str, scenario: str):
     seen: dict = {}
 
     def capture(solve_cfg, rolls, timelines):
-        assert _run_model.__dict__["_roll_tail_plans"] is capture
+        assert _native_run_model.__dict__["_roll_tail_plans"] is capture
         seen["cfg"], seen["rolls"], seen["timelines"] = solve_cfg, rolls, timelines
         raise _Stop
 
-    default = _run_model._roll_tail_plans
-    monkeypatch.setattr(_run_model, "_roll_tail_plans", capture)
+    default = _native_run_model._roll_tail_plans
+    monkeypatch.setattr(_native_run_model, "_roll_tail_plans", capture)
     monkeypatch.setenv("FLEXTOOL_AUTOSCALE_STRICT", "1")
     work = tmp_path / "work"
     work.mkdir()

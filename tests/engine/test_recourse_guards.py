@@ -96,7 +96,7 @@ def test_g1_resolver_normalisation():
 
 
 def test_g1_validate_model_solve_accepts_the_members():
-    from flextool.engine.solve._orchestration import _validate_model_solve
+    from flextool.engine.solve._orchestration._entry import _validate_model_solve
 
     sc = _solve_config_with_flag({"m": ["s_ok", "s_after", "s_at"]},
                                   {"s_after": "investments_after_reveal_period",
@@ -109,10 +109,8 @@ def test_g1_raw_value_typo_rejected():
     """The guard inspects the RAW authored value (the resolver reads a typo as operations_only), so an unrecognised
     authored value raises, naming the value, while the members, blank and absent do not.  The old values of
     ``stochastic_invest_method`` are unknown here: every database is migrated to v84 before it runs."""
-    from flextool.engine.solve._orchestration import (
-        _invest_branching_raw_guard,
-        _validate_model_solve,
-    )
+    from flextool.engine.solve._orchestration._guards import _invest_branching_raw_guard
+    from flextool.engine.solve._orchestration._entry import _validate_model_solve
 
     for bad in ("investments_after_reveal", "recourse", "none"):
         sc = _solve_config_with_flag({"m": ["s"]}, {"s": bad})
@@ -130,7 +128,7 @@ def test_g1_raw_value_typo_rejected():
 
 
 def test_g1_validate_model_solve_passes_flag_absent():
-    from flextool.engine.solve._orchestration import _validate_model_solve
+    from flextool.engine.solve._orchestration._entry import _validate_model_solve
 
     sc = _solve_config_with_flag({"m": ["s1", "s2"]}, {})
     state = dataclasses.make_dataclass("S", ["solve"])(solve=sc)
@@ -328,7 +326,7 @@ def _build_handoff(sol, run, flex_data, provider):
 def _provider_realizing(run, period: str):
     """A clone of the step's provider whose realize-invest key lists only
     *period* (dtype kept from the cascade's frame)."""
-    from flextool.engine.preprocess.flex_data import _read_realize_invest_periods
+    from flextool.engine.preprocess.flex_data._handoff_inputs import _read_realize_invest_periods
 
     provider = clone_provider(run.last.provider)
     orig = provider.get(REALIZE_KEY)

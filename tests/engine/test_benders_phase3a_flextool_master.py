@@ -39,7 +39,7 @@ from polar_high import Problem
 from flextool.engine import build_flextool
 from flextool.engine.solve import _region_filter
 from flextool.engine.solve._benders import solve_benders
-from flextool.engine.solve._orchestration import _LEGACY_DEFAULT_OBJECTIVE_SCALE
+from flextool.engine.solve._orchestration._highs_options import _LEGACY_DEFAULT_OBJECTIVE_SCALE
 from tests._support.benders import benders_reference_data
 from tests._support.load import load_scenario
 

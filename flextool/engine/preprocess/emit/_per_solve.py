@@ -31,7 +31,7 @@ from flextool.engine.preprocess import _provider_keys as K
 from flextool.engine.preprocess._provider_io import _emit
 from flextool.engine.preprocess.params._branch import fan_period_labels
 from flextool.engine.preprocess.params._cohorts import eol_methods_of
-from flextool.engine.preprocess.params._derived import _expand_invest_branch_periods
+from flextool.engine.preprocess.params._derived._periods import _expand_invest_branch_periods
 from flextool.engine.preprocess.params._run_calendar import (
     RUN_EXISTING_COHORT_KEY,
 )
@@ -567,7 +567,8 @@ def _invest_window(source, solve_data_dir: Path, provider, ed_invest_pairs: list
     ordered by lifetime_method (reinvest_choice, reinvest_automatic, no_reinvestment), then entity (``entity_set``),
     decision (``period_with_history``) and period (``period_in_use``)."""
     from flextool.engine.preprocess.params._cohorts import as_names, invest_alive, invest_cohorts
-    from flextool.engine.preprocess.params._derived import _build_commission_lf, _read_active_solve
+    from flextool.engine.preprocess.params._derived._invest_apply import _build_commission_lf
+    from flextool.engine.preprocess.params._derived._scope import _read_active_solve
     if not ed_invest_pairs or not period_in_use:
         return []
     if source is None or not provider.has(RUN_EXISTING_COHORT_KEY):

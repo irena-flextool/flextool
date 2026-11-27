@@ -10,7 +10,7 @@ emitters, solve orchestration, handoff) are in [engine.md](engine.md).
 |---|---|
 | Orientation: data flow, packages | [Top-level data flow](#top-level-data-flow), [Repository layout](#repository-layout), [Key architectural patterns](#key-architectural-patterns) |
 | Add a model parameter | [Parameter shapes](#parameter-shapes-dt-broadcasting), [Solve-step aggregation](#solve-step-aggregation-new_stepduration-of-a-solve), [autoscale registry](#layers-bottom-up), engine [Where to start when…](engine.md#where-to-start-when) |
-| Add a constraint / variable | engine [LP build](engine.md#lp-build-modelcorepy-and-the-feature-modules), [Equation headers](engine.md#equation-headers), [autoscale registry](#layers-bottom-up) |
+| Add a constraint / variable | engine [LP build](engine.md#lp-build-modelcore-and-the-feature-modules), [Equation headers](engine.md#equation-headers), [autoscale registry](#layers-bottom-up) |
 | Change preprocess emit | engine [Emitters](engine.md#emitters), [Vectorized per-roll emit](engine.md#vectorized-per-roll-emit) |
 | Change solve orchestration / rolling / stochastic handoff | engine [Solve modes](engine.md#solve-modes), [Solve-to-solve handoff](engine.md#solve-to-solve-handoff), [Stochastic branches](engine.md#stochastic-branches) |
 | Schema change & migration | [update_flextool](#flextoolupdate_flextool-migration-and-updates), CONTRIBUTING.md "Updating the Data Structure" |
@@ -475,7 +475,7 @@ reaching the generic broadcast raises.
 
 ##### Silent-default `"x"` index — readers outside the resolver
 
-Not every DB read goes through `resolve_param_shape`. The **per-entity cascades** in `_derived.py` /
+Not every DB read goes through `resolve_param_shape`. The **per-entity cascades** in `params/_derived/` /
 `_existing.py` / `_lifetime_inputs.py` read raw entity params (`source.parameter(...)`) and must detect the period
 axis themselves. The failure mode is the resolver's: spinedb_api's default `index_name` is the literal string
 `"x"` (real 2-D maps carry `index_name='x'`, see `_spinedb_reader._discover_index_cols`), so an
@@ -680,7 +680,7 @@ CI-enforced verify chain (`tests.yml::template-check`):
 group and prepare sub-problems for the Benders solve mode (the filter-only
 `--region` CLI entry point that materialises one region's standalone input
 directory). The in-engine slicer used by the live Benders driver lives at
-`engine/solve/_region_filter.py`; the master + cut loop is in
+`engine/solve/_region_filter/` (map in its `__init__.py`); the master + cut loop is in
 `engine/solve/_benders.py`.
 
 ### `flextool/model_builder/` and `flextool/representative_periods/`
@@ -968,7 +968,7 @@ changes the optimum. User-facing guide (modes, the guard's thresholds and messag
      quantity type of every variable (`VARIABLE_FAMILIES`), constraint (`CONSTRAINT_FAMILIES` via `lookup_cstr`) and
      parameter (`PARAMETER_TYPES`) in `_layer2_types.py` / `_quantity_types.py`. These registries refuse to default
      — an unregistered name raises `KeyError` in `bucket_coefficients`. That `KeyError` is **caught** in
-     `_orchestration._autoscale_apply_layer2_pre_solve` and the solve silently reverts to an **un-scaled LP**
+     `_orchestration._autoscale_hooks._autoscale_apply_layer2_pre_solve` and the solve silently reverts to an **un-scaled LP**
      ("autoscale Layer 2 apply failed … reverting"), so a missing registration does not crash — it quietly disables
      autoscaling. So: every new `add_var(...)` / `add_cstr(...)` literal and every new schema parameter MUST get a
      registry entry (flags / `yes_no` gates → `DIMENSIONLESS`). `lookup_cstr` resolves dynamic (f-string)

@@ -189,7 +189,7 @@
       "source": null,
       "tokens": ["source", "sink"],
       "filter": null,
-      "note": "Fixed pair. Substrate token introduced in cascade helpers (e.g. _derived.py and _writer_leaf_sets) when pivoting node/process membership by side."
+      "note": "Fixed pair. Substrate token introduced in cascade helpers (e.g. params/_derived/ and _writer_leaf_sets) when pivoting node/process membership by side."
     },
     {
       "name": "klass",
@@ -198,7 +198,7 @@
       "source": null,
       "tokens": ["unit", "connection"],
       "filter": null,
-      "note": "Fixed pair, mirrors the two entity classes that compose 'process'. Introduced in _derived.py efficiency-method derivation when tagging rows by their underlying process class."
+      "note": "Fixed pair, mirrors the two entity classes that compose 'process'. Introduced in params/_derived/_process_method.py efficiency-method derivation when tagging rows by their underlying process class."
     }
   ],
   "synthetic_token_allowlist": [

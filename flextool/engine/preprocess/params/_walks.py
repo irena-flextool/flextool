@@ -266,10 +266,7 @@ def period_walk_iterator(
     # years without threading ``provider``/``workdir`` through every NPV/edd
     # walker caller.  Without branch periods both are ``None``.
     if provider is None:
-        from flextool.engine.preprocess.params._derived import (
-            _fan_walk_provider,
-            _fan_walk_workdir,
-        )
+        from flextool.engine.preprocess.params._derived._invest_apply import _fan_walk_provider, _fan_walk_workdir
         provider = _fan_walk_provider()
         if provider is not None and workdir is None:
             workdir = _fan_walk_workdir()
@@ -282,7 +279,7 @@ def period_walk_iterator(
         return ed_lf.select("e", "d").with_columns(
             factor=pl.lit(0.0, dtype=pl.Float64))
     # Lazy import to avoid circular dependency at module-load time.
-    from flextool.engine.preprocess.params._derived import _p_years_d_lf
+    from flextool.engine.preprocess.params._derived._periods import _p_years_d_lf
     # With branch periods (any invest_solve_branching_method) ``provider`` is set,
     # so the canonical ``p_years_d.csv`` arm — which copies each label's year
     # onto its fan members — gives every branch period its label's

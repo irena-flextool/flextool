@@ -283,7 +283,7 @@ def test_autoscale_strict_completes_with_margin(
     PARAMETER_TYPES entries are registered (CLAUDE.md invariant #1).
 
     Under strict mode an autoscale-registry gap re-raises (see
-    ``_orchestration._autoscale_layer2_for_solve``), so a clean,
+    ``_orchestration._autoscale_hooks._autoscale_apply_layer2_pre_solve``), so a clean,
     all-optimal run is the positive signal.
     """
     monkeypatch.setenv("FLEXTOOL_AUTOSCALE_STRICT", "1")

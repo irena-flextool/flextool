@@ -13,7 +13,7 @@ import pytest
 import flextool.engine
 from flextool._solver_config_source import UNTRUSTED_SHORT
 from flextool.cli import cmd_run_flextool
-from flextool.engine.solve._orchestration import _operator_highs_overrides
+from flextool.engine.solve._orchestration._highs_options import _operator_highs_overrides
 
 _OPTION_ENV_VARS = (
     "FLEXTOOL_HIGHS_THREADS", "FLEXTOOL_HIGHS_PRESOLVE", "FLEXTOOL_SOLVER_LOG_LEVEL", "FLEXTOOL_HIGHS_TIME_LIMIT",

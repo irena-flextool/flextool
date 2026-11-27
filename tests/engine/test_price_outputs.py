@@ -369,7 +369,7 @@ def test_price_independent_of_objective_scale(tmp_path_factory, monkeypatch) -> 
     reserve prices (the live scale is divided out).  Before: the reserve price differed by 1e6."""
     _s0, wf0 = _shared_run(tmp_path_factory, "pr_s6", NET_RES)
     import flextool.engine.solve._orchestration as orch
-    monkeypatch.setattr(orch, "_resolve_effective_obj_scale", lambda _v: 1.0)
+    monkeypatch.setattr(orch._cascade, "_resolve_effective_obj_scale", lambda _v: 1.0)
     _s1, wf1 = _run(tmp_path_factory, "pr_s1", NET_RES)
     for get in (_node_prices, _reserve_prices):
         a, b = get(wf0), get(wf1)
@@ -390,8 +390,8 @@ def test_price_independent_of_lp_scaling(tmp_path_factory, monkeypatch) -> None:
     import flextool.engine.solve._orchestration as orch
 
     seen = {"l2": [], "l3": []}
-    real_cfg = orch._autoscale_resolve_config
-    real2, real3 = orch._autoscale_apply_layer2_pre_solve, orch._autoscale_apply_layer3_pre_solve
+    real_cfg = orch._cascade._autoscale_resolve_config
+    real2, real3 = orch._cascade._autoscale_apply_layer2_pre_solve, orch._cascade._autoscale_apply_layer3_pre_solve
 
     def forced_cfg(cli_args=None, **kwargs):
         return dataclasses.replace(real_cfg(cli_args, **kwargs), threshold_decades=1.0, user_objective_scale=3)
@@ -406,15 +406,17 @@ def test_price_independent_of_lp_scaling(tmp_path_factory, monkeypatch) -> None:
         seen["l3"].append(plan)
         return plan
 
-    monkeypatch.setattr(orch, "_autoscale_resolve_config", forced_cfg)
-    monkeypatch.setattr(orch, "_autoscale_apply_layer2_pre_solve", spy2)
-    monkeypatch.setattr(orch, "_autoscale_apply_layer3_pre_solve", spy3)
+    monkeypatch.setattr(orch._autoscale_hooks, "_autoscale_resolve_config", forced_cfg)
+    monkeypatch.setattr(orch._cascade, "_autoscale_resolve_config", forced_cfg)
+    monkeypatch.setattr(orch._cascade, "_autoscale_apply_layer2_pre_solve", spy2)
+    monkeypatch.setattr(orch._cascade, "_autoscale_apply_layer3_pre_solve", spy3)
     _s0, wf0 = _run(tmp_path_factory, "pr_sc_on", NET_RES)
     plans2 = [p for p in seen["l2"] if p is not None]
     assert plans2 and any(np.any(p.row_factors != 1.0) for p in plans2), "Layer 2 did not scale any row"
     assert any(p is not None and p.user_objective_scale != 0 for p in seen["l3"]), "Layer 3 set no objective scale"
 
-    monkeypatch.setattr(orch, "_autoscale_resolve_config", real_cfg)
+    monkeypatch.setattr(orch._autoscale_hooks, "_autoscale_resolve_config", real_cfg)
+    monkeypatch.setattr(orch._cascade, "_autoscale_resolve_config", real_cfg)
     monkeypatch.setenv("FLEXTOOL_SCALING", "off")
     _s1, wf1 = _run(tmp_path_factory, "pr_sc_off", NET_RES)
     for get in (_node_prices, _reserve_prices):
@@ -439,7 +441,7 @@ def test_fix_price_handoff_equals_parent_price(tmp_path_factory, monkeypatch, sc
     price (4.75e-5) at the default scale, ÷ nothing else."""
     if scale is not None:
         import flextool.engine.solve._orchestration as orch
-        monkeypatch.setattr(orch, "_resolve_effective_obj_scale", lambda _v: scale)
+        monkeypatch.setattr(orch._cascade, "_resolve_effective_obj_scale", lambda _v: scale)
     alt = "pr_fp_def" if scale is None else "pr_fp_one"
     steps, wf = _run(tmp_path_factory, alt, _chain(FIX / "tests.json",
                                                    "multi_fullYear_battery_nested_24h_invest_one_solve"),

@@ -1,7 +1,7 @@
 """Surface A.6 (storage / reservoir / state loader) and A.20
 (handoff / warm-start / rolling-horizon coupling) loader tests.
 
-A.6 tests call ``flextool.engine.preprocess.flex_data._load_storage`` directly
+A.6 tests call ``flextool.engine.preprocess.flex_data._load_storage._load_storage`` directly
 with hand-built minimal frames — the helper is pure (provider reads
 plus algebra over its inputs) so isolating it avoids needing a full
 workdir orchestration just to flip a single binding-method row.  The
@@ -26,7 +26,8 @@ import polars as pl
 import pytest
 
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-from flextool.engine.preprocess.flex_data import _load_storage, _apply_db_overrides
+from flextool.engine.preprocess.flex_data._load_storage import _load_storage
+from flextool.engine.preprocess.flex_data._db_overrides import _apply_db_overrides
 from tests._support.provider import provider_from_csv_dirs
 
 
@@ -255,12 +256,15 @@ def _stub_a20_passes(monkeypatch, calls: list, *,
     monkeypatch.setattr(_drv, "apply_synthetic_invest_sets",
                         _record("synth_invest"))
     monkeypatch.setattr(_drv, "apply_delay_params", _record("synth_delay"))
+    monkeypatch.setattr(_drv._ladder, "apply_delay_params", _record("synth_delay"))
     monkeypatch.setattr(_lifetime_costs, "apply_run_fields_of_synthetic_solve",
                         _record("synth_run_costs"))
     monkeypatch.setattr(_ex, "apply_existing_chain",
                         _record("10_existing"))
-    monkeypatch.setattr(_drv, "_read_active_solve",
-                        lambda workdir, *, provider=None: active_solve)
+    for _reader in (_drv._scope, _drv._existing_capacity, _drv._invest_apply, _drv._ladder, _drv._process_flows,
+                    _drv._process_method, _drv._storage, _drv._time):
+        monkeypatch.setattr(_reader, "_read_active_solve",
+                            lambda workdir, *, provider=None: active_solve)
 
 
 # --- A.20 tests -----------------------------------------------------

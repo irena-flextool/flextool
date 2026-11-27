@@ -38,7 +38,7 @@ from flextool.engine.model._common import _has_rows
 from flextool.engine.preprocess.params._coarse import ordered_sum
 
 if TYPE_CHECKING:
-    from flextool.engine.model.core import _Build
+    from flextool.engine.model.core._context import _Build
 
 _KEYS = ("p", "d", "t")
 
@@ -391,7 +391,7 @@ def at_first_steps(b: "_Build", param: "Param | None") -> "Param | None":
 def ramp_rows(b: "_Build", arcs: pl.DataFrame, ramp_speed: "Param | None", side: str, link: pl.DataFrame,
               carry: pl.DataFrame) -> pl.DataFrame:
     """The ramp rows of the coarse-process ``arcs`` ``(p, source, sink)``: one per coarse step b with a
-    predecessor, in the columns of ``core._ramp_rows`` (``t`` = b_first).
+    predecessor, in the columns of ``core._ramp._ramp_rows`` (``t`` = b_first).
 
     The predecessor of b is the coarse step b⁻ that holds the fine predecessor of b's first step (``link``,
     ``dt_ramp_link``); ρ̄ = ramp_speed · 60 · (Δ_b⁻ + Δ_b) / 2 with the coarse step durations (the distance
@@ -401,7 +401,7 @@ def ramp_rows(b: "_Build", arcs: pl.DataFrame, ramp_speed: "Param | None", side:
     that arc's carried step length (``p_roll_continue_flow_duration``: its last realized coarse step).  The reserve
     the arc holds in this direction is in these rows too (with the flow change); the reserve's own room at the solve's
     steps of each coarse step is :func:`reserve_room_rows`.  With ``ramp_speed=None`` (the ramp cost,
-    ``core._eq_ramp_cost``) every row with a predecessor (no room filter) and ``__room`` null."""
+    ``core._ramp._eq_ramp_cost``) every row with a predecessor (no room filter) and ``__room`` null."""
     d = b.d
     keys = ["p", "source", "sink"]
     base = (arcs.select(keys).unique(maintain_order=True)
@@ -451,10 +451,10 @@ def reserve_room_rows(b: "_Build", arcs: pl.DataFrame, ramp_speed: Param, side: 
                       link: pl.DataFrame, carry: pl.DataFrame) -> pl.DataFrame:
     """The reserve ramp-room rows of the coarse-process ``arcs`` ``(p, source, sink)`` in ramp direction ``dir_``:
     one per coarse step b on which the arc holds reserve in that direction (upward / downward reserve at its sink
-    in the same direction, at its source in the opposite one, ``prundt``), in the columns of ``core._ramp_rows``
+    in the same direction, at its source in the opposite one, ``prundt``), in the columns of ``core._ramp._ramp_rows``
     (``__kind`` ``reserve``, ``t`` = b_first) with ``__room`` = min_{t∈b, ρ_t<1} ρ_t · c_t (none where every ρ_t ≥ 1):
-    the room already scaled by the arc's capacity factor c at each fine step (``core._c_param_plain``), so
-    ``core._ramp_rate`` does not scale these rows again.
+    the room already scaled by the arc's capacity factor c at each fine step (``core._ramp._c_param_plain``), so
+    ``core._ramp._ramp_rate`` does not scale these rows again.
 
     ρ_t is the fine rule's room at each fine step t of b: ramp_speed · 60 · (Δt_prev + Δt) / 2 where t has a ramp
     predecessor (``link``; ``carry``: the previous roll's step, with the arc's carried duration
@@ -490,7 +490,7 @@ def reserve_room_rows(b: "_Build", arcs: pl.DataFrame, ramp_speed: Param, side: 
     hold = pl.concat([base.join(at_sink, on=["_p", "_sink", "_d", "_t"], how="semi"),
                       base.join(at_source, on=["_p", "_source", "_d", "_t"], how="semi")]).select(
         "_p", "_source", "_sink", "_d", "_b").unique()
-    from flextool.engine.model.core import _c_param_plain
+    from flextool.engine.model.core._ramp import _c_param_plain
 
     fine = (base.join(hold, on=["_p", "_source", "_sink", "_d", "_b"], how="semi")
             .join(psd, on=["_d", "_t"], how="left")

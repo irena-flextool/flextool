@@ -2,7 +2,7 @@
 ``specs/step05_continuation_fanout_design.md`` §5.5).
 
 ``make_step_jump`` (``_timeline.py``) and ``dtttdt_from_source``
-(``_derived.py``) must share the same cross-period wrap
+(``_derived/_dtttdt.py``) must share the same cross-period wrap
 semantics.  Byte-parity for pre-existing shapes is enforced with
 hard-coded literals CAPTURED FROM PRE-CHANGE HEAD (main 643a8fb8):
 the deterministic 2-period and single-period stochastic rows below are

@@ -1,7 +1,7 @@
 """``p_window_fraction_from_shares``: the per-period window fraction of a sub-solve and its load-boundary raise.
 
 The function runs in production for every roll and every synthetic nested sub-solve
-(``flex_data.py``, the ``p_window_fraction`` step).  Its definition (docstring of
+(``flex_data/_load.py``, the ``p_window_fraction`` step).  Its definition (docstring of
 :func:`flextool.engine.preprocess.params._derived.p_window_fraction_from_shares`)::
 
     p_window_fraction[d] = (Σ_{t in dt[d]} step_duration[d,t] / 8760) / p_period_share[d]

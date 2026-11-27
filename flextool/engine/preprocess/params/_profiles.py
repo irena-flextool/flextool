@@ -48,7 +48,7 @@ Architectural notes
 -------------------
 
 * **Drop the ``_check_canonical_keys`` predicate.**  The Δ.6 close
-  stanza identified ``_derived.py:p_profile_value_from_source``
+  stanza identified the former derived-params ``p_profile_value_from_source``
   as guarding against non-canonical Map keys (``x``/``i`` from
   zero-``index_name`` Spine values) by returning ``None`` and falling
   back to the CSV path.  Cluster C drops the predicate: the stochastic

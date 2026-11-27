@@ -122,7 +122,7 @@ The reference catalogue entry is `group.decomposition_method` in
 `benders_regional` (the `_region` suffix makes the geographic flavour
 explicit, leaving naming room for any future temporal variant). The
 source of truth is
-`flextool/engine/solve/_region_filter.py:load_decomposition_method`, which
+`flextool/engine/solve/_region_filter/_regions.py:load_decomposition_method`, which
 reads the sub-solve provider's `input/p_group_decomposition` frame (a
 provider is required; the work folder is never read).
 
@@ -146,7 +146,7 @@ before solving the region. The cut slope for `(arc, d, t)` is then the
 reduced cost of the pinned forward column
 (`Solution.col_dual[pin_col_id]` = `∂cost_r / ∂f̄`, basis-correct, no
 monolith reference). The rewriter / half-flow metadata structure is in
-`_region_filter` (`HalfFlow`, `Coupling`, `split`); the arc / pin
+`_region_filter` (`HalfFlow`, `split`) and `_benders.Coupling`; the arc / pin
 bookkeeping for the master lives in `_benders._build_arcs`.
 
 A one-variable connection (`process_source_sink_2way_1var`: one arc, signed
@@ -384,13 +384,14 @@ solving — useful for inspecting how the rewriter sees a given region.
 | `BendersResult` — return type | same |
 | `pin_invest_decisions`, `check_final_objective`, `final_solve_on` (final solve, §2.9) | `flextool/engine/solve/_benders_final.py` |
 | `write_benders_invest_slice` (investment-only results, §2.9) | `flextool/engine/output/_benders_slice.py` |
-| `Coupling`, `_build_arcs`, the master + cut loop | same |
-| `master_network_data` (network-only reduced FlexData for the master) | `flextool/engine/solve/_region_filter.py` |
-| `RegionSplit`, `HalfFlow`, `split` | same |
-| `load_decomposition_method` (reads ``decomposition_method`` from the provider's `input/p_group_decomposition`) | same |
+| `Coupling`, `_build_arcs`, the master + cut loop | `flextool/engine/solve/_benders.py` |
+| `master_network_data` (network-only reduced FlexData for the master) | `flextool/engine/solve/_region_filter/_master_network.py` |
+| `RegionSplit`, `HalfFlow` | `flextool/engine/solve/_region_filter/_regions.py` |
+| `split` | `flextool/engine/solve/_region_filter/_split.py` |
+| `load_decomposition_method` (reads ``decomposition_method`` from the provider's `input/p_group_decomposition`) | `flextool/engine/solve/_region_filter/_regions.py` |
 | `WarmProblem.add_cut_row` / `add_recourse_col` / `solve(retry_on_unknown=…)` | `polar_high` (external) |
 
-The per-solve routing lives in `flextool/engine/solve/_orchestration.py`
+The per-solve routing lives in `flextool/engine/solve/_orchestration/_cascade.py`
 (`_PolarHighCascadeSolver._run_benders_solve`, driven by
 `SolveConfig.decomposition_for`). The Benders path is also surfaced
 as a "Solve modes" entry in

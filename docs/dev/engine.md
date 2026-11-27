@@ -13,7 +13,7 @@ cross-cutting invariants are in [architecture.md](architecture.md).
 | Task | Sections |
 |---|---|
 | Add a model parameter | [Where to start when…](#where-to-start-when), architecture [Parameter shapes](architecture.md#parameter-shapes-dt-broadcasting), [Solve-step aggregation](architecture.md#solve-step-aggregation-new_stepduration-of-a-solve), [autoscale registry](architecture.md#layers-bottom-up) |
-| Add a constraint / variable / objective term | [LP build](#lp-build-modelcorepy-and-the-feature-modules), [Feature flags](#feature-flags-and-required-fields), [Equation headers](#equation-headers) |
+| Add a constraint / variable / objective term | [LP build](#lp-build-modelcore-and-the-feature-modules), [Feature flags](#feature-flags-and-required-fields), [Equation headers](#equation-headers) |
 | Add an optional model feature | [Where to start when…](#where-to-start-when), [Feature flags](#feature-flags-and-required-fields) |
 | Change a preprocess emit / derive | [Emitters](#emitters), [Vectorized per-roll emit](#vectorized-per-roll-emit), [FlexDataProvider](#flexdataprovider-and-override-translator) |
 | Change solve orchestration, warm start, Benders | [Per-solve pipeline](#per-solve-pipeline), [Solve modes](#solve-modes) |
@@ -67,7 +67,7 @@ The steps, with their modules, are listed in `flextool/engine/README.md`
 
 `solve.reduce_unit_detail_method` / `reduce_system_detail_method` (user docs: entities_and_time.md "Leaving out
 detail in a solve") are applied in one place: `preprocess._reduce_detail.apply_reduce_detail(d, unit, system)`,
-called by the cascade right after `load_flextool` for every sub-solve (`_orchestration._drive_cascade`). Every
+called by the cascade right after `load_flextool` for every sub-solve (`_orchestration._cascade._drive_cascade`). Every
 consumer after it reads the reduced data: the online / ramp carry check (`check_online_ramp_carry`, outside
 `load_flextool` so that it sees the reduced online set), the realization checks, the Benders split, the cold and
 warm build, the handoff and the per-roll outputs. The per-roll emit and the input derivation are not changed.
@@ -131,10 +131,14 @@ Which `has_*` flags each level turns off is listed under [Feature flags](#featur
 
 ## FlexData — the central data carrier
 
-`FlexData` (`preprocess/flex_data.py`) is a `@dataclass` of about 400
+`FlexData` (`preprocess/flex_data/_container.py`) is a `@dataclass` of about 400
 fields. Nine are positional and always present (the time / weighting / node
 floor); every other field defaults to `None` and is filled in only when
-the scenario exercises the corresponding feature.
+the scenario exercises the corresponding feature.  The package
+`preprocess/flex_data/` re-exports the public names; its modules are the
+container, the shared readers (`_readers`), the feature loaders (`_load_*`,
+`_coarse`), `load_flextool` (`_load`), the DB-direct passes (`_db_overrides`)
+and `build_handoff_from_solution` with its helpers (`_handoff*`).
 
 The naming convention is documented on the class:
 
@@ -183,7 +187,7 @@ or stale CSVs in a reused work folder cannot change a run (Rule 4 of
 provider from them first; architecture.md
 [CSV dump](architecture.md#csv-dump-supported-and-csv-reload-unsupported)).
 
-## LP build: `model/core.py` and the feature modules
+## LP build: `model/core/` and the feature modules
 
 `build_flextool(m, d)` builds the LP into the `polar_high.Problem` `m`
 from the `FlexData` `d`. Its body is a table of contents: a list of
@@ -209,16 +213,22 @@ few shared expressions):
 
 Every family function starts with an early-return guard on its flag
 (`if not b.has_storage: return`), so a feature whose data is empty emits
-nothing. The `model/core.py` module docstring is the map: every variable with
+nothing. The `model/core/__init__.py` docstring is the map: every variable with
 its dims and unit, and every equation family in emit order with the
 module it lives in. Each row, objective term and variable carries an
 `EQ.` / `OBJ.` / `VAR.` header with its formula, so
 `grep -rn "EQ. ─── maxFlow" flextool/engine` finds an equation.
 
-**What lives where.** `model/core.py` holds the core model that every run
-uses: node balance, storage state, flows and capacity, conversion,
-investment maxima, CO2 caps, user constraints, profiles and the core
-objective. An optional feature that brings its own variables or rows
+**What lives where.** The package `model/core/` holds the core model that
+every run uses, one module per equation family: `_prepare` (flags, data
+checks, index sets), `_variables` (variables and shared expressions),
+`_rp_storage`, `_node_balance`, `_flows` (maxFlow, maxOutputSum),
+`_ramp`, `_invest` (investment maxima), `_conversion`, `_co2`,
+`_user_constraints`, `_storage_state`, `_profiles` and `_objective`;
+`_storage_links` holds the storage helpers several of them read,
+`_context` the `_Build` context and the required-field tuples, `_build`
+the table of contents.  `core/__init__.py` re-exports the public names
+only: code that needs a private helper imports it from its module. An optional feature that brings its own variables or rows
 lives in its own module, exposing the parts of the interface it needs —
 `add_variables(b)`, `add_constraints(b)`, `objective_terms(b)`:
 `_online` (unit commitment), `_unit_floors` (minimum load and
@@ -242,7 +252,7 @@ degenerate models. Check the effect with `tools/lp_snapshot.py`
 
 `_prepare` sets one `has_*` flag per feature on the `_Build` context from
 its switch field on `FlexData`. The data each feature needs is a
-module-level tuple at the top of `model/core.py`:
+module-level tuple in `model/core/_context.py`:
 
 ```python
 ALWAYS = ("dt", "nodeBalance",
@@ -347,7 +357,7 @@ grammar; `tests/docs/test_header_grammar.py` checks it):
 - **One header per family.** A generic row helper carries no header; its
   callers do (`ROW_HELPERS` in the test: `_coarse_flows.add_cstr` /
   `add_twin` / `add_row_rule_cstr`, `_lead_time.period_limit`,
-  `core._ramp_family`, `_cumulative_invest._group_period_limit_online`,
+  `core._ramp._ramp_family`, `_cumulative_invest._group_period_limit_online`,
   `_online._add_max_input_flow_online`).
 - **Ratchets** (`tests/docs/test_header_grammar.py`): every `add_cstr` /
   `add_var` in `engine/model/` has a header earlier in its function or sits
@@ -513,7 +523,7 @@ heat rate) is checked before the solve, so the curve is the upper envelope of it
   One-input, one-output multi-line units (`process_piecewise_remap`) keep their input-side items on the output
   (`_projection.single_input_curve_arc_remap`); reserves, operating cost, start-up input, commodity / CO2,
   flowGroup membership and inertia stay on the input.
-- **Model** (`core._eq_conversion_piecewise`, rows `conversion_piecewise` and the coarse twin): weighted input ≥
+- **Model** (`core._conversion._eq_conversion_piecewise`, rows `conversion_piecewise` and the coarse twin): weighted input ≥
   `pw_slope·x + pw_intercept·unitsize·U` for every line, `U` = units online, or the units built (existing count +
   invested − divested) without online variables; `conversion_indirect` skips these units. The rows are `≥`, so the
   input can exceed the curve where that costs nothing or pays (the over-burn cases, units.md "Input above the
@@ -554,7 +564,7 @@ adds:
 | `maxState_rp_start` | `model._eq_rp_storage_chain` | Sibling capacity bound on `v_state_rp_start[n, d, t]` over `rp_block_first`. Both bounds depend on invest/divest, so they are rows rather than variable bounds. |
 | `non_anticipativity_rp_block_start` | `model._non_anticipativity.add_dispatch_constraints` | `v_state_rp_start` equal across the forecast star at the block starts inside the tie window, for `include_stochastics` nodes in `nodeState_rp`; a block already tied by a `non_anticipativity_storage_state_first` row is left out. |
 
-In a stochastic solve every forecast branch period is an rp period with the timeset of the period it branches from (`_solve_writers._with_branch_period_timesets`); `rp_period_previous` is then a tree (a branch's first period ← the trunk period, later periods ← the same branch). A rolling_window solve on representative periods is a configuration error (`_run_model._reject_rolling_rp`), and so is a plain bind_forward_only node in a solve on representative periods (`_run_model._reject_plain_forward_in_rp_solve`). A plain bind_within_solve / bind_within_period / bind_intraperiod_blocks node there is a warning (`_run_model._warn_plain_cyclic_in_rp_solve`: the plain cycle moves the level between the representative periods unweighted while their flows are weighted, which is reasonable with equal weights or storage whose inflow timing does not matter; the weights are the user's to use).
+In a stochastic solve every forecast branch period is an rp period with the timeset of the period it branches from (`_solve_writers._with_branch_period_timesets`); `rp_period_previous` is then a tree (a branch's first period ← the trunk period, later periods ← the same branch). A rolling_window solve on representative periods is a configuration error (`_run_model._rp_methods._reject_rolling_rp`), and so is a plain bind_forward_only node in a solve on representative periods (`_run_model._rp_methods._reject_plain_forward_in_rp_solve`). A plain bind_within_solve / bind_within_period / bind_intraperiod_blocks node there is a warning (`_run_model._rp_methods._warn_plain_cyclic_in_rp_solve`: the plain cycle moves the level between the representative periods unweighted while their flows are weighted, which is reasonable with equal weights or storage whose inflow timing does not matter; the weights are the user's to use).
 
 The three blended-weights methods that activate the block —
 `bind_within_solve_blended_weights`, `bind_within_period_blended_weights`,
@@ -580,7 +590,7 @@ import path. Both decode to the same nested
 `rp_base_first`, `rp_base_last`, `rp_block_*` and `rp_base_period_set`
 companion sets, one set of rows per period of the solve (every frame has a
 `period` column), plus `rp_period_previous` (the rp periods in solve
-order).  `solve/_run_model.py` emits them for every period whose timeset
+order).  `solve/_run_model/_native_run_model.py` emits them for every period whose timeset
 has `representative_period_weights`; periods without keep their
 `timeset_weights` rows in the same `timestep_weight` frame.  The forecast
 branch periods of a stochastic solve are rp periods with the timeset of the
@@ -706,7 +716,7 @@ from `_period_params`; `_fixed_costs` reads
 in `_arc_unions`.
 
 The runner does not compute the order. It is encoded in the call
-order of `_apply_db_overrides` (in `flex_data.py`) and the load sequence
+order of `_apply_db_overrides` (in `flex_data/_db_overrides.py`) and the load sequence
 in `load_flextool`. Adding a new derived field typically means appending
 one call to the right phase.
 
@@ -803,14 +813,14 @@ Known gaps (not exercised, or not Enum, in this mode):
   and the CLI region export (`decomposition/region_filter.py`), the staged input
   loader (`engine/input/_db_loader.py`), the CSV reload
   (`engine/_csv_reload/load.py`), and the sub-solve provider that
-  `_run_model.py` builds when the run state carries none.
+  `_run_model.native_run_model` builds when the run state carries none.
 - Engine Benders inherits the vocabulary through `FlexData`
-  (`_region_filter.py` widens it per region), but no lp_snapshot
+  (`_region_filter.split` widens it per region), but no lp_snapshot
   fixture runs it; only the Benders / master-hosted region tests that
   load with `axis_enums=True` cover it.
 - Intended narrowing casts null labels outside the scenario's
   vocabulary: `d` casts of periods outside the solve (`_retire_settlement.py`,
-  `_derived.py`) and the `constraint` cast in `_spinedb_reader.py`. No
+  `params/_derived/`) and the `constraint` cast in `_spinedb_reader.py`. No
   LP effect in the fixtures; a site that needs such a label must not
   read it through the cast.
 
@@ -919,6 +929,20 @@ folder) is architecture.md
 
 The same `build_flextool` body backs three solver wrappers exported by
 `polar_high`. They differ only in what they do *between* solves.
+
+The loop that drives them is the `solve/_orchestration/` package: `_entry`
+(`run_chain_from_db`, `run_orchestration`), `_cascade` (`_drive_cascade` and its
+per-sub-solve `_run_one`: load, build or warm reuse, solve, outputs, handoff),
+`_highs_options` (the HiGHS option set of a sub-solve), `_autoscale_hooks` (the
+autoscale steps around a solve), `_guards` (solve-chain guards and the realization
+solves of stochastic solves), `_steps` (`OrchestrationStep`) and `_memory` (the
+memory / phase diagnostics).  `_drive_cascade` hands each sub-solve to it from the
+`solve/_run_model/` package: `_native_run_model` (`native_run_model`: the solve-tree
+expansion, stochastic branching and the per-solve setup), `_rolling_storage` /
+`_nested_storage` (the storage carry of rolling and nested solves), `_rp_methods`
+(storage-binding methods on representative periods, the fix_start_end forward chain),
+`_storage_frames` (the shared method readers and `_RollingStorage`) and
+`_run_timelines` (realization-roll plans, run time steps).
 
 ### Monolithic — `polar_high.Problem`
 
@@ -1035,15 +1059,15 @@ columns are those of the module docstring:
 The other attributes are not carriers: `unit_detail` / `online_left_out`
 ([Solve-level detail reduction](#solve-level-detail-reduction)), and
 `cycle_start_state`, `storage_level`, `scope_start_state`,
-`realised_storage_usage`, which the cascade (`solve/_run_model.py`) reads
+`realised_storage_usage`, which the cascade (the `solve/_run_model/` package) reads
 for cyclic scopes, nested starts and the per-roll usage cap.
 
-**Producer and transport.** `build_handoff_from_solution` (`flex_data.py`)
+**Producer and transport.** `build_handoff_from_solution` (`flex_data/_handoff.py`)
 populates one `SolveHandoff` from the just-completed solve's `polar_high`
 Solution and the sub-solve's provider (which it requires). The cascade
 transports the carriers through the Provider's `HANDOFF_*` keys
 (`_provider_translators._FIELD_TO_KEY`) — zero disk round-trips — and the
-override translator + `_apply_db_overrides` chain in `flex_data.py`
+override translator + `_apply_db_overrides` chain in `flex_data/_db_overrides.py`
 translates each carrier into the next `FlexData`'s `p_entity_*` parameters
 and the corresponding `n_*` / `ndt_*` / `p_*` sets
 (`p_fix_storage_quantity`, `p_fix_storage_usage`,
@@ -1262,7 +1286,7 @@ for `fix_price` (an objective term).  The horizon-end reference value
 `handoff/fix_storage_price`).
 
 A `fix_start_end` node ignores its `storage_binding_method` (reference/nodes.md,
-exception `bind_forward_only`): `_run_model._fix_start_end_chains_forward`
+exception `bind_forward_only`): `_run_model._rp_methods._fix_start_end_chains_forward`
 rewrites the per-solve `input/node__storage_binding_method` frame right
 after `_downgrade_rp_methods_for_non_rp_solve` (so a blended node of a
 solve without representative periods goes blended → plain →
@@ -1286,7 +1310,7 @@ on representative periods the mapping is `_FIX_START_END_FORWARD_RP`: a
 configuration error, `_reject_plain_forward_in_rp_solve`, checked on the
 database methods before this mapping).
 
-Then `_run_model._timeblock_binds_within_period_in_roll` rewrites
+Then `_run_model._rolling_storage._timeblock_binds_within_period_in_roll` rewrites
 `bind_within_timeblock` to `bind_within_period` in a rolling solve
 (`_reject_rolling_with_gaps` has made sure each period is one timeblock),
 so the per-period rolling rule (`_scope_rows`, `scope_*` rows) applies to
@@ -1372,7 +1396,7 @@ Behaviours to know:
   operational is tied; unset for a dispatch solve, which ties its committed
   window).  Under `operations_only` the investments stay on the period labels.
   A per-branch investment is never realized; the handoff realizes the tied
-  reveal-period copy under its label (`flex_data._label_tied_cohorts`), and the
+  reveal-period copy under its label (`flex_data._handoff_inputs._label_tied_cohorts`), and the
   realization solve of an investment solve starts at the reveal
   (`SolveConfig.realization_window`).
 
@@ -1442,22 +1466,22 @@ API of the other packages is in architecture.md
 
 | You want to… | Start at | Then read |
 |---|---|---|
-| Add a constraint that uses only existing parameters | `model/core.py` table of contents in `build_flextool` | Write an `_eq_<family>(b)` function: an early-return guard on its flag (`if not b.has_<x>: return`), then an `EQ. ─── <name>` header (formula, one to three lines on what it does) above the `m.add_cstr` call. Add it to the table of contents next to related families. A constraint of an optional feature goes into that feature's module (`add_constraints(b)`). Placement sets the LP row order: check the effect with `tools/lp_snapshot.py`. Register the constraint name in autoscale `CONSTRAINT_FAMILIES` (architecture.md [Layers](architecture.md#layers-bottom-up)), a period-level family also in `PERIOD_ROW_KINDS` / `REVIEWED_STEP_LEVEL` ([Realization rolls](#realization-rolls)), and list it in the `model/core.py` module docstring. |
-| Add a new input parameter | `_param_shapes.py` `PARAM_ALLOWED_SHAPES` | Add the parameter's entry, then populate it in `_direct.py` (trivial DB read) or a new module in `preprocess/params/` (computed). Add the field to `FlexData` and to the relevant feature's required-field tuple in `model/core.py`. Register it in autoscale `PARAMETER_TYPES`; a time series also needs its `TIME_AGGREGATION` kind (architecture.md [Solve-step aggregation](architecture.md#solve-step-aggregation-new_stepduration-of-a-solve)). A parameter that takes several shapes needs a constant-vs-equivalent-map test (CONTRIBUTING.md "Shape-equivalence tests"). |
-| Add a new pre-solve set / index | `_per_solve_sets.py` if it's per-active-solve; a new module in `preprocess/emit/` otherwise | Wire the new function into `_apply_db_overrides` in `flex_data.py`. A frame that links two steps goes in `STEP_RELATIONS`. |
-| Add a new optional feature | A new module next to `_reserve.py` / `_group_slack.py` | Give it `add_variables(b)` (variables with `VAR.` headers, set on `b`), `add_constraints(b)` and `objective_terms(b) -> Expr \| None`, each with an early-return guard on the feature's flag. Add the flag (and any variable fields) to `_Build`; set the flag in `_prepare`, with a `MY_FEATURE = (...)` required-field tuple and a `_check(d, MY_FEATURE, "my_feature")` call if it needs one. Call `add_variables` from `_declare_variables` and put `add_constraints` / `objective_terms` in the `build_flextool` table of contents. Register every new variable and constraint in autoscale `VARIABLE_FAMILIES` / `CONSTRAINT_FAMILIES`, add them to the `model/core.py` module docstring, and check the LP with `tools/lp_snapshot.py`. |
+| Add a constraint that uses only existing parameters | `model/core/_build.py` table of contents in `build_flextool` | Write an `_eq_<family>(b)` function: an early-return guard on its flag (`if not b.has_<x>: return`), then an `EQ. ─── <name>` header (formula, one to three lines on what it does) above the `m.add_cstr` call. Add it to the table of contents next to related families. A constraint of an optional feature goes into that feature's module (`add_constraints(b)`). Placement sets the LP row order: check the effect with `tools/lp_snapshot.py`. Register the constraint name in autoscale `CONSTRAINT_FAMILIES` (architecture.md [Layers](architecture.md#layers-bottom-up)), a period-level family also in `PERIOD_ROW_KINDS` / `REVIEWED_STEP_LEVEL` ([Realization rolls](#realization-rolls)), and list it in the `model/core/_build.py` module docstring. |
+| Add a new input parameter | `_param_shapes.py` `PARAM_ALLOWED_SHAPES` | Add the parameter's entry, then populate it in `_direct.py` (trivial DB read) or a new module in `preprocess/params/` (computed). Add the field to `FlexData` and to the relevant feature's required-field tuple in `model/core/`. Register it in autoscale `PARAMETER_TYPES`; a time series also needs its `TIME_AGGREGATION` kind (architecture.md [Solve-step aggregation](architecture.md#solve-step-aggregation-new_stepduration-of-a-solve)). A parameter that takes several shapes needs a constant-vs-equivalent-map test (CONTRIBUTING.md "Shape-equivalence tests"). |
+| Add a new pre-solve set / index | `_per_solve_sets.py` if it's per-active-solve; a new module in `preprocess/emit/` otherwise | Wire the new function into `_apply_db_overrides` in `flex_data/_db_overrides.py`. A frame that links two steps goes in `STEP_RELATIONS`. |
+| Add a new optional feature | A new module next to `_reserve.py` / `_group_slack.py` | Give it `add_variables(b)` (variables with `VAR.` headers, set on `b`), `add_constraints(b)` and `objective_terms(b) -> Expr \| None`, each with an early-return guard on the feature's flag. Add the flag (and any variable fields) to `_Build`; set the flag in `_prepare`, with a `MY_FEATURE = (...)` required-field tuple and a `_check(d, MY_FEATURE, "my_feature")` call if it needs one. Call `add_variables` from `_declare_variables` and put `add_constraints` / `objective_terms` in the `build_flextool` table of contents. Register every new variable and constraint in autoscale `VARIABLE_FAMILIES` / `CONSTRAINT_FAMILIES`, add them to the `model/core/` module docstring, and check the LP with `tools/lp_snapshot.py`. |
 | Trace a numerical issue | `solve_data/autoscale_<solve>.yaml` | The Layer 1 ranges + Layer 2/3 plans show which families are wide and which scalers fired. [scaling.md](scaling.md), architecture.md [Numerical scaling](architecture.md#numerical-scaling). |
 | Trace a feasibility issue | `vq_*` outputs in `output_parquet/` | Slack activity localises the infeasibility to a row family. [slack_convention.md](slack_convention.md). |
-| Add a new decomposition mode | `_benders.py` (+ `_region_filter.py`) for spatial, `_warm.py` + `_orchestration.py` `_drive_cascade` for temporal | Each carries the FlexTool-side glue around a `polar_high` driver. Read [decomposition.md](decomposition.md) first. |
-| Trace a wrong-period bug in rolling horizon | `_apply_db_overrides` in `flex_data.py` | The handoff translation site. Cross-check against the `SolveHandoff` fields populated by `build_handoff_from_solution` and the routing in `solve/_carry_routing.py`. |
-| Trace a warm-LP divergence | `_warm._reuse_blocker`, `_orchestration` `solver_key` | A reuse requires every `FlexData` field and the solver configuration to be identical; the INFO line "warm reuse fell back to COLD REBUILD" names the blocker. A warm/cold divergence on a reused sub-solve means something that shapes the LP lives outside `FlexData` and the solver key: add it to the comparison. |
+| Add a new decomposition mode | `_benders.py` (+ `_region_filter/`) for spatial, `_warm.py` + `_orchestration/_cascade.py` `_drive_cascade` for temporal | Each carries the FlexTool-side glue around a `polar_high` driver. Read [decomposition.md](decomposition.md) first. |
+| Trace a wrong-period bug in rolling horizon | `_apply_db_overrides` in `flex_data/_db_overrides.py` | The handoff translation site. Cross-check against the `SolveHandoff` fields populated by `build_handoff_from_solution` and the routing in `solve/_carry_routing.py`. |
+| Trace a warm-LP divergence | `_warm._reuse_blocker`, `_orchestration/_cascade.py` `solver_key` | A reuse requires every `FlexData` field and the solver configuration to be identical; the INFO line "warm reuse fell back to COLD REBUILD" names the blocker. A warm/cold divergence on a reused sub-solve means something that shapes the LP lives outside `FlexData` and the solver key: add it to the comparison. |
 | Add a new variable / dual to the parquet output | `flextool/process_outputs/read_highs_solution.VARIABLE_SPECS` | Append one `VariableSpec` (architecture.md [Solution extraction](architecture.md#solution-extraction)). |
 
 ## Conventions worth knowing
 
 - **Lazy at the rim, eager at the boundary.** Internal frames are
   `pl.LazyFrame`; helpers `.collect()` once at the function boundary.
-  This is the pattern documented at the top of `_derived.py`
+  This is the pattern documented in `params/_derived/__init__.py`
   and `_per_solve_sets.py`.
 - **None-skip is canonical.** A field at `None` means "feature not
   active" and is the recommended way to opt out. Empty frames mean

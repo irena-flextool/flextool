@@ -137,7 +137,7 @@ def require_supported(solver: str, options: Mapping | Iterable | None, *, solve_
     option of *solver* and the installed polar-high cannot map it.
 
     Called where a solve's HiGHS options are resolved
-    (``_orchestration._solve_highs_options``), so the refusal holds on every
+    (``_orchestration._highs_options._solve_highs_options``), so the refusal holds on every
     in-process path, whatever prints or echoes follow; the option-file paths
     also meet it in :func:`translate_for_solver`."""
     if supported():

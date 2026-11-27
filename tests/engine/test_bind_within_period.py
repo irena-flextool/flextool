@@ -15,7 +15,7 @@ import pytest
 
 from flextool.engine.model import _self_discharge
 from flextool.engine.model._pdt_join import compute_nodeState_dt
-from flextool.engine.preprocess.flex_data import _within_period_lag
+from flextool.engine.preprocess.flex_data._readers import _within_period_lag
 from tests.engine import _rp_hourly_ref as H
 from tests.engine._lp_rows import row_terms
 from tests.engine._unit_db import build

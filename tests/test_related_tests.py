@@ -1,0 +1,51 @@
+"""tools/related_tests.py: a module of a package that its facade imports relates the tests that import the package."""
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+def _tool():
+    spec = importlib.util.spec_from_file_location("related_tests", REPO / "tools" / "related_tests.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_a_module_of_a_split_package_relates_the_importers_of_the_package() -> None:
+    """test_coarse_row_rule imports only ``flextool.engine.model.core`` (the facade); _ramp is imported by the
+    facade itself, _storage_links only through other modules of the package: both relate it."""
+    tool = _tool()
+    for changed in ("flextool/engine/model/core/_ramp.py", "flextool/engine/model/core/_storage_links.py"):
+        assert "tests/engine/test_coarse_row_rule.py" in tool.related([changed])
+
+
+def test_a_module_of_a_split_package_relates_the_importers_of_the_modules_that_import_it() -> None:
+    """test_piecewise_reader imports ``_derived._process_method`` (not the facade); _process_method imports
+    ``_derived._scope``, so a change of _scope relates it.  No module of the package imports _ladder, so a change of
+    _ladder does not."""
+    tool = _tool()
+    assert "tests/engine/test_piecewise_reader.py" in tool.related(
+        ["flextool/engine/preprocess/params/_derived/_scope.py"])
+    assert "tests/engine/test_piecewise_reader.py" not in tool.related(
+        ["flextool/engine/preprocess/params/_derived/_ladder.py"])
+
+
+def test_importing_a_plain_package_still_does_not_count() -> None:
+    """``flextool.engine.model`` is a package whose __init__ imports none of its modules: a change of _online
+    relates only the tests that import _online by name."""
+    tool = _tool()
+    assert "tests/engine/test_coarse_row_rule.py" not in tool.related(["flextool/engine/model/_online.py"])
+
+
+def test_a_directory_counts_as_its_python_files() -> None:
+    """A package directory, with or without a trailing slash, selects what its modules select: test_region_filter
+    imports ``flextool.engine.solve._region_filter``, whose facade imports the package's modules."""
+    tool = _tool()
+    expected = tool.related(sorted(
+        p.relative_to(REPO).as_posix() for p in (REPO / "flextool/engine/solve/_region_filter").glob("*.py")))
+    assert "tests/engine/test_region_filter.py" in expected
+    for changed in ("flextool/engine/solve/_region_filter", "flextool/engine/solve/_region_filter/"):
+        assert tool.related([changed]) == expected

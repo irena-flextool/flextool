@@ -192,7 +192,7 @@ def test_no_csv_dump_means_no_emit_leak_on_disk(
     # Files dropped to ``solve_data/`` by the post-solve handoff
     # pipeline.  These predate the writer→emitter refactor and are
     # written by ``flextool.process_outputs.handoff_writers`` /
-    # ``flextool.engine.solve._orchestration._dump_scale_the_objective``
+    # ``flextool.engine.solve._orchestration._steps._write_scale_csv``
     # — never via an ``emit_*`` site — so they're not in scope here.
     _POST_SOLVE_HANDOFF_LEAK_EXEMPT = {
         "fix_storage_price.csv",

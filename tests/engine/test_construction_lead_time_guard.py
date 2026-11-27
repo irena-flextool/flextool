@@ -23,7 +23,7 @@ import pytest
 
 from flextool.engine.preprocess.params._cohorts import invest_cohorts
 from flextool.engine.preprocess.params._existing import _construction_lag_configured
-from flextool.engine.preprocess.params._derived import _build_commission_lf
+from flextool.engine.preprocess.params._derived._invest_apply import _build_commission_lf
 from flextool.engine.preprocess.params._walks import (
     WindowMethod,
     period_walk_iterator,

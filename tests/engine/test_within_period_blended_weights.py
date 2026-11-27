@@ -55,7 +55,7 @@ state-change is bounded by what inflow + slack can absorb.
 These three numbers are the load-bearing assertions below.  Any drift
 indicates a regression in the cyclic-closure topology or the per-
 period join semantics added in Phase E to
-``model/core.py``'s ``rp_inter_period_cyclic`` block.
+``model/core/``'s ``rp_inter_period_cyclic`` block.
 
 If the orthogonal forward_only sanity check is interesting, see
 ``test_forward_only_blended_weights.py`` which exercises a closely
@@ -79,7 +79,7 @@ def _build_toy_rp_two_periods(*, method: str) -> FlexData:
     ``storage_bind_*_blended_weights`` partition gets the singleton
     node ``bat``; ``nodeState_rp`` is the union of all three blended-
     weights variants (Phase E extension) so the shared RP machinery in
-    ``model/core.py`` fires identically across the three variants.  Only
+    ``model/core/`` fires identically across the three variants.  Only
     ``rp_inter_period_cyclic`` further filters back to the
     within_solve ∪ within_period subset and gates its (b_first, b_last)
     pairing on the optional ``d`` column carried on
@@ -126,7 +126,7 @@ def _build_toy_rp_two_periods(*, method: str) -> FlexData:
     nodeState = pl.DataFrame({"n": ["bat"]})
     nodeState_dt = nodeState.join(dt, how="cross")
     # The first step of the solve's first period only, as the engine builds it (from
-    # period_first_of_solve, flex_data.py).  A first step of y2030 here would make y2030 a second root
+    # period_first_of_solve, flex_data/_load_storage.py).  A first step of y2030 here would make y2030 a second root
     # of the solve: rp_inter_period_fan_start (item 125) would then tie its chain start to y2025's, as
     # for a fan of forecasts in the first period, and forward_only would no longer be unclosed.
     nodeState_first_dt = (nodeState_dt.filter(pl.col("d") == "y2025").sort(["n", "d", "t"])
@@ -277,7 +277,7 @@ def test_three_variants_distinguished_by_objective() -> None:
         f"each period closes its own cycle independently: "
         f"period y2025 must spill 2 (cost 2.0), period y2030 must "
         f"spill 1 (cost 1.0), total 3.0.  If obj == 1.0 the "
-        f"per-period (b_first, b_last) pairing in model/core.py's cyclic-"
+        f"per-period (b_first, b_last) pairing in model/core/'s cyclic-"
         f"emit block is collapsing to the within_solve cross-join "
         f"(Phase E rp_base_first/last d-column join bug); if obj == "
         f"0.0 the cyclic constraint is not firing at all for the "

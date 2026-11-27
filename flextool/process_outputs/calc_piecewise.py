@@ -1,7 +1,7 @@
 """Input burnt above the part-load curve of the piecewise_linear units (the post-solve check, W5).
 
 A ``piecewise_linear`` unit with two or more lines converts by ``conversion_piecewise``: its weighted input is *at
-least* each line of its curve (``model/core._eq_conversion_piecewise``).  The cheapest input lies on the curve, so
+least* each line of its curve (``model/core/_conversion._eq_conversion_piecewise``).  The cheapest input lies on the curve, so
 the input is above it only where that costs nothing or pays: an input without value (a surplus, a free or
 curtailed input), a negative value (a CO2 credit, a negative price), or a reserve or a minimum on the input.  The
 check measures, per realized step,

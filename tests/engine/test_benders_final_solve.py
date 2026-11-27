@@ -2,7 +2,7 @@
 run; without the final solve result a chained Benders solve writes its investment-only results (P3).
 
 After the Benders loop, the whole model of the solve is solved once with every investment decision fixed to the
-Benders incumbent (``_orchestration._run_one``), on the normal monolithic path.  Oracles are relational: each
+Benders incumbent (``_run_one`` in ``_orchestration._cascade``), on the normal monolithic path.  Oracles are relational: each
 Benders run is compared with its **monolithic twin**, the same database with ``solve.decomposition = none`` on
 the Benders solve (the values come from the twin, never from the new code).
 
@@ -330,7 +330,7 @@ def test_final_solve_not_accepted_keeps_the_benders_result(restore_env, monkeypa
     from flextool.cli import cmd_run_flextool
     from flextool.engine.solve import _orchestration
 
-    real = _orchestration.classify_acceptance
+    real = _orchestration._cascade.classify_acceptance
     seen = []
 
     def reject(sol, **kwargs):
@@ -339,7 +339,7 @@ def test_final_solve_not_accepted_keeps_the_benders_result(restore_env, monkeypa
         return dataclasses.replace(acc, accepted=False, near_optimal=False, model_status="kInfeasible",
                                    message="patched: not accepted")
 
-    monkeypatch.setattr(_orchestration, "classify_acceptance", reject)
+    monkeypatch.setattr(_orchestration._cascade, "classify_acceptance", reject)
     url, scenario = make_db(tmp_path_factory, alt="p287p2_reject", values=[], base_chain=TRADE_CHAIN,
                             fixture_json=TRADE_JSON)
     root = tmp_path_factory.mktemp("p287p2_reject_run")
@@ -375,8 +375,8 @@ def test_final_solve_not_accepted_keeps_the_benders_step_and_handoff(monkeypatch
     from flextool.engine import run_chain_from_db
     from flextool.engine.solve import _orchestration
 
-    real = _orchestration.classify_acceptance
-    monkeypatch.setattr(_orchestration, "classify_acceptance", lambda sol, **kw: dataclasses.replace(
+    real = _orchestration._cascade.classify_acceptance
+    monkeypatch.setattr(_orchestration._cascade, "classify_acceptance", lambda sol, **kw: dataclasses.replace(
         real(sol, **kw), accepted=False, near_optimal=False, model_status="kInfeasible", message="patched"))
     monkeypatch.delenv("FLEXTOOL_BENDERS_FINAL_SOLVE", raising=False)
     url, scenario = make_db(tmp_path_factory, alt="p287p2_reject_steps", values=[], base_chain=TRADE_CHAIN,
@@ -462,7 +462,7 @@ def test_chained_final_solve_not_accepted_writes_the_investment_only_results(run
     from flextool.cli import cmd_run_flextool
     from flextool.engine.solve import _orchestration
 
-    real = _orchestration.classify_acceptance
+    real = _orchestration._cascade.classify_acceptance
 
     def reject(sol, **kwargs):
         acc = real(sol, **kwargs)
@@ -471,7 +471,7 @@ def test_chained_final_solve_not_accepted_writes_the_investment_only_results(run
         return dataclasses.replace(acc, accepted=False, near_optimal=False, model_status="kInfeasible",
                                    message="patched: not accepted")
 
-    monkeypatch.setattr(_orchestration, "classify_acceptance", reject)
+    monkeypatch.setattr(_orchestration._cascade, "classify_acceptance", reject)
     url, scenario = make_db(tmp_path_factory, alt="p287p3_reject", values=[], base_chain=INVEST_CHAIN,
                             fixture_json=LH2_JSON)
     root = tmp_path_factory.mktemp("p287p3_reject_run")

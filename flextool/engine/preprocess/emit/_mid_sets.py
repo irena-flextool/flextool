@@ -629,7 +629,7 @@ def derive_node_storage_nested_fix_method(
     ``node, storage_nested_fix_method`` from the generic
     ``_PARAMETER_SPECS`` emit) and renames the value column to the
     ``method`` contract every solve-time consumer expects
-    (``_load_handoff_aux_pair`` in ``flex_data.py`` and the
+    (``_load_handoff_aux_pair`` in ``flex_data/_handoff_inputs.py`` and the
     ``build_handoff_from_solution`` producer guards, which all check for
     a column literally named ``method``).  This is the crux deviation
     from the sibling ``derive_node_storage_binding_method``, whose

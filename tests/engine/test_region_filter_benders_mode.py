@@ -22,10 +22,8 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from flextool.engine.solve._region_filter import (
-    _BENDERS_UNCAP_SENTINEL,
-    split,
-)
+from flextool.engine.solve._region_filter import split
+from flextool.engine.solve._region_filter._region_data import _BENDERS_UNCAP_SENTINEL
 from tests._support.load import load_scenario
 
 

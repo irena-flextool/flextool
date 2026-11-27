@@ -86,7 +86,7 @@ node) keep their original ``value`` string verbatim.
 Group accounting reads the real demand
 --------------------------------------
 The core ``nodeBalance_eq`` reads ``p_inflow`` DIRECTLY from
-``pdtNodeInflow.csv`` (``model/core.py``), so the added demand IS served
+``pdtNodeInflow.csv`` (``model/core/``), so the added demand IS served
 for every node type, including one set ``inflow_method="no_inflow"``.  The
 group rows — the non-synchronous limit, the capacity margin and the group
 demand of the dynamic reserve requirement (``_group_slack.py``,

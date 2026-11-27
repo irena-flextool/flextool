@@ -6,7 +6,7 @@ data from an external tool — another optimisation model, a market
 simulator, a Python data step — into a FlexTool cascade *between*
 sub-solves of the same run.
 
-[rc]: https://github.com/irena-flextool/flextool/blob/main/flextool/engine/solve/_orchestration.py
+[rc]: https://github.com/irena-flextool/flextool/blob/main/flextool/engine/solve/_orchestration/_entry.py
 
 ## Purpose
 
@@ -51,8 +51,8 @@ It is invoked **once per sub-solve iteration**, after the natural
 handoff translators and before preprocessing. Returning `{}` (or
 `None`) means "no override this iteration".
 
-Full source: `flextool/engine/solve/_orchestration.py` (entry point),
-`flextool/engine/solve/_run_model.py` (invocation site),
+Full source: `flextool/engine/solve/_orchestration/_entry.py` (entry point),
+`flextool/engine/solve/_run_model/_native_run_model.py` (invocation site),
 `flextool/engine/preprocess/_provider_translators.py`
 (`translate_overrides_to_provider`, `read_handoff_frame`,
 `dump_provider_sources`).

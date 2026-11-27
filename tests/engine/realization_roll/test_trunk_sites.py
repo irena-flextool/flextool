@@ -1,6 +1,7 @@
 """The label-dispatch sites of a realization roll R_k (design rev 7.1 §2.2 S1-S9, §2.7 S13), through the seam.
 
-The realization roll is wired (``_run_model._roll_tail_plans``): a rolling ``within_solve`` solve gets no
+The realization roll is wired (``_run_model._native_run_model._roll_tail_plans``): a rolling ``within_solve`` solve gets
+no
 realization solve, each of its rolls is a realization roll.  The split-roll tests here stop at the first build
 and check the data the build reads (FlexData and ``solve_data``); ``test_split_roll_lp.py`` builds and solves split
 rolls end to end.  Rolls whose horizon is their jump (``deterministic`` plans: no label with steps) build and solve
@@ -33,7 +34,8 @@ class _Stop(BaseException):
 
 
 def _live_plan(monkeypatch) -> None:
-    """The realization roll is wired (``_run_model._roll_tail_plans``): only the strict autoscale check is set."""
+    """The realization roll is wired (``_run_model._native_run_model._roll_tail_plans``): only the strict autoscale
+    check is set."""
     monkeypatch.setenv("FLEXTOOL_AUTOSCALE_STRICT", "1")
 
 
@@ -220,10 +222,10 @@ def test_separate_dispatch_realization_roll_reads_its_plan(tmp_path_factory, mon
     plan (3.8: ``realized`` through flat tiers nearest to the UC roll's start), not from the W4c projection of its
     UC roll.  ``realized`` is made at t0001, t0025 and t0049 and covers each roll's jump, so the LPs equal today's
     (the W4c projection reads the same series, made at the roll start)."""
-    from flextool.engine.solve import _run_model
+    from flextool.engine.solve._run_model import _native_run_model
 
     frames: dict[str, list] = {}
-    emit = _run_model.solve_writers.emit_branch_time_start
+    emit = _native_run_model.solve_writers.emit_branch_time_start
 
     def recording(rows, **kw):
         frames.setdefault("rows", []).append(list(rows))
@@ -233,11 +235,11 @@ def test_separate_dispatch_realization_roll_reads_its_plan(tmp_path_factory, mon
     with monkeypatch.context() as unplanned:
         # Today's realization rolls: no plan (the W4c projection of the UC roll; horizon = jump, so the window is
         # the jump either way).
-        unplanned.setattr(_run_model, "_roll_tail_plans", lambda *a: {})
+        unplanned.setattr(_native_run_model, "_roll_tail_plans", lambda *a: {})
         today, _ = scm.run_capturing(scm.build_db(path, tmp_path_factory.mktemp("today")),
                                      "rolling_separate_dispatch", tmp_path_factory.mktemp("today_run"))
     _live_plan(monkeypatch)
-    monkeypatch.setattr(_run_model.solve_writers, "emit_branch_time_start", recording)
+    monkeypatch.setattr(_native_run_model.solve_writers, "emit_branch_time_start", recording)
     planned, _ = scm.run_capturing(scm.build_db(path, tmp_path_factory.mktemp("planned")),
                                    "rolling_separate_dispatch", tmp_path_factory.mktemp("planned_run"))
     assert [s for s, _, _ in planned] == [s for s, _, _ in today]

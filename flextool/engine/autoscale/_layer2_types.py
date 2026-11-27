@@ -94,27 +94,27 @@ class CstrFamily:
 
 VARIABLE_FAMILIES: dict[str, VarFamily] = {
     # ── Process / connection flow (dispatched per timestep).
-    # flextool/engine/model/core.py _declare_variables
+    # flextool/engine/model/core/_variables.py _declare_variables
     "v_flow": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
     # The increase / decrease of v_flow from its ramp predecessor (ramp cost), in v_flow's units, so that
     # ramp_change_eq keeps its ±1 coefficients after column scaling.
-    # flextool/engine/model/core.py _declare_variables
+    # flextool/engine/model/core/_variables.py _declare_variables
     "v_ramp_up": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
     "v_ramp_down": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
 
     # ── Storage / nodeBalance slacks.  Carry ENERGY directly (no
     # unitsize multiplier on the column).
-    # flextool/engine/model/core.py _declare_variables
+    # flextool/engine/model/core/_variables.py _declare_variables
     "vq_state_up": VarFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _declare_variables
+    # flextool/engine/model/core/_variables.py _declare_variables
     "vq_state_down": VarFamily(QuantityType.ENERGY),
 
     # ── Storage state (per-step, per-block).  ENERGY column.
-    # flextool/engine/model/core.py _declare_variables
+    # flextool/engine/model/core/_variables.py _declare_variables
     "v_state": VarFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _declare_variables
+    # flextool/engine/model/core/_variables.py _declare_variables
     "v_state_inter": VarFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _declare_variables
+    # flextool/engine/model/core/_variables.py _declare_variables
     "v_state_rp_start": VarFamily(QuantityType.ENERGY),
 
     # ── Unit-commitment families.  Column counts a number of units
@@ -142,13 +142,13 @@ VARIABLE_FAMILIES: dict[str, VarFamily] = {
     # matrix coefficient ``p_unitsize`` (process / connection) or
     # ``p_state_unitsize`` (node) sets the row's effective POWER /
     # ENERGY type.
-    # flextool/engine/model/core.py _declare_variables
+    # flextool/engine/model/core/_variables.py _declare_variables
     "v_invest_p": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
-    # flextool/engine/model/core.py _declare_variables
+    # flextool/engine/model/core/_variables.py _declare_variables
     "v_divest_p": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
-    # flextool/engine/model/core.py _declare_variables
+    # flextool/engine/model/core/_variables.py _declare_variables
     "v_invest_n": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_state_unitsize"),
-    # flextool/engine/model/core.py _declare_variables
+    # flextool/engine/model/core/_variables.py _declare_variables
     "v_divest_n": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_state_unitsize"),
     # flextool/engine/model/_retire_built.py add_variables: the retirement of a model-built cohort and the
     # model-built capacity retired so far, counts of unitsize like v_divest.
@@ -198,7 +198,7 @@ VARIABLE_FAMILIES: dict[str, VarFamily] = {
     # flextool/engine/model/_dc_power_flow.py add_variables
     "v_angle": VarFamily(QuantityType.DIMENSIONLESS),
     # ``v_flow_back`` mirrors v_flow on the reverse direction.
-    # flextool/engine/model/core.py _declare_variables
+    # flextool/engine/model/core/_variables.py _declare_variables
     "v_flow_back": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
 
     # ── Benders (Option C) hand-built master families.  The hand master
@@ -237,52 +237,52 @@ VARIABLE_FAMILIES: dict[str, VarFamily] = {
 
 CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # ── Node balance (the central energy equation) — ENERGY.
-    # flextool/engine/model/core.py _eq_node_balance
+    # flextool/engine/model/core/_node_balance.py _eq_node_balance
     "nodeBalance_eq": CstrFamily(QuantityType.ENERGY),
     # Per-period energy balance for balance_within_period nodes — ENERGY.
-    # flextool/engine/model/core.py _eq_node_balance_period
+    # flextool/engine/model/core/_node_balance.py _eq_node_balance_period
     "nodeBalancePeriod_eq": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _eq_block_coupling
+    # flextool/engine/model/core/_node_balance.py _eq_block_coupling
     "nodeBalanceBlock_eq": CstrFamily(QuantityType.ENERGY),
     # Per-coarse-step energy balance of coarse new_stepduration group nodes — ENERGY.
-    # flextool/engine/model/core.py _eq_node_balance_coarse
+    # flextool/engine/model/core/_node_balance.py _eq_node_balance_coarse
     "nodeBalanceCoarse_eq": CstrFamily(QuantityType.ENERGY),
 
     # ── Storage state max / state ladder.  ENERGY.
-    # flextool/engine/model/core.py _eq_max_state
+    # flextool/engine/model/core/_storage_state.py _eq_max_state
     "maxState": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _eq_rp_storage_chain
+    # flextool/engine/model/core/_rp_storage.py _eq_rp_storage_chain
     "maxState_rp_start": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _eq_block_coupling
+    # flextool/engine/model/core/_node_balance.py _eq_block_coupling
     "stateConstantWithinBlock_eq": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _eq_node_balance_coarse
+    # flextool/engine/model/core/_node_balance.py _eq_node_balance_coarse
     "stateConstantCoarse_eq": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _eq_rp_storage_chain
+    # flextool/engine/model/core/_rp_storage.py _eq_rp_storage_chain
     "rp_inter_period_balance": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _eq_rp_storage_chain
+    # flextool/engine/model/core/_rp_storage.py _eq_rp_storage_chain
     "rp_inter_period_cyclic": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _eq_rp_storage_chain (first-period fan of forward-only blended nodes)
+    # flextool/engine/model/core/_rp_storage.py _eq_rp_storage_chain (first-period fan of forward-only blended nodes)
     "rp_inter_period_fan_start": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _eq_rp_storage_chain
+    # flextool/engine/model/core/_rp_storage.py _eq_rp_storage_chain
     "rp_inter_period_max_state": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _eq_rp_chain_ends (the absolute level at the ends of the base-period chain)
+    # flextool/engine/model/core/_rp_storage.py _eq_rp_chain_ends (the absolute level at the ends of the base-period chain)
     "rp_inter_period_start_fix": CstrFamily(QuantityType.ENERGY),
     "rp_inter_period_end_fix": CstrFamily(QuantityType.ENERGY),
     "rp_inter_period_start_max_state": CstrFamily(QuantityType.ENERGY),
     "rp_inter_period_start_min_state": CstrFamily(QuantityType.ENERGY),
     "rp_inter_period_end_match": CstrFamily(QuantityType.ENERGY),
     "rp_inter_period_reference_value": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _eq_storage_start_binding_cyclic
+    # flextool/engine/model/core/_storage_state.py _eq_storage_start_binding_cyclic
     "storage_state_start_binding_cyclic_period": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _eq_storage_within_solve_path_end (bind_within_solve, stochastic paths)
+    # flextool/engine/model/core/_storage_state.py _eq_storage_within_solve_path_end (bind_within_solve, stochastic paths)
     "storage_within_solve_path_end": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _eq_storage_split_path_end (bind_within_period / blocks, split realization roll)
+    # flextool/engine/model/core/_storage_state.py _eq_storage_split_path_end (bind_within_period / blocks, split realization roll)
     "storage_split_path_end": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _eq_storage_state_fan_start (bind_forward_only, first-period fan)
+    # flextool/engine/model/core/_storage_state.py _eq_storage_state_fan_start (bind_forward_only, first-period fan)
     "storage_state_fan_start": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _eq_storage_end_binding
+    # flextool/engine/model/core/_storage_state.py _eq_storage_end_binding
     "storage_state_end_binding": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _eq_storage_roll_end (rolling bind_within_solve: anchor and closure)
+    # flextool/engine/model/core/_storage_state.py _eq_storage_roll_end (rolling bind_within_solve: anchor and closure)
     "storage_state_roll_anchor": CstrFamily(QuantityType.ENERGY),
     "storage_state_roll_close": CstrFamily(QuantityType.ENERGY),
     "storage_state_roll_anchor_share": CstrFamily(QuantityType.ENERGY),
@@ -290,21 +290,21 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "storage_state_roll_match": CstrFamily(QuantityType.ENERGY),
     "rp_inter_period_start_carry": CstrFamily(QuantityType.ENERGY),
     "rp_inter_period_start_match": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _eq_storage_end_match (forward chains whose start the solve decides)
+    # flextool/engine/model/core/_storage_state.py _eq_storage_end_match (forward chains whose start the solve decides)
     "storage_state_end_match": CstrFamily(QuantityType.ENERGY),
     "storage_state_end_match_share": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _eq_storage_reference_value
+    # flextool/engine/model/core/_storage_state.py _eq_storage_reference_value
     "storage_state_solve_horizon_reference_value": CstrFamily(QuantityType.ENERGY),
 
     # ── Flow caps from process side.  DIMENSIONLESS (capacity coefficient).
     # The cap is a fraction × existing_count; the row's effective type
     # lives in the coefficient, not the RHS.
-    # flextool/engine/model/core.py _eq_max_flow
+    # flextool/engine/model/core/_flows.py _eq_max_flow
     "maxFlow": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine/model/core.py _eq_max_flow
+    # flextool/engine/model/core/_flows.py _eq_max_flow
     "maxFlow_negCap": CstrFamily(QuantityType.DIMENSIONLESS),
     # Reverse-flow capacity cap on v_flow_back for method_2way_1var_off
-    # arcs (DC + non-DC).  flextool/engine/model/core.py (maxFlow_back).
+    # arcs (DC + non-DC).  flextool/engine/model/core/ (maxFlow_back).
     "maxFlow_back": CstrFamily(QuantityType.DIMENSIONLESS),
     # Coarse processes: the arc-local rows averaged over each coarse step (Σ_t w·row_t, Σ_t w = 1) keep their
     # fine family's type.  flextool/engine/model/_coarse_flows.py add_cstr (f"{name}_coarse").  Explicit: the
@@ -320,51 +320,51 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "maxFlow_exact_forward_coarse": CstrFamily(QuantityType.DIMENSIONLESS),
     "maxFlow_exact_reverse_coarse": CstrFamily(QuantityType.DIMENSIONLESS),
     # Indirect-unit capacity on the SUM of output flows (+ its neg-cap
-    # ``≥`` twin).  flextool/engine/model/core.py (_eq_max_output_sum).
+    # ``≥`` twin).  flextool/engine/model/core/_flows.py (_eq_max_output_sum).
     "maxOutputSum": CstrFamily(QuantityType.DIMENSIONLESS),
     "maxOutputSum_negCap": CstrFamily(QuantityType.DIMENSIONLESS),
     "maxOutputSum_coarse": CstrFamily(QuantityType.DIMENSIONLESS),
     "maxOutputSum_negCap_coarse": CstrFamily(QuantityType.DIMENSIONLESS),
     # Ramp constraints, prefix-matched: ramp_<side>_<dir>_constraint.
-    # flextool/engine/model/core.py _eq_ramp
+    # flextool/engine/model/core/_ramp.py _eq_ramp
     "ramp": CstrFamily(QuantityType.DIMENSIONLESS),
-    # The reserve ramp room of coarse processes, one row per coarse step (core.py _eq_ramp,
+    # The reserve ramp room of coarse processes, one row per coarse step (core/_ramp.py _eq_ramp,
     # _coarse_flows.reserve_room_rows).  Explicit, with the ramp family's type.
     **{f"ramp_{side}_{dir_}_reserve_coarse": CstrFamily(QuantityType.DIMENSIONLESS)
        for side in ("sink", "source") for dir_ in ("up", "down")},
-    # The flow change of an arc with a ramp cost, split into v_ramp_up / v_ramp_down (core.py _eq_ramp_cost).
+    # The flow change of an arc with a ramp cost, split into v_ramp_up / v_ramp_down (core/_ramp.py _eq_ramp_cost).
     # Exact entry: the "ramp" prefix above would otherwise catch it.
     "ramp_change_eq": CstrFamily(QuantityType.DIMENSIONLESS),
 
     # ── Investment caps — entity scope.  v_invest / v_divest ≤ max_units: a count of units (of unitsize /
     # state_unitsize), not MW or MWh, so DIMENSIONLESS like the invest columns themselves.
-    # flextool/engine/model/core.py _eq_invest_max_units
+    # flextool/engine/model/core/_invest.py _eq_invest_max_units
     "maxInvest_var_bound": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine/model/core.py _eq_invest_max_units
+    # flextool/engine/model/core/_invest.py _eq_invest_max_units
     "maxDivest_var_bound": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine/model/core.py _eq_invest_max_units
+    # flextool/engine/model/core/_invest.py _eq_invest_max_units
     "maxInvest_var_bound_n": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine/model/core.py _eq_invest_max_units
+    # flextool/engine/model/core/_invest.py _eq_invest_max_units
     "maxDivest_var_bound_n": CstrFamily(QuantityType.DIMENSIONLESS),
-    # flextool/engine/model/core.py _eq_invest_period_caps
+    # flextool/engine/model/core/_invest.py _eq_invest_period_caps
     "maxInvest_entity_period_p": CstrFamily(QuantityType.POWER),
-    # flextool/engine/model/core.py _eq_invest_period_caps
+    # flextool/engine/model/core/_invest.py _eq_invest_period_caps
     "maxInvest_entity_period_n": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _eq_invest_period_caps
+    # flextool/engine/model/core/_invest.py _eq_invest_period_caps
     "maxDivest_entity_period_p": CstrFamily(QuantityType.POWER),
-    # flextool/engine/model/core.py _eq_invest_period_caps
+    # flextool/engine/model/core/_invest.py _eq_invest_period_caps
     "maxDivest_entity_period_n": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _eq_invest_total_caps
+    # flextool/engine/model/core/_invest.py _eq_invest_total_caps
     "maxInvest_entity_total": CstrFamily(QuantityType.POWER),
-    # flextool/engine/model/core.py _eq_invest_total_caps
+    # flextool/engine/model/core/_invest.py _eq_invest_total_caps
     "maxInvest_entity_total_n": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _eq_invest_total_caps
+    # flextool/engine/model/core/_invest.py _eq_invest_total_caps
     "maxDivest_entity_total": CstrFamily(QuantityType.POWER),
-    # flextool/engine/model/core.py _eq_invest_total_caps
+    # flextool/engine/model/core/_invest.py _eq_invest_total_caps
     "maxDivest_entity_total_n": CstrFamily(QuantityType.ENERGY),
-    # flextool/engine/model/core.py _eq_retired_existing
+    # flextool/engine/model/core/_invest.py _eq_retired_existing
     "maxRetired_existing_p": CstrFamily(QuantityType.POWER),
-    # flextool/engine/model/core.py _eq_retired_existing
+    # flextool/engine/model/core/_invest.py _eq_retired_existing
     "maxRetired_existing_n": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/_retire_built.py add_constraints: a cohort retires at most what it has (MW / MWh)
     "maxDivest_cohort_p": CstrFamily(QuantityType.POWER),
@@ -381,7 +381,7 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
 
     # Slice D per-path total caps (design §7.2/§14) — one cap row per
     # (entity, scenario-leaf).  Emitted by
-    # ``_eq_invest_total_caps`` (model/core.py) when >1 scenario leaf exists
+    # ``_eq_invest_total_caps`` (model/core/_invest.py) when >1 scenario leaf exists
     # (recourse); the leaf-suffixed sums replace the cross-scenario
     # ``over=("d",)`` total.  Registered EXACTLY (``_path`` is not a
     # known ``lookup_cstr`` suffix, so a missing row silently reverts to
@@ -497,7 +497,7 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
 
     # ── User-defined constraints: composite LHS, RHS in caller's
     # coordinates.  Layer 2 skips per-row scaling.
-    # flextool/engine/model/core.py _eq_user_constraints (process_constraint_equal / _less_than / _greater_than;
+    # flextool/engine/model/core/_user_constraints.py _eq_user_constraints (process_constraint_equal / _less_than / _greater_than;
     # the _period variants are the one-row-per-period rows of constraints without flow or state terms)
     "process_constraint_equal": CstrFamily(None),
     "process_constraint_less_than": CstrFamily(None),
@@ -517,24 +517,24 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # ── Node-balance fix (used by manual demand patching).  Zero RHS
     # in the most common case; treat as DIMENSIONLESS so the row
     # coefficient is the rescaled quantity.
-    # flextool/engine/model/core.py _eq_node_balance_fix_quantity
+    # flextool/engine/model/core/_node_balance.py _eq_node_balance_fix_quantity
     "node_balance_fix_quantity_eq_lower": CstrFamily(None),
-    # flextool/engine/model/core.py _eq_storage_usage_fix
+    # flextool/engine/model/core/_node_balance.py _eq_storage_usage_fix
     "node_storage_usage_fix_le": CstrFamily(None),
 
     # ── Conversion (efficiency-balanced flow row).
-    # flextool/engine/model/core.py _eq_conversion
+    # flextool/engine/model/core/_conversion.py _eq_conversion
     "conversion_indirect": CstrFamily(QuantityType.ENERGY),
     # Coarse processes, averaged over each coarse step — flextool/engine/model/_coarse_flows.py add_cstr.
     "conversion_indirect_coarse": CstrFamily(QuantityType.ENERGY),
-    # Part-load curve of piecewise_linear units (input ≥ each line) — core.py _eq_conversion_piecewise.
+    # Part-load curve of piecewise_linear units (input ≥ each line) — core/_conversion.py _eq_conversion_piecewise.
     "conversion_piecewise": CstrFamily(QuantityType.ENERGY),
     "conversion_piecewise_coarse": CstrFamily(QuantityType.ENERGY),
 
     # ── CO2 caps — EMISSION_MASS.
-    # flextool/engine/model/core.py _eq_co2_max_period
+    # flextool/engine/model/core/_co2.py _eq_co2_max_period
     "co2_max_period": CstrFamily(QuantityType.EMISSION_MASS),
-    # flextool/engine/model/core.py _eq_co2_max_total
+    # flextool/engine/model/core/_co2.py _eq_co2_max_total
     "co2_max_total": CstrFamily(QuantityType.EMISSION_MASS),
     # Q16 (#52) per-path row: _eq_co2_max_total passes the constraint name as a variable (legacy vs
     # "_path"), so the literal-grep test cannot see it.  Registered EXACTLY, same reason as the
@@ -600,7 +600,7 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # (_unit_floors.py, _reserve.py).  Explicit: the fine-family prefixes would otherwise resolve them silently.
     "minFlow_reserve_coarse": CstrFamily(QuantityType.DIMENSIONLESS),
     "minFlow_reserve_arc_coarse": CstrFamily(QuantityType.DIMENSIONLESS),
-    # model/core.py _eq_min_input_share: homogeneous input-mixing row
+    # model/core/_conversion.py _eq_min_input_share: homogeneous input-mixing row
     # (input_share_min) in unit-count flow units
     "minInputShare": CstrFamily(QuantityType.DIMENSIONLESS),
     # Coarse processes, averaged over each coarse step — flextool/engine/model/_coarse_flows.py add_cstr.

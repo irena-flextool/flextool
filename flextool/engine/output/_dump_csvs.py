@@ -27,7 +27,7 @@ sliced rows back into a wide-by-param file (one row per (entity,
 param, …)).  Where flextool emits both an ``input/`` and a
 ``solve_data/`` copy of the same logical CSV, ``dump_csvs`` writes
 to ``solve_data/`` (the canonical post-preprocessing location) and
-also to ``input/`` when ``flex_data.py`` reads from there for that field.
+also to ``input/`` when ``preprocess/flex_data/`` reads from there for that field.
 
 **Not in scope.**  Per-solve metadata (``solve_current.csv``,
 ``period_first_of_solve.csv``, ``solve_mode.csv``, etc.) — these are
@@ -185,7 +185,7 @@ DIRECT_WRITES: dict[str, tuple[str, str, dict[str, str]]] = {
                                   {"p": "process"}),
     "process_minload": ("solve_data", "process_minload.csv", {"p": "process"}),
     "process_exact": ("solve_data", "process_exact.csv", {"p": "process"}),
-    # Start-up input draws (startup_input_method): reloaded by flex_data._load_startup_inputs.
+    # Start-up input draws (startup_input_method): reloaded by flex_data._load_co2._load_startup_inputs.
     "p_startup_energy": ("solve_data", "process_node_startup_energy.csv",
                          {"p": "process", "n": "node", "d": "period", "value": "value"}),
     # ─── Storage ──────────────────────────────────────────────────────

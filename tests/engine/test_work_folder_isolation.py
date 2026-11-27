@@ -1,7 +1,7 @@
 """A run reads only its in-memory provider, never CSV files left in a reused work folder (item 160).
 
 A ``--csv-dump`` (or any earlier run) leaves ``input/*.csv`` and ``solve_data/*.csv`` in the work folder. The
-loader's provider helpers in ``preprocess/flex_data.py`` used to fall back to such a file whenever the provider
+loader's provider helpers in ``preprocess/flex_data/_readers.py`` used to fall back to such a file whenever the provider
 lacked the key, so a stale ``solve_data/process_exact.csv`` from an ``exact``-transfer model turned a
 ``regular`` connection of the next model into an exact one (extra ``v_exact_forward`` columns and
 ``maxFlow_exact_*`` rows).
@@ -32,13 +32,9 @@ import pytest
 from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 from flextool.engine.preprocess.emit._blocks import _read_input_rows
-from flextool.engine.preprocess.flex_data import (
-    _provider_has,
-    _provider_pick,
-    _provider_read,
-    _read_process_exact,
-    load_flextool,
-)
+from flextool.engine.preprocess.flex_data import load_flextool
+from flextool.engine.preprocess.flex_data._readers import _provider_has, _provider_pick, _provider_read
+from flextool.engine.preprocess.flex_data._load_ramp_online import _read_process_exact
 from tests._support.load import sqlite_path_from_url
 from tests.engine._unit_db import b64, make_db
 

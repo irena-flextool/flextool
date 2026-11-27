@@ -1439,7 +1439,7 @@ class SolveConfig:
         deterministic optimisation, not a re-floated gap.
         """
         # ►► The reader half of the sibling config is ``SpineDbReader.REALIZATION_SOLVE_DROPPED_PARAMS``
-        # (feature map: ``_orchestration._spawn_realized_dispatch_siblings``; pinned by
+        # (feature map: ``_orchestration._guards._spawn_realized_dispatch_siblings``; pinned by
         # ``tests/engine/test_realized_dispatch_coherence.py``).
         # Positional insert right after the parent (NOT append + remove).
         for _model, solves in self.model_solve.items():
@@ -1467,7 +1467,7 @@ class SolveConfig:
 
         Applied to the driving ``runner.state.solve`` (:meth:`spawn_realized_dispatch_sibling`) and to the outer
         cascade ``state.solve``, where the ``run()`` closure reads each solve's solver and scaling
-        (``_orchestration._spawn_realized_dispatch_siblings``): the sibling runs on its parent's solver,
+        (``_orchestration._guards._spawn_realized_dispatch_siblings``): the sibling runs on its parent's solver,
         ``solver_arguments``, ``solver_mip_gap`` and ``scaling``."""
         parent_mode = self.solve_modes.get(parent, "single_solve")
         mode = "rolling_window" if parent_mode == "rolling_window" else "single_solve"
@@ -1617,7 +1617,7 @@ class SolveConfig:
         """Whether the investments of *solve_name* branch after its reveal (``investments_after_reveal_period`` or
         ``investments_at_reveal_period``): the model's recourse switch, emitted as
         ``solve_data/stochastic_invest_method.csv`` (``recourse`` / ``none``) and read back by
-        ``_derived._recourse_invest_active``."""
+        ``_derived._scope._recourse_invest_active``."""
         return self.invest_branching_method_for(solve_name) != INVEST_SOLVE_BRANCHING_METHODS[0]
 
     def reveal_period(self, solve_name: str) -> str | None:

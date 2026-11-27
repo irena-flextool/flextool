@@ -3,7 +3,7 @@
 Each start-up of a unit takes ``startup_energy`` [MWh per MW started] × MW started from the input node of the arc:
 ``startup_and_input`` keeps the arc's flow as well, ``startup_only`` has no flow (the readers hide the arc from every
 arc set).  The draw is a term on ``v_startup`` (an event: no step duration) in the node's balance, the commodity
-cost, the CO2 price and caps and the commodity ladder (``core._startup_draw``).
+cost, the CO2 price and caps and the commodity ladder (``core._conversion._startup_draw``).
 
 Hand-built model ``coal on oil`` (on ``tests/fixtures/tests.json``, alternative ``init`` only; never a checked-in
 ``.sqlite``): one period p2020, timeset ``2day`` cut to four 1-h steps t0001..t0004 (period share 4/8760, so a
@@ -674,7 +674,7 @@ def test_start_up_node_in_the_master_is_refused() -> None:
     draw would be in the master's balance, the start-ups in the region subproblem."""
     from types import SimpleNamespace
 
-    from flextool.engine.solve._region_filter import _validate_startup_nodes
+    from flextool.engine.solve._region_filter._checks import _validate_startup_nodes
 
     nodes, procs = {"A": {"fuel_A", "elec_A", "oil_A"}}, {"A": {"u"}}
     data = SimpleNamespace(process_startup_node=pl.DataFrame({"p": ["u"], "n": ["oil_M"]}))
@@ -689,7 +689,7 @@ def test_start_up_node_of_another_region_is_refused() -> None:
     B's balance, the start-ups in A's subproblem); a node of no region (a commodity node) is fine."""
     from types import SimpleNamespace
 
-    from flextool.engine.solve._region_filter import _validate_startup_nodes
+    from flextool.engine.solve._region_filter._checks import _validate_startup_nodes
 
     nodes, procs = {"A": {"elec_A"}, "B": {"heat_B"}}, {"A": {"u"}, "B": {"v"}}
     data = SimpleNamespace(process_startup_node=pl.DataFrame({"p": ["u"], "n": ["heat_B"]}))
@@ -876,7 +876,7 @@ def test_co2_cap_partition_counts_the_start_up_draws() -> None:
     of master-local flows straddles the boundary and is refused."""
     from types import SimpleNamespace
 
-    from flextool.engine.solve._region_filter import _co2_master_partition
+    from flextool.engine.solve._region_filter._master_side import _co2_master_partition
 
     flows = pl.DataFrame({"p": ["liq"], "source": ["h2_M"], "sink": ["lh2_M"], "c": ["c"], "g": ["cap"]})
     ml = {("liq", "h2_M", "lh2_M")}
@@ -897,7 +897,7 @@ def test_co2_cap_loaders_keep_a_start_up_only_emitter_without_arcs() -> None:
     """With no efficiency arcs at all (pss_eff and pss_noEff None), a start-up draw in a capped group still keeps
     the cap's groups (_load_co2_cap / _load_co2_cap_total): the early return does not drop it."""
     from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-    from flextool.engine.preprocess.flex_data import _load_co2_cap, _load_co2_cap_total
+    from flextool.engine.preprocess.flex_data._load_co2 import _load_co2_cap, _load_co2_cap_total
 
     prov = FlexDataProvider()
     prov.put("solve_data/group_co2_max_period", pl.DataFrame({"group": ["co2g"]}))

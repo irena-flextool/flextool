@@ -1,12 +1,12 @@
 """Surface A.7 (invest/divest capacity expansion) and A.16 (cumulative
 invest / group-build constraints) loader tests.
 
-A.7 covers ``flextool.engine.preprocess.flex_data._load_invest`` — the helper
+A.7 covers ``flextool.engine.preprocess.flex_data._load_features._load_invest`` — the helper
 that reads ``solve_data/ed_invest.csv`` etc. and assembles the dict of
 invest-set frames + per-(e, d) cost params consumed by the override
 chain and the variable emitter.
 
-A.16 covers ``flextool.engine.preprocess.flex_data._load_cumulative_invest``
+A.16 covers ``flextool.engine.preprocess.flex_data._load_features._load_cumulative_invest``
 (the cascade-of-15+ optional CSVs that drive cumulative-capacity and
 group-invest constraints) and a single direct call into
 ``flextool.engine.model._cumulative_invest._eq_group_invest_cumulative``
@@ -27,10 +27,7 @@ from types import SimpleNamespace
 import polars as pl
 import pytest
 
-from flextool.engine.preprocess.flex_data import (
-    _load_invest,
-    _load_cumulative_invest,
-)
+from flextool.engine.preprocess.flex_data._load_features import _load_invest, _load_cumulative_invest
 from flextool.engine.model._cumulative_invest import (
     _eq_group_invest_cumulative,
     has_feature,

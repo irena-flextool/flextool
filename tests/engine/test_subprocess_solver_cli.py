@@ -144,7 +144,7 @@ def test_cplex_dotted_name_lands_on_the_interactive_spelling(tmp_path: Path) -> 
 
 def test_highs_environment_names_never_reach_a_commercial_solver() -> None:
     """D5: FLEXTOOL_HIGHS_* stay HiGHS-only; FLEXTOOL_SOLVER_* are the flags' twins for every solver."""
-    from flextool.engine.solve._orchestration import _operator_highs_overrides
+    from flextool.engine.solve._orchestration._highs_options import _operator_highs_overrides
 
     highs_only = RunOptions.from_env({"FLEXTOOL_HIGHS_TIME_LIMIT": "120", "FLEXTOOL_HIGHS_MIP_GAP": "0.3"})
     assert _operator_native_overrides("gurobi", highs_only) == []

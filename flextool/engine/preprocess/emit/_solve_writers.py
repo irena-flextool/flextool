@@ -381,7 +381,7 @@ def emit_stochastic_invest_method(
     ``investments_at_reveal_period``).
 
     A single-row, single-column (``method``) frame carrying ``"recourse"`` or ``"none"``.  Read run-time via
-    ``_derived._recourse_invest_active`` so the derived/model
+    ``_derived._scope._recourse_invest_active`` so the derived/model
     layers can gate the recourse feature without a ``SolveConfig``.
     """
     _emit_path(provider, filename,

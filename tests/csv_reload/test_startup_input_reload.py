@@ -1,7 +1,7 @@
 """A reader-less reload of a dump keeps the start-up input draws (``startup_input_method``, database version 79).
 
 ``dump_csvs`` writes ``p_startup_energy`` (``solve_data/process_node_startup_energy.csv``); the reload reads it in
-``flex_data._load_startup_inputs``, so the reloaded FlexData has the start-up nodes, energies and derived sets of the
+``flex_data._load_co2._load_startup_inputs``, so the reloaded FlexData has the start-up nodes, energies and derived sets of the
 run.  Model: the coal-on-oil model of ``tests/engine/test_startup_input.py`` (built from ``tests.json``).
 """
 from __future__ import annotations

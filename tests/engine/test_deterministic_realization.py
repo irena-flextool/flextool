@@ -265,7 +265,7 @@ def test_resolver_and_guard() -> None:
     from types import SimpleNamespace
 
     from flextool.engine.input._solve_config import SolveConfig
-    from flextool.engine.solve._orchestration import _dispatch_realization_raw_guard
+    from flextool.engine.solve._orchestration._guards import _dispatch_realization_raw_guard
 
     cfg = SimpleNamespace(dispatch_realization_method={"a": "Deterministic", "b": " within_solve ", "c": "",
                                                        "d": "separate_dispatch"})

@@ -80,6 +80,7 @@ def source_files(markdown_root: Path, package_dir: Path = PACKAGE_DIR) -> list[t
             out.append((f"md/{rel}", path))
     patterns = (
         "engine/model/*.py",
+        "engine/model/*/*.py",          # a package of the model (core) and its modules
         "engine/solve/_benders.py",
         "process_outputs/_output_meta.py",
         "process_outputs/write_spinedb.py",

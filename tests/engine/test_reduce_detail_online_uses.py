@@ -298,7 +298,7 @@ _ONLINE_NAMES = {
 #: checks), ``non_anticipativity`` (the ties of the units online across branches).
 _NOT_A_USE = {"online_model", "validation", "non_anticipativity"}
 CONSUMERS: dict[str, set[str]] = {
-    # The section and, through core._startup_draw, the start-up input draw (process_startup_node).
+    # The section and, through core._conversion._startup_draw, the start-up input draw (process_startup_node).
     "_balance_terms:balance_flow_terms": {"min_load_efficiency", "startup_energy"},
     # The same terms evaluated at the solution (the capacity-margin breakdown); the capacityMargin row reads the
     # units online only through balance_flow_terms (test_the_capacity_margin_reads_online_only_by_the_section).
@@ -356,7 +356,7 @@ def _online_readers() -> set[str]:
     out = set()
     for path in sorted(MODEL_DIR.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        module = path.relative_to(MODEL_DIR).with_suffix("").as_posix()
+        module = path.relative_to(MODEL_DIR).parts[0].removesuffix(".py")   # a package (core) is one module
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue

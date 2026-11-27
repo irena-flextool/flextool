@@ -19,7 +19,7 @@ from polar_high import Param
 
 from flextool.engine.input._axis_enums import rename_to_axis
 from flextool.engine.preprocess._invest_seeds import read_invest_set
-from flextool.engine.preprocess.flex_data import _read_wide_e_d
+from flextool.engine.preprocess.flex_data._load_features import _read_wide_e_d
 from flextool.engine.preprocess.params._derived import (
     process_delayed__duration_from_weight,
     process_group_inside_nonSync_from_flex,
@@ -49,7 +49,7 @@ _DELAY_TABLES: tuple[str, ...] = ("dtt__delay_duration", "p_process_delay_weight
 
 #: The FlexData fields :func:`apply_dump_field_seeds` writes (each stage-4 deletion adds its fields).
 #: ``p_profile_value`` is not here: the c24 stage-4 follow-up restored its seed to the production loader's
-#: ``_load_profiles`` (``flex_data.py``), which runs whether or not there is a DB reader, so the reload needs
+#: ``_load_profiles`` (``flex_data/_load_features.py``), which runs whether or not there is a DB reader, so the reload needs
 #: no separate copy.
 SEEDED_FIELDS: tuple[str, ...] = (
     *_VARCOST_SETS, "p_pssdt_varCost",
@@ -230,7 +230,7 @@ def _apply_delay_seeds(flex_data: object, provider: object) -> None:
     the seeded weights, so its ``td`` labels match the weights exactly.
 
     ``p_profile_value`` used to be seeded alongside these (S4-5); the c24 stage-4 follow-up restored its seed to
-    the production loader instead (``flex_data.py::_load_profiles``), so it no longer needs a copy here.
+    the production loader instead (``flex_data/_load_features.py::_load_profiles``), so it no longer needs a copy here.
     """
     delayed = getattr(flex_data, "process_delayed", None)
     if delayed is not None and delayed.height > 0:
@@ -283,7 +283,7 @@ def apply_dump_field_seeds(flex_data: object, sd: Path, inp: Path, provider: obj
     * Delay tables (S4-5, :func:`_apply_delay_seeds`): ``dtt__delay_duration`` / ``p_process_delay_weight`` from
       the emitted CSVs and ``process_delayed__duration`` derived from the weights, when a process is delayed.
       ``p_profile_value`` is not seeded here: the production loader's own ``pdtProfile.csv`` read
-      (``flex_data.py::_load_profiles``) covers the reload too.
+      (``flex_data/_load_features.py::_load_profiles``) covers the reload too.
     * A dump with ``piecewise_linear`` units is refused (:func:`_refuse_piecewise_units`).
     """
     del inp

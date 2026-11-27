@@ -21,7 +21,7 @@ from flextool.engine.input._param_shapes import promote_param_to_dt
 from flextool.engine.input._solve_state import FlexToolConfigError
 
 if TYPE_CHECKING:
-    from flextool.engine.model.core import _Build
+    from flextool.engine.model.core._context import _Build
 
 
 def add_constraints(b: "_Build") -> None:

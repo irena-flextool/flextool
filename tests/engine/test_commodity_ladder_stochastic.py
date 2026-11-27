@@ -334,7 +334,7 @@ def test_dispatch_sibling_parent_carries_no_realized_mwh_of_its_own() -> None:
     two steps and only the first realized, ``this_roll = v * unitsize * (realized_hours / horizon_hours)
     = 5.0 * 1.0 * (10 / 20) = 2.5``; combined with a prior carry of 7.0 that is ``7.0 + 2.5 = 9.5``.
     """
-    from flextool.engine.preprocess.flex_data import (
+    from flextool.engine.preprocess.flex_data._handoff_commodity import (
         _extract_cum_sim_hours,
         _extract_cumulative_commodity,
     )

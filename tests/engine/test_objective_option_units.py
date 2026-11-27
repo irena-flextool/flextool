@@ -27,7 +27,7 @@ from flex_toy_existing_fixed_cost import data as toy_data
 from flextool.engine import build_flextool
 from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.solve import _benders, _objective_options
-from flextool.engine.solve._orchestration import _format_solver_args_line, _highs_echo_translations
+from flextool.engine.solve._orchestration._highs_options import _format_solver_args_line, _highs_echo_translations
 
 REPO = Path(__file__).resolve().parents[2]
 FIXTURES = REPO / "tests" / "fixtures"
@@ -199,7 +199,7 @@ def test_an_older_polar_high_refuses_without_the_solver_args_echo(options_db, sa
     from flextool.engine.solve import _orchestration
 
     monkeypatch.setattr(_objective_options, "_api", lambda: None)
-    monkeypatch.setattr(_orchestration, "_highs_echo_translations", lambda *a, **k: {})
+    monkeypatch.setattr(_orchestration._cascade, "_highs_echo_translations", lambda *a, **k: {})
     if save_memory:
         monkeypatch.setenv("FLEXTOOL_SAVE_MEMORY", "1")
     else:

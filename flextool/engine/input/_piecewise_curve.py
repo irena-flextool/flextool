@@ -9,7 +9,7 @@ linear between the points; each segment ``k = 1..N−1`` is the line ``F = α_k�
     α_k = 1/η_k − β_k · (1/ℓ_k)                                           incremental input per output
 
 (``ℓ_k = 1``: ``β = ℓ_{k−1} · (1/η_{k−1} − 1/η_k) · (1/(1 − ℓ_{k−1}))``, ``α = 1/η_k − β``: the float operations
-of the ``min_load_efficiency`` section and slope, ``params/_derived._mle_section`` / ``_mle_slope``.)  Only
+of the ``min_load_efficiency`` section and slope, ``params/_derived._process_flows._mle_section`` / ``_mle_slope``.)  Only
 multiplications and ``1/x``, so a curve gives the same bits whatever way it was authored; ``β = 0`` exactly when
 ``η_{k−1} = η_k``.  ``sign(β_k) = sign(η_k − η_{k−1})``.
 

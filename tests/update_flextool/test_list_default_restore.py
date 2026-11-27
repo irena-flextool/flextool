@@ -321,7 +321,7 @@ def test_a_failing_w0490_check_does_not_stop_w0491(tmp_path, monkeypatch) -> Non
     seen = []
     monkeypatch.setattr(vlh, "warn_at_run_start", boom)
     monkeypatch.setattr(ldr, "note_at_run_start", seen.append)
-    monkeypatch.setattr(orch, "_reset_solver_args_echo", stop)
+    monkeypatch.setattr(orch._entry, "_reset_solver_args_echo", stop)
     db = tmp_path / "x.sqlite"
     with pytest.raises(Stop):
         orch.run_chain_from_db(f"sqlite:///{db}", "s", work_folder=tmp_path / "w")

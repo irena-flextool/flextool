@@ -18,7 +18,7 @@ The model folds the loss into each state-change term: ``(S⁻·(1 − β) − S�
 ``keep_now``), so the β weight is always on the state the step's state change starts from.  The output writer
 (``process_outputs.read_highs_solution.write_v_self_discharge``) computes the same loss from the solve's own
 solution with :func:`self_discharge_energy`, on the lags of :func:`state_links` — the lags the model's state
-change uses (``model.core._state_change_terms``).
+change uses (``model.core._node_balance._state_change_terms``).
 """
 from __future__ import annotations
 
@@ -177,13 +177,13 @@ class StateLink:
 
 
 def state_links(d, *, has_rp: bool, has_nsb: bool) -> list[StateLink]:
-    """The state-change branches of ``model.core._state_change_terms``, one per storage_binding_method; each node
+    """The state-change branches of ``model.core._node_balance._state_change_terms``, one per storage_binding_method; each node
     is in one branch only (``_validate_storage_binding_disjoint``)."""
     links: list[StateLink] = []
     carry = scope_carry_nodes(d)
     if d.storage_bind_within_timeblock is not None:
         # bind_within_timeblock: t⁻ wraps around within the timeblock.  (A rolling solve uses it as
-        # bind_within_period: solve._run_model._timeblock_binds_within_period_in_roll.)
+        # bind_within_period: solve._run_model._rolling_storage._timeblock_binds_within_period_in_roll.)
         links.append(StateLink("state_change", d.storage_bind_within_timeblock, d.dtttdt,
                                "t_previous_within_timeset", False, True))
     if _has_rows(d.storage_bind_forward_only) and _has_rows(d.dtttdt_forward_only):
@@ -236,7 +236,7 @@ def state_links(d, *, has_rp: bool, has_nsb: bool) -> list[StateLink]:
 
 def _seam_split(link: StateLink) -> list[StateLink]:
     """``link`` (a within-period lag) as it is, or, when some of its rows continue from another period (the seam rows
-    of a split realization roll, ``flex_data._within_period_lag``: a branch period's first step from the label's
+    of a split realization roll, ``flex_data._readers._within_period_lag``: a branch period's first step from the label's
     last jump step, the label's first step from the last step of d*), its same-period rows plus a cross-period
     link ``<key>_seam`` of those rows."""
     lag = link.lag
@@ -255,7 +255,7 @@ def _seam_split(link: StateLink) -> list[StateLink]:
 def scope_carry_nodes(d) -> "pl.DataFrame | None":
     """bind_within_period nodes (n) of a rolling roll whose first scope (the period of the roll's first step) began
     in an earlier roll: the roll continues that period from the carried level instead of wrapping its first step (``storage_roll_end`` kind ``scope_carry``,
-    ``solve._run_model._anchor_cyclic_in_rolling``).  None when there are none."""
+    ``solve._run_model._rolling_storage._anchor_cyclic_in_rolling``).  None when there are none."""
     sre = getattr(d, "storage_roll_end", None)
     if not _has_rows(sre):
         return None
@@ -660,7 +660,7 @@ def scope_start_levels(d, state: pl.DataFrame, start: "pl.DataFrame | None") -> 
     blocks loop, the step before the period where they chain forward) or, at the solve's first step, from ``start``
     (``[node, value]``, :func:`start_levels`).  ``state``: the solve's v_state ``(n, d, t, value)`` (state units).
     Read by the cascade: the level a rolling roll that continues the scope closes it to
-    (``solve._run_model._anchor_cyclic_in_rolling``).  None when there are none.
+    (``solve._run_model._rolling_storage._anchor_cyclic_in_rolling``).  None when there are none.
     """
     if not _has_rows(getattr(d, "nodeState_first_dt", None)) or d.p_state_unitsize is None:
         return None
@@ -711,7 +711,7 @@ def scope_start_levels(d, state: pl.DataFrame, start: "pl.DataFrame | None") -> 
 def rp_chain_start_levels(d, values) -> "pl.DataFrame | None":
     """``[node, value]``: the level (MWh) the base-period chain of each representative-period storage node starts
     from in a solved solve: v_state_inter at the first base period of the solve's first period less that base
-    period's weighted net change of its blocks (``model.core._rp_weighted_drift``), × state_unitsize.
+    period's weighted net change of its blocks (``model.core._rp_storage._rp_weighted_drift``), × state_unitsize.
 
     ``values(var)`` returns a solved variable as a frame (n, d, …, value) with Utf8 keys, or None.  None without
     representative-period nodes.

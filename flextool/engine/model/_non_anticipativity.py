@@ -19,7 +19,7 @@ from flextool.engine.model._online import online_rows
 from flextool.engine.preprocess.params._branch import forecast_star_pairs
 
 if TYPE_CHECKING:
-    from flextool.engine.model.core import _Build
+    from flextool.engine.model.core._context import _Build
 
 
 
@@ -181,7 +181,7 @@ def _state_first_cells(star, tie_dt, stoch_nodes, v_state) -> "pl.DataFrame | No
 def storage_state_first_cells(b: "_Build") -> "pl.DataFrame | None":
     """``(n, d, b, t)``: the rows non_anticipativity_storage_state_first has in this build (the same guards as
     :func:`add_dispatch_constraints`); None when it has none (always under the ``uc_only`` role).
-    ``model.core._eq_storage_state_fan_start`` leaves the root pairs these rows tie out."""
+    ``model.core._storage_state._eq_storage_state_fan_start`` leaves the root pairs these rows tie out."""
     d = b.d
     if na_role(d) == "uc_only":
         return None

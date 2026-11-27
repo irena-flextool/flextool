@@ -21,7 +21,7 @@ to the second in some period -- and has no start-ups (after the ``minimum_time_m
 ``linear`` start-ups (an info line says so, W3); a unit with two or more lines in some period is
 ``fork_yes`` (as a delayed unit).  The flags come from
 :func:`flextool.engine.input._piecewise_curve.unit_flags`, the function the engine classifier
-(``params/_derived._classify_process_method``) calls too.
+(``params/_derived._process_method._classify_process_method``) calls too.
 
 Cross-derivation input
 ----------------------
@@ -128,7 +128,7 @@ def derive_process_method(
         ct_method_map[process_name] = override_method
 
     # --- Collect startup_method per process: explicit, else the definition default (the engine broadcasts it,
-    # ``params/_derived._classify_process_method``); a process absent from the map reads ``no_startup`` ---
+    # ``params/_derived._process_method._classify_process_method``); a process absent from the map reads ``no_startup`` ---
     startup_method_map: dict[str, str] = {}
     for cl in ["unit", "connection"]:
         default_sm = _definition_default(backend, cl, "startup_method")
@@ -144,7 +144,7 @@ def derive_process_method(
             startup_method_map[process_name] = str(pv["parsed_value"])
 
     # --- minimum_time_method per unit: explicit, else the definition default, else none (the engine's reading
-    # rule, ``params/_derived._min_time_methods``) ---
+    # rule, ``params/_derived._scope._min_time_methods``) ---
     units = [entity["entity_byname"][0] for entity in backend.find_entities(entity_class_name="unit")]
     explicit_mtm = _explicit_values(backend, "minimum_time_method")
     default_mtm = _definition_default(backend, "unit", "minimum_time_method")
@@ -324,7 +324,7 @@ def _time_value(value) -> float:
 
 def _unit_times(backend, units: list[str], parameter: str) -> dict[str, float]:
     """``{unit: time}`` of the *units* whose ``unit.<parameter>`` (explicit, else the definition default) is
-    above 0, as the engine reads it (``params/_derived._process_min_time``).  A non-scalar explicit value (malformed:
+    above 0, as the engine reads it (``params/_derived._lookbacks._process_min_time``).  A non-scalar explicit value (malformed:
     the schema type is float) reads 0 here, while the engine reads its map leaves."""
     explicit = _explicit_values(backend, parameter)
     default = _definition_default(backend, "unit", parameter)
