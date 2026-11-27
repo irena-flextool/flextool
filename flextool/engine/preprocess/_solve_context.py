@@ -244,8 +244,8 @@ class SolveContext:
         canonical column names.  Empty when the file is missing.
 
         Path B / audit §Category B: cascade helpers that previously
-        re-read the CSV (``_derived.py:5421, 7974``;
-        ``_branch.py:285``) should prefer this typed accessor.
+        re-read the CSV (``_derived/_active_steps.py::_dt_period_active_steps_from_workdir``,
+        ``_derived/_ladder.py::p_f_d_k_from_source``; ``_branch.py:285``) should prefer this typed accessor.
         """
         if not self._steps_in_use_loaded:
             self._steps_in_use = _load_steps_in_use(
@@ -263,7 +263,7 @@ class SolveContext:
         is present.
 
         Path B / audit §Category B: cascade helpers that previously
-        re-read the CSV (``_derived.py:7990``) should prefer this
+        re-read the CSV (``_derived/_ladder.py::p_f_d_k_from_source``) should prefer this
         typed accessor.
         """
         if not self._period_share_loaded:
@@ -280,7 +280,7 @@ class SolveContext:
         file is missing.
 
         Path B / audit §Category B: cascade helpers that previously
-        re-read the CSV (``_derived.py:4940``) should prefer this
+        re-read the CSV (``_derived/_existing_capacity.py::_read_p_entity_all_existing_csv``) should prefer this
         typed accessor.
         """
         if not self._p_entity_all_existing_loaded:
@@ -298,7 +298,7 @@ class SolveContext:
         when the file is missing.
 
         Path B / audit §Category B: cascade helpers that previously
-        re-read the CSV (``_derived.py:7623``) should prefer
+        re-read the CSV (``_derived/_time.py::_read_solve_branch_weights``) should prefer
         this typed accessor.
         """
         if not self._solve_branch_weight_loaded:
@@ -667,7 +667,7 @@ def _load_period_share(solve_data_dir: Path,
 
     Audit §Category B (WriterSnapshot top-7): the cascade currently
     falls through both names at its read sites (e.g.
-    ``_derived.py:7984-7988``).  Centralising the fallback here
+    ``_derived/_ladder.py::p_f_d_k_from_source``).  Centralising the fallback here
     gives every consumer the same semantics.  *provider* is required
     (``None`` raises ``ValueError``); no disk read.
     """

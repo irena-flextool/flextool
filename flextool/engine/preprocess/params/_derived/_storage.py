@@ -662,7 +662,7 @@ def apply_derived_e(
     # ``flex_data.p_roll_continue_state`` / ``p_fix_storage_quantity``
     # at load time.  Re-reading the same CSV here duplicates the IO and
     # the polars allocation.  Audit `specs/in_cascade_csv_audit.md`
-    # §Category A entries `_derived.py:6562` and `:6582`.
+    # §Category A entries of the two re-reads (`p_roll_continue_state_from_handoff`, `p_fix_storage_quantity_from_handoff`).
     # Prefer the already-populated FlexData fields when available; fall
     # back to the workdir reader for legacy/test callers that bypass
     # ``_load_storage`` or when the seed produced None (e.g. CSV absent

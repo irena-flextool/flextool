@@ -1070,7 +1070,7 @@ def _classify_lineage(
       ``d != b``).
 
     Failure semantics (design §3.1.1, mirroring ``dtttdt_from_source``
-    ``_derived.py:6634-6650``): a synthetic ``period_in_use``
+    in ``_derived/_dtttdt.py``): a synthetic ``period_in_use``
     member without a ``period__branch`` fan row, with an anchor that
     has no in-use self-row, or without an SBTB time-branch entry means
     the per-solve artefacts are inconsistent — RAISE instead of
