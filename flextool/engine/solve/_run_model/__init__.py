@@ -28,8 +28,8 @@ Modules
 -------
 
 * ``_native_run_model`` — the per-solve cascade loop, :func:`native_run_model`.
-* ``_storage_frames`` — the per-solve storage-method readers, :class:`_RollingStorage`, the coded storage warnings,
-  the module logger.
+* ``_storage_frames`` — the per-solve storage-method readers, :class:`._storage_frames._RollingStorage`, the coded
+  storage warnings, the module logger.
 * ``_rp_methods`` — storage-binding methods on representative periods: checks, the across-solve chain, the
   downgrade on solves without representative periods, the forward chain of fix_start_end nodes.
 * ``_rolling_storage`` — the storage of rolling_window solves: carry, anchor and close of a roll, the per-period
