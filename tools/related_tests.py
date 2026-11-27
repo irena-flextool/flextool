@@ -4,7 +4,9 @@ A test module is related to a changed source module when it imports it by name (
 ``from a.b.c import x`` or ``from a.b import c``).  Importing only the package (``from flextool.engine import
 model``) does not count: that would select half the suite.  The one exception is a module split into a package
 (``model/core/``): a changed module of it that the package's ``__init__.py`` imports, directly or through other
-modules of the package, also relates the tests that import the package, since they reach it through the facade.
+modules of the package, also relates the tests that import the package, since they reach it through the facade,
+and the tests that import another module of the package that imports it, directly or through other modules of it
+(``from params._derived._process_method import x`` reaches ``_derived/_scope.py``), as they did the one module.
 Changed test modules are related to themselves.
 End-to-end tests that reach the code only through a solve are not found this way; prove the LP effect of a
 model change with ``tools/lp_snapshot.py``.
@@ -85,6 +87,21 @@ def _facade_modules(package: str) -> set[str]:
     return seen
 
 
+def _importers_in_package(package: str, module: str) -> set[str]:
+    """The modules of ``package`` that import ``module``, directly or through other modules of it."""
+    pkg_dir = REPO.joinpath(*package.split("."))
+    imports = {f"{package}.{p.stem}": imported_modules(p) for p in pkg_dir.glob("*.py") if p.stem != "__init__"}
+    seen: set[str] = set()
+    todo = [module]
+    while todo:
+        target = todo.pop()
+        for name, names in imports.items():
+            if target in names and name not in seen and name != module:
+                seen.add(name)
+                todo.append(name)
+    return seen
+
+
 def related(files: list[str]) -> list[str]:
     targets = {m for m in map(module_name, files) if m}
     for module in list(targets):
@@ -92,6 +109,7 @@ def related(files: list[str]) -> list[str]:
         if package and (REPO.joinpath(*package.split(".")) / "__init__.py").is_file() \
                 and module in _facade_modules(package):
             targets.add(package)
+            targets |= _importers_in_package(package, module)
     tests = {f for f in files if f.startswith("tests/") and Path(f).name.startswith("test_")
              and (REPO / f).exists()}
     if targets:

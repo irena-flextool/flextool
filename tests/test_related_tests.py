@@ -22,6 +22,17 @@ def test_a_module_of_a_split_package_relates_the_importers_of_the_package() -> N
         assert "tests/engine/test_coarse_row_rule.py" in tool.related([changed])
 
 
+def test_a_module_of_a_split_package_relates_the_importers_of_the_modules_that_import_it() -> None:
+    """test_piecewise_reader imports ``_derived._process_method`` (not the facade); _process_method imports
+    ``_derived._scope``, so a change of _scope relates it.  No module of the package imports _ladder, so a change of
+    _ladder does not."""
+    tool = _tool()
+    assert "tests/engine/test_piecewise_reader.py" in tool.related(
+        ["flextool/engine/preprocess/params/_derived/_scope.py"])
+    assert "tests/engine/test_piecewise_reader.py" not in tool.related(
+        ["flextool/engine/preprocess/params/_derived/_ladder.py"])
+
+
 def test_importing_a_plain_package_still_does_not_count() -> None:
     """``flextool.engine.model`` is a package whose __init__ imports none of its modules: a change of _online
     relates only the tests that import _online by name."""
