@@ -42,11 +42,11 @@ def test_near_optimal_accept_does_not_abort_cascade(
 
     seen: list[bool] = []
 
-    def _fake(sol, *, ranges_post, solve_name):
+    def _fake(sol, *, ranges_post, solve_name, highs_options=None):
         # Run the real classifier for side-effect-free validation, then
         # override to the NEAR-optimal accept branch so the fall-through is
         # exercised even though the genuine solve certifies kOptimal.
-        _real_classify(sol, ranges_post=ranges_post, solve_name=solve_name)
+        _real_classify(sol, ranges_post=ranges_post, solve_name=solve_name, highs_options=highs_options)
         seen.append(True)
         return Acceptance(
             accepted=True,
@@ -89,7 +89,7 @@ def test_reject_still_raises(scenario_workdir, monkeypatch) -> None:
     sqlite = scenario_workdir("base") / "tests.sqlite"
     scenario = _first_scenario(sqlite)
 
-    def _fake(sol, *, ranges_post, solve_name):
+    def _fake(sol, *, ranges_post, solve_name, highs_options=None):
         return Acceptance(
             accepted=False,
             near_optimal=False,

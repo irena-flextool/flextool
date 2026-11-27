@@ -249,9 +249,9 @@ def test_a_kept_limit_stopped_solve_is_logged_as_a_warning(options_db, tmp_path,
 
     real = _orchestration._cascade.classify_acceptance
 
-    def kept_at_a_limit(sol, *, ranges_post, solve_name):
-        acc = real(sol, ranges_post=ranges_post, solve_name=solve_name)
-        return dataclasses.replace(acc, near_optimal=True, limit_stopped=True, message=f"kept at a limit: {solve_name}")
+    def kept_at_a_limit(sol, **kwargs):
+        acc = real(sol, **kwargs)
+        return dataclasses.replace(acc, near_optimal=True, limit_stopped=True, message=f"kept at a limit: {kwargs['solve_name']}")
 
     monkeypatch.setattr(_orchestration._cascade, "classify_acceptance", kept_at_a_limit)
     monkeypatch.delenv("FLEXTOOL_SAVE_MEMORY", raising=False)

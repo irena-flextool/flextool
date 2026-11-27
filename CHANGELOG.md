@@ -1,3 +1,12 @@
+## Unreleased
+
+### Fixes
+
+- **The run log names the solver option folder once.** A `flextool-run` printed the `Solver config:` line in its
+  header and the engine logged it again; the engine now logs it only when it chose the folder itself.
+- **The hint after a rejected solve suggests `--highs-threads 1` only when the solve ran HiGHS in parallel mode.**
+  A serial solve (FlexTool's default, `parallel` off) or a solve by another solver no longer gets that advice.
+
 ## Release 4.7.2 (27.11.2026) — large engine modules split into packages of smaller modules (no schema change, no result change)
 
 Patch release: no schema change, databases stay at data version 84. Requires `polar-high>=3.16.1`. Results do not

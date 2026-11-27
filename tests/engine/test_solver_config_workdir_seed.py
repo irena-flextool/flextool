@@ -140,6 +140,19 @@ def test_snapshot_is_written_afresh_every_run(layout) -> None:
     assert second.origin("gurobi") == str(layout["ws"] / "solver_config" / "gurobi.opt")
 
 
+
+def test_snapshot_logs_the_folder_unless_the_caller_shows_it(layout, caplog) -> None:
+    """The CLI header names the folder; the engine, handed that folder, does not log it a second time."""
+    source = _resolve(input_db_url=f"sqlite:///{layout['db']}", cwd=layout["other"])
+    line = f"Solver config: {source.describe()}"
+    with caplog.at_level(logging.INFO, logger=_LOGGER.name):
+        snapshot_solver_option_files(source, layout["tmp"] / "w1", _LOGGER)
+    assert [r.getMessage() for r in caplog.records].count(line) == 1
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger=_LOGGER.name):
+        snapshot_solver_option_files(source, layout["tmp"] / "w2", _LOGGER, announce=False)
+    assert line not in [r.getMessage() for r in caplog.records]
+
 def test_no_folder_found_uses_the_defaults_without_planting_a_copy(layout, caplog) -> None:
     """``work_folder == cwd`` and no ``solver_config`` anywhere: no ``<cwd>/solver_config`` appears, the snapshot
     holds the templates and one warning says no folder was found."""

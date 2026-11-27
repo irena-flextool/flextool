@@ -2449,6 +2449,7 @@ def _drive_cascade(
                 sol,
                 ranges_post=locals().get("_autoscale_ranges_post"),
                 solve_name=complete_solve_name,
+                highs_options=highs_options if _active_solver_cfg.name == "highs" else None,
             )
             if _bfinal is not None:
                 # The final solve of a Benders solve: recorded beside the Benders verdict, which stays the
