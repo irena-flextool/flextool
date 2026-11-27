@@ -1,3 +1,19 @@
+## Release 4.7.2 (27.11.2026) — large engine modules split into packages of smaller modules (no schema change, no result change)
+
+Patch release: no schema change, databases stay at data version 84. Requires `polar-high>=3.16.1`. Results do not
+change: the code is moved, not changed.
+
+### Improvements
+
+- **Large engine modules are now packages of smaller modules.** `flextool/engine/model/core.py`,
+  `flextool/engine/preprocess/flex_data.py`, `flextool/engine/preprocess/params/_derived.py`,
+  `flextool/engine/solve/_orchestration.py`, `flextool/engine/solve/_run_model.py` and
+  `flextool/engine/solve/_region_filter.py` each became a package of the same name, one module per topic. Public
+  imports are unchanged. Log messages from these modules now carry the submodule's name as their logger (for
+  example `flextool.engine.solve._orchestration._cascade` instead of `flextool.engine.solve._orchestration`).
+  These are children of the old logger names, so logging configuration set on the old names still applies; the
+  new names show in the `logger` field of the warnings in `_run_status.json`.
+
 ## Release 4.7.1 (26.11.2026) — Benders master solves units with nodes in several regions; flowGroup cumulative limits carry across rolls and solves; `co2_max_total` needs a solve that sees every period; stochastic forecasts must cover the horizon; FlexTool 2 import gaps closed; easier to read Excel workbooks; stochastic and demand response examples (no schema change)
 
 No schema change: databases stay at data version 84. Requires `polar-high>=3.16.1`. Results change for Benders
