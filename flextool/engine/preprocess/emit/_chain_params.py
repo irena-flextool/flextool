@@ -342,7 +342,7 @@ def _compute_p_entity_capacity_max_chain(
                                        provider=provider)
     cum_max_cap = _load_ed_value_csv(solve_data_dir / "ed_cumulative_max_capacity.csv",
                                       provider=provider)
-    # As in `_derived.py`: entities that author
+    # As in `_derived/_invest_sets.py`: entities that author
     # cumulative_max_capacity at all (any period) — an entity absent here never set the
     # parameter, as opposed to an authored-but-zero value.
     cmc_authors = {e for (e, _d) in cum_max_cap}

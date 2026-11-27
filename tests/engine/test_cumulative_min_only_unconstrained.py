@@ -1,7 +1,7 @@
 """Regression: a ``cumulative_limits`` entity with only ``cumulative_min_capacity`` (no
 ``cumulative_max_capacity`` at all) is unconstrained above, not pinned to ``v_invest = 0``.
 
-``p_entity_max_units_from_source`` (``flextool/engine/preprocess/params/_derived.py``) computes a
+``p_entity_max_units_from_source`` (``flextool/engine/preprocess/params/_derived/_invest_sets.py``) computes a
 per-(entity, period) ceiling on invested units: for a ``cumulative_limits`` entity it used the
 authored ``cumulative_max_capacity`` directly as the ceiling, defaulting to 0 when the entity
 authors no value at all.  A ``cumulative_limits`` entity that only sets a floor
@@ -139,7 +139,7 @@ class _FakeProvider:
 
 
 def test_chain_params_cumulative_min_only_ceiling_is_unconstrained() -> None:
-    """Mirrors the ``_derived.py`` case above, but for the chain-cluster emitter
+    """Mirrors the ``_derived/_invest_sets.py`` case above, but for the chain-cluster emitter
     (``_chain_params._compute_p_entity_capacity_max_chain``) used across a continuation/rolling
     solve boundary, which carried the exact same pre-fix bug independently:
     a ``cumulative_limits`` entity that never authors ``cumulative_max_capacity`` (floor only)

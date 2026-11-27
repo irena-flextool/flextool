@@ -4,7 +4,7 @@ Moved from ``tests/engine/loaders/test_a01_a02_temporal_node.py`` (c24 S1-8).
 Each test overlays one CSV on a copy of the ``base`` work folder
 (``tiny_workdir``) and loads it reader-less (``load_from_dump(tiny_workdir)``).
 On the production path (provider + DB reader) ``apply_derived_a``
-(``params/_derived.py``) re-derives ``dt`` / ``p_step_duration`` (from the
+(``params/_derived/_time.py``) re-derives ``dt`` / ``p_step_duration`` (from the
 DB timeline, unless ``solve.new_stepduration`` is set), ``p_period_share`` /
 ``p_window_fraction`` (from that dt), ``p_timestep_weight`` (non-rp solves)
 and ``p_penalty_up`` / ``p_penalty_down`` on every load, so these overlays

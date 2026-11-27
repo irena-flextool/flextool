@@ -475,7 +475,7 @@ reaching the generic broadcast raises.
 
 ##### Silent-default `"x"` index — readers outside the resolver
 
-Not every DB read goes through `resolve_param_shape`. The **per-entity cascades** in `_derived.py` /
+Not every DB read goes through `resolve_param_shape`. The **per-entity cascades** in `params/_derived/` /
 `_existing.py` / `_lifetime_inputs.py` read raw entity params (`source.parameter(...)`) and must detect the period
 axis themselves. The failure mode is the resolver's: spinedb_api's default `index_name` is the literal string
 `"x"` (real 2-D maps carry `index_name='x'`, see `_spinedb_reader._discover_index_cols`), so an

@@ -252,7 +252,7 @@ def _recompute_input_caps(flex_data, db_reader: "InputSource", provider, units: 
     """Step 5: ``p_indirect_input_cap`` and the indirect input-arc rows of ``p_flow_upper`` of the piecewise
     *units*, from the overwritten ``p_slope`` / ``p_section`` (single-line units: full-load fuel ``slope · W +
     section``; multi-line units: ``max_g(slope_g · W + intercept_g)`` of *multi_lines*;
-    ``_derived._indirect_input_cap_lf``).
+    ``_derived._arc_capacity._indirect_input_cap_lf``).
 
         p_indirect_input_cap[p,s,p,d,t] = input_share_max · fuel · delay_factor / conversion_flow_coeff
         p_flow_upper[p,s,p,d,t]         = cap_per_unit[p,d] · p_indirect_input_cap[p,s,p,d,t]
@@ -348,7 +348,7 @@ def _remapped_output_upper(db_reader: "InputSource", pss: pl.DataFrame, dt: pl.D
 def _user_solve(db_reader: "InputSource", solve: "str | None") -> "str | None":
     """The user's solve of the sub-solve *solve*: *solve* when it is a solve of the database, else the database
     solve it was made from (a roll ``<solve>_roll_<k>``, a realization ``<solve>__realized_dispatch…``, a nested
-    ``<solve>_<period>``: :func:`_derived._resolve_synthetic_solve`)."""
+    ``<solve>_<period>``: :func:`_derived._periods._resolve_synthetic_solve`)."""
     from flextool.engine.preprocess.params import _derived as _drv
 
     if solve is None or _drv._scope._solve_in_spine(db_reader, solve):

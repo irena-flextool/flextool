@@ -91,7 +91,7 @@ class SolveContext:
 
     The remaining per-solve frames (block-layout, dtttdt, etc.) are read
     from the provider by their own helpers (:class:`BlockLayout`,
-    ``_derived._ctx_read``).
+    ``_derived._scope._ctx_read``).
     """
 
     workdir: Path
@@ -426,7 +426,7 @@ def _maybe_read(path: Path,
 
 def _read_active_solve(workdir: Path,
                         *, provider: "object | None" = None) -> str | None:
-    """Mirror of ``_derived._read_active_solve``.
+    """Mirror of ``_derived._scope._read_active_solve``.
 
     Reads ``solve_data/solve_current`` from *provider* (required:
     ``None`` raises ``ValueError``).  Key absent or empty → ``None``.

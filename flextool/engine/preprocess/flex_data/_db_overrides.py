@@ -125,7 +125,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     # Δ.19 — for the synthetic ``<base>_<anchor>`` shape we additionally
     # produce the 8 invest-set frames from ``<base>``'s Spine entries
     # filtered to the anchor's period subset (see
-    # :func:`_derived._resolve_synthetic_solve` and
+    # :func:`_derived._periods._resolve_synthetic_solve` and
     # :func:`_derived.apply_synthetic_invest_sets`).  This cuts the
     # 8 invest-set disk reads in ``_invest_seeds.py``.  The investment
     # annuity and lifetime fixed cost come from ``_npv.apply_invest_lumps``

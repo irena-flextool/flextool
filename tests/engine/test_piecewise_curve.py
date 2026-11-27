@@ -3,7 +3,7 @@
 Expected lines are the independent hand calculation of ``specs/piecewise_efficiency_oracle.md`` (exact fractions,
 F = ℓ/η): O1 thermal {0.4: 0.30, 0.7: 0.40, 1.0: 0.42}, O2 electrolyser {0.2: 0.70, 0.6: 0.66, 1.0: 0.60}, O4 p2035
 {0.5: 0.55, 1.0: 0.50}, O5 CHP {0.3: 0.25, 0.6: 0.35, 1.0: 0.40}.  The segment ending at load 1 must give the bits
-of the min_load_efficiency section and slope (``params/_derived._mle_section`` / ``_mle_slope``).
+of the min_load_efficiency section and slope (``params/_derived._process_flows._mle_section`` / ``_mle_slope``).
 """
 from __future__ import annotations
 

@@ -381,7 +381,7 @@ with the orientation of `nodeBalance_eq` (into the arc's source, out of its sink
    turned a `regular` connection one-way. Now every reader of `delay`
    reads `unit.delay` only (`input_derivation/_specs.py` delay tables,
    `input_derivation/_process_method.py`, `_derived`
-   `_classify_process_method` / `_delay_distributions_from_source`,
+   `_process_method._classify_process_method` / `_delay._delay_distributions_from_source`,
    `_projection.process_delayed`), so a connection is modelled as
    if no delay were set, and `_validators.validate_connection_delay` warns
    once per connection with a non-zero delay

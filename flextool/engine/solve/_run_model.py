@@ -2656,7 +2656,7 @@ def native_run_model(state, solver) -> int:
         # (Phase 4.1e).  The legacy shutil.copy archive path and the
         # in-memory carrier fallback that wrote to the now-dead
         # ``solve_data/fix_storage_*`` Provider keys have been deleted;
-        # all downstream consumers (preprocess/flex_data/, _derived.py,
+        # all downstream consumers (preprocess/flex_data/, params/_derived/,
         # _arc_unions.py, _per_solve.py) consult ``handoff/*``.
 
         solve_writers.emit_solve_status(

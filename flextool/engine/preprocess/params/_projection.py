@@ -252,7 +252,7 @@ def process_source_sink(source: "InputSource") -> pl.DataFrame:
 #   * Connections: always ``(c, node_1, node_2)`` (already 1-arc form).
 #
 # Internal method comes from the classifier (input_writer.METHODS_MAPPING).
-# We reuse the classifier from ``_derived.py``.
+# We reuse the classifier from ``_derived/_process_method.py``.
 
 
 _METHOD_2WAY_NVAR_LOCAL = frozenset(("method_2way_nvar_off",))
@@ -695,8 +695,8 @@ def single_input_curve_arc_remap(source: "InputSource") -> pl.DataFrame:
     ramp limit, ramp cost, profile and ``constraint_flow_coeff`` (moved to the output arc at the load boundary,
     ``params/_piecewise.remap_input_items``) and its ``input_share_max`` (an output cap
     ``min(capacity_max_coeff, input_share_max)``; the input's own share is 1 —
-    ``_derived._arc_max_capacity_coef_lf`` and ``_direct._p_side_scalar`` read it so).  The rule for the arc
-    counts is the classifier's (``_derived._classify_process_method`` step 6)."""
+    ``_derived._arc_capacity._arc_max_capacity_coef_lf`` and ``_direct._p_side_scalar`` read it so).  The rule for the arc
+    counts is the classifier's (``_derived._process_method._classify_process_method`` step 6)."""
     from flextool.engine.input._param_shapes import _run_memo
 
     return _run_memo(source, ("single_input_curve_arc_remap",), lambda: _single_input_curve_arcs(source))
@@ -1305,7 +1305,7 @@ def _online_by_startup(source: "InputSource", methods: tuple[str, ...], *, fix_i
     """Modelled units and connections whose startup method is in ``methods`` (with ``fix_in_uc``: only those whose
     ``startup_method`` is a ``_fix_in_uc`` member).  Schema: ``[p]``.
 
-    The startup method is the classifier's (``_derived._classify_process_method``): the startup class of
+    The startup method is the classifier's (``_derived._process_method._classify_process_method``): the startup class of
     ``startup_method`` of units and connections, promoted to ``linear`` by a unit's ``minimum_time_method``;
     processes whose method triplet is not modelled are left out.  Online-ness comes from the startup method, not
     from the internal method, so a two-way connection keeps its flow shape (and ``exact`` its direction switch).

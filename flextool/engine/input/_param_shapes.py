@@ -430,7 +430,7 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     # the full (period, time) shape family exactly like ``availability``.
     # Consumed by :func:`._derived.p_slope_from_source` /
     # :func:`._derived.p_section_from_source` via
-    # :func:`._derived._eff_param_to_pdt`.  ``efficiency`` is
+    # :func:`._derived._process_flows._eff_param_to_pdt`.  ``efficiency`` is
     # authored on both unit and connection; ``efficiency_at_min_load`` /
     # ``min_load`` only feed the unit ``min_load_efficiency`` linearisation.
     ("unit", "efficiency"): {
@@ -547,7 +547,7 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     # ``solve.years_represented`` — a 1-D Map period -> years (schema: map rank 1).  The index is ``period``, or
     # Spine's silent ``x`` (the only shape, so it resolves to ``period``).  Read through
     # :func:`solve_years_represented` by the investment annuities, the period start years and the inflation factors
-    # (``params/_derived.py``, ``params/_existing.py``); the operations side reads the SolveConfig-written
+    # (``params/_derived/``, ``params/_existing.py``); the operations side reads the SolveConfig-written
     # ``p_years_represented``.  Before this entry the readers tested for a ``period`` column, so a map without an
     # index name gave investments one year per period.
     ("solve", "years_represented"): {Shape.MAP_PERIOD},

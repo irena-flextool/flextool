@@ -1096,7 +1096,7 @@ def _derive_conversion_trio(
 
     Unrounded and in the float operations of the single-solve producers
     (``_derived.p_slope_from_source`` / ``p_section_from_source`` via
-    ``_derived._mle_slope``), so a rolling sub-solve reads the same slope and
+    ``_derived._process_flows._mle_slope``), so a rolling sub-solve reads the same slope and
     section as the single solve and slope + section = 1/eta (#140):
 
         conv_rate = 1/eta
@@ -1196,10 +1196,10 @@ def _derive_conversion_trio(
             cr = conv_rate.get((p, d, t), 0.0)
             ml = min_load.get((p, d, t), 0.0)
             # No efficiency_at_min_load in this cell (pdtProcess resolves an unauthored one to 0, and 0 is
-            # no usable efficiency): the efficiency (a flat curve, section 0), as ``_derived._mle_eta_min``.
+            # no usable efficiency): the efficiency (a flat curve, section 0), as ``_derived._process_flows._mle_eta_min``.
             em = eff_min.get((p, d, t)) or eff.get((p, d, t), 0.0)
             denom = 1.0 - ml
-            # The float operations of ``_derived._mle_section`` / ``_mle_slope`` in their order (byte parity with
+            # The float operations of ``_derived._process_flows._mle_section`` / ``_mle_slope`` in their order (byte parity with
             # the single solve); a flat curve (em = eff) gives a section of exactly 0.  Fold the direct-unit
             # ratio onto the unfolded section⁰/slope⁰ afterwards (#10 / Q12), same order as
             # ``_derived.p_section_from_source`` / ``p_slope_from_source``.

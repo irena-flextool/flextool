@@ -1617,7 +1617,7 @@ class SolveConfig:
         """Whether the investments of *solve_name* branch after its reveal (``investments_after_reveal_period`` or
         ``investments_at_reveal_period``): the model's recourse switch, emitted as
         ``solve_data/stochastic_invest_method.csv`` (``recourse`` / ``none``) and read back by
-        ``_derived._recourse_invest_active``."""
+        ``_derived._scope._recourse_invest_active``."""
         return self.invest_branching_method_for(solve_name) != INVEST_SOLVE_BRANCHING_METHODS[0]
 
     def reveal_period(self, solve_name: str) -> str | None:

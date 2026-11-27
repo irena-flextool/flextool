@@ -7,7 +7,7 @@ through ``(min_load, efficiency_at_min_load) = (ℓ₀, η₀)`` and ``(1, effic
 
     β = ℓ₀ · (1/η₀ − 1/η₁) · (1/(1 − ℓ₀)),   α = 1/η₁ − β
 
-the same float operations as ``_derived._mle_section`` / ``_mle_slope``.  So the two units give the same model,
+the same float operations as ``_derived._process_flows._mle_section`` / ``_mle_slope``.  So the two units give the same model,
 bit for bit: the same ``p_slope`` / ``p_section`` / ``process_min_load_eff``, the same capacity parameters
 derived from them (``p_indirect_input_cap``, ``p_flow_upper``) and the same LP (every row, column, bound and
 coefficient; the written MPS byte for byte), in

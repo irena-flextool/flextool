@@ -39,7 +39,7 @@ Architecture notes
   same function the DB-direct readers use, so both paths give the same
   values.
 
-* ``_derived.py::dt_and_step_duration_from_source`` is a
+* ``_derived/_time.py::dt_and_step_duration_from_source`` is a
   polars-lazy alternative that consumes the per-(entity_class,
   parameter_name) ``InputSource`` Protocol; this module uses
   ``params_to_dict`` directly.  The two paths produce identical

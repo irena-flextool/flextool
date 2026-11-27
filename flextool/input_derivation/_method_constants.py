@@ -98,7 +98,7 @@ def startup_class(raw: str) -> tuple[str, bool]:
 
 
 #: The minimum times each ``minimum_time_method`` enables (``docs/reference/units.md``); ``none`` (and an unset
-#: method) enables neither.  Read by the engine gate (``params/_derived._process_min_time``) and the input
+#: method) enables neither.  Read by the engine gate (``params/_derived._lookbacks._process_min_time``) and the input
 #: derivation (``_process_method``).
 MIN_TIME_ENABLES: dict[str, frozenset[str]] = {
     "min_uptime": frozenset({"min_uptime", "both"}),

@@ -10,7 +10,7 @@ structure is incomplete:
   timeset uses the sole timeline.
 
 The three DB-side timeline readers (``_derived.dt_and_step_duration_from_source``,
-``_derived._dt_period_active_steps``, ``_per_solve_sets.derive_per_solve_aggregates``) had no
+``_derived._active_steps._dt_period_active_steps``, ``_per_solve_sets.derive_per_solve_aggregates``) had no
 such defaults: each re-reads ``timeset.timeset_duration`` / ``timeset.timeline`` directly and
 returns ``None`` the moment either is absent, so ``apply_derived_a`` bails before
 ``p_period_share``, ``p_inflation_op``, ``p_timestep_weight``, ``pd_branch_weight``,

@@ -225,7 +225,7 @@ def cohort_years(source: "InputSource",
                  workdir: Path | None,
                  *,
                  provider: "object | None" = None) -> dict[str, float]:
-    """``{period: run year}`` the cohort table compares: the solve's period years (:func:`._derived._p_years_d_lf`:
+    """``{period: run year}`` the cohort table compares: the solve's period years (:func:`._derived._periods._p_years_d_lf`:
     with the Provider, the solve's ``p_years_d`` over its period history; without it, the solve's own
     ``years_represented``) on the run calendar (:func:`._run_calendar.run_years`: a period takes its run-calendar
     year, a branch period its anchor's).  A solve that is not handed the run history (its years count from its own

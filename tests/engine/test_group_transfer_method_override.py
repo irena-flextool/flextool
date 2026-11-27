@@ -3,7 +3,7 @@
 docs/reference/groups.md: a group ``transfer_method`` other than ``use_connection_transfer_methods`` applies to the
 connections with both endpoints in the group (``dc_power_flow_with_angles``: the DC power-flow lines, one
 signed flow each).  The input derivation applied it (``derived/ct_method_overrides`` →
-``input/process_method``), but the engine's own classifier (``_derived._classify_process_method``) read
+``input/process_method``), but the engine's own classifier (``_derived._process_method._classify_process_method``) read
 ``connection.transfer_method`` only, so the DB-path topology ignored it: every case14 DC line kept a second
 ``v_flow`` arc in the reverse direction that is in ``nodeBalance_eq`` and ``maxFlow`` but not in
 ``dc_flow_eq`` (a lossless path around the DC power-flow physics), and a group ``unidirectional`` override

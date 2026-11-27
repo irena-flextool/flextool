@@ -457,7 +457,7 @@ def commissioning_year_lf(source: "InputSource",
     ``run_calendar`` is the :class:`._run_calendar.RunCalendar` of the run; without one (a solve built on its
     own) the solve's in-use periods and its ``years_represented`` stand in for it.
 
-    The solve's year of ``o`` comes from :func:`._derived._p_years_d_lf` through the same provider / workdir
+    The solve's year of ``o`` comes from :func:`._derived._periods._p_years_d_lf` through the same provider / workdir
     resolution :func:`._walks.period_walk_iterator` uses, so a branch period's year lands on the calendar the
     walk compares against.  The solve calendar and the run calendar differ by a constant offset (a solve that is
     not handed the run history counts years from its own first period); a varying offset, or two solves giving

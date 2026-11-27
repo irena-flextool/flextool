@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 
 # Inflation defaults — mirrors period_calculated_params.py:221-227 and
-# _solve_inflation_inputs in _derived.py.
+# _solve_inflation_inputs in _derived/_inflation.py.
 _INFL_RATE_DEFAULT = 0.0
 _INFL_OFFSET_INV_DEFAULT = 0.0
 _INFL_OFFSET_OPS_DEFAULT = 0.5
@@ -45,7 +45,7 @@ def _solve_inflation_scalars(source: "InputSource"
     flextool's CSV-side defaults when the Spine reader returned
     only-default rows.
 
-    Mirrors :func:`._derived._solve_inflation_inputs` semantics.
+    Mirrors :func:`._derived._inflation._solve_inflation_inputs` semantics.
     """
     def _explicit_max(par: str, default: float) -> float:
         try:
@@ -89,7 +89,7 @@ def _years_for_period_lf(source: "InputSource",
                               ) -> pl.LazyFrame:
     """Build the per-(d, year_label, width) frame from
     ``solve.years_represented`` mirroring
-    :func:`._derived._years_for_period_from_source` in lazy form.
+    :func:`._derived._inflation._years_for_period_from_source` in lazy form.
 
     Returns columns ``[d, y, width]`` where ``y`` is a string label.
     Empty if no rows.  ``provider`` (Slice D α-1) revives the canonical
@@ -448,7 +448,7 @@ def _period_history_years(workdir: Path | None, provider: "object | None") -> di
 
 def _split_years(represented: float) -> list[float]:
     """Year widths of a period that represents ``represented`` years: ⌈R⌉ years of min(1, remaining), as the
-    solve's own ``years_represented`` is split (:func:`._derived._years_for_period_from_source`)."""
+    solve's own ``years_represented`` is split (:func:`._derived._inflation._years_for_period_from_source`)."""
     import math
     out: list[float] = []
     remaining = float(represented)

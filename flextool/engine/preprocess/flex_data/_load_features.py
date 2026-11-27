@@ -245,7 +245,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
 
     Δ.19 — when ``db_reader`` is supplied AND the active solve is a
     recognised synthetic ``<base>_<anchor>`` (see
-    :func:`_derived._resolve_synthetic_solve`), the 8 invest-set
+    :func:`_derived._periods._resolve_synthetic_solve`), the 8 invest-set
     seed reads (``ed_invest``, ``ed_divest``, ``ed_invest_forbidden``,
     ``pd_invest``, ``pd_divest``, ``nd_invest``, ``nd_divest``,
     ``edd_invest``) are skipped — :func:`apply_synthetic_invest_sets`

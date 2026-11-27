@@ -720,7 +720,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # We deliberately DEFER the FlexData → Enum sweep until AFTER
         # ``_apply_db_overrides`` (the derived-cascade).  The cascade
         # builds many scratch frames with hard-coded ``pl.Utf8`` dim
-        # column schemas in ``_derived.py`` /
+        # column schemas in ``params/_derived/`` /
         # ``_block.py`` / etc., and joining Enum-cast FlexData
         # fields against String-dtype scratch frames raises
         # ``SchemaError``.  Casting after the cascade keeps the entire

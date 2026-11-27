@@ -820,7 +820,7 @@ Known gaps (not exercised, or not Enum, in this mode):
   load with `axis_enums=True` cover it.
 - Intended narrowing casts null labels outside the scenario's
   vocabulary: `d` casts of periods outside the solve (`_retire_settlement.py`,
-  `_derived.py`) and the `constraint` cast in `_spinedb_reader.py`. No
+  `params/_derived/`) and the `constraint` cast in `_spinedb_reader.py`. No
   LP effect in the fixtures; a site that needs such a label must not
   read it through the cast.
 
@@ -1467,7 +1467,7 @@ API of the other packages is in architecture.md
 
 - **Lazy at the rim, eager at the boundary.** Internal frames are
   `pl.LazyFrame`; helpers `.collect()` once at the function boundary.
-  This is the pattern documented at the top of `_derived.py`
+  This is the pattern documented in `params/_derived/__init__.py`
   and `_per_solve_sets.py`.
 - **None-skip is canonical.** A field at `None` means "feature not
   active" and is the recommended way to opt out. Empty frames mean

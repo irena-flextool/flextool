@@ -1,6 +1,6 @@
 """Line-range index of Python modules, so a reader can open just the part it needs.
 
-Large engine modules (``preprocess/params/_derived.py``, ``preprocess/flex_data/``,
+Large engine modules (``preprocess/params/_derived/``, ``preprocess/flex_data/``,
 ``solve/_orchestration.py`` …) run to thousands of lines.  This tool lists every
 top-level function and class (and class methods) with its line range and the first
 line of its docstring, so an agent or a person can read a single range instead of

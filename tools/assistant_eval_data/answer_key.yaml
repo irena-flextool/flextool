@@ -34,7 +34,7 @@ sources:
   - flextool/input_derivation/_validators.py (validate_node_inflow_not_period message text)
   - flextool/engine/model/core/ (EQ./OBJ. headers nodeBalance_eq, balance_slack_penalty, commodity and CO2 cost,
     invest_cost_p, existing_fixed_cost, invest period and total caps)
-  - flextool/engine/preprocess/params/_npv.py, _derived.py (annuity formula, which invest_method values get
+  - flextool/engine/preprocess/params/_npv.py, _derived/_invest_sets.py (annuity formula, which invest_method values get
     a per-period cap)
 questions:
   G01:

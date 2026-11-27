@@ -98,13 +98,13 @@ flextool source; deviations are documented inline.
 Cross-references
 ----------------
 
-* :mod:`._derived._inflation_yearly_from_source` — the yearly
+* :mod:`._derived._inflation._inflation_yearly_from_source` — the yearly
   inflation cascade computation used to be eager-Python; we keep that
   helper's algorithm but expose a lazy-frame variant
   (:func:`._discount._inflation_factors_lf`) for use here.
-* :func:`._derived._p_years_d_lf` — already lazy; reused as-is.
-* :func:`._derived._period_in_use_set` and
-  :func:`._derived._solve_periods` — list builders used to
+* :func:`._derived._periods._p_years_d_lf` — already lazy; reused as-is.
+* :func:`._derived._periods._period_in_use_set` and
+  :func:`._derived._periods._solve_periods` — list builders used to
   bound the period domain.
 """
 from __future__ import annotations

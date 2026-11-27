@@ -384,7 +384,7 @@ def test_load_flextool_with_db_reader_solves_correctly(scenario_run):
 # a "None-default" policy: spinedb_schema.json carries
 # ``default_value = None`` for every such row, and consumers fall back
 # to the engine's hard-coded substitute at read time (see
-# ``_scalar_default`` in _derived.py and the min_load comment in
+# ``_scalar_default`` in _derived/_scope.py and the min_load comment in
 # _projection.py:1101).  Regression here would mean a vendored
 # JSON drifted *to* a non-None default — silently bypassing the
 # engine-side fallback and breaking the contract that the schema only

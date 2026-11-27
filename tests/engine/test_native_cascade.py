@@ -206,7 +206,7 @@ def test_step_duration_3_keeps_seed_intact(scenario_run):
     )
 
     # p_step_duration is NOT the scaled seed on the production path: with a DB reader,
-    # ``apply_derived`` (params/_derived.py, the dt / step-duration override) replaces it with the DB
+    # ``apply_derived`` (params/_derived/_time.py, the dt / step-duration override) replaces it with the DB
     # timeline's durations unless ``solve.new_stepduration`` is set.  Only the old reader-less CSV reload
     # kept the scaled ``steps_in_use`` seed (reload gap, c24 stage 1 S1-5), so the rebuild carries the
     # solved FlexData's step durations; the p_inflow guard above is unaffected (the bug class it catches

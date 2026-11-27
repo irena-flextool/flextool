@@ -59,7 +59,7 @@ _AXIS_SYNONYMS: dict[str, str] = {
     # period in service before it.
     "d_extend": "d",
     "d_last": "d",
-    # ``anchor`` is the cascade column name used in _derived.py
+    # ``anchor`` is the cascade column name used in params/_derived/
     # during the period__branch overlay (period→anchor rename).  The
     # values are period labels, so the column belongs to the ``d`` axis.
     "anchor": "d",

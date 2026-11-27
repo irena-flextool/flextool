@@ -67,13 +67,13 @@ def _reset_global_axis_enums():
 def _reset_recourse_walk_scope():
     """Reset the recourse walker process-globals before/after each test.
 
-    :func:`._derived._enter_recourse_anchor_scope` arms three
+    :func:`._derived._invest_apply._enter_recourse_anchor_scope` arms three
     module-globals for the active solve — the recourse anchor-pairs holder
     and the boundary-scoped walker Provider + workdir of a solve with branch
     periods.  A real
     stochastic solve leaves them ARMED when it finishes; in production the next
     solve's cascade clears them (``flex_data._db_overrides._apply_db_overrides`` calls
-    :func:`._derived._reset_recourse_scope` first — the F1 guarantee).
+    :func:`._derived._invest_apply._reset_recourse_scope` first — the F1 guarantee).
 
     A solver-free unit test that calls ``period_walk_iterator`` /
     ``commissioning_year_lf`` directly never runs that cascade, so without

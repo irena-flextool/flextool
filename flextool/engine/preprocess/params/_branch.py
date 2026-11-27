@@ -1988,7 +1988,7 @@ def apply_branch_cluster(
                          ctx=ctx, provider=provider)
 
     # 3-4. Branch-weight Params (lazy ports of the previous eager
-    # helpers in ``_derived.py``).
+    # helpers in ``_derived/_time.py``).
     _new_pd_bw = pd_branch_weight_param(
         workdir, source, active_solve, ctx=ctx, provider=provider)
     if _new_pd_bw is not None or getattr(flex_data, "pd_branch_weight", None) is None:
