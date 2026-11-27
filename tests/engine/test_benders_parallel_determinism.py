@@ -179,7 +179,7 @@ from polar_high import Problem
 from flextool.engine import build_flextool
 from flextool.engine.solve import _region_filter
 from flextool.engine.solve._benders import solve_benders
-from flextool.engine.solve._orchestration import _LEGACY_DEFAULT_OBJECTIVE_SCALE
+from flextool.engine.solve._orchestration._highs_options import _LEGACY_DEFAULT_OBJECTIVE_SCALE
 from flextool.engine.input._axis_enums import set_global_axis_enums
 from tests._support.load import load_saved
 
