@@ -75,7 +75,7 @@ The choice is per solve, so a single chain can mix schemes (e.g. a
 Benders investment solve followed by a monolithic dispatch solve — the
 Benders invest solve's realised trade + in-region capacity threads into
 the downstream dispatch). The per-solve routing is in
-`flextool/engine/solve/_orchestration.py` and the coordinator (master +
+`flextool/engine/solve/_orchestration/_cascade.py` and the coordinator (master +
 cut loop) in `flextool/engine/solve/_benders.py`. `benders_max_iter`
 caps the cut loop and `benders_tolerance` is the relative
 optimality-gap threshold for declaring convergence. Use Benders when the

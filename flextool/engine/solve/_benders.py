@@ -494,8 +494,8 @@ def _apply_region_autoscale(
     :class:`Layer2Plan` (or ``None`` when Layer-2 was skipped/failed).
 
     Mirrors the monolith's two pre-solve hooks
-    (:func:`_orchestration._autoscale_apply_layer2_pre_solve` +
-    :func:`_orchestration._autoscale_apply_layer3_pre_solve`) so the region
+    (:func:`_orchestration._autoscale_hooks._autoscale_apply_layer2_pre_solve` +
+    :func:`_orchestration._autoscale_hooks._autoscale_apply_layer3_pre_solve`) so the region
     subproblems condition exactly like the monolith LP — which runs this same
     ``scale_the_objective`` + Layer-2 + Layer-3 stack on every solve.
 

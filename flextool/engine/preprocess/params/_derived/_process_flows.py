@@ -654,7 +654,7 @@ def apply_derived_b(
     # This value is solve-invariant (computed against the whole-model,
     # unfiltered-scenario source).  In the DB cascade path it is computed
     # ONCE before the per-solve loop and seeded into the Provider under
-    # ``input/p_all_entity_unitsize`` (see ``_orchestration._drive_cascade``),
+    # ``input/p_all_entity_unitsize`` (see ``_orchestration._cascade._drive_cascade``),
     # so here we read it from the Provider rather than recompute it per roll.
     # The recompute is kept as the fallback for the CSV/fixture path and any
     # path that lacks the seeded Provider.

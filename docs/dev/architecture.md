@@ -968,7 +968,7 @@ changes the optimum. User-facing guide (modes, the guard's thresholds and messag
      quantity type of every variable (`VARIABLE_FAMILIES`), constraint (`CONSTRAINT_FAMILIES` via `lookup_cstr`) and
      parameter (`PARAMETER_TYPES`) in `_layer2_types.py` / `_quantity_types.py`. These registries refuse to default
      — an unregistered name raises `KeyError` in `bucket_coefficients`. That `KeyError` is **caught** in
-     `_orchestration._autoscale_apply_layer2_pre_solve` and the solve silently reverts to an **un-scaled LP**
+     `_orchestration._autoscale_hooks._autoscale_apply_layer2_pre_solve` and the solve silently reverts to an **un-scaled LP**
      ("autoscale Layer 2 apply failed … reverting"), so a missing registration does not crash — it quietly disables
      autoscaling. So: every new `add_var(...)` / `add_cstr(...)` literal and every new schema parameter MUST get a
      registry entry (flags / `yes_no` gates → `DIMENSIONLESS`). `lookup_cstr` resolves dynamic (f-string)

@@ -441,7 +441,7 @@ class RecursiveSolveBuilder:
         self._rolling_invest_warned.add(solve)
         # Emit via a MODULE-level logger, NOT ``self.logger``: the orchestrator
         # deliberately raises ``state.logger`` to ERROR during the cascade
-        # (``_orchestration._drive_cascade``) to silence per-solve chatter, so
+        # (``_orchestration._cascade._drive_cascade``) to silence per-solve chatter, so
         # a WARNING through ``self.logger`` would be filtered and never seen.
         # This advisory must survive that silencing, so it routes through
         # ``_MODULE_LOGGER`` (effective level inherited from root).

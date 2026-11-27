@@ -4,7 +4,7 @@ Commit 8464dc76 (``fix(autoscale): cache scaling decision per rolling
 group; skip per-roll range traversal``) added a per-structural-fingerprint
 cache on the cascade solver:
 
-* :class:`flextool.engine.solve._orchestration._AutoscaleShapeCacheEntry`
+* :class:`flextool.engine.solve._orchestration._autoscale_hooks._AutoscaleShapeCacheEntry`
   stores the Layer-2 exponents + Layer-3 plan + pre/post
   :class:`RangeReport`s the autoscaler decided on the first solve of a
   given LP shape.
@@ -24,7 +24,7 @@ and asserts BOTH:
 
 1. **Mechanism**: with the cache ON the autoscaler performs strictly fewer
    range-detection Problem traversals than with the cache OFF.  We count
-   by wrapping :func:`_orchestration._autoscale_compute_ranges` (the import
+   by wrapping :func:`_orchestration._autoscale_hooks._autoscale_compute_ranges` (the import
    alias for :func:`polar_high.autoscale.detect_ranges`, the symbol used
    for every per-roll Layer-2 pre-solve, Layer-3 pre-solve, and Layer-1
    post-solve range read).  We separate the EXPENSIVE Problem-path walk
@@ -112,7 +112,7 @@ def _read_per_solve_objectives(workdir: Path) -> dict[str, float]:
 
 
 class _RangeWalkCounter:
-    """Wrap ``_orchestration._autoscale_compute_ranges`` with a call counter.
+    """Wrap ``_orchestration._autoscale_hooks._autoscale_compute_ranges`` with a call counter.
 
     ``_autoscale_compute_ranges`` is the orchestration import alias for
     :func:`polar_high.autoscale.detect_ranges`.  It is called for the
@@ -314,7 +314,7 @@ def test_shape_cache_hits_when_fingerprint_slides_per_solve(
 
     The DES condition is "fingerprint differs per solve, but the LP shape
     is identical".  We reproduce it on the fast ``coal_cum_within_period``
-    rolling scenario by perturbing ``_orchestration._fingerprint`` to
+    rolling scenario by perturbing ``_fingerprint`` (``solve._warm``, as ``_orchestration._cascade`` reads it) to
     return a unique value per call.  Under that perturbation:
 
     * The OLD ``_fingerprint``-keyed decision cache (pre-``b7751db5``)

@@ -4,7 +4,7 @@ Solver-free coverage of:
 
 * :meth:`SolveConfig.decomposition_for` / ``benders_config_for`` —
   the per-solve scheme + knob resolvers (defaults + normalisation).
-* :func:`_orchestration._benders_consume_guard_message` — the loud
+* :func:`_orchestration._guards._benders_consume_guard_message` — the loud
   guard that (post TIER 1) fires only when a downstream solve would
   consume a Benders predecessor that deposited NO usable investment
   handoff; it is silent when the predecessor handed forward invested

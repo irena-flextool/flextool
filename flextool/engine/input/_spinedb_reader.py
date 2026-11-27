@@ -380,7 +380,7 @@ class SpineDbReader:
     # Solves FlexTool makes from another solve (the realization solve, the solves of a 2-D period map)
 
     #: The ``solve`` parameters the engine-automatic realization solve ``<solve>__realized_dispatch`` does NOT take
-    #: from its parent (:func:`_orchestration._spawn_realized_dispatch_siblings`): it is a deterministic,
+    #: from its parent (:func:`_orchestration._guards._spawn_realized_dispatch_siblings`): it is a deterministic,
     #: fixed-capacity, monolithic dispatch over the parent's realized window, so it cannot invest, branch,
     #: decompose, contain solves or spawn a realization solve of its own.  Every other parameter row of the parent
     #: is copied (the realized window ``realized_periods``, the timesets, ``years_represented``, ``solve_mode``,

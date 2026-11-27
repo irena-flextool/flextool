@@ -390,7 +390,7 @@ solving — useful for inspecting how the rewriter sees a given region.
 | `load_decomposition_method` (reads ``decomposition_method`` from the provider's `input/p_group_decomposition`) | same |
 | `WarmProblem.add_cut_row` / `add_recourse_col` / `solve(retry_on_unknown=…)` | `polar_high` (external) |
 
-The per-solve routing lives in `flextool/engine/solve/_orchestration.py`
+The per-solve routing lives in `flextool/engine/solve/_orchestration/_cascade.py`
 (`_PolarHighCascadeSolver._run_benders_solve`, driven by
 `SolveConfig.decomposition_for`). The Benders path is also surfaced
 as a "Solve modes" entry in

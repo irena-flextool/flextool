@@ -5,7 +5,7 @@ entry point for any solve that isn't going through the warm-active
 HiGHS path:
 
 * HiGHS with ``--save-memory`` (or with ``warm=False`` and the
-  soft-promote rule fired in ``_orchestration.py``) — written via
+  soft-promote rule fired in ``_orchestration._cascade``) — written via
   :meth:`polar_high.Problem.write_mps`, solved by
   :mod:`flextool.cli.cmd_solve_mps`.
 * Non-HiGHS solvers (``gurobi`` / ``cplex`` / ``xpress`` / ``copt``) —
@@ -13,7 +13,7 @@ HiGHS path:
   solver's CLI binary discovered on ``$PATH`` (with a small set of
   conventional install dirs as fallback).
 
-The default HiGHS path in ``_orchestration.py`` (warm-active
+The default HiGHS path in ``_orchestration._cascade`` (warm-active
 :class:`polar_high.WarmProblem`) does **not** call this module.
 
 **Non-HiGHS contract**: commercial solvers (Gurobi/CPLEX/Xpress/COPT)
@@ -445,7 +445,7 @@ class SolveOutcomeError(RuntimeError):
     A solve *outcome*, as opposed to a configuration, licence or internal error (a missing binary, an option
     the solver refuses, a file that does not line up with the LP: those stay plain ``RuntimeError`` /
     ``FlexToolUserError``).  The final solve of a Benders solve turns only these into W-0572 and goes on
-    (``_orchestration._run_one``).
+    (``_run_one`` in ``_orchestration._cascade``).
     """
 
 
@@ -2184,7 +2184,7 @@ def _solve_highs_subprocess(
     defensive: a missing fingerprint, a rejected/garbage basis, or any
     exception falls back to a correct cold solve.  Warm-start never
     breaks a solve.  This ``.bas`` cache is a separate branch from the
-    in-memory ``WarmProblem`` reuse gate in ``_orchestration.py``.
+    in-memory ``WarmProblem`` reuse gate in ``_orchestration._cascade``.
 
     **First-transfer A/B gate** (Landmine B): a supplied basis disables
     HiGHS' presolve, so a stale/far seed can make the warm solve SLOWER

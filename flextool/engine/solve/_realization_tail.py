@@ -6,7 +6,7 @@ realizes each jump ``[s_k, s_{k+1})`` on its ``realized: yes`` branch, read as o
 the roll ``k`` of the engine-added realization solve, after the roll's fully stochastic solve (1).
 
 * :func:`realization_roll_method` is the gate: the one predicate that says whether a solve has realization rolls
-  (also read by ``_orchestration._spawn_realized_dispatch_siblings``).  :func:`delay_gated_units` names the delayed
+  (also read by ``_orchestration._guards._spawn_realized_dispatch_siblings``).  :func:`delay_gated_units` names the delayed
   units that alone keep a solve from them.
 * :func:`roll_tail_plan` makes the :class:`RollTail` of each roll of a gated solve from the authored
   ``stochastic_branches`` rows (never changed) and raises the configuration errors of a missing forecast or a

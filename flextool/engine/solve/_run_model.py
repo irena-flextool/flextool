@@ -1,7 +1,7 @@
 """Native cascade driver.
 
 This module owns the per-solve cascade loop.  :func:`native_run_model`
-is invoked by :func:`._orchestration._drive_cascade`.
+is invoked by :func:`._orchestration._cascade._drive_cascade`.
 
 Design decisions
 ----------------
@@ -12,7 +12,7 @@ Design decisions
   ``preprocessing.solve_time`` or the ``solve_writers`` module.  Those
   remain authoritative and are still called as functions — the
   ``_native_leaf_set_override()`` context (wired by
-  :func:`._orchestration._drive_cascade`) intercepts the already-native
+  :func:`._orchestration._cascade._drive_cascade`) intercepts the already-native
   preprocessing helpers.
 * **Native solve-tree expansion** via
   :class:`flextool.engine.solve._recursive_solve.RecursiveSolveBuilder`
@@ -1518,7 +1518,7 @@ def native_run_model(state, solver) -> int:
     Walks the solve tree, applies stochastic branching, writes the
     per-solve inputs the solver needs (via ``solve_writers`` /
     ``preprocessing.solve_time`` — both intercepted where native ports
-    exist by the override hook in ``_orchestration._drive_cascade``),
+    exist by the override hook in ``_orchestration._cascade._drive_cascade``),
     and invokes the per-solve callback ``solver.run(complete_solve_name)``.
 
     Args:
@@ -1529,7 +1529,7 @@ def native_run_model(state, solver) -> int:
             are tolerated via ``getattr``.
         solver: A :class:`SolverRunner` subclass.  In the native cascade
             this is ``_PolarHighCascadeSolver`` defined inside
-            :func:`._orchestration._drive_cascade`.
+            :func:`._orchestration._cascade._drive_cascade`.
 
     Returns:
         0 on success.
@@ -2467,7 +2467,7 @@ def native_run_model(state, solver) -> int:
         # ---- LP scaling: emit user-set row-scaling state.  The objective
         # scale (``solve_data/scale_the_objective``) is emitted by the
         # orchestrator when it resolves the value the LP is built with
-        # (``_orchestration._emit_provider_obj_scale``).
+        # (``_orchestration._steps._emit_provider_obj_scale``).
         solve_writers.emit_p_use_row_scaling(
             solve,
             state.solve.use_row_scaling,
@@ -3121,9 +3121,9 @@ def native_run_model(state, solver) -> int:
                 )
 
         # ---- Scaling report — handled by the orchestrator.
-        # The diagnostic TXT report is emitted by
-        # ``_orchestration._write_scale_csv_and_report`` (called from
-        # the cascade post-solve path at ``_orchestration.py:1352``).
+        # The scale output is written by
+        # ``_orchestration._steps._write_scale_csv`` (called from
+        # the cascade post-solve path in ``_orchestration._cascade``).
         # The duplicate native call site was removed in Tier 4
         # Commit 4 since the orchestrator's call uses the modern
         # ``flex_data`` / ``Solution`` API and emits the same

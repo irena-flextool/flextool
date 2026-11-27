@@ -244,7 +244,7 @@ def test_untrusted_gurobi_lines_get_the_database_rules(line, refused) -> None:
 def test_untrusted_highs_file_names_go_to_the_work_folder(tmp_path) -> None:
     """HiGHS: an untrusted ``highs.opt`` with ``log_file=/tmp/x.log`` is refused; ``log_file=run.log`` becomes a
     file in the solve's work folder.  The in-process solve and the ``--save-memory`` child both take this option
-    set (``_orchestration._solve_highs_options``)."""
+    set (``_orchestration._highs_options._solve_highs_options``)."""
     work = tmp_path / "solve_data" / "subprocess"
     with pytest.raises(FlexToolUserError, match=r"highs.opt, line 1.*plain file name.*NOTE$"):
         _resolve_effective_highs_options(

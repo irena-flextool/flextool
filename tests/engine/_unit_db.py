@@ -144,7 +144,7 @@ class RunCache:
 
 
 #: Name suffix of the realization solve the engine adds after a stochastic solve with a ``realized: yes``
-#: designation (``solve._orchestration._spawn_realized_dispatch_siblings``); its rolls are ``<name>_roll_<k>``.
+#: designation (``solve._orchestration._guards._spawn_realized_dispatch_siblings``); its rolls are ``<name>_roll_<k>``.
 REALIZATION_SUFFIX = "__realized_dispatch"
 
 

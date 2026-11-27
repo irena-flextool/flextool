@@ -2,7 +2,7 @@
 run; without the final solve result a chained Benders solve writes its investment-only results (P3).
 
 After the Benders loop, the whole model of the solve is solved once with every investment decision fixed to the
-Benders incumbent (``_orchestration._run_one``), on the normal monolithic path.  Oracles are relational: each
+Benders incumbent (``_run_one`` in ``_orchestration._cascade``), on the normal monolithic path.  Oracles are relational: each
 Benders run is compared with its **monolithic twin**, the same database with ``solve.decomposition = none`` on
 the Benders solve (the values come from the twin, never from the new code).
 

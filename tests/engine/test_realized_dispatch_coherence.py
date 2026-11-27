@@ -2,7 +2,7 @@
 feature.
 
 The sibling's configuration is DEFINED TWICE, in two vocabularies (see the
-feature map at ``_orchestration._spawn_realized_dispatch_siblings``): both halves
+feature map at ``_orchestration._guards._spawn_realized_dispatch_siblings``): both halves
 copy everything from the parent except a drop list,
 
 * the RAW Spine-param half — ``SpineDbReader.REALIZATION_SOLVE_DROPPED_PARAMS``

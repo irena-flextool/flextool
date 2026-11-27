@@ -19,7 +19,7 @@ so they don't leak, exactly as the subprocess-level tests do.
 
 The save-memory subprocess route is opted into with
 ``FLEXTOOL_SAVE_MEMORY=1`` (read by the orchestration gate at
-``_orchestration.py``); under it every sub-solve cold-rebuilds, writes MPS
+``_orchestration/_cascade.py``); under it every sub-solve cold-rebuilds, writes MPS
 and dispatches to a subprocess HiGHS, which is where the warm-start arm
 lives.  We reuse the exact fixture/DB helper and scenario constant from
 ``test_solver_integration.py`` so the model is a genuine, migrating build

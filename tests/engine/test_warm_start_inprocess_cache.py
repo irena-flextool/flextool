@@ -219,7 +219,7 @@ def test_gate_predicate_benders_and_solver(
     whenever the opt-in is off.
 
     A full Benders cascade is NOT built here because it cannot reach the
-    warm-start code at all: ``_orchestration.run`` returns early through
+    warm-start code at all: ``run`` (``_orchestration._cascade``) returns early through
     ``_run_benders_solve`` when ``decomposition_for(...) == "benders"``,
     BEFORE the warm branch that hosts the capture/inject blocks.  The
     ``decomposition != "benders"`` term in this predicate is the explicit

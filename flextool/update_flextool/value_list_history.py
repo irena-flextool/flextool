@@ -14,7 +14,7 @@ a database and never looks at the values (design: ``specs/two_stage_fix_D_invest
 Only SQLite files are checked: a database on a server (not a ``sqlite:///`` URL) is never checked.
 
 TODO(v5.0.0): remove this module, W-0490 (``run_warnings/_input_specs.py``), its call sites
-(``engine/solve/_orchestration.py``, ``gui/input_sources.py`` ``value_list_findings``, the
+(``engine/solve/_orchestration/_entry.py``, ``gui/input_sources.py`` ``value_list_findings``, the
 ``value_list_check`` message in ``gui/messages.py`` and ``gui/message_sources.py``), the repair tool ``flextool-repair-value-list``
 (``update_flextool/value_list_repair.py``, ``value_list_suspects.py``, ``value_list_archive.py``,
 ``value_list_answers.py``, ``value_list_write.py``,

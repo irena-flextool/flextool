@@ -216,7 +216,7 @@ class RunnerState:
     # the ``input/<class>`` frames.  Typed as ``object`` to avoid
     # pulling :class:`FlexDataProvider` into the import graph.
     cascade_input_provider: object | None = None
-    # The run's input-database reader (``_orchestration._drive_cascade`` builds it): ``_run_model`` builds the run's
+    # The run's input-database reader (``_orchestration._cascade._drive_cascade`` builds it): ``_run_model`` builds the run's
     # existing cohorts from it once, after the run calendar.  ``None`` outside a run.
     input_source: object | None = None
     # Per-sub-solve Provider currently driving the cascade.  Set by

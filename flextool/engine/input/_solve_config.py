@@ -1439,7 +1439,7 @@ class SolveConfig:
         deterministic optimisation, not a re-floated gap.
         """
         # ►► The reader half of the sibling config is ``SpineDbReader.REALIZATION_SOLVE_DROPPED_PARAMS``
-        # (feature map: ``_orchestration._spawn_realized_dispatch_siblings``; pinned by
+        # (feature map: ``_orchestration._guards._spawn_realized_dispatch_siblings``; pinned by
         # ``tests/engine/test_realized_dispatch_coherence.py``).
         # Positional insert right after the parent (NOT append + remove).
         for _model, solves in self.model_solve.items():
@@ -1467,7 +1467,7 @@ class SolveConfig:
 
         Applied to the driving ``runner.state.solve`` (:meth:`spawn_realized_dispatch_sibling`) and to the outer
         cascade ``state.solve``, where the ``run()`` closure reads each solve's solver and scaling
-        (``_orchestration._spawn_realized_dispatch_siblings``): the sibling runs on its parent's solver,
+        (``_orchestration._guards._spawn_realized_dispatch_siblings``): the sibling runs on its parent's solver,
         ``solver_arguments``, ``solver_mip_gap`` and ``scaling``."""
         parent_mode = self.solve_modes.get(parent, "single_solve")
         mode = "rolling_window" if parent_mode == "rolling_window" else "single_solve"

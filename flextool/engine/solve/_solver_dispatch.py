@@ -883,7 +883,7 @@ def _resolve_effective_highs_options(
     Precedence (lowest → highest):
 
     1. ``baseline`` — engine-pinned defaults from
-       :func:`flextool.engine.solve._orchestration._baseline_highs_options`
+       :func:`flextool.engine.solve._orchestration._highs_options._baseline_highs_options`
        (Curtis-Reid simplex scale + the four determinism keys from
        :data:`flextool.engine.solve._determinism.DETERMINISM_OPTIONS`).
        Each higher layer may overwrite these — operator intent wins.
@@ -901,7 +901,7 @@ def _resolve_effective_highs_options(
        no path (:func:`check_database_solver_option`).
     5. ``cli_overrides`` — keys injected by CLI flags
        (``--highs-threads``, ``--solver-time-limit``, …) via
-       :func:`flextool.engine.solve._orchestration._operator_highs_overrides`.
+       :func:`flextool.engine.solve._orchestration._highs_options._operator_highs_overrides`.
        Highest precedence; the operator's command-line intent is
        authoritative.
 

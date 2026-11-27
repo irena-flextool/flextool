@@ -67,7 +67,7 @@ The steps, with their modules, are listed in `flextool/engine/README.md`
 
 `solve.reduce_unit_detail_method` / `reduce_system_detail_method` (user docs: entities_and_time.md "Leaving out
 detail in a solve") are applied in one place: `preprocess._reduce_detail.apply_reduce_detail(d, unit, system)`,
-called by the cascade right after `load_flextool` for every sub-solve (`_orchestration._drive_cascade`). Every
+called by the cascade right after `load_flextool` for every sub-solve (`_orchestration._cascade._drive_cascade`). Every
 consumer after it reads the reduced data: the online / ramp carry check (`check_online_ramp_carry`, outside
 `load_flextool` so that it sees the reduced online set), the realization checks, the Benders split, the cold and
 warm build, the handoff and the per-roll outputs. The per-roll emit and the input derivation are not changed.
@@ -930,6 +930,14 @@ folder) is architecture.md
 The same `build_flextool` body backs three solver wrappers exported by
 `polar_high`. They differ only in what they do *between* solves.
 
+The loop that drives them is the `solve/_orchestration/` package: `_entry`
+(`run_chain_from_db`, `run_orchestration`), `_cascade` (`_drive_cascade` and its
+per-sub-solve `_run_one`: load, build or warm reuse, solve, outputs, handoff),
+`_highs_options` (the HiGHS option set of a sub-solve), `_autoscale_hooks` (the
+autoscale steps around a solve), `_guards` (solve-chain guards and the realization
+solves of stochastic solves), `_steps` (`OrchestrationStep`) and `_memory` (the
+memory / phase diagnostics).
+
 ### Monolithic — `polar_high.Problem`
 
 The default. One LP, one HiGHS run. Used for every single-shot solve
@@ -1458,9 +1466,9 @@ API of the other packages is in architecture.md
 | Add a new optional feature | A new module next to `_reserve.py` / `_group_slack.py` | Give it `add_variables(b)` (variables with `VAR.` headers, set on `b`), `add_constraints(b)` and `objective_terms(b) -> Expr \| None`, each with an early-return guard on the feature's flag. Add the flag (and any variable fields) to `_Build`; set the flag in `_prepare`, with a `MY_FEATURE = (...)` required-field tuple and a `_check(d, MY_FEATURE, "my_feature")` call if it needs one. Call `add_variables` from `_declare_variables` and put `add_constraints` / `objective_terms` in the `build_flextool` table of contents. Register every new variable and constraint in autoscale `VARIABLE_FAMILIES` / `CONSTRAINT_FAMILIES`, add them to the `model/core/` module docstring, and check the LP with `tools/lp_snapshot.py`. |
 | Trace a numerical issue | `solve_data/autoscale_<solve>.yaml` | The Layer 1 ranges + Layer 2/3 plans show which families are wide and which scalers fired. [scaling.md](scaling.md), architecture.md [Numerical scaling](architecture.md#numerical-scaling). |
 | Trace a feasibility issue | `vq_*` outputs in `output_parquet/` | Slack activity localises the infeasibility to a row family. [slack_convention.md](slack_convention.md). |
-| Add a new decomposition mode | `_benders.py` (+ `_region_filter.py`) for spatial, `_warm.py` + `_orchestration.py` `_drive_cascade` for temporal | Each carries the FlexTool-side glue around a `polar_high` driver. Read [decomposition.md](decomposition.md) first. |
+| Add a new decomposition mode | `_benders.py` (+ `_region_filter.py`) for spatial, `_warm.py` + `_orchestration/_cascade.py` `_drive_cascade` for temporal | Each carries the FlexTool-side glue around a `polar_high` driver. Read [decomposition.md](decomposition.md) first. |
 | Trace a wrong-period bug in rolling horizon | `_apply_db_overrides` in `flex_data/_db_overrides.py` | The handoff translation site. Cross-check against the `SolveHandoff` fields populated by `build_handoff_from_solution` and the routing in `solve/_carry_routing.py`. |
-| Trace a warm-LP divergence | `_warm._reuse_blocker`, `_orchestration` `solver_key` | A reuse requires every `FlexData` field and the solver configuration to be identical; the INFO line "warm reuse fell back to COLD REBUILD" names the blocker. A warm/cold divergence on a reused sub-solve means something that shapes the LP lives outside `FlexData` and the solver key: add it to the comparison. |
+| Trace a warm-LP divergence | `_warm._reuse_blocker`, `_orchestration/_cascade.py` `solver_key` | A reuse requires every `FlexData` field and the solver configuration to be identical; the INFO line "warm reuse fell back to COLD REBUILD" names the blocker. A warm/cold divergence on a reused sub-solve means something that shapes the LP lives outside `FlexData` and the solver key: add it to the comparison. |
 | Add a new variable / dual to the parquet output | `flextool/process_outputs/read_highs_solution.VARIABLE_SPECS` | Append one `VariableSpec` (architecture.md [Solution extraction](architecture.md#solution-extraction)). |
 
 ## Conventions worth knowing
