@@ -1,6 +1,6 @@
 """Tests for the regional filter (gap A4+A5).
 
-Exercises ``flextool._region_filter.split`` on the LH2 three-region
+Exercises ``flextool.engine.solve._region_filter.split`` on the LH2 three-region
 fixture plus a few synthetic cases (single-region no-op, all-pairs
 topology, missing-region defaults).  Asserts the output FlexDatas have:
 
