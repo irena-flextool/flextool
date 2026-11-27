@@ -16,6 +16,7 @@ Usage::
     python tools/related_tests.py                       # files changed against HEAD (+ untracked)
     python tools/related_tests.py --base main           # files changed since the merge base with main
     python tools/related_tests.py flextool/engine/model/_online.py
+    python tools/related_tests.py flextool/engine/solve/_region_filter   # a directory: its .py files
     python tools/related_tests.py --run                 # run them: pytest -n 8 -q --tb=short
 
 Each line is ``<seconds in CI> <test module>``, slowest last (seconds from ``tests/ci_durations.json``; ``?``
@@ -102,7 +103,20 @@ def _importers_in_package(package: str, module: str) -> set[str]:
     return seen
 
 
+def expand_dirs(files: list[str]) -> list[str]:
+    """``files`` with each directory (``flextool/engine/solve/_region_filter``) replaced by the ``.py`` files under it."""
+    out: list[str] = []
+    for f in files:
+        path = REPO / f
+        if path.is_dir():
+            out += sorted(p.relative_to(REPO).as_posix() for p in path.rglob("*.py"))
+        else:
+            out.append(f)
+    return out
+
+
 def related(files: list[str]) -> list[str]:
+    files = expand_dirs(files)
     targets = {m for m in map(module_name, files) if m}
     for module in list(targets):
         package = module.rpartition(".")[0]
@@ -121,7 +135,7 @@ def related(files: list[str]) -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("files", nargs="*", help="changed files (default: git diff against HEAD + untracked)")
+    ap.add_argument("files", nargs="*", help="changed files or directories (default: git diff against HEAD + untracked)")
     ap.add_argument("--base", help="also include commits since the merge base with this ref")
     ap.add_argument("--run", action="store_true", help="run the related modules with pytest -n 8")
     ap.add_argument("--include-heavy", action="store_true", help=f"--run also modules over {HEAVY_SECONDS:.0f} s")

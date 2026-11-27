@@ -38,3 +38,14 @@ def test_importing_a_plain_package_still_does_not_count() -> None:
     relates only the tests that import _online by name."""
     tool = _tool()
     assert "tests/engine/test_coarse_row_rule.py" not in tool.related(["flextool/engine/model/_online.py"])
+
+
+def test_a_directory_counts_as_its_python_files() -> None:
+    """A package directory, with or without a trailing slash, selects what its modules select: test_region_filter
+    imports ``flextool.engine.solve._region_filter``, whose facade imports the package's modules."""
+    tool = _tool()
+    expected = tool.related(sorted(
+        p.relative_to(REPO).as_posix() for p in (REPO / "flextool/engine/solve/_region_filter").glob("*.py")))
+    assert "tests/engine/test_region_filter.py" in expected
+    for changed in ("flextool/engine/solve/_region_filter", "flextool/engine/solve/_region_filter/"):
+        assert tool.related([changed]) == expected
