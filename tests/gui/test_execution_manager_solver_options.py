@@ -136,7 +136,7 @@ def test_a_changed_setting_sends_exactly_its_flag(tmp_path: Path, field, value, 
 def test_threads_per_run_is_sent_as_the_thread_budget(tmp_path: Path, per_run: int):
     """The Execution jobs window's "Threads per run" (stored as ``max_cores_per_job``) reaches the run as
     ``--threads``, which gives HiGHS ``threads`` without its parallel simplex; ``--highs-threads`` is not sent."""
-    from flextool.engine.solve._orchestration import _operator_highs_overrides
+    from flextool.engine.solve._orchestration._highs_options import _operator_highs_overrides
     from flextool.gui.data_models import ExecutionLimits
 
     settings = ProjectSettings()

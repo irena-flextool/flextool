@@ -87,7 +87,7 @@ def _realized(step) -> set[tuple[str, str]]:
 def _assert_price_is_summed_duals(step, wf: Path, r: str, ud: str, g: str) -> dict[tuple[str, str], float]:
     """The parquet holds the realized steps of the solve, each = Σ duals / s / (Δt · w) (empty where w = 0);
     returns the non-empty prices."""
-    from flextool.engine.solve._orchestration import _LEGACY_DEFAULT_OBJECTIVE_SCALE as S
+    from flextool.engine.solve._orchestration._highs_options import _LEGACY_DEFAULT_OBJECTIVE_SCALE as S
 
     got = _price_column(wf, step, r, ud, g)
     duals = _summed_duals(step, r, ud, g)
@@ -184,7 +184,7 @@ def test_reserve_price_sums_requirement_duals(tmp_path_factory, method: str) -> 
 def test_reserve_price_n_1_without_shortfall(tmp_path_factory) -> None:
     """tests.json ``reserve_n_1`` (large_failure_only, met by the providers): the price is the value of one MW
     from the provider that does not fail, −dual[reserve_total_upper] / s / (Δt · w), positive somewhere."""
-    from flextool.engine.solve._orchestration import _LEGACY_DEFAULT_OBJECTIVE_SCALE as S
+    from flextool.engine.solve._orchestration._highs_options import _LEGACY_DEFAULT_OBJECTIVE_SCALE as S
 
     url, scen = make_db(tmp_path_factory, alt="rps_n1", values=[], base_chain=PLANT_CHAIN + ["wind", "reserve_n_1"])
     steps, wf = _run(tmp_path_factory, url, scen)

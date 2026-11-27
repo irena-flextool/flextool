@@ -482,7 +482,7 @@ def _config(**over):
 def test_configured_realization_solve_is_registered_not_spawned() -> None:
     """A deterministic solve right after the stochastic solve, same mode and rolls, realizing its committed fan
     period, is registered as its realization solve; no sibling is added."""
-    from flextool.engine.solve._orchestration import _spawn_realized_dispatch_siblings
+    from flextool.engine.solve._orchestration._guards import _spawn_realized_dispatch_siblings
     cfg = _config(model_solve={"m": ["p", "q"]}, solve_modes={"p": "single_solve", "q": "single_solve"})
     cfg.realized_periods["q"] = [("d1", "d1")]
     reader = _Reader()
@@ -496,7 +496,7 @@ def test_configured_solve_with_a_lookahead_period_warns(capsys) -> None:
     """An author-declared realization solve of a single solve that also holds a period the stochastic solve does
     not realize dispatches it with the realized data, information the stochastic solve did not have: registered as
     authored, with a warning naming the period (item 255)."""
-    from flextool.engine.solve._orchestration import _spawn_realized_dispatch_siblings
+    from flextool.engine.solve._orchestration._guards import _spawn_realized_dispatch_siblings
     cfg = _config(model_solve={"m": ["p", "q"]}, solve_modes={"p": "single_solve", "q": "single_solve"})
     cfg.timesets_used_by_solves["q"] = [("d1", "ts"), ("d2", "ts")]
     cfg.realized_periods["q"] = [("d1", "d1")]
@@ -510,7 +510,7 @@ def test_configured_solve_with_a_lookahead_period_warns(capsys) -> None:
 def test_configured_solve_missing_the_fan_period_is_not_registered() -> None:
     """A following deterministic solve that does not realize the fan's committed period is not a realization
     solve: the designation then adds the engine sibling right after the stochastic solve."""
-    from flextool.engine.solve._orchestration import _spawn_realized_dispatch_siblings
+    from flextool.engine.solve._orchestration._guards import _spawn_realized_dispatch_siblings
     cfg = _config(model_solve={"m": ["p", "q"]}, solve_modes={"p": "single_solve", "q": "single_solve"})
     cfg.realized_periods["q"] = [("d2", "d2")]
     reader = _Reader()
@@ -526,7 +526,7 @@ def test_branched_investment_designation(method, spawned) -> None:
     realized investment to fix, so no realization solve (the run gives W-0639 for a reveal at the first period,
     ``test_branched_invest_realization``).  Under ``investments_after_reveal_period`` the reveal period's investment
     is one decision of every forecast, and the designation adds the realization solve."""
-    from flextool.engine.solve._orchestration import _spawn_realized_dispatch_siblings
+    from flextool.engine.solve._orchestration._guards import _spawn_realized_dispatch_siblings
     cfg = _config(invest_solve_branching_method={"p": method})
     reader = _Reader()
     _spawn_realized_dispatch_siblings(cfg, reader, logger=None)
@@ -538,7 +538,7 @@ def test_branched_investment_designation(method, spawned) -> None:
 def test_nested_designation_raises(nesting: str) -> None:
     """A designated solve that contains solves, or is nested in another solve, cannot get a realization solve."""
     from flextool.engine.input._solve_state import FlexToolConfigError
-    from flextool.engine.solve._orchestration import _spawn_realized_dispatch_siblings
+    from flextool.engine.solve._orchestration._guards import _spawn_realized_dispatch_siblings
     if nesting == "parent":
         cfg = _config(contains_solves={"p": ["c"]})
     else:
@@ -552,7 +552,7 @@ def test_nested_rolling_designation_raises_reworded(nesting: str) -> None:
     """A rolling stochastic solve that contains solves, or is nested in another solve, gets the 4.7.0 text: its jumps
     cannot be realized (design §2.6, rev 6 §6.4)."""
     from flextool.engine.input._solve_state import FlexToolConfigError
-    from flextool.engine.solve._orchestration import _spawn_realized_dispatch_siblings
+    from flextool.engine.solve._orchestration._guards import _spawn_realized_dispatch_siblings
     if nesting == "parent":
         cfg = _config(contains_solves={"p": ["c"]}, solve_modes={"p": "rolling_window"})
         match = (r"Solve 'p' is a rolling stochastic solve that contains other solves \(contains_solves\)\. "
@@ -570,7 +570,7 @@ def test_configured_realization_of_a_solve_with_contained_solves_raises() -> Non
     """A stochastic solve that contains solves cannot be realized by the deterministic solve right after it: its
     contained solves would take its pins, and that solve would continue from the last of them."""
     from flextool.engine.input._solve_state import FlexToolConfigError
-    from flextool.engine.solve._orchestration import _spawn_realized_dispatch_siblings
+    from flextool.engine.solve._orchestration._guards import _spawn_realized_dispatch_siblings
     cfg = _config(model_solve={"m": ["p", "q"]}, solve_modes={"p": "single_solve", "q": "single_solve"},
                   contains_solves={"p": ["c"]})
     cfg.realized_periods["q"] = [("d1", "d1")]
@@ -581,7 +581,7 @@ def test_configured_realization_of_a_solve_with_contained_solves_raises() -> Non
 
 def test_designation_outside_the_committed_window_adds_nothing() -> None:
     """A designated fan opened at a period after every realized period does not reach the committed window."""
-    from flextool.engine.solve._orchestration import _spawn_realized_dispatch_siblings
+    from flextool.engine.solve._orchestration._guards import _spawn_realized_dispatch_siblings
     cfg = _config(stochastic_branches={"p": [["d2", "rlz", "t0001", "yes", 0.0], ["d2", "a", "t0001", "no", 1.0]]},
                   timesets_used_by_solves={"p": [("d1", "ts"), ("d2", "ts")]})
     _spawn_realized_dispatch_siblings(cfg, _Reader(), logger=None)

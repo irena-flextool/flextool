@@ -128,7 +128,7 @@ class _RangeWalkCounter:
     def __init__(self) -> None:
         self.total = 0
         self.problem_walk = 0
-        self._orig = _orchestration._autoscale_compute_ranges
+        self._orig = _orchestration._autoscale_hooks._autoscale_compute_ranges
 
     def __enter__(self) -> "_RangeWalkCounter":
         orig = self._orig
@@ -141,11 +141,11 @@ class _RangeWalkCounter:
                 self.problem_walk += 1
             return orig(arg, cfg)
 
-        _orchestration._autoscale_compute_ranges = wrapped
+        _orchestration._autoscale_hooks._autoscale_compute_ranges = wrapped
         return self
 
     def __exit__(self, *exc: object) -> None:
-        _orchestration._autoscale_compute_ranges = self._orig
+        _orchestration._autoscale_hooks._autoscale_compute_ranges = self._orig
 
 
 def _run_scenario(

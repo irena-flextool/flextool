@@ -802,7 +802,7 @@ def test_rule_4_detector_flags_every_pattern(source: str, fname: str) -> None:
     ("open(p, mode='wb')", "model/core/_flows.py"),
     ("p.write_text('x')", "preprocess/flex_data/_load.py"),
     ("p.mkdir(parents=True, exist_ok=True)", "preprocess/flex_data/_load.py"),
-    ("p.exists()", "solve/_orchestration.py"),                       # (b) covers preprocess/ and model/ only
+    ("p.exists()", "solve/_orchestration/_cascade.py"),              # (b) covers preprocess/ and model/ only
     ("json.loads(s)", "preprocess/flex_data/_load.py"),
     ("pd.DataFrame(rows)", "preprocess/flex_data/_load.py"),            # pandas, but not a file read
     ("pl.read_database(q, conn)", "preprocess/flex_data/_load.py"),    # a DB query, not the work folder

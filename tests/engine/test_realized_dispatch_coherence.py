@@ -156,7 +156,7 @@ def test_single_solve_realization_has_the_realized_periods_only_in_both_halves()
     """Item 255: the realization solve of a single solve dispatches its realized periods only, not the
     look-ahead.  Both halves agree: the SolveConfig dicts and the reader's ``period_timeset`` /
     ``years_represented`` rows (``replace=``) hold p2035 and not p2040."""
-    from flextool.engine.solve._orchestration import _spawn_realized_dispatch_siblings
+    from flextool.engine.solve._orchestration._guards import _spawn_realized_dispatch_siblings
 
     sc = _lookahead_parent()
     reader = _CapturingReader()
@@ -179,7 +179,7 @@ def test_single_solve_realization_has_the_realized_periods_only_in_both_halves()
 def test_rolling_realization_keeps_the_parent_periods():
     """A rolling parent's realization rolls are trimmed to each roll's jump at run time (``_run_model`` OC1), so
     both halves copy the parent's periods unchanged."""
-    from flextool.engine.solve._orchestration import _spawn_realized_dispatch_siblings
+    from flextool.engine.solve._orchestration._guards import _spawn_realized_dispatch_siblings
 
     sc = _lookahead_parent("rolling_window")
     sc.roll_counter = {"P": 0}
@@ -194,7 +194,7 @@ def test_rolling_realization_keeps_the_parent_periods():
 def test_separate_dispatch_without_realized_periods_adds_no_realization_solve():
     """A ``separate_dispatch`` solve that realizes no period (an invest-only solve) has nothing to dispatch: no
     realization solve is added (owner decision, item 255 critique M2)."""
-    from flextool.engine.solve._orchestration import _spawn_realized_dispatch_siblings
+    from flextool.engine.solve._orchestration._guards import _spawn_realized_dispatch_siblings
 
     sc = _lookahead_parent(realized=())
     reader = _CapturingReader()
@@ -209,7 +209,7 @@ def test_realization_of_realized_periods_with_a_gap_dispatches_the_span_and_repo
     error.  The realization solve dispatches the span from the first to the last realized period (p2030, p2035,
     p2040; not the look-ahead p2045) in both halves, and its ``realized_periods`` (what it reports) are the
     parent's: p2030 and p2040."""
-    from flextool.engine.solve._orchestration import _spawn_realized_dispatch_siblings
+    from flextool.engine.solve._orchestration._guards import _spawn_realized_dispatch_siblings
 
     sc = _lookahead_parent(realized=(("p2030", "p2030"), ("p2040", "p2040")))
     sc.timesets_used_by_solves["P"] = [("p2030", "ts30"), ("p2035", "ts35"), ("p2040", "ts40"), ("p2045", "ts45")]

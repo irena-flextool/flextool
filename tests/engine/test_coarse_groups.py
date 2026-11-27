@@ -564,7 +564,7 @@ def test_nested_fix_price_from_coarse_parent(tmp_path_factory) -> None:
     price of each fix step = its coarse row's dual / s / (tw[d,t] · inflation[d] / period share[d] · bw[d,t])
     (critique 7; tw and bw are per fine step, read from the solve, 1 where the solve has none).  Before: the
     storage solve had no nodeBalance_eq row for the battery, so no price reached the child."""
-    from flextool.engine.solve._orchestration import _LEGACY_DEFAULT_OBJECTIVE_SCALE as s_obj
+    from flextool.engine.solve._orchestration._highs_options import _LEGACY_DEFAULT_OBJECTIVE_SCALE as s_obj
     vals = [["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", _f(36.0)],
             ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", _f(24.0)],
             ["node", "battery", "storage_nested_fix_method", _s("fix_price")],

@@ -56,7 +56,7 @@ def test_near_optimal_accept_does_not_abort_cascade(
         )
 
     monkeypatch.setattr(
-        "flextool.engine.solve._orchestration.classify_acceptance", _fake
+        "flextool.engine.solve._orchestration._cascade.classify_acceptance", _fake
     )
 
     steps = run_chain_from_db(sqlite, scenario, keep_solutions=True)
@@ -98,7 +98,7 @@ def test_reject_still_raises(scenario_workdir, monkeypatch) -> None:
         )
 
     monkeypatch.setattr(
-        "flextool.engine.solve._orchestration.classify_acceptance", _fake
+        "flextool.engine.solve._orchestration._cascade.classify_acceptance", _fake
     )
 
     with pytest.raises(FlexToolSolveError):

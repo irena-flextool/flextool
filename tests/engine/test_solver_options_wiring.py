@@ -200,7 +200,7 @@ def test_objective_bound_check_sees_every_layer(options_db, tmp_path, monkeypatc
         seen.append(dict(solver_options or {}))
         return f"objective_bound check of {solve_name}"
 
-    monkeypatch.setattr(_orchestration, "highs_objective_bound_warning", recorder)
+    monkeypatch.setattr(_orchestration._cascade, "highs_objective_bound_warning", recorder)
     monkeypatch.setenv("FLEXTOOL_SAVE_MEMORY", save_memory)
     url, cfg = options_db
     with caplog.at_level(logging.WARNING):
@@ -221,7 +221,7 @@ def test_objective_bound_warning_once_per_rolling_solve(tmp_path_factory, monkey
     def recorder(sol, solve_name, solver_options):
         return f"objective_bound check of {solve_name}"
 
-    monkeypatch.setattr(_orchestration, "highs_objective_bound_warning", recorder)
+    monkeypatch.setattr(_orchestration._cascade, "highs_objective_bound_warning", recorder)
     monkeypatch.delenv("FLEXTOOL_SAVE_MEMORY", raising=False)
     roll = "dispatch_fullYear_roll"
     # a rolling solve needs a continuous timeline: 2day (48 h), not 5weeks (sampled)
@@ -247,13 +247,13 @@ def test_a_kept_limit_stopped_solve_is_logged_as_a_warning(options_db, tmp_path,
 
     from flextool.engine.solve import _orchestration
 
-    real = _orchestration.classify_acceptance
+    real = _orchestration._cascade.classify_acceptance
 
     def kept_at_a_limit(sol, *, ranges_post, solve_name):
         acc = real(sol, ranges_post=ranges_post, solve_name=solve_name)
         return dataclasses.replace(acc, near_optimal=True, limit_stopped=True, message=f"kept at a limit: {solve_name}")
 
-    monkeypatch.setattr(_orchestration, "classify_acceptance", kept_at_a_limit)
+    monkeypatch.setattr(_orchestration._cascade, "classify_acceptance", kept_at_a_limit)
     monkeypatch.delenv("FLEXTOOL_SAVE_MEMORY", raising=False)
     url, cfg = options_db
     with caplog.at_level(logging.WARNING):
@@ -493,7 +493,7 @@ def _env_options(environ: dict):
 def test_no_flag_and_no_env_leave_highs_serial() -> None:
     """Unset ``--highs-threads`` and ``FLEXTOOL_HIGHS_THREADS``: no operator HiGHS key at all, so the engine's
     ``parallel=off`` pin stands and no ``threads`` reaches HiGHS — what the flag's former default 1 gave."""
-    from flextool.engine.solve._orchestration import _baseline_highs_options, _operator_highs_overrides
+    from flextool.engine.solve._orchestration._highs_options import _baseline_highs_options, _operator_highs_overrides
 
     assert _operator_highs_overrides(_env_options({})) == {}
     effective = _resolve_effective_highs_options(
@@ -507,7 +507,7 @@ def test_no_flag_and_no_env_leave_highs_serial() -> None:
 def test_thread_budget_reaches_highs_with_parallel_off() -> None:
     """``--threads B`` (FLEXTOOL_THREADS) alone gives HiGHS ``threads=B`` and leaves the engine's ``parallel=off``
     pin standing; ``--highs-threads`` keeps its parallel opt-in, at most B."""
-    from flextool.engine.solve._orchestration import _baseline_highs_options, _operator_highs_overrides
+    from flextool.engine.solve._orchestration._highs_options import _baseline_highs_options, _operator_highs_overrides
 
     budget = _env_options({"FLEXTOOL_THREADS": "4"})
     assert _operator_highs_overrides(budget) == {"threads": 4}
@@ -522,7 +522,7 @@ def test_thread_budget_reaches_highs_with_parallel_off() -> None:
 
 
 def test_operator_highs_layer_comes_from_run_options(monkeypatch) -> None:
-    from flextool.engine.solve._orchestration import _operator_highs_overrides
+    from flextool.engine.solve._orchestration._highs_options import _operator_highs_overrides
 
     monkeypatch.delenv("FLEXTOOL_THREADS", raising=False)  # the suite's default budget is not in _READER_ENV
     for name, value in _READER_ENV.items():
@@ -535,7 +535,7 @@ def test_operator_highs_layer_comes_from_run_options(monkeypatch) -> None:
 
 
 def test_warm_start_and_basis_cache_come_from_run_options(tmp_path, monkeypatch) -> None:
-    from flextool.engine.solve._orchestration import _basis_cache_active, _basis_cache_dir
+    from flextool.engine.solve._orchestration._highs_options import _basis_cache_active, _basis_cache_dir
     from flextool.engine.solve._subprocess_solve import resolve_basis_cache_dir
 
     monkeypatch.setenv("FLEXTOOL_WARM_START", "1")

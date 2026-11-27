@@ -406,9 +406,7 @@ def test_spawn_helper_registers_in_both_reader_and_config(tmp_path):
     after the parent in the driving config's ``model_solve``."""
     from flextool.engine.input._spinedb_reader import SpineDbReader
     from flextool.engine.input._solve_config import SolveConfig
-    from flextool.engine.solve._orchestration import (
-        _spawn_realized_dispatch_siblings,
-    )
+    from flextool.engine.solve._orchestration._guards import _spawn_realized_dispatch_siblings
 
     url = _build_db(AUTO_FIXTURE, tmp_path)
     reader = SpineDbReader(url, scenario=SCENARIO)
@@ -428,9 +426,7 @@ def test_spawn_helper_collision_raises(tmp_path):
     owner, rather than silently clobbering it."""
     from flextool.engine.input._spinedb_reader import SpineDbReader
     from flextool.engine.input._solve_config import SolveConfig
-    from flextool.engine.solve._orchestration import (
-        _spawn_realized_dispatch_siblings,
-    )
+    from flextool.engine.solve._orchestration._guards import _spawn_realized_dispatch_siblings
     from flextool.engine.input._solve_state import FlexToolConfigError
 
     url = _build_db(AUTO_FIXTURE, tmp_path)
@@ -458,9 +454,7 @@ def test_spawn_helper_fix_storage_guard_raises():
     period with a multi-period fix_storage authored).  Empty / unset
     ``fix_storage_periods`` is NOT rejected."""
     from flextool.engine.input._solve_config import SolveConfig
-    from flextool.engine.solve._orchestration import (
-        _spawn_realized_dispatch_siblings,
-    )
+    from flextool.engine.solve._orchestration._guards import _spawn_realized_dispatch_siblings
     from flextool.engine.input._solve_state import FlexToolConfigError
 
     class _FakeReader:

@@ -55,12 +55,12 @@ def test_exhausted_level_highs_released_before_next_build(
     # eviction.  Audit must show zero violators AND objectives must match the
     # reference bit-for-bit (the release/eviction is memory-only).
     monkeypatch.setenv("FLEXTOOL_LEVEL_RELEASE_AUDIT", "1")
-    _orchestration._LEVEL_RELEASE_AUDIT.clear()
+    _orchestration._memory._LEVEL_RELEASE_AUDIT.clear()
     sub = run_chain_from_db(
         db_path, scenario_name=SCEN, warm=True, keep_solutions=False,
     )
 
-    audit = _orchestration._LEVEL_RELEASE_AUDIT
+    audit = _orchestration._memory._LEVEL_RELEASE_AUDIT
     assert audit, (
         "cross-level audit recorded nothing — hook not firing or cascade had "
         "fewer than one solve"

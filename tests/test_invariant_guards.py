@@ -111,7 +111,7 @@ LARGE_MODULES: dict[str, int] = {
     "flextool/engine/preprocess/params/_direct.py": 3243,
     "flextool/engine/preprocess/params/_projection.py": 2206,
     "flextool/engine/solve/_benders.py": 3657,
-    "flextool/engine/solve/_orchestration.py": 6019,
+    "flextool/engine/solve/_orchestration/_cascade.py": 3012,
     "flextool/engine/solve/_region_filter.py": 2874,
     "flextool/engine/solve/_run_model.py": 3134,
     "flextool/engine/solve/_solver_dispatch.py": 1874,

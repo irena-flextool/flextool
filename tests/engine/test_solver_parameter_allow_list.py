@@ -343,7 +343,7 @@ def test_highs_options_of_a_commercial_solve_leave_out_its_arguments() -> None:
     does not read its ``solver_arguments``: ``MIPGap`` is not handed to the HiGHS resolver, so it is neither in
     the result nor refused as an unlisted HiGHS name."""
     from flextool.engine.input._solve_config import SolverSettings
-    from flextool.engine.solve._orchestration import _solve_highs_options
+    from flextool.engine.solve._orchestration._highs_options import _solve_highs_options
 
     gurobi = SolverConfig(name="gurobi", options={"MIPGap": "0.01"})
     solve = SimpleNamespace(
