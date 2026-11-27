@@ -2678,7 +2678,7 @@
 
 
 <h1 id="unit-floors-input-shares-and-reserve-shortfall">Unit floors, input shares and reserve shortfall</h1>
-<p>Engine notes for <code>_unit_floors.py</code>, <code>model/core.py::_eq_min_input_share</code> and
+<p>Engine notes for <code>_unit_floors.py</code>, <code>model/core/_conversion.py::_eq_min_input_share</code> and
 <code>_reserve.reserve_shortfall_scale</code>. User-facing semantics are in
 <code>docs/reference/units.md</code> and <code>docs/reference/reserves.md</code> (<code>min_load</code>, <code>capacity_min_coeff</code>, <code>input_share_min</code>,
 Reserves).</p>
@@ -2737,14 +2737,14 @@ the conversion mix), so combined with output-side <code>down</code> reserve such
 can end up below <code>min_load</code>.</p>
 <h2 id="upward-reserve-and-online-capacity">Upward reserve and online capacity</h2>
 <p>Upward reserve held at a node a process delivers into (<code>b.reserve_up_to_sink</code>,
-<code>b.reserve_up_sink_parts</code> from <code>core._reserve_coupling</code>) sits on the LHS of
+<code>b.reserve_up_sink_parts</code> from <code>core._variables._reserve_coupling</code>) sits on the LHS of
 the capacity rows, with coefficient 1 (<code>v_flow</code> and <code>v_reserve</code> are both in
 output units of unitsize):</p>
 <ul>
 <li>
 <p>built capacity, units: <code>maxFlow</code> (per arc) and <code>maxOutputSum</code>
   (sum of an indirect unit's outputs).  On an indirect unit's INPUT arc
-  <code>maxFlow</code>'s M (<code>core._max_flow_rhs</code>) uses <code>x(availability)</code> in place of
+  <code>maxFlow</code>'s M (<code>core._flows._max_flow_rhs</code>) uses <code>x(availability)</code> in place of
   plain availability — the min-load section is drawn per unit online, not
   per available unit, credited only to a unit with an online variable
   (#102; same <code>x</code> as <code>maxInputFlow_online</code> below, computed once and shared);</p>
@@ -2775,7 +2775,7 @@ down_src_eff)</code> keyed <code>(p, r, ud, source)</code> over all unit arcs
 (<code>all_unit_arcs</code>): <code>down</code> reserve at the source node of an arc whose
 <code>v_flow</code> is the input (<code>sink == p</code>: an indirect unit's input, a sink-less
 unit; φ = 1) or of a direct input→output arc (<code>source ≠ p ≠ sink</code>; φ =
-<code>1/slope</code>, <code>_inverse_slope</code>). <code>core._reserve_coupling</code> turns them into
+<code>1/slope</code>, <code>_inverse_slope</code>). <code>core._variables._reserve_coupling</code> turns them into
 <code>b.reserve_down_at_source</code> (per arc <code>(p, source, sink, d, t)</code>, converted
 by φ) and <code>b.reserve_down_input_arcs</code>; the reducing <code>up</code> source selectors
 give <code>b.reserve_up_at_source</code> for <code>profile_flow_lower_limit</code>.</p>
@@ -2822,7 +2822,7 @@ The reverse arc of a two-way unit (2way_2var) is a direct arc in
 that draws from the node and a floor on the arc that feeds it. Connections
 have their own rows ("Connections and reserve" below).</p>
 <h2 id="reserve-and-ramp-rows">Reserve and ramp rows</h2>
-<p><code>core._eq_ramp</code> adds the reserve of an arc to its ramp rows, from the same
+<p><code>core._ramp._eq_ramp</code> adds the reserve of an arc to its ramp rows, from the same
 <code>_reserve_coupling</code> aggregates as <code>maxFlow</code> and the floors (no new selector):</p>
 <table>
 <thead>
@@ -3116,7 +3116,7 @@ with the orientation of <code>nodeBalance_eq</code> (into the arc's source, out 
    turned a <code>regular</code> connection one-way. Now every reader of <code>delay</code>
    reads <code>unit.delay</code> only (<code>input_derivation/_specs.py</code> delay tables,
    <code>input_derivation/_process_method.py</code>, <code>_derived</code>
-   <code>_classify_process_method</code> / <code>_delay_distributions_from_source</code>,
+   <code>_process_method._classify_process_method</code> / <code>_delay._delay_distributions_from_source</code>,
    <code>_projection.process_delayed</code>), so a connection is modelled as
    if no delay were set, and <code>_validators.validate_connection_delay</code> warns
    once per connection with a non-zero delay

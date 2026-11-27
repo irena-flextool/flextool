@@ -1763,7 +1763,7 @@ emitters, solve orchestration, handoff) are in <a href="../engine/">engine.md</a
 </tr>
 <tr>
 <td>Add a constraint / variable</td>
-<td>engine <a href="../engine/#lp-build-modelcorepy-and-the-feature-modules">LP build</a>, <a href="../engine/#equation-headers">Equation headers</a>, <a href="#layers-bottom-up">autoscale registry</a></td>
+<td>engine <a href="../engine/#lp-build-modelcore-and-the-feature-modules">LP build</a>, <a href="../engine/#equation-headers">Equation headers</a>, <a href="#layers-bottom-up">autoscale registry</a></td>
 </tr>
 <tr>
 <td>Change preprocess emit</td>
@@ -2268,7 +2268,7 @@ solve is unchanged. <code>t</code> stays the I/O axis and only the values are gr
 readers (a constant counts once per base step: the inflow scaling, the energy-margin adder), so a <code>SUM</code> key
 reaching the generic broadcast raises.</p>
 <h5 id="silent-default-x-index-readers-outside-the-resolver">Silent-default <code>"x"</code> index — readers outside the resolver</h5>
-<p>Not every DB read goes through <code>resolve_param_shape</code>. The <strong>per-entity cascades</strong> in <code>_derived.py</code> /
+<p>Not every DB read goes through <code>resolve_param_shape</code>. The <strong>per-entity cascades</strong> in <code>params/_derived/</code> /
 <code>_existing.py</code> / <code>_lifetime_inputs.py</code> read raw entity params (<code>source.parameter(...)</code>) and must detect the period
 axis themselves. The failure mode is the resolver's: spinedb_api's default <code>index_name</code> is the literal string
 <code>"x"</code> (real 2-D maps carry <code>index_name='x'</code>, see <code>_spinedb_reader._discover_index_cols</code>), so an
@@ -2608,7 +2608,7 @@ message_sources.py               The list's sources (W-0490, upgraded, unreadabl
 group and prepare sub-problems for the Benders solve mode (the filter-only
 <code>--region</code> CLI entry point that materialises one region's standalone input
 directory). The in-engine slicer used by the live Benders driver lives at
-<code>engine/solve/_region_filter.py</code>; the master + cut loop is in
+<code>engine/solve/_region_filter/</code> (map in its <code>__init__.py</code>); the master + cut loop is in
 <code>engine/solve/_benders.py</code>.</p>
 <h3 id="flextoolmodel_builder-and-flextoolrepresentative_periods"><code>flextool/model_builder/</code> and <code>flextool/representative_periods/</code></h3>
 <ul>
@@ -2880,7 +2880,7 @@ changes the optimum. User-facing guide (modes, the guard's thresholds and messag
  quantity type of every variable (<code>VARIABLE_FAMILIES</code>), constraint (<code>CONSTRAINT_FAMILIES</code> via <code>lookup_cstr</code>) and
  parameter (<code>PARAMETER_TYPES</code>) in <code>_layer2_types.py</code> / <code>_quantity_types.py</code>. These registries refuse to default
  — an unregistered name raises <code>KeyError</code> in <code>bucket_coefficients</code>. That <code>KeyError</code> is <strong>caught</strong> in
- <code>_orchestration._autoscale_apply_layer2_pre_solve</code> and the solve silently reverts to an <strong>un-scaled LP</strong>
+ <code>_orchestration._autoscale_hooks._autoscale_apply_layer2_pre_solve</code> and the solve silently reverts to an <strong>un-scaled LP</strong>
  ("autoscale Layer 2 apply failed … reverting"), so a missing registration does not crash — it quietly disables
  autoscaling. So: every new <code>add_var(...)</code> / <code>add_cstr(...)</code> literal and every new schema parameter MUST get a
  registry entry (flags / <code>yes_no</code> gates → <code>DIMENSIONLESS</code>). <code>lookup_cstr</code> resolves dynamic (f-string)

@@ -1775,7 +1775,7 @@ error (use the monolithic path instead).</p>
 <code>benders_regional</code> (the <code>_region</code> suffix makes the geographic flavour
 explicit, leaving naming room for any future temporal variant). The
 source of truth is
-<code>flextool/engine/solve/_region_filter.py:load_decomposition_method</code>, which
+<code>flextool/engine/solve/_region_filter/_regions.py:load_decomposition_method</code>, which
 reads the sub-solve provider's <code>input/p_group_decomposition</code> frame (a
 provider is required; the work folder is never read).</p>
 <h3 id="23-half-flow-rewriting">2.3 Half-flow rewriting</h3>
@@ -1794,7 +1794,7 @@ before solving the region. The cut slope for <code>(arc, d, t)</code> is then th
 reduced cost of the pinned forward column
 (<code>Solution.col_dual[pin_col_id]</code> = <code>∂cost_r / ∂f̄</code>, basis-correct, no
 monolith reference). The rewriter / half-flow metadata structure is in
-<code>_region_filter</code> (<code>HalfFlow</code>, <code>Coupling</code>, <code>split</code>); the arc / pin
+<code>_region_filter</code> (<code>HalfFlow</code>, <code>split</code>) and <code>_benders.Coupling</code>; the arc / pin
 bookkeeping for the master lives in <code>_benders._build_arcs</code>.</p>
 <p>A one-variable connection (<code>process_source_sink_2way_1var</code>: one arc, signed
 flow <code>v_flow − v_flow_back</code>) keeps that form on both sides of the cut: its
@@ -2090,19 +2090,23 @@ solving — useful for inspecting how the rewriter sees a given region.</p>
 </tr>
 <tr>
 <td><code>Coupling</code>, <code>_build_arcs</code>, the master + cut loop</td>
-<td>same</td>
+<td><code>flextool/engine/solve/_benders.py</code></td>
 </tr>
 <tr>
 <td><code>master_network_data</code> (network-only reduced FlexData for the master)</td>
-<td><code>flextool/engine/solve/_region_filter.py</code></td>
+<td><code>flextool/engine/solve/_region_filter/_master_network.py</code></td>
 </tr>
 <tr>
-<td><code>RegionSplit</code>, <code>HalfFlow</code>, <code>split</code></td>
-<td>same</td>
+<td><code>RegionSplit</code>, <code>HalfFlow</code></td>
+<td><code>flextool/engine/solve/_region_filter/_regions.py</code></td>
+</tr>
+<tr>
+<td><code>split</code></td>
+<td><code>flextool/engine/solve/_region_filter/_split.py</code></td>
 </tr>
 <tr>
 <td><code>load_decomposition_method</code> (reads <code>decomposition_method</code> from the provider's <code>input/p_group_decomposition</code>)</td>
-<td>same</td>
+<td><code>flextool/engine/solve/_region_filter/_regions.py</code></td>
 </tr>
 <tr>
 <td><code>WarmProblem.add_cut_row</code> / <code>add_recourse_col</code> / <code>solve(retry_on_unknown=…)</code></td>
@@ -2110,7 +2114,7 @@ solving — useful for inspecting how the rewriter sees a given region.</p>
 </tr>
 </tbody>
 </table>
-<p>The per-solve routing lives in <code>flextool/engine/solve/_orchestration.py</code>
+<p>The per-solve routing lives in <code>flextool/engine/solve/_orchestration/_cascade.py</code>
 (<code>_PolarHighCascadeSolver._run_benders_solve</code>, driven by
 <code>SolveConfig.decomposition_for</code>). The Benders path is also surfaced
 as a "Solve modes" entry in

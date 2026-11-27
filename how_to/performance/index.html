@@ -2753,7 +2753,7 @@ they default to <code>50</code> / <code>1e-3</code>). Then run normally:</p>
 Benders investment solve followed by a monolithic dispatch solve — the
 Benders invest solve's realised trade + in-region capacity threads into
 the downstream dispatch). The per-solve routing is in
-<code>flextool/engine/solve/_orchestration.py</code> and the coordinator (master +
+<code>flextool/engine/solve/_orchestration/_cascade.py</code> and the coordinator (master +
 cut loop) in <code>flextool/engine/solve/_benders.py</code>. <code>benders_max_iter</code>
 caps the cut loop and <code>benders_tolerance</code> is the relative
 optimality-gap threshold for declaring convergence. Use Benders when the
