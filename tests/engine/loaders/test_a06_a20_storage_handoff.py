@@ -256,12 +256,15 @@ def _stub_a20_passes(monkeypatch, calls: list, *,
     monkeypatch.setattr(_drv, "apply_synthetic_invest_sets",
                         _record("synth_invest"))
     monkeypatch.setattr(_drv, "apply_delay_params", _record("synth_delay"))
+    monkeypatch.setattr(_drv._ladder, "apply_delay_params", _record("synth_delay"))
     monkeypatch.setattr(_lifetime_costs, "apply_run_fields_of_synthetic_solve",
                         _record("synth_run_costs"))
     monkeypatch.setattr(_ex, "apply_existing_chain",
                         _record("10_existing"))
-    monkeypatch.setattr(_drv, "_read_active_solve",
-                        lambda workdir, *, provider=None: active_solve)
+    for _reader in (_drv._scope, _drv._existing_capacity, _drv._invest_apply, _drv._ladder, _drv._process_flows,
+                    _drv._process_method, _drv._storage, _drv._time):
+        monkeypatch.setattr(_reader, "_read_active_solve",
+                            lambda workdir, *, provider=None: active_solve)
 
 
 # --- A.20 tests -----------------------------------------------------

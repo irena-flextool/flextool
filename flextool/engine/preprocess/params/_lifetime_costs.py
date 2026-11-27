@@ -50,16 +50,14 @@ def apply_run_fields_of_synthetic_solve(flex_data: object,
     derives them; the rolls and nested sub-solves of the test fixtures have no divest set); its own discount factors
     stay the loaded ``solve_data`` frames.  Without run years the run fields are the sub-solve's own fields."""
     from flextool.engine.preprocess.params._branch import annuity_window_lineage_df
-    from flextool.engine.preprocess.params._derived import (
+    from flextool.engine.preprocess.params._derived._periods import (
         _expand_invest_branch_periods,
         _period_in_use_set,
-        _periodAll_from_source,
-        _provider_has_key,
-        _provider_read,
-        _read_active_solve,
-        _read_period_with_history,
         _solve_periods,
     )
+    from flextool.engine.preprocess.params._derived._inflation import _periodAll_from_source
+    from flextool.engine.preprocess.params._derived._scope import _provider_has_key, _provider_read, _read_active_solve
+    from flextool.engine.preprocess.params._derived._handoff_state import _read_period_with_history
     active_solve = _read_active_solve(workdir, provider=provider)
     period_in_use = list(_period_in_use_set(source, active_solve, workdir, provider=provider))
     apply_pre_existing_of_reported_costs(flex_data, source, active_solve, period_in_use, workdir, provider=provider)
@@ -146,10 +144,16 @@ def apply_npv(flex_data: object,
     (no_invest short-circuit, no period_with_history, etc.) — that
     ``None`` is the explicit "field stays default" signal.
     """
-    from flextool.engine.preprocess.params._derived import (
-        _read_active_solve, _solve_periods, _period_in_use_set,
-        _periodAll_from_source, _read_period_with_history,
-        _expand_invest_branch_periods, _enter_recourse_anchor_scope,
+    from flextool.engine.preprocess.params._derived._scope import _read_active_solve
+    from flextool.engine.preprocess.params._derived._periods import (
+        _solve_periods,
+        _period_in_use_set,
+        _expand_invest_branch_periods,
+    )
+    from flextool.engine.preprocess.params._derived._inflation import _periodAll_from_source
+    from flextool.engine.preprocess.params._derived._handoff_state import _read_period_with_history
+    from flextool.engine.preprocess.params._derived._invest_apply import (
+        _enter_recourse_anchor_scope,
         _recourse_branch_axis_present,
     )
 

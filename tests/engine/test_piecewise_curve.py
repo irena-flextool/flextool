@@ -72,7 +72,7 @@ def test_collinear_points_merge_into_one_line() -> None:
 
 
 def test_segment_ending_at_full_load_is_bit_equal_to_min_load_efficiency() -> None:
-    from flextool.engine.preprocess.params._derived import _mle_section, _mle_slope
+    from flextool.engine.preprocess.params._derived._process_flows import _mle_section, _mle_slope
 
     cases = [(0.4, 0.30, 0.42), (0.3, 0.25, 0.40), (0.35, 0.31, 0.47), (0.6, 0.40, 0.50), (0.2, 0.7, 0.6)]
     frame = pl.DataFrame(cases, schema=["ml", "eta_min", "eta"], orient="row")

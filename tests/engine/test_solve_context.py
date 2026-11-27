@@ -177,21 +177,21 @@ def test_csv_on_disk_is_not_read(workdir: Path) -> None:
 
 def test_ctx_read_requires_provider(workdir: Path) -> None:
     with pytest.raises(ValueError, match="requires a FlexDataProvider"):
-        _derived._ctx_read(None, workdir, "period__branch.csv")
+        _derived._scope._ctx_read(None, workdir, "period__branch.csv")
 
 
 def test_ctx_read_reads_the_provider_not_disk(workdir: Path) -> None:
     """Disk has ``period__branch.csv``; the provider decides what ``_ctx_read`` returns."""
     empty = FlexDataProvider()
-    assert _derived._ctx_read(None, workdir, "period__branch.csv", provider=empty) is None
+    assert _derived._scope._ctx_read(None, workdir, "period__branch.csv", provider=empty) is None
     ctx = SolveContext.from_workdir(workdir, provider=_seed_workdir_provider(workdir))
-    assert _derived._ctx_read(ctx, workdir, "period__branch.csv", provider=empty) is None
+    assert _derived._scope._ctx_read(ctx, workdir, "period__branch.csv", provider=empty) is None
     frame = pl.DataFrame({"period": ["p2030"], "branch": ["p2030"]})
     provider = FlexDataProvider()
     provider.put("solve_data/period__branch", frame)
-    got = _derived._ctx_read(None, workdir, "period__branch.csv", provider=provider)
+    got = _derived._scope._ctx_read(None, workdir, "period__branch.csv", provider=provider)
     assert got is not None and got["period"].to_list() == ["p2030"]
-    assert _derived._ctx_read(None, None, "period__branch.csv", provider=provider) is None
+    assert _derived._scope._ctx_read(None, None, "period__branch.csv", provider=provider) is None
 
 
 def test_solve_data_dir_property(workdir: Path) -> None:

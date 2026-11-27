@@ -46,7 +46,7 @@ _KEYS_PD = ("p", "d")
 
 def piecewise_units(db_reader: "InputSource") -> list[str]:
     """The units whose ``conversion_method`` is ``piecewise_linear`` in the scenario, sorted."""
-    from flextool.engine.preprocess.params._derived import _try_param
+    from flextool.engine.preprocess.params._derived._scope import _try_param
 
     cm = _try_param(db_reader, "unit", "conversion_method")
     if cm is None:
@@ -243,8 +243,8 @@ def _is_synthetic_solve(db_reader: "InputSource", provider) -> bool:
 
     if provider is None:
         return False
-    active = _drv._read_active_solve(Path("."), provider=provider)
-    return active is not None and not _drv._solve_in_spine(db_reader, active)
+    active = _drv._scope._read_active_solve(Path("."), provider=provider)
+    return active is not None and not _drv._scope._solve_in_spine(db_reader, active)
 
 
 def _recompute_input_caps(flex_data, db_reader: "InputSource", provider, units: set[str],
@@ -267,7 +267,7 @@ def _recompute_input_caps(flex_data, db_reader: "InputSource", provider, units: 
     indirect = _names(getattr(flex_data, "process_indirect", None)) & units
     if not indirect or pss is None or pss.height == 0 or dt is None or dt.height == 0:
         return
-    classified = _drv._classify_process_method(db_reader)
+    classified = _drv._process_method._classify_process_method(db_reader)
     lines = multi_lines if multi_lines.height > 0 else None
     cap = _drv.p_indirect_input_cap_from_source(db_reader, pss, dt, flex_data.p_slope, flex_data.p_section,
                                                 classified, lines)
@@ -320,7 +320,8 @@ def _remapped_output_upper(db_reader: "InputSource", pss: pl.DataFrame, dt: pl.D
     one-input *units* with an authored ``input_share_max`` (a remapped output cap), ``cap_per_unit[p,d] ·
     capacity_max_coeff'[p,o]`` (``derive_p_flow_max``'s formula with the remapped coefficient); None without
     such arcs."""
-    from flextool.engine.preprocess.params._derived import _arc_max_capacity_coef_lf, _try_param_explicit
+    from flextool.engine.preprocess.params._derived._arc_capacity import _arc_max_capacity_coef_lf
+    from flextool.engine.preprocess.params._derived._scope import _try_param_explicit
     from flextool.engine.preprocess.params._projection import single_input_curve_arc_remap
 
     remap = single_input_curve_arc_remap(db_reader).filter(pl.col("p").is_in(sorted(units)))
@@ -350,9 +351,9 @@ def _user_solve(db_reader: "InputSource", solve: "str | None") -> "str | None":
     ``<solve>_<period>``: :func:`_derived._resolve_synthetic_solve`)."""
     from flextool.engine.preprocess.params import _derived as _drv
 
-    if solve is None or _drv._solve_in_spine(db_reader, solve):
+    if solve is None or _drv._scope._solve_in_spine(db_reader, solve):
         return solve
-    resolved = _drv._resolve_synthetic_solve(db_reader, solve)
+    resolved = _drv._periods._resolve_synthetic_solve(db_reader, solve)
     return resolved[0] if resolved is not None else solve
 
 
@@ -362,7 +363,7 @@ def _check_user_solve_periods(db_reader: "InputSource", curves: pl.DataFrame, un
     piecewise unit with a curve per period has one for each of them (:func:`solve_points`).  Stochastic branch
     periods are not keys of ``period_timeset``; they take their anchor's curve in each sub-solve."""
     from flextool.engine.input._param_shapes import _run_memo
-    from flextool.engine.preprocess.params._derived import _try_param
+    from flextool.engine.preprocess.params._derived._scope import _try_param
 
     def check() -> bool:
         pt = _try_param(db_reader, "solve", "period_timeset")
@@ -394,7 +395,7 @@ def apply_piecewise_curves(flex_data, db_reader: "InputSource", provider=None) -
         return
     periods = _solve_periods(dt)
     pairs = branch_anchor_pairs(provider, periods) if provider is not None else None
-    solve = _drv._read_active_solve(Path("."), provider=provider) if provider is not None else None
+    solve = _drv._scope._read_active_solve(Path("."), provider=provider) if provider is not None else None
     user_solve = _user_solve(db_reader, solve)
     curves = piecewise_curve_frame(db_reader)
     if user_solve is not None and user_solve != solve:
@@ -405,7 +406,7 @@ def apply_piecewise_curves(flex_data, db_reader: "InputSource", provider=None) -
     online = _names(getattr(flex_data, "process_online", None))
     lines = curve_lines(points, online)
 
-    flags = _drv._piecewise_flags(db_reader).filter(pl.col("p").is_in(units))
+    flags = _drv._process_method._piecewise_flags(db_reader).filter(pl.col("p").is_in(units))
     multi = sorted(flags.filter(pl.col("multi_line")).get_column("p").to_list())
     single = [u for u in units if u not in set(multi)]
     rising = sorted(flags.filter(pl.col("single_line_rising")).get_column("p").to_list())

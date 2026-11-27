@@ -78,12 +78,9 @@ from flextool.engine.input._param_shapes import (
     parameter_index_label_paths,
     resolve_param_shape,
 )
-from flextool.engine.preprocess.params._derived import (
-    UNITSIZE_DEFAULT,
-    _entity_unitsize_lf,
-    _node_unitsize_lf,
-    _try_param,
-)
+from flextool.engine.preprocess.params._derived import UNITSIZE_DEFAULT
+from flextool.engine.preprocess.params._derived._unitsize import _entity_unitsize_lf, _node_unitsize_lf
+from flextool.engine.preprocess.params._derived._scope import _try_param
 from flextool.engine.preprocess.params._projection import (
     process_source_sink_eff,
     process_unit,

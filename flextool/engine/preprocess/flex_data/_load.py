@@ -111,9 +111,9 @@ def _years_represented_boundary(dt: "pl.DataFrame | None", db_reader, provider,
     from flextool.engine.preprocess.params import _derived as _drv_yr
 
     if (dt is None or dt.height == 0
-            or not _drv_yr._provider_has_key(provider, Path("solve_data") / "p_years_represented.csv")):
+            or not _drv_yr._scope._provider_has_key(provider, Path("solve_data") / "p_years_represented.csv")):
         return None
-    active = (_drv_yr._read_active_solve(Path(workdir), provider=provider)
+    active = (_drv_yr._scope._read_active_solve(Path(workdir), provider=provider)
               if workdir is not None else None)
     return _drv_yr.p_years_represented_d_from_source(
         db_reader, active, _drv_yr.bookkeeping_periods(dt, workdir, provider=provider), provider=provider)
@@ -1014,7 +1014,7 @@ def _warn_fractional_integer_unit_counts(flex_data: "FlexData", db_reader: "Inpu
     names = {str(x) for x in integer.get_column(integer.columns[0]).to_list()}
     warned: set[str] = set()
     if db_reader is not None:
-        from flextool.engine.preprocess.params._derived import _try_param_explicit
+        from flextool.engine.preprocess.params._derived._scope import _try_param_explicit
         try:
             warned = _FRACTIONAL_COUNT_WARNED.setdefault(db_reader, set())
         except TypeError:  # pragma: no cover — a reader that cannot be weak-referenced: no per-run memory

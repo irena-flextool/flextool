@@ -426,7 +426,7 @@ def test_E11_rolling_names_the_user_solve_at_the_first_roll(tmp_path_factory, mo
     original = _piecewise.apply_piecewise_curves
 
     def spy(flex_data, db_reader, provider=None):
-        loads.append(str(_derived._read_active_solve(_Path("."), provider=provider)))
+        loads.append(str(_derived._scope._read_active_solve(_Path("."), provider=provider)))
         return original(flex_data, db_reader, provider)
 
     monkeypatch.setattr(_piecewise, "apply_piecewise_curves", spy)

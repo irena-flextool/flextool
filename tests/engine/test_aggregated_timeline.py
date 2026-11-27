@@ -318,7 +318,7 @@ def test_derived_lags_equal_step_previous(tmp_path_factory, case) -> None:
 def test_step_space_ranks(tmp_path_factory) -> None:
     """5weeks + Δ 2: the active steps' ranks are their positions in the solve's timeline (36 2-h chunks), so
     adjacent steps differ by 1 and a gap shows as a larger difference.  Before: raw timeline ranks."""
-    from flextool.engine.preprocess.params._derived import _to_solve_step_space
+    from flextool.engine.preprocess.params._derived._active_steps import _to_solve_step_space
 
     step = _last(_run(tmp_path_factory, "rank_5w2h", STEP_2H_5W, BATTERY + ["5weeks"]))
     labels = ["t0001", "t0003", "t0009", "t0011", "t0013", "t0015", "t0025", "t0027", "t0037", "t0039"]

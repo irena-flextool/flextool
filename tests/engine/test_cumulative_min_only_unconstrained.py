@@ -93,8 +93,8 @@ def min_only_source(tmp_path_factory: pytest.TempPathFactory) -> SpineDbReader:
 
 def test_wind_plant_is_cumulative_with_no_max_authored(min_only_source: SpineDbReader) -> None:
     """Root-cause pin: the override lands, and no ``cumulative_max_capacity`` is set anywhere."""
-    assert dp._try_param(min_only_source, "unit", "cumulative_max_capacity") is None
-    got = dp._try_param(min_only_source, "unit", "cumulative_min_capacity")
+    assert dp._scope._try_param(min_only_source, "unit", "cumulative_max_capacity") is None
+    got = dp._scope._try_param(min_only_source, "unit", "cumulative_min_capacity")
     assert got is not None and got.height == 1
     assert float(got["value"][0]) == pytest.approx(MIN_CAPACITY)
 

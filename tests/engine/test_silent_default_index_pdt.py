@@ -558,7 +558,7 @@ class _EntityExistingStub:
 
 
 def _unitsize_map(stub) -> dict[str, float]:
-    from flextool.engine.preprocess.params._derived import _entity_unitsize_lf
+    from flextool.engine.preprocess.params._derived._unitsize import _entity_unitsize_lf
     us = _entity_unitsize_lf(stub).collect()
     return {
         e: v for e, v in zip(

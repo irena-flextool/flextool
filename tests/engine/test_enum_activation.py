@@ -121,6 +121,7 @@ def _load_recording_flow_caps(run, monkeypatch, *, axis_enums: bool) -> list:
 
     with monkeypatch.context() as mp:
         mp.setattr(_derived, "p_flow_upper_from_source", recording)
+        mp.setattr(_derived._existing_capacity, "p_flow_upper_from_source", recording)
         load_scenario(run, axis_enums=axis_enums)
     return calls
 

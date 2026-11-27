@@ -90,7 +90,7 @@ def test_zero_cost_notice_detail_lists_fresh_entities_only(coded_log, monkeypatc
     from flextool.engine.preprocess.params import _derived
 
     found = {"invest_cost": {"g": ["p2020"]}, "net_salvage_value": {}}
-    monkeypatch.setattr(_derived, "_zero_cost_pairs", lambda _s, _p, cost, _c, _online=None: dict(found[cost]))
+    monkeypatch.setattr(_derived._invest_apply, "_zero_cost_pairs", lambda _s, _p, cost, _c, _online=None: dict(found[cost]))
     bc.start_run({"invest_without_cost_offered": "79"})
     _derived.zero_cost_invest_notice(None, None, None)
     found["invest_cost"] = {"g": ["p2020", "p2025"], "h": ["p2025"]}

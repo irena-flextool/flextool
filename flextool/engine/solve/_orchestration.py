@@ -2959,9 +2959,7 @@ def _drive_cascade(
             reset_global_axis_enums,
             set_global_axis_enums,
         )
-        from flextool.engine.preprocess.params._derived import (
-            _entity_unitsize_lf,
-        )
+        from flextool.engine.preprocess.params._derived._unitsize import _entity_unitsize_lf
         _us_enums_token = (set_global_axis_enums(_cascade_axis_enums)
                            if _cascade_axis_enums is not None else None)
         try:

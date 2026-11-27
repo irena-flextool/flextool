@@ -68,7 +68,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     # holder / walker Provider from a prior solve in a chained multi-solve.
     # (The flag-aware Layer-4 boundaries still overwrite them; this just
     # guarantees the invariant for any future earlier-step per-period producer.)
-    _drv._reset_recourse_scope()
+    _drv._invest_apply._reset_recourse_scope()
 
     from flextool.engine.solve._orchestration import get_phase_recorder
     _rec = get_phase_recorder()
@@ -131,10 +131,10 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     # annuity and lifetime fixed cost come from ``_npv.apply_invest_lumps``
     # (in ``apply_run_fields_of_synthetic_solve`` below); the divest lumps
     # and the per-period caps stay on the CSV-seed path.
-    active_solve = _drv._read_active_solve(workdir_path, provider=provider)
-    if active_solve is not None and not _drv._solve_in_spine(db_reader,
+    active_solve = _drv._scope._read_active_solve(workdir_path, provider=provider)
+    if active_solve is not None and not _drv._scope._solve_in_spine(db_reader,
                                                                   active_solve):
-        synth = _drv._resolve_synthetic_solve(db_reader, active_solve)
+        synth = _drv._periods._resolve_synthetic_solve(db_reader, active_solve)
         if synth is not None:
             _loadflex_prof("apply_db_overrides:pass_synthetic_invest_sets")
             _timed("c.synth invest_sets",
@@ -148,7 +148,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # (a rolling recourse solve is warned about and checked on its own), so they are not affected.
         _pi = getattr(flex_data, "period_invest", None)
         if (_pi is not None and _pi.height > 0 and not getattr(flex_data, "solve_is_rolling", False)
-                and _drv._recourse_invest_active(workdir_path, ctx=ctx, provider=provider)):
+                and _drv._scope._recourse_invest_active(workdir_path, ctx=ctx, provider=provider)):
             from flextool.engine.input._solve_state import FlexToolConfigError
             raise FlexToolConfigError(
                 f"Nested sub-solve '{active_solve}' has an invest_solve_branching_method whose investments branch "
@@ -199,7 +199,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
             dt = getattr(flex_data, "dt", None)
             if dt is None or dt.height == 0:
                 return
-            classified = _drv._classify_process_method(db_reader)
+            classified = _drv._process_method._classify_process_method(db_reader)
             if classified is None or classified.height == 0:
                 return
             flex_data.p_section = _drv.p_section_from_source(
@@ -375,7 +375,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
             # The look-back follows flex_data.dt_ramp_link (seeded from solve_data/step_previous before this
             # early return): the same predecessor links the ramp rows of this roll use.  The roll carry
             # (``uptime_carry`` / ``downtime_carry``) starts at the same roll's ``dt_ramp_carry`` steps.
-            _drv.apply_mintime_lookbacks(flex_data, db_reader, _drv._roll_first_step_link(workdir_path, provider),
+            _drv.apply_mintime_lookbacks(flex_data, db_reader, _drv._dtttdt._roll_first_step_link(workdir_path, provider),
                                          active_solve)
         _loadflex_prof("apply_db_overrides:pass_synthetic_mintime")
         _timed("c.synth mintime", _wire_mintime_for_synthetic_solve)
@@ -394,7 +394,7 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
                 return
             family = _drv.period_block_family_from_source(
                 db_reader, active_solve, workdir_path, ctx=ctx, provider=provider,
-                realized=_drv._rolling_realized_steps(flex_data, workdir_path, provider))
+                realized=_drv._dtttdt._rolling_realized_steps(flex_data, workdir_path, provider))
             if family is None:
                 return
             from flextool.engine.preprocess._step_relations import null_split_block_wraps

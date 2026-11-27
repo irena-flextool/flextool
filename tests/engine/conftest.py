@@ -86,6 +86,6 @@ def _reset_recourse_walk_scope():
     solve.
     """
     from flextool.engine.preprocess.params import _derived as _drv
-    _drv._reset_recourse_scope()
+    _drv._invest_apply._reset_recourse_scope()
     yield
-    _drv._reset_recourse_scope()
+    _drv._invest_apply._reset_recourse_scope()

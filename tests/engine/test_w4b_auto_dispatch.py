@@ -315,10 +315,8 @@ def test_register_derived_solve_makes_sibling_a_real_spine_solve(tmp_path):
     ``_solve_periods`` reads the cloned realized window — while NOT cloning
     the dropped ``invest_periods`` (the sibling must not invest)."""
     from flextool.engine.input._spinedb_reader import SpineDbReader
-    from flextool.engine.preprocess.params._derived import (
-        _solve_in_spine,
-        _solve_periods,
-    )
+    from flextool.engine.preprocess.params._derived._scope import _solve_in_spine
+    from flextool.engine.preprocess.params._derived._periods import _solve_periods
 
     url = _build_db(AUTO_FIXTURE, tmp_path)
     reader = SpineDbReader(url, scenario=SCENARIO)

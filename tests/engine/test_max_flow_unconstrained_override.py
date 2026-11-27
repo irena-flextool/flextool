@@ -97,11 +97,11 @@ def test_override_is_readable_under_raw_db_name(override_source: SpineDbReader) 
     CSV-emit alias — pins the root cause of the bug.
     """
     # The (wrongly) prefixed name the buggy lookup used never matches.
-    assert dp._try_param(
+    assert dp._scope._try_param(
         override_source, "model", "p_max_flow_for_unconstrained_variables",
     ) is None
     # The correct raw name carries the override.
-    got = dp._try_param(
+    got = dp._scope._try_param(
         override_source, "model", "max_flow_for_unconstrained_variables",
     )
     assert got is not None and got.height == 1

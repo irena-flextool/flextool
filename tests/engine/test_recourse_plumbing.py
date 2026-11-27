@@ -10,10 +10,8 @@ from __future__ import annotations
 import polars as pl
 
 from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-from flextool.engine.preprocess.params._derived import (
-    _has_branch_invest_axis,
-    _recourse_invest_active,
-)
+from flextool.engine.preprocess.params._derived._invest_apply import _has_branch_invest_axis
+from flextool.engine.preprocess.params._derived._scope import _recourse_invest_active
 from flextool.engine.preprocess.emit._solve_writers import (
     emit_stochastic_invest_method,
 )

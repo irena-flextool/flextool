@@ -230,7 +230,7 @@ def cohort_years(source: "InputSource",
     ``years_represented``) on the run calendar (:func:`._run_calendar.run_years`: a period takes its run-calendar
     year, a branch period its anchor's).  A solve that is not handed the run history (its years count from its own
     first period) so compares in the years of the run, where the cohorts of earlier solves were placed."""
-    from flextool.engine.preprocess.params._derived import _p_years_d_lf
+    from flextool.engine.preprocess.params._derived._periods import _p_years_d_lf
     from flextool.engine.preprocess.params._run_calendar import read_run_calendar, run_years
     pyd_lf = _p_years_d_lf(source, active_solve, workdir, provider=provider)
     if pyd_lf is None:
@@ -509,7 +509,8 @@ def _existing_rows(source: "InputSource", years: Mapping[str, float], cal: _Cale
     """The rows (:func:`_cohort_schema` order, Utf8 labels) of the existing cohorts on the years ``years``, then the
     generations of the ``reinvest_automatic`` existing capacity of the processes and storage nodes
     (:func:`chain_rows`, the existing plant's first generation :func:`_existing_first_generation`)."""
-    from flextool.engine.preprocess.params._derived import _entity_classes_lookup, run_start_period
+    from flextool.engine.preprocess.params._derived import run_start_period
+    from flextool.engine.preprocess.params._derived._scope import _entity_classes_lookup
     start = run_start_period(dict(years))
     eol_methods = end_of_life_methods(source)
     ages = existing_ages(source)
@@ -608,7 +609,8 @@ def _past_end_of_life_warning(source: "InputSource", frame: pl.DataFrame, years:
     process or storage node with ``existing`` > 0 in some period whose rounded end of life is at or before the model
     start (``y_eol <= y[d0] + YEAR_TOL``): its existing capacity is 0 in every period (W-0521, one line)."""
     from flextool import run_warnings
-    from flextool.engine.preprocess.params._derived import _entity_classes_lookup, run_start_period
+    from flextool.engine.preprocess.params._derived import run_start_period
+    from flextool.engine.preprocess.params._derived._scope import _entity_classes_lookup
     start = run_start_period(dict(years))
     if start is None:
         return

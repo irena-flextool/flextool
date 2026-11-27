@@ -357,7 +357,7 @@ def test_fixed_cost_notice_names_entities_whose_fixed_cost_changes(tmp_path_fact
 
 
 def _seed(step, name: str) -> dict[str, float]:
-    from flextool.engine.preprocess.params._derived import _provider_has_key, _provider_read
+    from flextool.engine.preprocess.params._derived._scope import _provider_has_key, _provider_read
 
     path = Path("solve_data") / f"{name}.csv"
     provider = step.flex_data_provider

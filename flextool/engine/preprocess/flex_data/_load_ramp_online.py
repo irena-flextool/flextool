@@ -431,7 +431,7 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
         from flextool.engine.preprocess.params import _derived as _drv_mt
         _mt: dict[str, float] = {}
         for _pn in ("min_uptime", "min_downtime"):
-            for _p, _v in _drv_mt._process_min_time(source, _pn):
+            for _p, _v in _drv_mt._lookbacks._process_min_time(source, _pn):
                 if _v > _mt.get(_p, 0.0):
                     _mt[_p] = _v
         if _mt:

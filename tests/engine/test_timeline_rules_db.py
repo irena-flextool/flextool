@@ -270,11 +270,11 @@ def test_db_producers_match_the_authored_twin(tmp_path_factory, patch, case) -> 
     ``derive_per_solve_aggregates`` and ``p_timestep_weight_from_source`` give the twin's result.  Before the
     fix each returned ``None`` (or the 1.0 default) for the case."""
     from flextool.engine.preprocess.params._derived import (
-        _dt_period_active_steps,
         dt_and_step_duration_from_source,
         p_timestep_weight_from_source,
         solve_has_rp_timeset,
     )
+    from flextool.engine.preprocess.params._derived._active_steps import _dt_period_active_steps
     from flextool.engine.preprocess.params._per_solve_sets import derive_per_solve_aggregates
     from tests._support.fields import field_diff
 

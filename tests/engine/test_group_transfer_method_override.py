@@ -46,7 +46,7 @@ def cases(tmp_path_factory) -> dict:
 
 def _connection_methods(step, url: str, scenario: str) -> tuple[dict, dict]:
     from flextool.engine.input._spinedb_reader import SpineDbReader
-    from flextool.engine.preprocess.params._derived import _classify_process_method
+    from flextool.engine.preprocess.params._derived._process_method import _classify_process_method
 
     cls = _classify_process_method(SpineDbReader(url, scenario))
     engine = dict(utf8(cls.filter(pl.col("klass") == "connection").select("p", "method")).iter_rows())
@@ -99,7 +99,7 @@ def test_conflicting_group_overrides_raise(tmp_path_factory) -> None:
     classifier raise, naming the connection and the groups."""
     from flextool.engine.input._solve_state import FlexToolConfigError
     from flextool.engine.input._spinedb_reader import SpineDbReader
-    from flextool.engine.preprocess.params._derived import _classify_process_method
+    from flextool.engine.preprocess.params._derived._process_method import _classify_process_method
 
     ents, vals = _two_groups("unidirectional", "exact")
     url, scen = make_db(tmp_path_factory, alt="gto_conflict", values=vals, base_chain=NET, entities=ents)

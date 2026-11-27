@@ -759,7 +759,7 @@ def _automatic_chain_lumps(source: "InputSource",
     if generations is None or generations.height == 0:
         return None
     from flextool.engine.preprocess.params._cohorts import salvage_periods
-    from flextool.engine.preprocess.params._derived import _fan_walk_provider
+    from flextool.engine.preprocess.params._derived._invest_apply import _fan_walk_provider
     walk = _utf8_ed(period_walk_iterator(source, active_solve, ed_anchor_lf, period_in_use, period_universe,
                                          bounded=False, life_lf=life_lf, factor_side=None, lineage=lineage,
                                          commission_lf=commission_lf, year_rows=year_rows),

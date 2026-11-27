@@ -280,9 +280,8 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         try:
             scc = sd / "solve_current.csv"
             if _provider_has(provider, "solve_data/solve_current", scc):
-                from flextool.engine.preprocess.params._derived import (_read_active_solve,
-                                                _resolve_synthetic_solve,
-                                                _solve_in_spine)
+                from flextool.engine.preprocess.params._derived._scope import _read_active_solve, _solve_in_spine
+                from flextool.engine.preprocess.params._derived._periods import _resolve_synthetic_solve
                 # workdir = sd.parent (sd is solve_data/)
                 active_solve = _read_active_solve(sd.parent, provider=provider)
                 if (active_solve is not None
@@ -309,7 +308,7 @@ def _load_invest(sd: Path, dt: pl.DataFrame, inp: Path,
         # from Spine directly (``solve.invest_periods`` for ``<base>``
         # at the anchor key is empty → no invest activity).  No disk
         # reads needed for the gate.
-        from flextool.engine.preprocess.params._derived import _solve_periods as _sp
+        from flextool.engine.preprocess.params._derived._periods import _solve_periods as _sp
         invest_periods = _sp(db_reader, active_solve, "invest_periods")
         if not invest_periods:
             return blank

@@ -412,14 +412,11 @@ def _solve_walk_years(source: "InputSource",
     it (the same provider / workdir fallback), so these years are the ones the availability walk compares;
     ``None`` when the solve has no period years."""
     if provider is None:
-        from flextool.engine.preprocess.params._derived import (
-            _fan_walk_provider,
-            _fan_walk_workdir,
-        )
+        from flextool.engine.preprocess.params._derived._invest_apply import _fan_walk_provider, _fan_walk_workdir
         provider = _fan_walk_provider()
         if provider is not None and workdir is None:
             workdir = _fan_walk_workdir()
-    from flextool.engine.preprocess.params._derived import _p_years_d_lf
+    from flextool.engine.preprocess.params._derived._periods import _p_years_d_lf
     pyd_lf = _p_years_d_lf(source, active_solve, workdir, provider=provider)
     if pyd_lf is None:
         return None
@@ -707,7 +704,7 @@ def carried_lead_time_capacity(source: "InputSource",
 
     if realized_commission is None or realized_commission.height == 0 or not period_in_use:
         return None, None
-    from flextool.engine.preprocess.params._derived import _fan_walk_scope_provider
+    from flextool.engine.preprocess.params._derived._invest_apply import _fan_walk_scope_provider
     walk_yr = _solve_walk_years(source, active_solve, workdir,
                                 _fan_walk_scope_provider(workdir, provider=provider)) or {}
     rc_years = dict(getattr(run_calendar, "years", None) or {})
@@ -988,7 +985,7 @@ def p_entity_retired_carried_from_provider(workdir: Path | None,
     that earlier solves of a chain realized and that still count in the solve's periods, as the solve emitted them
     (``solve_data/p_entity_retired_carried``, ``_chain_params.emit_existing_capacity``), sorted.  ``None`` without
     carried retirements (or without the frame: a solve built on its own)."""
-    from flextool.engine.preprocess.params._derived import _read_handoff_e_d_from_workdir
+    from flextool.engine.preprocess.params._derived._handoff_state import _read_handoff_e_d_from_workdir
     if workdir is None:
         return None
     param = _read_handoff_e_d_from_workdir(workdir, "p_entity_retired_carried", provider=provider)
@@ -1105,7 +1102,8 @@ def apply_existing_chain(flex_data: object,
       realized with a construction lead time, coming online / in construction in the solve's periods (handoff
       ``realized_commission``; ``handoff`` is the fallback when the Provider has none).
     """
-    from flextool.engine.preprocess.params._derived import _read_active_solve, _period_in_use_set
+    from flextool.engine.preprocess.params._derived._scope import _read_active_solve
+    from flextool.engine.preprocess.params._derived._periods import _period_in_use_set
 
     active_solve = ctx.solve_name if ctx is not None else _read_active_solve(workdir, provider=provider)
     period_in_use = _period_in_use_set(source, active_solve, workdir, ctx=ctx, provider=provider)

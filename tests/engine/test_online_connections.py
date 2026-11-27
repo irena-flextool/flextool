@@ -313,7 +313,7 @@ def test_online_projection_equals_emit(mixed) -> None:
 def test_methods_mapping_copies_equal() -> None:
     """The engine's copy of METHODS_MAPPING equals the input derivation's, and two-way connections with a startup
     method map to their flow-shape method."""
-    from flextool.engine.preprocess.params._derived import _METHODS_MAPPING
+    from flextool.engine.preprocess.params._derived._process_method import _METHODS_MAPPING
     from flextool.input_derivation._specs import METHODS_MAPPING
 
     assert _METHODS_MAPPING == METHODS_MAPPING

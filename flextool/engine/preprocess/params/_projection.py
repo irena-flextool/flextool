@@ -336,7 +336,7 @@ def process_source_sink_canonical(source: "InputSource",
     del pss  # legacy parameter
 
     # Late import to avoid a circular reference.
-    from flextool.engine.preprocess.params._derived import _classify_process_method
+    from flextool.engine.preprocess.params._derived._process_method import _classify_process_method
     classified = _classify_process_method(source)
 
     # Connections are always noEff and 1-arc.
@@ -707,7 +707,7 @@ def _single_input_curve_arcs(source: "InputSource") -> pl.DataFrame:
     cm = _try_param(source, "unit", "conversion_method")
     if cm is None or not (cm.get_column("value").cast(pl.Utf8) == "piecewise_linear").any():
         return empty
-    from flextool.engine.preprocess.params._derived import _piecewise_flags
+    from flextool.engine.preprocess.params._derived._process_method import _piecewise_flags
 
     units = set(cm.filter(pl.col("value").cast(pl.Utf8) == "piecewise_linear")
                 .get_column("name").cast(pl.Utf8).to_list())
@@ -752,7 +752,7 @@ def remap_capacity_coef(source: "InputSource", frame: "pl.DataFrame | pl.LazyFra
                .join(drop.rename({k: f"__{k}" for k in keys}), on=[f"__{k}" for k in keys], how="anti")
                .select(f.columns))
         return out.lazy() if lazy else out
-    from flextool.engine.preprocess.params._derived import _try_param_explicit
+    from flextool.engine.preprocess.params._derived._scope import _try_param_explicit
 
     ism = _try_param_explicit(source, "unit__inputNode", "input_share_max")
     if ism is None or ism.height == 0:
@@ -884,7 +884,7 @@ def process_source_sink_2way_1var(source: "InputSource") -> pl.DataFrame:
     Schema: ``[p, source, sink]`` in the canonical forward orientation
     (matching ``process_source_sink``).
     """
-    from flextool.engine.preprocess.params._derived import _classify_process_method
+    from flextool.engine.preprocess.params._derived._process_method import _classify_process_method
 
     classified = _classify_process_method(source)
     if classified is None or classified.height == 0:
@@ -1310,7 +1310,7 @@ def _online_by_startup(source: "InputSource", methods: tuple[str, ...], *, fix_i
     processes whose method triplet is not modelled are left out.  Online-ness comes from the startup method, not
     from the internal method, so a two-way connection keeps its flow shape (and ``exact`` its direction switch).
     """
-    from flextool.engine.preprocess.params._derived import _classify_process_method
+    from flextool.engine.preprocess.params._derived._process_method import _classify_process_method
     classified = _classify_process_method(source)
     if classified.height == 0:
         return _empty({"p": pl.Utf8})

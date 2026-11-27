@@ -385,7 +385,7 @@ def _active_solve_name(sd: Path, provider: "object | None") -> str | None:
     """The active solve (``solve_data/solve_current``), for messages; None without a provider or the frame."""
     if provider is None:
         return None
-    from flextool.engine.preprocess.params._derived import _read_active_solve
+    from flextool.engine.preprocess.params._derived._scope import _read_active_solve
     return _read_active_solve(sd.parent, provider=provider)
 
 

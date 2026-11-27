@@ -132,10 +132,8 @@ def test_producers_match_the_explicit_full_timeline_twin(tmp_path):
     ``derive_per_solve_aggregates`` give the same result whether the whole-timeline block comes
     from Rule 2's default or from an equivalent explicit Map.  Before the fix every producer
     returns ``None`` for ``timeline_default`` (no ``timeset_duration`` anywhere, Rule 2 absent)."""
-    from flextool.engine.preprocess.params._derived import (
-        _dt_period_active_steps,
-        dt_and_step_duration_from_source,
-    )
+    from flextool.engine.preprocess.params._derived import dt_and_step_duration_from_source
+    from flextool.engine.preprocess.params._derived._active_steps import _dt_period_active_steps
     from flextool.engine.preprocess.params._per_solve_sets import derive_per_solve_aggregates
 
     url = _build_db(tmp_path, _timeline_default_data())

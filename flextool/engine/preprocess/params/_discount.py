@@ -96,7 +96,7 @@ def _years_for_period_lf(source: "InputSource",
     ``p_years_represented.csv`` arm carrying fan-member year rows.
     """
     # Materialise scalars eagerly — they're solve-level, tiny.
-    from flextool.engine.preprocess.params._derived import _years_for_period_from_source
+    from flextool.engine.preprocess.params._derived._inflation import _years_for_period_from_source
     yfp = _years_for_period_from_source(
         source, active_solve, period_universe, provider=provider)
     rows: list[tuple[str, str, float]] = []
@@ -363,7 +363,7 @@ def _walk_ops_factor(source: "InputSource", active_solve: str | None, period_uni
                      year_rows: pl.DataFrame | None) -> pl.LazyFrame:
     """``[d_all, factor]``: the operations factor the walks of :func:`._lifetime_inputs.period_walk_iterator` sum (the
     same factors, with the boundary's walker Provider of a solve with branch periods)."""
-    from flextool.engine.preprocess.params._derived import _fan_walk_provider
+    from flextool.engine.preprocess.params._derived._invest_apply import _fan_walk_provider
     return (_inflation_factors_lf(source, active_solve, period_universe, provider=_fan_walk_provider(),
                                   year_rows=year_rows)
               .select(pl.col("d").alias("d_all"), pl.col("ops_factor").alias("factor")))
@@ -428,7 +428,7 @@ def p_inflation_op_from_source(source: "InputSource",
 def _period_history_years(workdir: Path | None, provider: "object | None") -> dict[str, float] | None:
     """``{period: years from the start of the run}`` of the solve's ``period_with_history`` (history first, then the
     solve's own periods; a branch period carries its anchor's year); ``None`` when the solve has none."""
-    from flextool.engine.preprocess.params._derived import _provider_has_key, _provider_read
+    from flextool.engine.preprocess.params._derived._scope import _provider_has_key, _provider_read
     if workdir is None:
         return None
     path = Path(workdir) / "solve_data" / "period_with_history.csv"
@@ -473,7 +473,7 @@ def run_years(source: "InputSource",
 
     ``None`` when the solve's own fields are the run fields: no run calendar or no period history, or every run
     period is in use by the solve and the solve starts the run."""
-    from flextool.engine.preprocess.params._derived import _years_for_period_from_source
+    from flextool.engine.preprocess.params._derived._inflation import _years_for_period_from_source
     from flextool.engine.preprocess.params._run_calendar import YEAR_TOL, read_run_calendar
     calendar = read_run_calendar(provider)
     history = _period_history_years(workdir, provider)
@@ -643,7 +643,7 @@ def notice_discount_from_run_start(solve: str | None, rate: float) -> None:
 
 def _represented_years(provider: "object | None") -> dict[str, list[tuple[str, float]]]:
     """``{d: [(year label, width)]}`` of the solve's ``solve_data/p_years_represented.csv`` (``{}`` without)."""
-    from flextool.engine.preprocess.params._derived import _provider_has_key, _provider_read
+    from flextool.engine.preprocess.params._derived._scope import _provider_has_key, _provider_read
     path = Path("solve_data") / "p_years_represented.csv"
     if provider is None or not _provider_has_key(provider, path):
         return {}
@@ -673,7 +673,7 @@ def solve_year_rows(workdir: Path | None,
         return None
     also = None
     if source is not None and period_universe:
-        from flextool.engine.preprocess.params._derived import _years_for_period_from_source
+        from flextool.engine.preprocess.params._derived._inflation import _years_for_period_from_source
         also = _years_for_period_from_source(source, active_solve, list(period_universe))
     return year_rows_from_history(history, years, solve=active_solve, also_counted=also)
 

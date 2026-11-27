@@ -118,7 +118,7 @@ def test_constant_curve_equals_its_period_map(built) -> None:
 
 def test_both_classifiers_agree(built) -> None:
     """Flags and methods: engine (SpineDbReader) = input derivation (DatabaseMapping)."""
-    from flextool.engine.preprocess.params._derived import _classify_process_method, _piecewise_flags
+    from flextool.engine.preprocess.params._derived._process_method import _classify_process_method, _piecewise_flags
     from flextool.input_derivation._piecewise import parse_piecewise_curves
     from flextool.input_derivation._process_method import derive_process_method
 

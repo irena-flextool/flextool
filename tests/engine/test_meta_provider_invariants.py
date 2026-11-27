@@ -757,7 +757,7 @@ def test_rule_4_read_allowlist_is_used() -> None:
     ("p.is_file()", "model/_reserve.py"),
     ("p.is_dir()", "preprocess/emit/_blocks.py"),
     ("p.is_symlink()", "model/core/_flows.py"),
-    ("os.path.exists(p)", "preprocess/params/_derived.py"),
+    ("os.path.exists(p)", "preprocess/params/_derived/_scope.py"),
     ("os.path.isfile(p)", "model/core/_flows.py"),
     ("os.path.isdir(p)", "preprocess/_solve_context.py"),
     ("open(p)", "preprocess/flex_data/_load.py"),
