@@ -11,7 +11,8 @@ or a deeper one (owner decision Q-c15e-B, with the nested clarification of 2026-
 * a lower nested level starts from ``fix_start`` at its first appearance (no realised state exists at its level or
   below), and later instances of the level continue from the latest realised state at that level or below; the
   upper solve supplies the END of the lower horizon (the nested fix methods) and, for the nodes it fixes that have
-  no realised state yet, the START the cascade adds to the routed state (``_run_model._borrow_upper_start``:
+  no realised state yet, the START the cascade adds to the routed state
+  (``_run_model._nested_storage._borrow_upper_start``:
   borrowed end ⇒ borrowed start, unless fix_start applies at the model start).
 
 A node with no realised state yet starts from ``fix_start`` (or free).  ``nesting_level`` counts the

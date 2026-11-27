@@ -337,7 +337,7 @@ def _roll_continue_terms(b: _Build) -> dict:
     # routed by the cascade: solve._carry_routing).  α, β: the self-discharge weights of an open-start node
     # (_self_discharge).  A cyclic node (_cyclic_nodes) cycles within the solve and takes no carry (how_to/solve_sequences.md
     # rolling notes); a bind_within_solve node of a rolling roll that continues from a carried state is bind_forward_only
-    # in that roll (_run_model._anchor_cyclic_in_rolling) and takes the carry here, its horizon end in
+    # in that roll (_run_model._rolling_storage._anchor_cyclic_in_rolling) and takes the carry here, its horizon end in
     # storage_state_roll_anchor / _close; a representative-period node starts each block from v_state_rp_start (no carry).  Nodes of
     # neither kind outside the open-start set take the unweighted form.
     d = b.d
@@ -447,7 +447,7 @@ def _eq_node_balance_fix_quantity(b: _Build) -> None:
     # state an upper-level (coarser) solve reached at the matching time.  Where
     # the horizon ends inside an upper step, the cascade restates the target as
     # the upper level interpolated at that instant (the upper solve's level is
-    # linear within its step; _run_model._nested_end_rows), not the step's end.
+    # linear within its step; _run_model._nested_storage._nested_end_rows), not the step's end.
     # Despite the name, the row is an equality.
     target = _fix_quantity_target(b)
     if target is None:
@@ -485,7 +485,7 @@ def _eq_storage_usage_fix(b: _Build) -> None:
     # windows overlapping that period.  One row per period, at its last step;
     # each coarse window counts once however many fine steps it covers.  The
     # cascade restates the cap where that differs from the cumulative rule
-    # (_run_model._nested_end_rows): the upper usage from the period's start in
+    # (_run_model._nested_storage._nested_end_rows): the upper usage from the period's start in
     # the solve instance to the horizon end, each window pro rata to its hours
     # in that span, less the usage the instance's earlier rolls realised in the
     # period — so a rolling lower level uses at most what the upper planned.

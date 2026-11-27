@@ -1,7 +1,8 @@
 """The realization-roll plan (``solve._realization_tail``): the gate, ``roll_tail_plan``, the rows each roll reads,
 the plan errors and G2b.
 
-Most tests call the builder directly; the seam tests stop a real run at ``_run_model._roll_tail_plans``.
+Most tests call the builder directly; the seam tests stop a real run at
+``_run_model._native_run_model._roll_tail_plans``.
 Every expected value is derived by hand from the roll windows below (comment at each test): a roll realizes its
 jump ``[s_k, s_{k+1})`` and looks ahead from ``s_{k+1}``, the first step of its horizon after the jump, with the
 forecasts made there (weight > 0, not realized, in database order).  The jump reads the one realized branch

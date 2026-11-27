@@ -1,6 +1,7 @@
 """The label-dispatch sites of a realization roll R_k (design rev 7.1 §2.2 S1-S9, §2.7 S13), through the seam.
 
-The realization roll is wired (``_run_model._roll_tail_plans``): a rolling ``within_solve`` solve gets no
+The realization roll is wired (``_run_model._native_run_model._roll_tail_plans``): a rolling ``within_solve`` solve gets
+no
 realization solve, each of its rolls is a realization roll.  The split-roll tests here stop at the first build
 and check the data the build reads (FlexData and ``solve_data``); ``test_split_roll_lp.py`` builds and solves split
 rolls end to end.  Rolls whose horizon is their jump (``deterministic`` plans: no label with steps) build and solve
@@ -33,7 +34,8 @@ class _Stop(BaseException):
 
 
 def _live_plan(monkeypatch) -> None:
-    """The realization roll is wired (``_run_model._roll_tail_plans``): only the strict autoscale check is set."""
+    """The realization roll is wired (``_run_model._native_run_model._roll_tail_plans``): only the strict autoscale
+    check is set."""
     monkeypatch.setenv("FLEXTOOL_AUTOSCALE_STRICT", "1")
 
 

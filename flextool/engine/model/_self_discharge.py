@@ -183,7 +183,7 @@ def state_links(d, *, has_rp: bool, has_nsb: bool) -> list[StateLink]:
     carry = scope_carry_nodes(d)
     if d.storage_bind_within_timeblock is not None:
         # bind_within_timeblock: t⁻ wraps around within the timeblock.  (A rolling solve uses it as
-        # bind_within_period: solve._run_model._timeblock_binds_within_period_in_roll.)
+        # bind_within_period: solve._run_model._rolling_storage._timeblock_binds_within_period_in_roll.)
         links.append(StateLink("state_change", d.storage_bind_within_timeblock, d.dtttdt,
                                "t_previous_within_timeset", False, True))
     if _has_rows(d.storage_bind_forward_only) and _has_rows(d.dtttdt_forward_only):
@@ -255,7 +255,7 @@ def _seam_split(link: StateLink) -> list[StateLink]:
 def scope_carry_nodes(d) -> "pl.DataFrame | None":
     """bind_within_period nodes (n) of a rolling roll whose first scope (the period of the roll's first step) began
     in an earlier roll: the roll continues that period from the carried level instead of wrapping its first step (``storage_roll_end`` kind ``scope_carry``,
-    ``solve._run_model._anchor_cyclic_in_rolling``).  None when there are none."""
+    ``solve._run_model._rolling_storage._anchor_cyclic_in_rolling``).  None when there are none."""
     sre = getattr(d, "storage_roll_end", None)
     if not _has_rows(sre):
         return None
@@ -660,7 +660,7 @@ def scope_start_levels(d, state: pl.DataFrame, start: "pl.DataFrame | None") -> 
     blocks loop, the step before the period where they chain forward) or, at the solve's first step, from ``start``
     (``[node, value]``, :func:`start_levels`).  ``state``: the solve's v_state ``(n, d, t, value)`` (state units).
     Read by the cascade: the level a rolling roll that continues the scope closes it to
-    (``solve._run_model._anchor_cyclic_in_rolling``).  None when there are none.
+    (``solve._run_model._rolling_storage._anchor_cyclic_in_rolling``).  None when there are none.
     """
     if not _has_rows(getattr(d, "nodeState_first_dt", None)) or d.p_state_unitsize is None:
         return None

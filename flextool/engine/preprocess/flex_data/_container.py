@@ -509,7 +509,8 @@ class FlexData:
     # the model's last period; solve_data/storage_rp_chain_at_model_end, default True).
     storage_rp_chain_at_model_end: bool = True
     # (n, kind, value): the horizon-end condition of the bind_within_solve nodes of a rolling roll that continues
-    # from a carried state (solve_data/storage_roll_end, _run_model._anchor_cyclic_in_rolling): kind anchor /
+    # from a carried state (solve_data/storage_roll_end, _run_model._rolling_storage._anchor_cyclic_in_rolling): kind
+    # anchor /
     # close (MWh value), anchor_share / close_share (storage_state_start × capacity) and wrap_end (the first roll's
     # wrap pinned at storage_state_end).  model.core._storage_state._eq_storage_roll_end.
     storage_roll_end: pl.DataFrame | None = None

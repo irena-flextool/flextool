@@ -11,3 +11,7 @@
   (`_run_one`), `_entry` holds `run_chain_from_db` / `run_orchestration`; the HiGHS options, autoscale steps,
   guards, step records and memory diagnostics each have their own module (map in `_orchestration/__init__.py`).
   Patch a name on the submodule whose code reads it, not on the package.
+- **The cascade walk** is `_run_model/` (a package): `_native_run_model.native_run_model` expands the solve tree
+  and sets up each sub-solve; the storage steps it calls live in `_rolling_storage`, `_nested_storage`,
+  `_rp_methods` and `_storage_frames`, the run-scoped timelines in `_run_timelines` (map in
+  `_run_model/__init__.py`).  Tests patch the seams (`_roll_tail_plans`, `make_step_jump`) on `_native_run_model`.

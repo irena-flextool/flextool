@@ -966,7 +966,7 @@ def _drive_cascade(
             # and it is not the level THIS solve belongs to; same-level steps
             # are kept for warm reuse.  ``self._warm_problem`` for an exhausted
             # level was already nulled at the level boundary
-            # (_run_model.py:497-505), so nulling the step's
+            # (``_run_model._native_run_model.native_run_model``, the per-level boundary), so nulling the step's
             # ``solution.highs`` here drops the last reference and frees it.
             # malloc_trim reclaims the HiGHS (glibc) heap; the polars-side
             # provider is freed by dropping the Python ref.

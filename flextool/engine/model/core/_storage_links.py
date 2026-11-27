@@ -74,7 +74,8 @@ def _fix_quantity_target(b: _Build) -> "pl.DataFrame | None":
 
 def _restated(d, target: pl.DataFrame, kind: str) -> pl.DataFrame:
     """``target`` (n, d, t, value) with the value of each node that ``storage_roll_end`` restates by ``kind``
-    (_run_model._nested_end_rows: the upper level interpolated inside an upper step, the cumulative fix_usage cap)."""
+    (_run_model._nested_storage._nested_end_rows: the upper level interpolated inside an upper step, the cumulative
+    fix_usage cap)."""
     rows = _roll_end_rows(d, (kind,))
     if rows is None or target.height == 0:
         return target
@@ -121,7 +122,7 @@ def _fix_usage_target(b: _Build) -> "pl.DataFrame | None":
 def _with_period_caps(d, target: pl.DataFrame) -> pl.DataFrame:
     """``target`` (n, d, t, value) with the ``usage_cap_period`` rows of ``storage_roll_end``: the cumulative
     fix_usage cap of a period of a roll before its horizon's last period, at the period's last step in the roll
-    (_run_model._nested_end_rows; a period already in ``target`` keeps its row)."""
+    (_run_model._nested_storage._nested_end_rows; a period already in ``target`` keeps its row)."""
     sre = getattr(d, "storage_roll_end", None)
     if not _has_rows(sre) or "period" not in sre.columns:
         return target
@@ -188,7 +189,8 @@ def _without_steps(over: pl.DataFrame, steps: "pl.DataFrame | None") -> pl.DataF
 
 
 def _roll_end_rows(d, kinds) -> "pl.DataFrame | None":
-    """``(n, value)`` of the storage_roll_end rows of the ``kinds`` (_run_model._anchor_cyclic_in_rolling); None
+    """``(n, value)`` of the storage_roll_end rows of the ``kinds``
+    (_run_model._rolling_storage._anchor_cyclic_in_rolling); None
     when there are none."""
     sre = getattr(d, "storage_roll_end", None)
     if not _has_rows(sre):

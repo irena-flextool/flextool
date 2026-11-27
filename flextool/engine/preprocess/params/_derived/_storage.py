@@ -574,7 +574,8 @@ def apply_derived_e(
             if workdir is not None else None)
         if fwd is not None:
             # The per-solve forward-only set counts too: it holds the fix_start_end nodes whose cyclic method the
-            # solve ignores (_run_model._fix_start_end_chains_forward), which the DB does not call forward-only.
+            # solve ignores (_run_model._rp_methods._fix_start_end_chains_forward), which the DB does not call
+            # forward-only.
             sbm_full = _node_storage_binding_method_with_fallback(source)
             per_solve_fo = getattr(flex_data, "storage_bind_forward_only", None)
             if ((sbm_full is not None
@@ -646,7 +647,8 @@ def apply_derived_e(
         # The solve's plain cyclic sets come from the per-solve frame, so they include the blended-weights
         # nodes this solve downgraded (no representative periods): those cycle too and get no end pin.
         # A bind_within_solve node of a rolling roll that continues from a carried state chains forward in the roll
-        # (_run_model._anchor_cyclic_in_rolling) and its end is tied to its start by storage_roll_end: no pin either.
+        # (_run_model._rolling_storage._anchor_cyclic_in_rolling) and its end is tied to its start by storage_roll_end:
+        # no pin either.
         from flextool.engine.preprocess.flex_data._readers import _roll_end_tied_nodes
         for cyclic in (flex_data.storage_bind_within_solve, flex_data.storage_bind_within_period,
                        _roll_end_tied_nodes(getattr(flex_data, "storage_roll_end", None))):

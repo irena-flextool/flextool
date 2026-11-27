@@ -256,7 +256,8 @@ class SolveHandoff:
     # The level (MWh) each cyclic scope that starts in this solve starts from: every period of a bind_within_period
     # node, every timeblock of a bind_within_timeblock node (the state of its first step's wrap target) and every
     # period a rolling roll holds only in part of a bind_intraperiod_blocks node, keyed by the scope's first step:
-    # ``[node, period, step, value]``.  Read by the cascade (``solve._run_model._anchor_cyclic_in_rolling``): the
+    # ``[node, period, step, value]``.  Read by the cascade
+    # (``solve._run_model._rolling_storage._anchor_cyclic_in_rolling``): the
     # level a later roll that continues the scope closes it to.  Producer and consumer as ``cycle_start_state``.
     # Not a carrier.
     scope_start_state: pl.DataFrame | None = None
@@ -264,7 +265,8 @@ class SolveHandoff:
     # The net energy (MWh) this solve drew in its realised steps from each storage node an upper-level solve caps by
     # fix_usage: ``[node, period, value]``.  The cascade sums it over the rolls of a solve instance, so that a roll's
     # cap is the upper solve's usage from the start of the period less what the earlier rolls used
-    # (``solve._run_model._usage_cap``).  Producer: ``build_handoff_from_solution``.  Not a carrier.
+    # (``solve._run_model._nested_storage._record_usage``, ``_nested_end_rows``).  Producer:
+    # ``build_handoff_from_solution``.  Not a carrier.
     realised_storage_usage: pl.DataFrame | None = None
 
     _FIELDS = (

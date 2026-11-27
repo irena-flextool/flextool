@@ -193,11 +193,11 @@ def _eq_storage_start_binding_cyclic(b: _Build) -> None:
     # bind_within_timeblock in a rolling solve, and bind_intraperiod_blocks; in a roll, of its part in the roll).  Only where no state of the node was
     # realised before this solve (the first solve of the model and of each nested level); a later solve neither
     # pins nor carries a cyclic node (it cycles within the solve; a later roll of a rolling bind_within_solve node
-    # chains forward from the carry instead, _run_model._anchor_cyclic_in_rolling).  Where an
+    # chains forward from the carry instead, _run_model._rolling_storage._anchor_cyclic_in_rolling).  Where an
     # upper-level solve fixes the state at the wrap target the upper value wins (the two equalities would sit on
     # one variable).  A bind_intraperiod_blocks node that chains forward (fix_start_end, or a roll that holds its
     # first period only in part) has its start in nodeBalanceBlock_eq (_fix_start_terms); fix_start_end nodes of the
-    # other cyclic methods are forward-only in the solve (_run_model._fix_start_end_chains_forward).
+    # other cyclic methods are forward-only in the solve (_run_model._rp_methods._fix_start_end_chains_forward).
     # In a rolling instance that reaches the model end, a fix_end node without fix_start is pinned the same way at
     # storage_state_end (state_start below stands for that share; storage_roll_end kind wrap_end): its cycle level
     # is the end value, as in a solve that is not rolling, where the end pin sits on the wrap target.
@@ -501,7 +501,8 @@ def _eq_storage_end_binding(b: _Build) -> None:
     # stochastic solve) ends there.  storage_fix_end = fix_end ∪ fix_start_end.  Where an
     # upper-level solve fixes the quantity or caps the usage at that step the upper value wins; a nested fix_price
     # steers the end through the objective and keeps the pin.  A fix_start_end node chains forward whatever its
-    # storage_binding_method (_run_model._fix_start_end_chains_forward, _self_discharge.block_forward_nodes), so its
+    # storage_binding_method (_run_model._rp_methods._fix_start_end_chains_forward,
+    # _self_discharge.block_forward_nodes), so its
     # start is in the first step's balance and never on this state; a cyclic node is pinned here by fix_end only.
     # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
     # existing capacity counting until its end of life (none for reinvest_automatic).
@@ -534,7 +535,7 @@ def _end_match_nodes(b: _Build) -> "tuple[pl.DataFrame | None, pl.DataFrame | No
     d = b.d
     none = (None, None, None)
     # The first roll of a rolling solve that does not reach the end of the model: its free-start nodes get the row
-    # at its horizon end (storage_roll_end kind match_first, _run_model._anchor_cyclic_in_rolling).
+    # at its horizon end (storage_roll_end kind match_first, _run_model._rolling_storage._anchor_cyclic_in_rolling).
     first_roll = _roll_end_rows(d, ("match_first",))
     if not (b.has_storage and (d.storage_solve_at_model_end or first_roll is not None)
             and _has_rows(d.storage_bind_forward_only)
@@ -794,13 +795,14 @@ def _eq_storage_roll_end(b: _Build) -> None:
     #   carry = the level the roll starts from (MWh, roll_continue_state); hold = the level reached from it by doing
     #   nothing (_do_nothing_level: inflow and self-discharge only, clipped to [0, existing capacity])
     # A bind_within_solve node of a rolling solve continues each roll from the level realised by the previous roll
-    # (the cascade rewrites it to bind_forward_only for the roll, _run_model._anchor_cyclic_in_rolling), and a roll
+    # (the cascade rewrites it to bind_forward_only for the roll,
+    # _run_model._rolling_storage._anchor_cyclic_in_rolling), and a roll
     # whose horizon does not reach the end of its solve ends at least at that level: each roll's plan is cyclic on
     # its own start, as the first roll's wrap is.  An inequality, so that it can always be reached: storing more has
     # a cost, so a lossless node ends at the carried level.  Where an upper-level solve fixes, caps or prices the
     # state at the step, that replaces the anchor; fix_end (at the last step of the model) wins.  The same per
     # period (bind_within_period, bind_intraperiod_blocks; bind_within_timeblock in a rolling solve is
-    # bind_within_period, _run_model._timeblock_binds_within_period_in_roll): a roll that
+    # bind_within_period, _run_model._rolling_storage._timeblock_binds_within_period_in_roll): a roll that
     # starts inside a period an earlier roll began continues it from the carry (scope_carry: its first step has no
     # wrap) and anchors the period's part in the roll; for bind_intraperiod_blocks also the roll that begins a period
     # at its first step and holds it in part (its blocks chain forward from the carry).

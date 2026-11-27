@@ -564,7 +564,7 @@ adds:
 | `maxState_rp_start` | `model._eq_rp_storage_chain` | Sibling capacity bound on `v_state_rp_start[n, d, t]` over `rp_block_first`. Both bounds depend on invest/divest, so they are rows rather than variable bounds. |
 | `non_anticipativity_rp_block_start` | `model._non_anticipativity.add_dispatch_constraints` | `v_state_rp_start` equal across the forecast star at the block starts inside the tie window, for `include_stochastics` nodes in `nodeState_rp`; a block already tied by a `non_anticipativity_storage_state_first` row is left out. |
 
-In a stochastic solve every forecast branch period is an rp period with the timeset of the period it branches from (`_solve_writers._with_branch_period_timesets`); `rp_period_previous` is then a tree (a branch's first period ← the trunk period, later periods ← the same branch). A rolling_window solve on representative periods is a configuration error (`_run_model._reject_rolling_rp`), and so is a plain bind_forward_only node in a solve on representative periods (`_run_model._reject_plain_forward_in_rp_solve`). A plain bind_within_solve / bind_within_period / bind_intraperiod_blocks node there is a warning (`_run_model._warn_plain_cyclic_in_rp_solve`: the plain cycle moves the level between the representative periods unweighted while their flows are weighted, which is reasonable with equal weights or storage whose inflow timing does not matter; the weights are the user's to use).
+In a stochastic solve every forecast branch period is an rp period with the timeset of the period it branches from (`_solve_writers._with_branch_period_timesets`); `rp_period_previous` is then a tree (a branch's first period ← the trunk period, later periods ← the same branch). A rolling_window solve on representative periods is a configuration error (`_run_model._rp_methods._reject_rolling_rp`), and so is a plain bind_forward_only node in a solve on representative periods (`_run_model._rp_methods._reject_plain_forward_in_rp_solve`). A plain bind_within_solve / bind_within_period / bind_intraperiod_blocks node there is a warning (`_run_model._rp_methods._warn_plain_cyclic_in_rp_solve`: the plain cycle moves the level between the representative periods unweighted while their flows are weighted, which is reasonable with equal weights or storage whose inflow timing does not matter; the weights are the user's to use).
 
 The three blended-weights methods that activate the block —
 `bind_within_solve_blended_weights`, `bind_within_period_blended_weights`,
@@ -590,7 +590,7 @@ import path. Both decode to the same nested
 `rp_base_first`, `rp_base_last`, `rp_block_*` and `rp_base_period_set`
 companion sets, one set of rows per period of the solve (every frame has a
 `period` column), plus `rp_period_previous` (the rp periods in solve
-order).  `solve/_run_model.py` emits them for every period whose timeset
+order).  `solve/_run_model/_native_run_model.py` emits them for every period whose timeset
 has `representative_period_weights`; periods without keep their
 `timeset_weights` rows in the same `timestep_weight` frame.  The forecast
 branch periods of a stochastic solve are rp periods with the timeset of the
@@ -813,7 +813,7 @@ Known gaps (not exercised, or not Enum, in this mode):
   and the CLI region export (`decomposition/region_filter.py`), the staged input
   loader (`engine/input/_db_loader.py`), the CSV reload
   (`engine/_csv_reload/load.py`), and the sub-solve provider that
-  `_run_model.py` builds when the run state carries none.
+  `_run_model.native_run_model` builds when the run state carries none.
 - Engine Benders inherits the vocabulary through `FlexData`
   (`_region_filter.py` widens it per region), but no lp_snapshot
   fixture runs it; only the Benders / master-hosted region tests that
@@ -936,7 +936,13 @@ per-sub-solve `_run_one`: load, build or warm reuse, solve, outputs, handoff),
 `_highs_options` (the HiGHS option set of a sub-solve), `_autoscale_hooks` (the
 autoscale steps around a solve), `_guards` (solve-chain guards and the realization
 solves of stochastic solves), `_steps` (`OrchestrationStep`) and `_memory` (the
-memory / phase diagnostics).
+memory / phase diagnostics).  `_drive_cascade` hands each sub-solve to it from the
+`solve/_run_model/` package: `_native_run_model` (`native_run_model`: the solve-tree
+expansion, stochastic branching and the per-solve setup), `_rolling_storage` /
+`_nested_storage` (the storage carry of rolling and nested solves), `_rp_methods`
+(storage-binding methods on representative periods, the fix_start_end forward chain),
+`_storage_frames` (the shared method readers and `_RollingStorage`) and
+`_run_timelines` (realization-roll plans, run time steps).
 
 ### Monolithic — `polar_high.Problem`
 
@@ -1053,7 +1059,7 @@ columns are those of the module docstring:
 The other attributes are not carriers: `unit_detail` / `online_left_out`
 ([Solve-level detail reduction](#solve-level-detail-reduction)), and
 `cycle_start_state`, `storage_level`, `scope_start_state`,
-`realised_storage_usage`, which the cascade (`solve/_run_model.py`) reads
+`realised_storage_usage`, which the cascade (the `solve/_run_model/` package) reads
 for cyclic scopes, nested starts and the per-roll usage cap.
 
 **Producer and transport.** `build_handoff_from_solution` (`flex_data/_handoff.py`)
@@ -1280,7 +1286,7 @@ for `fix_price` (an objective term).  The horizon-end reference value
 `handoff/fix_storage_price`).
 
 A `fix_start_end` node ignores its `storage_binding_method` (reference/nodes.md,
-exception `bind_forward_only`): `_run_model._fix_start_end_chains_forward`
+exception `bind_forward_only`): `_run_model._rp_methods._fix_start_end_chains_forward`
 rewrites the per-solve `input/node__storage_binding_method` frame right
 after `_downgrade_rp_methods_for_non_rp_solve` (so a blended node of a
 solve without representative periods goes blended → plain →
@@ -1304,7 +1310,7 @@ on representative periods the mapping is `_FIX_START_END_FORWARD_RP`: a
 configuration error, `_reject_plain_forward_in_rp_solve`, checked on the
 database methods before this mapping).
 
-Then `_run_model._timeblock_binds_within_period_in_roll` rewrites
+Then `_run_model._rolling_storage._timeblock_binds_within_period_in_roll` rewrites
 `bind_within_timeblock` to `bind_within_period` in a rolling solve
 (`_reject_rolling_with_gaps` has made sure each period is one timeblock),
 so the per-period rolling rule (`_scope_rows`, `scope_*` rows) applies to

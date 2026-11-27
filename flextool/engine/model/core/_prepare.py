@@ -386,7 +386,7 @@ def _check_storage_accounting(b: _Build) -> None:
       use_reference_value) is on capacity the solve invests in or extends during the start period, in a solve that
       does not hold the last step of the model: the matching end (storage_state_end_match_share) needs both ends in
       one solve, so it is not applied; a warning.  A free start is not warned about: the later solve that reaches
-      the end of the model matches it (_run_model._sequence_match_rows, _anchor_cyclic_in_rolling).  (A
+      the end of the model matches it (_run_model._nested_storage._sequence_match_rows, _anchor_cyclic_in_rolling).  (A
       representative-period chain always gets rp_inter_period_end_match.)
     "Investable" counts life extensions in the start period too (:func:`_start_decision_periods`).
     Each warning prints one line per solve, naming how many nodes and the first (owner rule); the values per node
@@ -446,7 +446,8 @@ def _check_storage_accounting(b: _Build) -> None:
                         f"({total:.6g} MWh in total, on the existing capacity before any retirement).")
     if not d.storage_solve_at_model_end:
         # A free start (fix_nothing, not use_reference_value) is matched by the later solve that reaches the end of
-        # the model and continues the chain (_run_model._sequence_match_rows, _anchor_cyclic_in_rolling: the level
+        # the model and continues the chain (_run_model._nested_storage._sequence_match_rows, _anchor_cyclic_in_rolling:
+        # the level
         # the model started the node from at its nesting level), so only an explicit start on capacity the solve
         # decides goes unmatched.
         rp_nodes = set(str(n) for n in d.nodeState_rp["n"].to_list()) if _has_rows(d.nodeState_rp) else set()

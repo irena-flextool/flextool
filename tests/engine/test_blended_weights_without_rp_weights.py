@@ -1,7 +1,7 @@
 """Phase C regression: silent-degrade replaces the Phase 5 strict check.
 
 Covers the
-:func:`flextool.engine.solve._run_model._downgrade_rp_methods_for_non_rp_solve`
+:func:`flextool.engine.solve._run_model._rp_methods._downgrade_rp_methods_for_non_rp_solve`
 helper introduced in Phase C of the
 ``storage-binding-methods-restructure`` migration.
 

@@ -2063,7 +2063,7 @@ SIMPLE_PROJECTIONS: dict[str, callable] = {
     # ``flex_data._load_storage._load_storage`` from the per-solve
     # ``solve_data/node__storage_binding_method`` frame, so that the
     # cascade-applied silent downgrade
-    # (``_run_model._downgrade_rp_methods_for_non_rp_solve``) is honoured.
+    # (``_run_model._rp_methods._downgrade_rp_methods_for_non_rp_solve``) is honoured.
     # A DB-source projection of the raw method would drop the downgraded
     # nodes (item 127: a downgraded bind_within_solve_blended_weights node
     # lost its storage chain next to plain bind_within_solve nodes).  The

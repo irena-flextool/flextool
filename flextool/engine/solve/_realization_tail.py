@@ -18,7 +18,7 @@ the roll ``k`` of the engine-added realization solve, after the roll's fully sto
 * :func:`announce_realization_notices`: W-0635 / W-0636 and W-0594, once the plans and the expansion have passed
   their checks.
 
-The plans are made in ``native_run_model`` through the seam ``_run_model._roll_tail_plans``.
+The plans are made in ``native_run_model`` through the seam ``_run_model._native_run_model._roll_tail_plans``.
 """
 from __future__ import annotations
 
@@ -255,7 +255,8 @@ def roll_tail_plan(solve_cfg: Any, rolls: list[RollWindow], timeline: list[tuple
     """The :class:`RollTail` of each roll in *rolls* (the rolls of one stochastic complete solve, in run order).
 
     *timeline* is the ``(period, step)`` timeline the solve's realized branch is read on
-    (``_run_model._solve_timelines``).  ``{}`` when the solve is not gated (:func:`realization_roll_method`).  Raises
+    (``_run_model._run_timelines._solve_timelines``).  ``{}`` when the solve is not gated
+    (:func:`realization_roll_method`).  Raises
     :class:`FlexToolConfigError` when the solve has no ``realized: yes`` row, when its ``realized: yes`` rows name more
     than one branch or none lies on *timeline*, when a roll with a tail has no forecast made at the end of its jump,
     and (``separate_dispatch``) when no forecast is made at the start of a roll (its solve (1) branches there).  The

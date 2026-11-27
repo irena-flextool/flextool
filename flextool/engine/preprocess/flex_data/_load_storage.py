@@ -260,7 +260,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
     # Phase C — ``binding_within_solve_blended_weights`` is also derived
     # here from the per-solve provider so the partition reflects any
     # cascade-applied silent downgrade (see
-    # :func:`._run_model._downgrade_rp_methods_for_non_rp_solve`).
+    # :func:`._run_model._rp_methods._downgrade_rp_methods_for_non_rp_solve`).
     # apply_projection_params no longer touches this field — the
     # per-solve CSV is the single source of truth.
     binding_within_solve_blended_weights = None
@@ -424,7 +424,8 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
             if nsb_df_local.height > 0:
                 nsb_for_excl = nsb_df_local.pipe(rename_to_axis, {"node": "n"}).select("n")
         # A rolling bind_within_solve node continued from a carried state chains forward in the roll and its end is
-        # tied to its start by storage_roll_end (_run_model._anchor_cyclic_in_rolling): no reference pin.
+        # tied to its start by storage_roll_end (_run_model._rolling_storage._anchor_cyclic_in_rolling): no reference
+        # pin.
         for excl in (fix_end,
                      binding_within_solve, binding_within_period, binding_within_timeblock,
                      nsb_for_excl, _roll_end_tied_nodes(roll_end)):
@@ -586,7 +587,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
                     f"tightly-coupled field `{_name}` is missing or "
                     f"empty.  Under the storage-binding-methods-restructure "
                     f"(Phase C onwards), the per-solve downgrade in "
-                    f"_run_model._downgrade_rp_methods_for_non_rp_solve "
+                    f"_run_model._rp_methods._downgrade_rp_methods_for_non_rp_solve "
                     f"normally strips bind_within_solve_blended_weights "
                     f"to bind_within_solve when a solve's active "
                     f"timeset has no representative_period_weights.  "

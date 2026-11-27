@@ -1,7 +1,8 @@
 """The plain storage binding sets keep the per-solve downgrade of blended-weights nodes (#127).
 
 A solve without representative periods turns every ``*_blended_weights`` storage_binding_method into its plain
-method (``_run_model._downgrade_rp_methods_for_non_rp_solve``, in the per-solve frame).  The binding sets must come
+method (``_run_model._rp_methods._downgrade_rp_methods_for_non_rp_solve``, in the per-solve frame).  The binding sets
+must come
 from that frame: a DB-direct projection of the raw DB value used to replace them.  Databases are built from
 ``tests/fixtures/lh2_three_region_rp_invest.json`` plus an override alternative, never a checked-in sqlite.
 """

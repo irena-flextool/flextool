@@ -242,7 +242,8 @@ def coarse_node_frames(*, node_group: dict[str, str], group_step: dict[str, floa
 
 def _rp_misaligned_message(g: str, gstep: float, d: str, cur: list[str]) -> str:
     """The error for a coarse step ``cur`` of period ``d`` that a representative period's length cuts short (a solve
-    on representative periods is never rolling: :func:`flextool.engine.solve._run_model._reject_rolling_rp`)."""
+    on representative periods is never rolling:
+    :func:`flextool.engine.solve._run_model._rp_methods._reject_rolling_rp`)."""
     return ("Coarse time resolution is not aligned with the representative periods.\n\n"
             f"The group {g!r} sets a coarser time resolution (new_stepduration {gstep:g} h) on its nodes, but "
             "that step length does not evenly divide the length of a representative "
