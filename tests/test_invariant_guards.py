@@ -113,7 +113,7 @@ LARGE_MODULES: dict[str, int] = {
     "flextool/engine/solve/_benders.py": 3657,
     "flextool/engine/solve/_orchestration/_cascade.py": 3012,
     "flextool/engine/solve/_region_filter.py": 2874,
-    "flextool/engine/solve/_run_model.py": 3134,
+    "flextool/engine/solve/_run_model/_native_run_model.py": 1753,
     "flextool/engine/solve/_solver_dispatch.py": 1874,
     "flextool/engine/solve/_subprocess_solve.py": 2951,
     "flextool/export_to_tabular/excel_writer.py": 3570,

@@ -1204,7 +1204,7 @@ def test_fix_start_end_mapping_rewrites_only_fix_start_end_nodes():
     nodes of the other start / end methods keep their method."""
     import logging
 
-    from flextool.engine.solve._run_model import _fix_start_end_chains_forward
+    from flextool.engine.solve._run_model._rp_methods import _fix_start_end_chains_forward
 
     methods = {"a": "bind_within_solve", "b": "bind_within_timeblock", "c": "bind_within_period",
                "d": "bind_within_solve_blended_weights", "e": "bind_within_period_blended_weights",
@@ -1230,7 +1230,7 @@ def test_fix_start_end_blocks_line_is_logged_once_per_solve(caplog):
     node, not once per roll."""
     import logging
 
-    from flextool.engine.solve._run_model import _fix_start_end_chains_forward
+    from flextool.engine.solve._run_model._rp_methods import _fix_start_end_chains_forward
 
     provider = _Provider({
         "input/node__storage_binding_method": pl.DataFrame({"node": ["a", "g"], "storage_binding_method": [

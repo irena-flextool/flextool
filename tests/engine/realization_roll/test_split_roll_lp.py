@@ -245,7 +245,8 @@ def _storage_change(steps, folder):
 def test_g4_refuses_a_tail_that_does_not_continue_from_the_jump(tmp_path, monkeypatch):
     """T-L1: ``make_step_jump`` as before S2 (a first-period fan's copy self-cycles on its own last step): G4 raises
     on the first tail."""
-    from flextool.engine.solve import _run_model, _stochastic
+    from flextool.engine.solve import _stochastic
+    from flextool.engine.solve._run_model import _native_run_model
 
     make = _stochastic.make_step_jump
 
@@ -261,7 +262,7 @@ def test_g4_refuses_a_tail_that_does_not_continue_from_the_jump(tmp_path, monkey
         return out
 
     monkeypatch.setattr(_stochastic, "make_step_jump", before_s2)
-    monkeypatch.setattr(_run_model, "make_step_jump", before_s2)
+    monkeypatch.setattr(_native_run_model, "make_step_jump", before_s2)
     with pytest.raises(RuntimeError, match=r"Internal error: dtttdt on period 'p1_A' of roll '\w+' is not "
                                            r"path-aware"):
         _run(_tw1(0.5), tmp_path, monkeypatch)
@@ -376,7 +377,7 @@ def test_a_delay_keeps_todays_realization(tmp_path, monkeypatch, caplog):
     t01, t03, t05, which today's fans need) with ``gen`` taking its input from node ``fuel`` with a 1 h delay."""
     import logging
 
-    from flextool.engine.solve import _run_model
+    from flextool.engine.solve._run_model import _native_run_model
 
     spec = ts._spec(real_at=ts.OVERLAP, forecast_at=ts.OVERLAP)
     spec["entities"] += [["node", "fuel", None], ["unit__inputNode", ["gen", "fuel"], None]]
@@ -384,14 +385,14 @@ def test_a_delay_keeps_todays_realization(tmp_path, monkeypatch, caplog):
     spec["parameter_values"] += [*_node("fuel", "balance", pack(100.0, "float")),
                                  ["unit", "gen", "delay", pack(1.0, "float"), "init"]]
     ts._live_plan(monkeypatch)
-    live = _run_model._roll_tail_plans
+    live = _native_run_model._roll_tail_plans
     plans: list = []
 
     def recording(solve_cfg, rolls, timelines):
         plans.append((dict(rolls), live(solve_cfg, rolls, timelines)))
         return plans[-1][1]
 
-    monkeypatch.setattr(_run_model, "_roll_tail_plans", recording)
+    monkeypatch.setattr(_native_run_model, "_roll_tail_plans", recording)
     caplog.set_level(logging.INFO)
     built, steps = scm.run_spec(spec, tmp_path)
     assert plans == [({}, {})]

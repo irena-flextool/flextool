@@ -220,10 +220,10 @@ def test_separate_dispatch_realization_roll_reads_its_plan(tmp_path_factory, mon
     plan (3.8: ``realized`` through flat tiers nearest to the UC roll's start), not from the W4c projection of its
     UC roll.  ``realized`` is made at t0001, t0025 and t0049 and covers each roll's jump, so the LPs equal today's
     (the W4c projection reads the same series, made at the roll start)."""
-    from flextool.engine.solve import _run_model
+    from flextool.engine.solve._run_model import _native_run_model
 
     frames: dict[str, list] = {}
-    emit = _run_model.solve_writers.emit_branch_time_start
+    emit = _native_run_model.solve_writers.emit_branch_time_start
 
     def recording(rows, **kw):
         frames.setdefault("rows", []).append(list(rows))
@@ -233,11 +233,11 @@ def test_separate_dispatch_realization_roll_reads_its_plan(tmp_path_factory, mon
     with monkeypatch.context() as unplanned:
         # Today's realization rolls: no plan (the W4c projection of the UC roll; horizon = jump, so the window is
         # the jump either way).
-        unplanned.setattr(_run_model, "_roll_tail_plans", lambda *a: {})
+        unplanned.setattr(_native_run_model, "_roll_tail_plans", lambda *a: {})
         today, _ = scm.run_capturing(scm.build_db(path, tmp_path_factory.mktemp("today")),
                                      "rolling_separate_dispatch", tmp_path_factory.mktemp("today_run"))
     _live_plan(monkeypatch)
-    monkeypatch.setattr(_run_model.solve_writers, "emit_branch_time_start", recording)
+    monkeypatch.setattr(_native_run_model.solve_writers, "emit_branch_time_start", recording)
     planned, _ = scm.run_capturing(scm.build_db(path, tmp_path_factory.mktemp("planned")),
                                    "rolling_separate_dispatch", tmp_path_factory.mktemp("planned_run"))
     assert [s for s, _, _ in planned] == [s for s, _, _ in today]

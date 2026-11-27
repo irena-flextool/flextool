@@ -268,17 +268,17 @@ def test_nested_fix_usage_gets_no_plan(tmp_path, monkeypatch, designated):
     refused before any solve; without one, the first roll of ``st`` commits t01-t02 inside the forecasts-only fan
     (forecasts at t01 cover the jump) and a later roll continues from its storage state, which is refused too."""
     from flextool.engine.input._solve_state import FlexToolConfigError
-    from flextool.engine.solve import _run_model
+    from flextool.engine.solve._run_model import _native_run_model
 
     sr.ts._live_plan(monkeypatch)
-    live = _run_model._roll_tail_plans
+    live = _native_run_model._roll_tail_plans
     plans: list = []
 
     def recording(solve_cfg, rolls, timelines):
         plans.append(live(solve_cfg, rolls, timelines))
         return plans[-1]
 
-    monkeypatch.setattr(_run_model, "_roll_tail_plans", recording)
+    monkeypatch.setattr(_native_run_model, "_roll_tail_plans", recording)
     if designated:
         match = (r"Solve 'st' is a rolling stochastic solve nested inside another solve's contains_solves\. "
                  r"FlexTool 4\.7\.0 cannot yet realize the jumps of a nested rolling stochastic solve")

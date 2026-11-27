@@ -346,7 +346,7 @@ def _seam_input(tmp_path, monkeypatch, fixture: str, scenario: str):
         sys.path.insert(0, tests_dir)
     from db_utils import json_to_db
     from flextool.engine import run_chain_from_db
-    from flextool.engine.solve import _run_model
+    from flextool.engine.solve._run_model import _native_run_model
     from flextool.update_flextool.db_migration import migrate_database
 
     url = json_to_db(FIXTURES / fixture, tmp_path / "db.sqlite")
@@ -354,12 +354,12 @@ def _seam_input(tmp_path, monkeypatch, fixture: str, scenario: str):
     seen: dict = {}
 
     def capture(solve_cfg, rolls, timelines):
-        assert _run_model.__dict__["_roll_tail_plans"] is capture
+        assert _native_run_model.__dict__["_roll_tail_plans"] is capture
         seen["cfg"], seen["rolls"], seen["timelines"] = solve_cfg, rolls, timelines
         raise _Stop
 
-    default = _run_model._roll_tail_plans
-    monkeypatch.setattr(_run_model, "_roll_tail_plans", capture)
+    default = _native_run_model._roll_tail_plans
+    monkeypatch.setattr(_native_run_model, "_roll_tail_plans", capture)
     monkeypatch.setenv("FLEXTOOL_AUTOSCALE_STRICT", "1")
     work = tmp_path / "work"
     work.mkdir()
