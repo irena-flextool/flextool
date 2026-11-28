@@ -1,4 +1,4 @@
-## Unreleased
+## Release 4.7.3 (28.11.2026) — fixing a bug affecting multi sub-units where availability lower than min_load
 
 ### Behaviour changes — read before upgrading
 
