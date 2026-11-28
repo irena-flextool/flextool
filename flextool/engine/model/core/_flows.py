@@ -406,9 +406,9 @@ def _max_flow_rhs(d, inv_procs: "pl.DataFrame | None" = None,
         in_lf = _utf8_keys(_with_availability(in_lf), ["d", "t"])
         if avail is not None:
             # a = x(availability) on every indirect unit's input arc (not only online units, #102); feed
-            # _fuel_share the __av already joined above as its level, so the bound and the online rows
-            # (_online._input_availability_share) read the same availability.  The section is credited
-            # only to units with an online variable (_online.add_variables): a non-online
+            # _fuel_share the __av already joined above as its level.  The section is credited only to units
+            # with an online variable (_online.add_variables): every unit online draws it, also when
+            # availability derates the output (the online rows carry no availability), while a non-online
             # min_load_efficiency unit's balance equation applies no section.
             online_frames = [f for f in (getattr(d, "process_online_linear", None),
                                          getattr(d, "process_online_integer", None))

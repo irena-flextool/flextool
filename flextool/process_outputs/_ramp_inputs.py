@@ -13,6 +13,8 @@ The coefficients come from the model's own helpers (never re-derived here):
 
 * the capacity multiplier of an arc's ``maxFlow`` row (``core._flows._max_flow_rhs``: capacity coefficient × availability
   on direct arcs and indirect output arcs, the input limit × x(availability) on indirect input arcs);
+* the same multiplier without availability for the units with online variables (their ``maxFlow_online`` rows: a
+  unit online has its full capacity);
 * the floor per unit online (``_unit_floors.arc_floor_share``);
 * the ramp-limit arc sets with their speeds (``process_source_sink_ramp_limit_{side}_{dir}`` without the
   ``conversion_flow_coeff = 0`` arcs, ``_common._drop_uncapped``) and the ramp row's capacity factor c
@@ -114,6 +116,27 @@ def arc_capacity_factor(d: "FlexData") -> "pl.DataFrame | None":
     out = (_utf8(cap_mult.select(*_KEYS, "d", "t", pl.col("value").cast(pl.Float64)), [*_KEYS, "d", "t"])
            .join(arcs, on=_KEYS, how="semi"))
     out = _coarse_mean(out, d, _KEYS, default=1.0).filter(pl.col("value") != 1.0)
+    return out if out.height > 0 else None
+
+
+def arc_online_capacity_factor(d: "FlexData") -> "pl.DataFrame | None":
+    """``(p, source, sink, d, t, value)``: the capacity multiplier of each arc of a unit with online variables in its
+    online rows (``maxFlow_online``: v_flow ≤ value · units online, the capacity coefficient; on an indirect unit's
+    input arc the input limit), i.e. :func:`arc_capacity_factor` without availability, rows where it is not 1.  A
+    unit online has its full capacity; availability derates the built capacity (:func:`arc_capacity_factor`)."""
+    import copy
+
+    online = [f.select(pl.col("p").cast(pl.Utf8)) for f in (getattr(d, "process_online_linear", None),
+                                                           getattr(d, "process_online_integer", None))
+              if _has_rows(f)]
+    if not online:
+        return None
+    plain = copy.copy(d)
+    plain.p_process_availability = None
+    out = arc_capacity_factor(plain)
+    if out is None:
+        return None
+    out = out.join(pl.concat(online).unique(), on="p", how="semi")
     return out if out.height > 0 else None
 
 

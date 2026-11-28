@@ -71,7 +71,8 @@ _PAR_DROP = [
     'reserve_upDown_group_reservation',
     'reserve_upDown_group_shortfall_scale', 'profile',
     # The per-solve inputs of the ramp envelope (calc_ramp_envelope): the realizing solve's values per step.
-    'process_arc_cap_coef_dt', 'process_arc_floor_share_dt', 'process_ramp_cap_coef_dt',
+    'process_arc_cap_coef_dt', 'process_arc_online_cap_coef_dt', 'process_arc_floor_share_dt',
+    'process_ramp_cap_coef_dt',
     'process_coarse_step_duration_dt', 'process_coarse_step_last_dt',
     # The invest / divest lumps come from the solve that realizes the
     # decision period only (persist_realized_slice); keep='last' ties the

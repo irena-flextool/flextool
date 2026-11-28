@@ -397,7 +397,7 @@ def format_console_summary(
     return parts[0] + "".join(f"\n  -> {p}" for p in parts[1:])
 
 
-def format_nonoptimal_hint(ranges: RangeReport) -> str:
+def format_nonoptimal_hint(ranges: RangeReport, *, highs_parallel: bool = False) -> str:
     """Compose the scaling-related *possibility* hint for a rejected solve.
 
     Returns the empty string unless ``ranges.trigger`` is ``True``.  The
@@ -409,6 +409,9 @@ def format_nonoptimal_hint(ranges: RangeReport) -> str:
     status, and passing the raw pre-autoscale ranges here (which are always
     wide for FlexTool's commodity ladders) would make the hint fire on
     essentially every failure regardless of cause.
+
+    ``highs_parallel`` says the solve ran HiGHS in parallel mode (``parallel`` not ``off``); only then does the
+    hint suggest a single-thread re-run, which a serial solve has already done.
     """
     if not ranges.trigger:
         return ""
@@ -422,14 +425,17 @@ def format_nonoptimal_hint(ranges: RangeReport) -> str:
     rhs_span = _span_decades(ranges.rhs)
     cost_span = _span_decades(ranges.cost)
 
+    threads_line = (
+        "  - Re-run with --highs-threads 1 to bypass parallel-mode "
+        "brittleness\n"
+    ) if highs_parallel else ""
     return (
         "The solved (post-autoscale) LP is still wide-ranged "
         f"(RHS spans {rhs_span}, Cost spans {cost_span}), so scaling MAY be "
         "a contributing factor. Possible remediations:\n"
         "  - Check unit conventions on commodity-ladder entities "
         "(set unitsize so quantity/unitsize <= 1e+6)\n"
-        "  - Re-run with --highs-threads 1 to bypass parallel-mode "
-        "brittleness\n"
+        f"{threads_line}"
         "  - Re-run with --scaling=solver_only if you suspect the "
         "autoscaler interferes (HiGHS' internal scaling still runs)"
     )

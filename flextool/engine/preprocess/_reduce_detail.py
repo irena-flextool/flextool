@@ -310,7 +310,7 @@ def _unit_widths(d: "FlexData", procs: set[str]) -> pl.DataFrame:
       (``_indirect_sum_arcs``): the outputs with conv > 0 filled in descending conv order, each up to min(κ_k, the
       rest), as ``_derived._arc_capacity._indirect_fuel_width_lf`` computes the width of the input limits, here from the FlexData
       the LP reads;
-    * direct unit: ``W = K``, the largest κ over its capped arcs (maxFlow_online: flow ≤ κ·availability·online).
+    * direct unit: ``W = K``, the largest κ over its capped arcs (maxFlow_online: flow ≤ κ·online).
 
     κ = ``p_arc_max_cap_coef`` (capacity_max_coeff; 1 where absent, clipped at 0), conv =
     ``p_process_sink_conversion_flow_coeff`` (1 where absent).  A unit without such arcs has width 0."""

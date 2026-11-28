@@ -1,3 +1,35 @@
+## Release 4.7.3 (28.11.2026) — fixing a bug affecting multi sub-units where availability lower than min_load
+
+### Behaviour changes — read before upgrading
+
+- **`availability` of a unit or connection with online variables derates its capacity, not the output of a unit
+  online.** The flow (and the upward reserve) stays within capacity × `availability`, as before, but a unit online
+  now has its full capacity: flow ≤ units online × capacity of a unit, flow ≥ units online × `min_load` × capacity of
+  a unit. Before, availability also derated every unit online (flow ≤ units online × `availability`) while the
+  minimum load was not derated, so a unit whose availability fell below its `min_load` could not be online at all
+  (e.g. a plant of four units with one in maintenance, availability 0.75, and `min_load` 0.9 was forced off), and an
+  availability just above `min_load` left almost no operating range. Now that plant gives 0.75 of its capacity with
+  3 to 3.33 units online (3 with *integer* online variables), and a single integer unit at availability 0.95 runs at
+  0.95. A fall in availability starts or stops no units unless `min_load` forces fewer units online. The start-up
+  and shut-down ramp allowance (now 1 − the start-up share), the input limits and the reserve limits of units online
+  no longer carry availability either. Inertia counts the units online, which availability does not limit. Results
+  change for models with online variables (`startup_method` other than *no_startup*, or a `minimum_time_method`) and
+  an availability below 1; models with availability 1, units without online variables and the capacity margin
+  (capacity × `availability`) are unchanged. A minimum up-time or a realization pin carried in from an earlier solve
+  yields (W-0592) only where the realized availability leaves less capacity than the minimum load of the units it
+  keeps online (capacity × `availability` < units online × `min_load` × capacity of a unit), and the pre-solve check
+  of a realization solve without balance slack counts a pinned unit at min(units online, capacity × `availability`);
+  the ramp envelope output counts units online at full capacity within capacity × `availability`.
+  The parameter description of unit `availability` in the database still describes the old behaviour; it is
+  updated with the next data version.
+
+### Fixes
+
+- **The run log names the solver option folder once.** A `flextool-run` printed the `Solver config:` line in its
+  header and the engine logged it again; the engine now logs it only when it chose the folder itself.
+- **The hint after a rejected solve suggests `--highs-threads 1` only when the solve ran HiGHS in parallel mode.**
+  A serial solve (FlexTool's default, `parallel` off) or a solve by another solver no longer gets that advice.
+
 ## Release 4.7.2 (27.11.2026) — large engine modules split into packages of smaller modules (no schema change, no result change)
 
 Patch release: no schema change, databases stay at data version 84. Requires `polar-high>=3.16.1`. Results do not

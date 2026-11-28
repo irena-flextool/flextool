@@ -51,6 +51,7 @@ class Frames:
         self.floor: dict = {}
         self.speed: dict = {}
         self.kappa: dict = {}
+        self.kappa_online: dict = {}
         self.slope: dict = {}
         self.section: dict = {}
         self.methods: list = []
@@ -73,12 +74,12 @@ class Frames:
 
     def unit(self, name, *, sink, flow, capacity, source=None, slope=None, speed=None, speed_in=None, online=None,
              startup=None, shutdown=None, unitsize=None, floor=None, reserve=None, pot=None, kappa=None,
-             section=None):
+             section=None, kappa_online=None):
         """A unit with one output ``sink`` (and one input ``source``: a direct unit, input draw slope · flow +
         section · online · unitsize; ``section`` makes it a min_load_efficiency unit).  ``speed``: the sink-side
         ramp speed (up and down) in the ramp-limit sets of the solves ``speed_in`` (default every solve);
         ``kappa``: the capacity multiplier of the arc's maxFlow row per step (capacity coefficient ×
-        availability)."""
+        availability); ``kappa_online`` the multiplier of its online rows (the capacity coefficient)."""
         self.units.append(name)
         flow = self._series(flow)
         arc = (name, source or name, sink)
@@ -103,6 +104,8 @@ class Frames:
                 self.speed[(*arc, label)] = (float(speed), solves)
         if kappa is not None:
             self.kappa[arc] = self._series(kappa)
+        if kappa_online is not None:
+            self.kappa_online[arc] = self._series(kappa_online)
         if online is not None:
             self.online[name] = self._series(online)
             self.startup[name] = self._series(startup if startup is not None else 0.0)
@@ -183,6 +186,8 @@ class Frames:
             process_availability=self._wide({}, ["process"]),
             entity_unitsize=pd.Series(self.unitsize).rename_axis("entity"),
             process_arc_cap_coef_dt=self._wide(self.kappa, arc_names) if self.kappa else empty_arc,
+            process_arc_online_cap_coef_dt=(self._wide(self.kappa_online, arc_names) if self.kappa_online
+                                            else empty_arc),
             process_arc_floor_share_dt=self._wide(self.floor, arc_names) if self.floor else empty_arc,
             process_ramp_limit=self._ramp_limit(),
             process_ramp_cap_coef_dt=self._wide({}, [*arc_names, "limit"]),
@@ -679,3 +684,18 @@ def test_case14_min_load_efficiency_section_and_kappa_at_the_next_step() -> None
     sub = env["e"]
     for row, (dg, dhp) in zip(rows[:2], ((10, -10), (-15, 15))):
         assert dg + dhp == pytest.approx(sub.loc[row, "ramp_net_load"])
+
+
+@pytest.mark.parametrize("online, up", [([4.0, 4.0], 35.0), ([4.0, 2.0], 10.0)])
+def test_case15_units_online_at_full_capacity_within_the_derated_capacity(online, up) -> None:
+    """Oracle Case 15: unit G, 4 units of 25 MW (capacity 100), availability 0.75 (its maxFlow multiplier κ = 0.75,
+    the online rows' κ_on = 1), flow 40 MW.  C = min(κ_on · U, κ · capacity): 4 units online in both steps give
+    min(100, 75) = 75 (up 35), 2 units min(50, 75) = 50 (up 10; before, 0.75 · U = 37.5).  Down: f₂ − L = 40
+    (no floor)."""
+    rows = [("p", "t1"), ("p", "t2")]
+    f = Frames(rows, [(rows[1], rows[0])])
+    f.unit("G", sink="n", flow=[40, 40], capacity=100.0, online=online, unitsize=25.0, kappa=[0.75, 0.75],
+           kappa_online=[1.0, 1.0])
+    f.demand("n", [40, 40])
+    env = _envelope(f).node_ramp_envelope_dt_ep
+    _assert_row(env, "n", rows[0], _row(0, 0, up, 0, 0, 0, -40, 0, 0, 0))

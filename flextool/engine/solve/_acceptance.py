@@ -394,6 +394,7 @@ def _limit_verdict(
     gap: float | None,
     primal_feasible: bool,
     ranges_post: "RangeReport | None",
+    highs_options: "Mapping[str, Any] | None",
 ) -> Acceptance:
     """The rule for a solve stopped by a search limit or at an objective target or bound (owner decision D2,
     extended to every limit; every solver).
@@ -416,7 +417,7 @@ def _limit_verdict(
                 f"solve for {solve_name} {stop} before finding a feasible solution, so there is no solution to "
                 f"use. {_capitalised(remedy)}"
             ),
-            scaling_hint=_scaling_hint_for_reject(ranges_post),
+            scaling_hint=_scaling_hint_for_reject(ranges_post, highs_options),
             model_status=status,
         )
     if not _is_mip(sol):
@@ -431,7 +432,7 @@ def _limit_verdict(
                 f"solve for {solve_name} {stop}: it is a linear problem, and a linear solve stopped at its "
                 f"{noun} has no usable solution. {_capitalised(remedy)}"
             ),
-            scaling_hint=_scaling_hint_for_reject(ranges_post),
+            scaling_hint=_scaling_hint_for_reject(ranges_post, highs_options),
             model_status=status,
         )
     # HiGHS reports ``inf`` (or ``NaN``) when it has no gap to give; that reads as "no gap" here.
@@ -498,6 +499,7 @@ def _format_gap(gap: float) -> str:
 
 def _scaling_hint_for_reject(
     ranges_post: "RangeReport | None",
+    highs_options: "Mapping[str, Any] | None",
 ) -> str | None:
     """Return the scaling remediation hint only when the *actually solved*
     (post-autoscale) LP is still ill-conditioned.
@@ -508,10 +510,17 @@ def _scaling_hint_for_reject(
     (the post-Layer-2 ranges, computed only when the pre-ranges tripped the
     detector) means the hint appears only when the autoscaler could NOT tame
     the range spread, i.e. when scaling is a plausible culprit.
+
+    ``highs_options`` are the HiGHS options the solve ran with (``None`` for
+    another solver); the hint suggests a single-thread re-run only when they
+    put HiGHS in parallel mode (``parallel`` absent means HiGHS' ``choose``).
     """
     if ranges_post is None or not ranges_post.trigger:
         return None
-    hint = _format_nonoptimal_hint(ranges_post)
+    highs_parallel = highs_options is not None and str(
+        highs_options.get("parallel", "choose"),
+    ).lower() not in ("off", "false")
+    hint = _format_nonoptimal_hint(ranges_post, highs_parallel=highs_parallel)
     return hint or None
 
 
@@ -621,13 +630,16 @@ def classify_acceptance(
     *,
     ranges_post: "RangeReport | None",
     solve_name: str,
+    highs_options: "Mapping[str, Any] | None" = None,
 ) -> Acceptance:
     """Decide whether *sol* is safe for the cascade to consume.
 
     See the module docstring for the policy.  ``ranges_post`` is the
     post-autoscale :class:`RangeReport` for this solve (``None`` when the raw
     LP never tripped the scaling detector); it gates the reject-path scaling
-    hint only.
+    hint only.  ``highs_options`` are the options of a HiGHS solve (``None``
+    for another solver); they decide whether that hint suggests a
+    single-thread re-run.
     """
     # Fast path: HiGHS certified optimality — nothing to decide.
     if sol.optimal:
@@ -670,6 +682,7 @@ def classify_acceptance(
                 gap=getattr(sol, "shim_mip_gap", None),
                 primal_feasible=getattr(sol, "shim_primal_feasible", True),
                 ranges_post=ranges_post,
+                highs_options=highs_options,
             )
         model_status = _SHIM_MODEL_STATUS.get(shim_status)
         if shim_status in _SHIM_STATUS_REASONS:
@@ -723,6 +736,7 @@ def classify_acceptance(
             gap=getattr(diag, "mip_gap", None),
             primal_feasible=_primal_counters(diag).feasible,
             ranges_post=ranges_post,
+            highs_options=highs_options,
         )
 
     # A named failure status is never acceptable — report the precise cause.
@@ -731,7 +745,7 @@ def classify_acceptance(
             accepted=False,
             near_optimal=False,
             message=f"solve for {solve_name} {_FAILURE_MESSAGES[status]}",
-            scaling_hint=_scaling_hint_for_reject(ranges_post),
+            scaling_hint=_scaling_hint_for_reject(ranges_post, highs_options),
             model_status=status,
         )
 
@@ -746,7 +760,7 @@ def classify_acceptance(
                 f"unrecognised status ({status}); the cause could not be "
                 "determined from the available solver diagnostics"
             ),
-            scaling_hint=_scaling_hint_for_reject(ranges_post),
+            scaling_hint=_scaling_hint_for_reject(ranges_post, highs_options),
             model_status=status,
         )
 
@@ -761,7 +775,7 @@ def classify_acceptance(
                 "certify optimality (status Unknown) and near-optimal "
                 "acceptance is disabled (FLEXTOOL_ACCEPT_NEAR_OPTIMAL=0)"
             ),
-            scaling_hint=_scaling_hint_for_reject(ranges_post),
+            scaling_hint=_scaling_hint_for_reject(ranges_post, highs_options),
             model_status=status,
         )
 
@@ -820,7 +834,7 @@ def classify_acceptance(
                 f"feasible ({'; '.join(failed)}{passed}). The "
                 "solution cannot be used"
             ),
-            scaling_hint=_scaling_hint_for_reject(ranges_post),
+            scaling_hint=_scaling_hint_for_reject(ranges_post, highs_options),
             model_status=status,
         )
 
@@ -836,7 +850,7 @@ def classify_acceptance(
                 f"optimality gap {pd_gap_tol:.2%}; optimality cannot be "
                 "certified"
             ),
-            scaling_hint=_scaling_hint_for_reject(ranges_post),
+            scaling_hint=_scaling_hint_for_reject(ranges_post, highs_options),
             model_status=status,
         )
 

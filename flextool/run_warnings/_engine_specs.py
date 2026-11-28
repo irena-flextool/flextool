@@ -1096,8 +1096,9 @@ ENGINE_SPECS: tuple[WarningSpec, ...] = (
         body=(
             "An earlier solve started these units, or left them ramping down. Their minimum up-time, or "
             "ramp-down limit, would have kept them running into time steps where they cannot run: their "
-            "availability is below their `min_load` there (for the ramp-down limit, the flow their capacity "
-            "allows there is below what the limit asks for). That solve could not see the outage, because it lay "
+            "capacity derated by `availability` there is below the minimum load of the units the obligation "
+            "keeps online (for the ramp-down limit, the flow their capacity allows there is below what the limit "
+            "asks for). That solve could not see the outage, because it lay "
             "beyond its horizon or only the realized data have it. FlexTool ends the carried obligation at the "
             "first such step, and the rest of its minimum up-time is dropped. A realization solve keeps the units "
             "online its stochastic solve committed up to such an outage and decides the unit again from the outage "

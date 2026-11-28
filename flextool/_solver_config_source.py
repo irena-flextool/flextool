@@ -930,10 +930,12 @@ def snapshot_solver_option_files(
     work_folder: str | os.PathLike,
     logger: logging.Logger | None = None,
     names: tuple[str, ...] = SOLVER_NAMES,
+    announce: bool = True,
 ) -> SolverOptionFiles:
     """Read the run's option files once and write them to ``<work_folder>/solve_data/solver_config/``.
 
-    Every run writes the snapshot afresh (an older one is replaced).  Logs the ladder (``Solver config:``), one
+    Every run writes the snapshot afresh (an older one is replaced).  Logs the ladder (``Solver config:``; not
+    with ``announce=False``, for a caller whose header shows it already), one
     warning when no folder was found (or one per folder skipped as an unedited template copy, which also names the
     folder used), one warning per folder of the ladder that does not exist, for a one-folder ladder one line for
     the solvers that use the packaged default, and one warning when a ``<work_folder>/solver_config/`` from an
@@ -942,7 +944,8 @@ def snapshot_solver_option_files(
     """
     log = logger or _logger
     files = read_solver_option_files(source, names)
-    log.info("Solver config: %s", source.describe())
+    if announce:
+        log.info("Solver config: %s", source.describe())
     for folder in source.skipped:
         log.warning(
             "Not using %s: it holds only FlexTool's default option files (probably copied there by FlexTool 4.3 "

@@ -468,32 +468,34 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
 def carried_obligations_yield_to_outages(flex_data: "FlexData", solve: str, unit_level: str = "none") -> None:
     """Obligations carried in from an earlier solve yield to an outage that solve did not see (W-0592), on the
     solve's data after its ``reduce_unit_detail_method`` *unit_level* (a roll and a realization take their base /
-    parent solve's level).  B = ``params._mintime.online_blocked_cells``: the steps where a unit cannot be online
-    (its availability, the realized data, keeps it below its min_load).
+    parent solve's level).  ``params._mintime.online_limit_cells``: the most units online at the steps where
+    availability keeps a unit below its units built (its min load over its derated capacity:
+    κ · availability · existing_count / min_load, 0 where κ < min_load); B = the steps where an obligation exceeds
+    it (``params._mintime.cells_over_limit``).
 
     * (a1) the carried minimum up-time (``uptime_carry``) of a unit ends at the first step of B it reaches and does
       not resume (``_mintime.cut_at_blocked``); the carried minimum down-time never conflicts (offline is always
       possible).
-    * (a2) a unit with a realization pin (``p_fix_online``) > 0 on B keeps its pins before the first such step and
-      loses them there and at every later step it reaches along the timeline (``dt_ramp_link``; a later period that
-      does not continue this one keeps its pins): it is decided again under its own rows from the outage on (no
-      later pin, so no minimum down-time conflicts with one).  A start-up of the kept pins whose minimum up-time runs into
-      that step has it cut there: the ``uptime_lookback`` terms of the rows at and after the step on start-ups at
-      kept pin cells go (``pdt_uptime_set`` follows).  The other units keep their pins.
+    * (a2) a unit with a realization pin (``p_fix_online``) above the limit on B keeps its pins before the first such
+      step and loses them there and at every later step it reaches along the timeline (``dt_ramp_link``; a later
+      period that does not continue this one keeps its pins): it is decided again under its own rows from the
+      outage on (no later pin, so no minimum down-time conflicts with one).  A start-up of the kept pins whose
+      minimum up-time runs into that step has it cut there: the ``uptime_lookback`` terms of the rows at and after
+      the step on start-ups at kept pin cells go (``pdt_uptime_set`` follows).  The other units keep their pins.
 
-    Nothing yields under a level that leaves out min limits (``min_limits``: no floor, so no step blocks the unit).
-    Only an LP that the carried obligation makes infeasible changes.  Called after the coarse process frames, which
-    B reads (a coarse process is judged on its coarse-step means)."""
+    Nothing yields under a level that leaves out min limits (``min_limits``: no floor, so availability limits only
+    the flow).  Only an LP that the carried obligation makes infeasible changes.  Called after the coarse process
+    frames, which the limit reads (a coarse process is judged on its coarse-step means)."""
     from flextool.engine.preprocess._reduce_detail import unit_parts
     from flextool.engine.preprocess.params._mintime import (
-        cut_at_blocked, note_carried_obligation_cut, online_blocked_cells)
+        cells_over_limit, cut_at_blocked, note_carried_obligation_cut, online_limit_cells)
     pin = flex_data.p_fix_online
     carry = flex_data.uptime_carry
     has_pin = pin is not None and pin.frame.height > 0
     if ("min_limits" in unit_parts(unit_level) or not (has_pin or (carry is not None and carry.height > 0))):
         return
-    blocked = online_blocked_cells(flex_data)
-    if blocked is None:
+    limit = online_limit_cells(flex_data)
+    if limit is None:
         return
     timeline = (flex_data.dt, flex_data.p_step_duration, flex_data.dt_ramp_link)
     notes: dict[str, str] = {}
@@ -501,16 +503,13 @@ def carried_obligations_yield_to_outages(flex_data: "FlexData", solve: str, unit
         mt = flex_data.online_min_time
         cut: list = []
         flex_data.uptime_carry = cut_at_blocked(
-            carry, blocked, *timeline, float(mt["value"].max()) if mt is not None and mt.height > 0 else float("inf"),
-            cut)
+            carry, cells_over_limit(carry, limit), *timeline,
+            float(mt["value"].max()) if mt is not None and mt.height > 0 else float("inf"), cut)
         notes.update({p: f"solve {solve}: the carried minimum up-time ends at step ({d}, {t})"
                       for p, d, t in reversed(cut)})
     if has_pin:
-        keys = ["p", "d", "t"]
-        on = (pin.frame.filter(pl.col("value") > 0.0).select(*(pl.col(k).cast(pl.Utf8) for k in keys))
-              .join(blocked, on=keys, how="semi"))
         cut, reached = [], []
-        kept = cut_at_blocked(pin.frame, on, *timeline, float("inf"), cut, reached)
+        kept = cut_at_blocked(pin.frame, cells_over_limit(pin.frame, limit), *timeline, float("inf"), cut, reached)
         if cut:
             flex_data.p_fix_online = Param(pin.dims, kept) if kept is not None else None
             _cut_pinned_uptime(flex_data, reached[0], kept)

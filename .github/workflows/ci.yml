@@ -10,12 +10,14 @@ name: CI
 
 on:
   push:
-    # `main` is the default branch. `master` is retained transitionally so CI
-    # keeps firing on the deprecated branch until it is fully retired; drop it
-    # once the default-branch switch has settled.
-    branches: [main, master]
+    # `main` is the default branch.
+    branches: [main]
+    paths-ignore:
+      - CHANGELOG.md
   pull_request:
-    branches: [main, master]
+    branches: [main]
+    paths-ignore:
+      - CHANGELOG.md
   schedule:
     # 03:00 UTC nightly
     - cron: "0 3 * * *"

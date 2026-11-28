@@ -1,14 +1,14 @@
 name: Tests
 on:
   push:
-    # `main` is the default branch; `master` kept transitionally (see ci.yml).
-    branches: [main, master]
+    # `main` is the default branch.
+    branches: [main]
     # Docs-only changes don't affect tests — skip the heavy cross-platform
     # matrix. ci.yml's required Smoke check has NO paths filter, so it still
     # runs and gates PRs (path-ignoring a required check would block it).
     paths-ignore: ['**.md']
   pull_request:
-    branches: [main, master]
+    branches: [main]
     paths-ignore: ['**.md']
   schedule:
     # 02:00 UTC nightly: only the `nightly-heavy` job runs on this trigger.

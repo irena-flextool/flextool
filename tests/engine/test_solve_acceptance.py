@@ -320,6 +320,24 @@ def test_reject_scaling_hint_only_when_post_trigger() -> None:
     assert acc3.scaling_hint is None
 
 
+
+@pytest.mark.parametrize(("highs_options", "suggests_one_thread"), [
+    ({"parallel": "off", "threads": 1}, False),  # a serial solve has done what the line suggests
+    ({"parallel": "on", "threads": 4}, True),    # --highs-threads 4
+    ({"threads": 4}, True),                      # parallel absent: HiGHS' own default, choose
+    (None, False),                               # another solver: --highs-threads does not apply
+])
+def test_scaling_hint_suggests_one_thread_only_for_parallel_highs(highs_options, suggests_one_thread) -> None:
+    acc = classify_acceptance(
+        _StubSolution(optimal=False, diagnostics=_diag(status_name="kInfeasible")),
+        ranges_post=_range_report(trigger=True),
+        solve_name="s",
+        highs_options=highs_options,
+    )
+    assert acc.scaling_hint is not None
+    assert ("--highs-threads 1" in acc.scaling_hint) is suggests_one_thread
+    assert "--scaling=solver_only" in acc.scaling_hint
+
 # --- env overrides ----------------------------------------------------------
 
 

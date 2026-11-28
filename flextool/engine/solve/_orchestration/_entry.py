@@ -462,13 +462,16 @@ def run_chain_from_db(
         resolve_solver_config_source,
         snapshot_solver_option_files,
     )
-    if solver_config_source is None or solver_config_dir is not None:
+    # A caller that passes the resolved folder (the CLI) has shown it in its header already.
+    resolved_here = solver_config_source is None or solver_config_dir is not None
+    if resolved_here:
         solver_config_source = resolve_solver_config_source(
             explicit=solver_config_dir, run_options=run_options, input_db_url=db_url,
         )
     from flextool.engine.solve._solver_dispatch import reset_run_warnings
     reset_run_warnings()
-    solver_option_files = snapshot_solver_option_files(solver_config_source, work_folder, logger)
+    solver_option_files = snapshot_solver_option_files(solver_config_source, work_folder, logger,
+                                                       announce=resolved_here)
     # Item 234: the run record names the folder and a hash of each option file, so two runs can be compared
     # without their logs.
     run_record.active().note_solver_config(solver_option_files.record())

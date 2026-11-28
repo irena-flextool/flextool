@@ -174,7 +174,7 @@ def test_nonoptimal_hint_triggered() -> None:
     re-deriving the log.
     """
     ranges_post = _range_report(trigger=True)
-    hint = format_nonoptimal_hint(ranges_post)
+    hint = format_nonoptimal_hint(ranges_post, highs_parallel=True)
     assert hint, "non-empty hint expected when trigger=True"
     # The hint must NOT claim scaling is the proven cause.
     assert "poorly-scaled" not in hint
@@ -185,6 +185,11 @@ def test_nonoptimal_hint_triggered() -> None:
     assert "Check unit conventions" in hint
     assert "--highs-threads 1" in hint
     assert "--scaling=solver_only" in hint
+    # A serial HiGHS solve has already run on one thread: no line suggests it.
+    serial = format_nonoptimal_hint(ranges_post)
+    assert "--highs-threads" not in serial
+    assert serial == hint.replace(
+        "  - Re-run with --highs-threads 1 to bypass parallel-mode brittleness\n", "")
 
 
 def test_nonoptimal_hint_not_triggered_when_well_scaled() -> None:

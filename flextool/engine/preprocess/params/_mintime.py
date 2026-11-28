@@ -267,30 +267,45 @@ def mintime_roll_carry(dt: "pl.DataFrame | None", step_duration: "object | None"
     return out if out.height > 0 else None
 
 
-def online_blocked_cells(d: object) -> "pl.DataFrame | None":
-    """``(p, d, t)`` Utf8: the steps where a unit cannot be online, B = {min_load[p,d,t] > 0 and
-    availability[p,d,t] · κ[p] < min_load[p,d,t]}, κ[p] = Σ capacity_max_coeff over its output measure A_p
-    (``model._unit_floors.unit_measured_arcs``; 1 by default), for an indirect unit min(Σ, 1).  There
-    ``minFlow_minload`` (Σ_{A_p} flow ≥ min_load · v_online), ``maxFlow_online`` (≤ capacity_max_coeff ·
-    availability · v_online on each arc of A_p) and, for an indirect unit, ``maxOutputSum_online`` (Σ_{A_p} flow ≤
-    availability · v_online) leave only v_online = 0, so an obligation carried in from an earlier solve that keeps
-    the unit online there makes the LP infeasible.  Availability 0 without min_load is no block (online at zero
-    output is feasible).
+def online_limit_cells(d: object) -> "pl.DataFrame | None":
+    """``(p, d, t, cap)`` (Utf8 keys): the most units online ``cap`` of a unit with online variables
+    (``process_online_linear`` / ``process_online_integer``) and min_load at the steps where its availability keeps
+    it below its units built — the ceiling an obligation carried in from an earlier solve meets:
+
+        cap[p,d,t] = 0                                                      κ[p] < min_load[p,d,t]
+                   = κ[p] · availability[p,d,t] · existing_count[p,d] / min_load[p,d,t]   otherwise
+
+    over B = {min_load[p,d,t] > 0 and availability[p,d,t] · κ[p] < min_load[p,d,t]}.  κ[p] = Σ capacity_max_coeff over
+    the unit's output measure A_p (``model._unit_floors.unit_measured_arcs``; 1 by default), for an indirect unit
+    min(Σ, 1).  ``minFlow_minload`` (Σ_{A_p} flow ≥ min_load · v_online) against ``maxFlow_online`` (≤
+    capacity_max_coeff · v_online on each arc of A_p) leaves only v_online = 0 where κ < min_load; against the built
+    capacity derated by availability (``maxFlow``: ≤ capacity_max_coeff · availability · existing_count on each arc,
+    ``maxOutputSum`` for an indirect unit) it allows v_online ≤ κ · availability · existing_count / min_load.
+    existing_count is the solve's existing units (the investments of earlier solves included); a unit this solve
+    invests in or retires is judged on them as well (an investment can only raise the ceiling, so the obligation
+    may yield where it need not; a retirement in the same solve is not seen).  A unit without an existing_count
+    value has no row.
 
     A coarse process (``processCoarse``, ``process_coarse_step``) is judged as its rows are: once per coarse step,
     at the step's first fine step, on the Δt-weighted means of availability and min_load over the step.  ``None``
-    when no step is blocked.  Reads the solve's shaped ``p_min_load`` / ``p_process_availability`` /
-    ``p_arc_max_cap_coef``."""
+    when no step is limited.  Reads the solve's shaped ``p_min_load`` / ``p_process_availability`` /
+    ``p_arc_max_cap_coef`` / ``p_process_existing_count``."""
     from flextool.engine.input._param_shapes import promote_param_to_dt
     from flextool.engine.model._common import _availability_factor, _coef_factor
     from flextool.engine.model._unit_floors import unit_measured_arcs
 
     ml, dt = getattr(d, "p_min_load", None), getattr(d, "dt", None)
-    if ml is None or ml.frame.height == 0 or dt is None or dt.height == 0:
+    ec = getattr(d, "p_process_existing_count", None)
+    online = [f.select(pl.col("p").cast(pl.Utf8)) for f in (getattr(d, "process_online_linear", None),
+                                                           getattr(d, "process_online_integer", None))
+              if f is not None and f.height > 0]
+    if (ml is None or ml.frame.height == 0 or dt is None or dt.height == 0 or not online or ec is None
+            or ec.frame.height == 0):
         return None
     arcs = unit_measured_arcs(d)
     if arcs is None:
         return None
+    procs = pl.concat(online).unique()
     keys = ["p", "source", "sink"]
     coef = getattr(d, "p_arc_max_cap_coef", None)
     kappa = (_coef_factor(arcs, coef, keys).frame if coef is not None
@@ -301,6 +316,7 @@ def online_blocked_cells(d: object) -> "pl.DataFrame | None":
         ind = indirect.select(pl.col("p").cast(pl.Utf8)).unique()["p"].implode()
         kappa = kappa.with_columns(pl.when(pl.col("p").is_in(ind)).then(pl.min_horizontal("kappa", pl.lit(1.0)))
                                    .otherwise(pl.col("kappa")).alias("kappa"))
+    kappa = kappa.join(procs, on="p", how="semi")
     cells = (promote_param_to_dt(ml, dt)
              .select(pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8),
                      pl.col("value").cast(pl.Float64).alias("ml"))
@@ -316,15 +332,39 @@ def online_blocked_cells(d: object) -> "pl.DataFrame | None":
     else:
         cells = cells.with_columns(av=pl.lit(1.0))
     cells = _at_coarse_steps(cells, getattr(d, "process_coarse_step", None))
+    count = (promote_param_to_dt(ec, dt)
+             .select(pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8),
+                     pl.col("value").cast(pl.Float64).alias("count"))
+             .collect())
     out = (cells.filter((pl.col("ml") > 0.0) & (pl.col("av") * pl.col("kappa") < pl.col("ml")))
-           .select("p", "d", "t").sort("p", "d", "t"))
+           .join(count, on=["p", "d", "t"], how="inner")
+           .select("p", "d", "t", cap=pl.when(pl.col("kappa") < pl.col("ml")).then(0.0)
+                   .otherwise(pl.col("kappa") * pl.col("av") * pl.col("count") / pl.col("ml")))
+           .sort("p", "d", "t"))
+    return out if out.height > 0 else None
+
+
+def cells_over_limit(frame: "pl.DataFrame | None", limit: "pl.DataFrame | None",
+                     tol: float = 1e-6) -> "pl.DataFrame | None":
+    """``(p, d, t)`` (Utf8) of the rows of *frame* ``(p, d, t, value, …)`` — units online an earlier solve obliges
+    (the carried minimum up-time, a realization pin) — whose value exceeds the most units online there, *limit*
+    ``(p, d, t, cap)`` (:func:`online_limit_cells`), by more than *tol* (relative to max(1, cap)); ``None`` when there
+    is none."""
+    if frame is None or frame.height == 0 or limit is None or limit.height == 0:
+        return None
+    keys = ["p", "d", "t"]
+    out = (frame.select(*(pl.col(k).cast(pl.Utf8) for k in keys), pl.col("value").cast(pl.Float64))
+           .join(limit, on=keys, how="inner")
+           .filter(pl.col("value") > pl.col("cap") + tol * pl.max_horizontal(pl.lit(1.0), pl.col("cap")))
+           .select(keys).unique().sort(keys))
     return out if out.height > 0 else None
 
 
 def _at_coarse_steps(cells: pl.DataFrame, coarse_step: "pl.DataFrame | None") -> pl.DataFrame:
     """*cells* ``(p, d, t, ml, kappa, av)`` Utf8 with the rows of each coarse process (*coarse_step* ``(p, d,
     b_first, t, w)``) replaced by one row per coarse step at its first fine step: ``ml`` and ``av`` their
-    w-weighted sums (the Δt-weighted means the coarse rows read; ``_coarse_flows.average``)."""
+    w-weighted means Σ w·x / Σ w (the Δt-weighted means the coarse rows read; dividing by Σ w keeps a constant
+    exact)."""
     if coarse_step is None or coarse_step.height == 0:
         return cells
     steps = coarse_step.select(pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8),
@@ -332,7 +372,8 @@ def _at_coarse_steps(cells: pl.DataFrame, coarse_step: "pl.DataFrame | None") ->
     with_b = cells.join(steps, on=["p", "d", "t"], how="left")
     coarse = (with_b.filter(pl.col("b_first").is_not_null())
               .group_by("p", "d", "b_first", maintain_order=True)
-              .agg((pl.col("ml") * pl.col("w")).sum(), pl.col("kappa").first(), (pl.col("av") * pl.col("w")).sum())
+              .agg((pl.col("ml") * pl.col("w")).sum() / pl.col("w").sum(), pl.col("kappa").first(),
+                   (pl.col("av") * pl.col("w")).sum() / pl.col("w").sum())
               .select("p", "d", pl.col("b_first").alias("t"), "ml", "kappa", "av"))
     return pl.concat([with_b.filter(pl.col("b_first").is_null()).select(cells.columns), coarse])
 
@@ -350,7 +391,7 @@ def cut_at_blocked(frame: "pl.DataFrame | None", blocked: "pl.DataFrame | None",
                    cut: "list | None" = None, reached: "list | None" = None) -> "pl.DataFrame | None":
     """*frame* ``(p, d, t, …)`` — the up-time roll carry (:func:`mintime_roll_carry`) or the realization pins —
     without what an outage voids: the rows of a process end at the first step of *blocked* ``(p, d, t)``
-    (:func:`online_blocked_cells`, or a subset of it) that holds one of its rows, and do not resume after it — every
+    (:func:`cells_over_limit`) that holds one of its rows, and do not resume after it — every
     step reached along *link* from such a step (the step itself included, within *l_max* hours) loses its rows.
     ``cut`` (a list) gets the ``(p, d, t)`` of those first blocked steps, ``reached`` (a list) the reached cells as
     one ``(p, d, t)`` Utf8 frame.  *frame* unchanged when nothing is cut; ``None`` when nothing is left."""

@@ -269,10 +269,11 @@ def check_pinned_realization_feasible(d, solve: str, *, rtol: float = 1e-6) -> N
     can deliver, and the LP is infeasible.  This check finds that case before the solve and names the node and step.
 
     Per hard-balance node and step: the realized need ``−inflow`` (MWh) is compared with an upper bound of the
-    supply into the node, Σ over the arcs into the node of ``unitsize · Δt · cap · availability · profile``, where
-    ``cap`` is the pinned online count × the sink's capacity_max_coeff for a pinned process and the existing capacity
-    (units of unitsize) × the arc's capacity factor otherwise, and ``profile`` the realized upper or fixed flow
-    profile (1 without one).  Reserve is not pinned and its shortfall is soft, so it does not reduce the bound.
+    supply into the node, Σ over the arcs into the node of ``unitsize · Δt · cap · profile``, where ``cap`` is the
+    built capacity bound ``existing`` (units of unitsize) × the arc's capacity factor × availability (maxFlow) and,
+    for a pinned process, the smaller of that and the pinned online count × the sink's capacity_max_coeff
+    (maxFlow_online: a unit online has its full capacity, availability derates the built capacity), and ``profile``
+    the realized upper or fixed flow profile (1 without one).  Reserve is not pinned and its shortfall is soft, so it does not reduce the bound.
     A node is not checked when the bound is not certain: it has a storage state, a block or coarse balance, a
     connection, an arc without capacity (conversion_flow_coeff = 0) or an arc without an existing-capacity value.
     """
@@ -336,11 +337,13 @@ def check_pinned_realization_feasible(d, solve: str, *, rtol: float = 1e-6) -> N
     cells = cells.filter(~pl.col("n").is_in(list(nodes_unknown)))
     if cells.height == 0:
         return
-    cap = (pl.when(pl.col("online").is_not_null()).then(pl.col("online") * pl.col("k_sink"))
-           .otherwise(pl.col("existing") * pl.col("k_arc")))
+    built = pl.col("existing") * pl.col("k_arc") * pl.col("avail")
+    online = pl.col("online") * pl.col("k_sink")
+    cap = (pl.when(pl.col("online").is_null()).then(built)
+           .when(pl.col("existing").is_null()).then(online)
+           .otherwise(pl.min_horizontal(online, built)))
     supply = (cells
-              .with_columns(mwh=pl.col("unitsize") * pl.col("dur")
-                            * cap * pl.col("avail") * pl.col("profile").fill_null(1.0))
+              .with_columns(mwh=pl.col("unitsize") * pl.col("dur") * cap * pl.col("profile").fill_null(1.0))
               .group_by("n", "d", "t").agg(pl.col("mwh").sum().alias("supply")))
     need = inflow.select("n", "d", "t", (-pl.col("value").cast(pl.Float64)).alias("need"))
     short = (supply.join(need, on=["n", "d", "t"], how="inner")
