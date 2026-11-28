@@ -470,7 +470,8 @@ The bands (the down bands are stored as negative numbers):
   potential of a VRE unit that also touches a storage node is not subtracted: that unit is in the storage band.
 - *ramp_demand* — the same for the demand alone (demand = −`inflow`).
 - *units_up* / *units_down* — how much the units with a flow at the node can raise / lower the supply at t⁺: up to
-  their capacity × availability at t⁺ and down to their minimum load, within their ramp limits, minus the reserve
+  their capacity × availability at t⁺ (units with online variables: the capacity of the units online, at full
+  output) and down to their minimum load, within their ramp limits, minus the reserve
   they hold at t⁺ in that direction. A unit that takes from the node (an input) raises the supply by consuming less;
   its input is converted with the efficiency of each step. Units with online variables count only the units online
   in both steps: the output of a unit that starts at t⁺, and the drop of a unit that stops at t⁺, is forced
@@ -484,7 +485,8 @@ The bands (the down bands are stored as negative numbers):
   rise is in the net-load line). *vre_down* is how much less than the potential allows the VRE units can give at
   t⁺; it can be larger than the VRE's own output, because it includes curtailing the coming rise of the potential.
 - *connections_up* / *connections_down* — how much the connections can raise / lower the flow into the node at
-  t⁺, within their capacity × availability at t⁺ in each direction (losses on the sending side: an export at full
+  t⁺, within their capacity × availability at t⁺ in each direction (with online variables: the capacity of the
+  units online; losses on the sending side: an export at full
   capacity draws capacity ÷ efficiency), minus the reserve the connection holds at the node at t⁺. The far end of
   the connection is not considered.
 

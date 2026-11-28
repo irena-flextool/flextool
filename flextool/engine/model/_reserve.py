@@ -1063,9 +1063,6 @@ def _add_connection_reserve_constraints(b: "_Build") -> None:
                                               pl.col("t").cast(pl.Utf8).alias("_t"))
     rhs_u = _arc_dt_u(b.flow_upper_rhs.frame, d.dt)
     mult_u = _arc_dt_u(b.flow_cap_mult, d.dt) if b.flow_cap_mult is not None else None
-    avail_u = (_utf8_keys(promote_param_to_dt(d.p_process_availability, d.dt).select("p", "d", "t", "value"),
-                          ["p", "d", "t"]).select("_p", "_d", "_t", pl.col("value").alias("__av"))
-               if d.p_process_availability is not None else None)
     coef_u = (_utf8_keys(d.p_arc_max_cap_coef.frame.lazy().select(*keys, "value"), keys)
               .select("_p", "_source", "_sink", pl.col("value").alias("__coef"))
               if d.p_arc_max_cap_coef is not None else None)
@@ -1077,18 +1074,13 @@ def _add_connection_reserve_constraints(b: "_Build") -> None:
     exact = _exact.exact_arcs(d) if b.v_exact_forward is not None else None
 
     def _online_factor_u(chan: pl.DataFrame) -> pl.LazyFrame:
-        """κ · availability of the channel arc over dt: (_p, _n, _d, _t, value)."""
+        """κ of the channel arc over dt: (_p, _n, _d, _t, value)."""
         lf = chan.lazy().select("_p", "_source", "_sink", "_n").join(dt_u.lazy().select("_d", "_t"), how="cross")
         if coef_u is not None:
             lf = lf.join(coef_u, on=["_p", "_source", "_sink"], how="left")
         else:
             lf = lf.with_columns(pl.lit(None, pl.Float64).alias("__coef"))
-        if avail_u is not None:
-            lf = lf.join(avail_u, on=["_p", "_d", "_t"], how="left")
-        else:
-            lf = lf.with_columns(pl.lit(None, pl.Float64).alias("__av"))
-        return lf.select("_p", "_n", "_d", "_t",
-                         (pl.col("__coef").fill_null(1.0) * pl.col("__av").fill_null(1.0)).alias("value"))
+        return lf.select("_p", "_n", "_d", "_t", pl.col("__coef").fill_null(1.0).alias("value"))
 
     # ─── EQ. ─── connection_reserve_up / connection_reserve_down ─────────────
     # ─────────────────────────────────────────────────────────────────────────
@@ -1106,14 +1098,16 @@ def _add_connection_reserve_constraints(b: "_Build") -> None:
     #           b.flow_cap_mult: capacity_max_coeff · availability · existing_count and coef · availability)
     #   a channel p does not have contributes nothing (x = 0, C = 0, M = 0, s_out = 1)
     # ─── EQ. ─── connection_reserve_{up,down}_online_{linear,integer} ────────
-    #   same LHS without invest terms  ≤  κ · availability · v_online[p,d,t]   (κ, availability of the up row's
-    #   in-channel arc / the down row's out-channel arc)   ∀ rows above with p online and that channel present
+    #   same LHS without invest terms  ≤  κ · v_online[p,d,t]   (κ = capacity_max_coeff of the up row's
+    #   in-channel arc / the down row's out-channel arc; availability limits the units online, maxOnline)
+    #   ∀ rows above with p online and that channel present
     # ─── EQ. ─── connection_reserve_{up,down}_exact ──────────────────────────
     #   same LHS − Ū · v_exact_forward[p,d,t]  ≤  0     when that channel is the exact connection's forward arc
     #   same LHS + Ū · v_exact_forward[p,d,t]  ≤  Ū     when it is the reverse arc
     #   ∀ rows above with p ∈ process_exact;  Ū = p_flow_upper · capacity_max_coeff · availability of the arc
     # A coarse connection: each family as <family>_coarse, the row's mean over each coarse step
-    #   (_coarse_flows.add_cstr): one reserve and one flow per step under the step-mean capacity and availability.
+    #   (_coarse_flows.add_cstr): one reserve and one flow per step under the step-mean capacity and availability
+    #   (of the built capacity, and of the units online through maxOnline).
     # A connection's reserve at a node is limited by its net position there: upward reserve by the free capacity
     # into n plus the flow out of n it can stop, downward reserve by the flow into n it can stop plus the free
     # capacity out of n (converted to power at n by the efficiency).  One row

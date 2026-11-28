@@ -2,10 +2,11 @@
 
 A unit starting in step t reaches at most ``SU = min(1, min_load + ½ · ramp_speed_up · 60 · Δt)`` of its capacity on
 average over the step (synchronised at min load, then ramping; owner question Q-c14a-A), a unit shutting down after
-step t at most ``SD`` (down speed) in t.  The online capacity rows lose ``(availability − SU) · v_startup[t]`` and
-``(availability − SD) · v_shutdown[t⁺]`` as a pair of rows (``maxFlow_online_*`` + ``maxFlow_online_shutdown_*``;
+step t at most ``SD`` (down speed) in t.  The online capacity rows lose ``(1 − SU) · v_startup[t]`` and
+``(1 − SD) · v_shutdown[t⁺]`` as a pair of rows (``maxFlow_online_*`` + ``maxFlow_online_shutdown_*``;
 ``maxInputFlow_online_*`` + ``…_shutdown_*`` on an indirect unit's input arc), so capacity online for one step gets
-the smaller limit.  Only where the arc has a ramp limit (``ramp_method`` set).
+the smaller limit.  Only where the arc has a ramp limit (``ramp_method`` set).  A unit online has its full
+capacity: availability limits the units online (``maxOnline``), so it is in none of these rows.
 
 Fixtures: ``tests.json`` (coal_plant 500 MW at west, coal_chp indirect coal_market → west + heat) plus override
 alternatives, built from JSON.  Coefficients are computed in the tests from the inputs.
@@ -15,7 +16,7 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from tests.engine._lp_rows import coef, row_terms, step_of
+from tests.engine._lp_rows import coef, row_bounds, row_terms, step_of
 from tests.engine._unit_db import CHP, COAL, PLANT, b64, build, make_db, run, unitsize, utf8
 
 pytestmark = pytest.mark.solver
@@ -134,19 +135,28 @@ def test_one_step_run_feasible(tmp_path_factory) -> None:
     assert ML * on[("p2020", "t0010")] - TOL <= f[("p2020", "t0010")] <= SU * on[("p2020", "t0010")] + TOL
 
 
-def test_availability_caps_reduction(tmp_path_factory) -> None:
-    """availability 0.4 < SU: no startup term (started units are limited by availability anyway); availability
-    0.9: coefficient 0.9 − SU (GMPL's 1 − SU would limit started units to availability − (1 − SU))."""
+def test_reduction_does_not_depend_on_availability(tmp_path_factory) -> None:
+    """availability 0.4 (< SU = 0.45) and 0.9: the startup coefficient is 1 − SU = 0.55 in both, and v_online has
+    coefficient −1 (a unit online has its full capacity); availability is the coefficient of the units built in
+    maxOnline_linear instead (v_online ≤ availability · existing_count, existing_count = 1: coal_plant is one unit).
+    Before: availability · v_online, and a startup coefficient availability − SU (none at 0.4)."""
     for avail, alt in ((0.4, "su_av4"), (0.9, "su_av9")):
         step = _last(_solve(tmp_path_factory, alt, _uc() + _ramp() + [["unit", PLANT, "availability",
                                                                          b64(avail, "float")]]))
-        rows = row_terms(build(step.flex_data), "maxFlow_online_linear", ARC)
+        pb = build(step.flex_data)
+        rows = row_terms(pb, "maxFlow_online_linear", ARC)
+        assert rows
         for row, terms in rows.items():
-            hit = [c for c in terms if c.startswith("v_startup_linear")]
-            if avail - SU <= 0:
-                assert not hit, row
-            else:
-                assert coef(terms, "v_startup_linear") == pytest.approx(avail - SU), row
+            d, t = step_of(row)
+            assert coef(terms, f"v_online_linear[{PLANT},{d},{t}]") == pytest.approx(-1.0), row
+            assert coef(terms, "v_startup_linear") == pytest.approx(1.0 - SU), row
+        on_rows = row_terms(pb, "maxOnline_linear", f"{PLANT},")
+        assert on_rows
+        bounds = row_bounds(pb, "maxOnline_linear", f"{PLANT},")
+        for row, terms in on_rows.items():
+            d, t = step_of(row)
+            assert terms == {f"v_online_linear[{PLANT},{d},{t}]": 1.0}, row
+            assert bounds[row][1] == pytest.approx(avail * 1.0), row
 
 
 def test_no_reduction_without_ramp_limit(tmp_path_factory) -> None:
@@ -229,7 +239,8 @@ def _online_rows(steps) -> list:
     out = []
     for s in steps.values():
         pb = build(s.flex_data)
-        out.append({fam: row_terms(pb, fam) for fam in ("maxFlow_online_linear", "maxFlow_online_shutdown_linear")})
+        out.append({fam: (row_terms(pb, fam), row_bounds(pb, fam))
+                    for fam in ("maxOnline_linear", "maxFlow_online_linear", "maxFlow_online_shutdown_linear")})
     return out
 
 
@@ -260,14 +271,16 @@ def test_min_load_and_availability_shapes_same_lp(tmp_path_factory, solve_kind) 
                            fixture_json=fixture)
             results[(ml_kind, av_kind)] = _online_rows(steps)
     ref = results[("constant", "constant")]
-    assert any(any("v_startup_linear" in c for terms in rows["maxFlow_online_linear"].values() for c in terms)
+    assert any(any("v_startup_linear" in c for terms in rows["maxFlow_online_linear"][0].values() for c in terms)
                for rows in ref)
+    # availability 0.9 is in the maxOnline bounds (0.9 · existing_count), so the comparison covers its shapes.
+    assert all(rows["maxOnline_linear"][1] for rows in ref)
     for key, got in results.items():
         assert got == ref, key
 
 
 # ---------------------------------------------------------------------------
-# input-arc online limit at derated full output
+# input-arc online limit at the output of the units available
 
 
 def _chp_mle(avail: float, *, ramp: bool, extra=None) -> list:
@@ -291,13 +304,11 @@ def _x(fd, y: float) -> float:
 
 
 def test_input_limit_keeps_derated_full_output(tmp_path_factory) -> None:
-    """coal_chp (min_load_efficiency, availability 0.8, demand far above capacity, online all the time): the
-    fuel arc's online coefficient (maxInputFlow_online, ramp-limited case) and its v_flow upper bound
-    (constant-capacity case, no ramp limit) are both input_cap · x(0.8) — the section is drawn per unit
-    online, not per available unit — so the output reaches the true derated full output, 0.8 × capacity,
-    with or without the ramp limit (#102).  Before: the v_flow bound alone used input_cap · 0.8, capping
-    the no-ramp output below 0.8 × capacity even though the ramp-limited case (already fixed by the online input rows)
-    did not."""
+    """coal_chp (min_load_efficiency, availability 0.8, demand far above capacity, online all the time): 0.8 of
+    its units are online (maxOnline), each at full output and full-load fuel.  The fuel arc's online coefficient
+    (maxInputFlow_online, ramp-limited case) is input_cap (no availability factor: x(1) = 1), its startup
+    coefficient input_cap · (1 − SU_in), and the output reaches 0.8 × capacity with or without the ramp limit
+    (#102).  Before: input_cap · x(0.8) · v_online, the section drawn by every unit online."""
     no_ramp = _last(_solve(tmp_path_factory, "av_noramp", _chp_mle(0.8, ramp=False),
                            chain=("init", "west", "coal_chp", "heat")))
     with_ramp = _last(_solve(tmp_path_factory, "av_ramp", _chp_mle(0.8, ramp=True),
@@ -313,22 +324,20 @@ def test_input_limit_keeps_derated_full_output(tmp_path_factory) -> None:
                 ["value"][0])
     rows = row_terms(build(fd), "maxInputFlow_online_linear", f"{CHP},{COAL},{CHP},")
     assert rows
+    su_in = min(1.0, _x(fd, 0.3) + 0.5 * 0.005 * 60.0)
+    assert su_in < 1.0
     for row, terms in rows.items():
         d, t = step_of(row)
-        assert coef(terms, f"v_online_linear[{CHP},{d},{t}]") == pytest.approx(-cap * _x(fd, 0.8)), row
-        su_in = min(1.0, _x(fd, 0.3) + 0.5 * 0.005 * 60.0)
-        hit = [c for c in terms if c.startswith("v_startup_linear")]
-        if _x(fd, 0.8) - su_in > 0:
-            assert coef(terms, "v_startup_linear") == pytest.approx(cap * (_x(fd, 0.8) - su_in)), row
-        else:
-            assert not hit, row
+        assert coef(terms, f"v_online_linear[{CHP},{d},{t}]") == pytest.approx(-cap), row
+        assert coef(terms, "v_startup_linear") == pytest.approx(cap * (1.0 - su_in)), row
+    on = _vals(with_ramp, "v_online_linear", CHP)
+    assert max(on.values()) == pytest.approx(0.8 * cap_units, rel=1e-6)
 
 
 def test_consume_more_row_at_derated_full_output(tmp_path_factory) -> None:
     """c13's "consume more" row (maxInputFlow_online on a fuel arc with downward reserve at coal_market) uses the
-    same limit: fuel + reserve ≤ input_cap · x(availability) · online, so holding the reserve row does not lower
-    the output below the unit's output without the reserve.  Before: input_cap · availability · online
-    (0.7455 units)."""
+    same limit: fuel + reserve ≤ input_cap · online, the full-load fuel of the units online, so holding the reserve
+    row does not lower the output below the unit's output without the reserve."""
     grp = ["rf", "down", "fuel"]
     ents = [["reserve", "rf", None], ["reserve__upDown__group", grp, None],
             ["reserve__upDown__unit__node", ["rf", "down", CHP, COAL], None]]
@@ -347,7 +356,7 @@ def test_consume_more_row_at_derated_full_output(tmp_path_factory) -> None:
     assert rows
     for row, terms in rows.items():
         d, t = step_of(row)
-        assert coef(terms, f"v_online_linear[{CHP},{d},{t}]") == pytest.approx(-cap * _x(fd, 0.8)), row
+        assert coef(terms, f"v_online_linear[{CHP},{d},{t}]") == pytest.approx(-cap), row
     base = _last(_solve(tmp_path_factory, "av_nores", _chp_mle(0.8, ramp=False),
                         chain=("init", "west", "coal_chp", "heat")))
     f = _vals(step, "v_flow", CHP, {"sink": "west"})

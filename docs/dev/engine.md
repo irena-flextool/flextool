@@ -329,9 +329,10 @@ grammar; `tests/docs/test_header_grammar.py` checks it):
 ```python
         # ─── EQ. ─── maxOnline_{linear,integer} ──────────────────────────────
         # ─────────────────────────────────────────────────────────────────────
-        # v_online[p,d,t] − Σ v_invest_p[p,d′] + Σ v_divest_p[p,d′]  ≤ existing_count[p,d]
-        #   ∀ (p,d,t) ∈ p_idx
-        # Units online cannot exceed the units built.
+        # v_online[p,d,t] − av[p,d,t] · Σ v_invest_p[p,d′] + av[p,d,t] · Σ v_divest_p[p,d′]
+        #   ≤ av[p,d,t] · existing_count[p,d]
+        #   ∀ (p,d,t) ∈ p_idx;   av = availability
+        # Units online cannot exceed the units available.
 ```
 
 - **First line:** `# ─── KIND. ─── names ───`, `KIND` one of `EQ`, `VAR`,

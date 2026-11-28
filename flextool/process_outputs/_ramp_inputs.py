@@ -12,7 +12,8 @@ uses the set of the solve that realized its later step.
 The coefficients come from the model's own helpers (never re-derived here):
 
 * the capacity multiplier of an arc's ``maxFlow`` row (``core._flows._max_flow_rhs``: capacity coefficient × availability
-  on direct arcs and indirect output arcs, the input limit × x(availability) on indirect input arcs);
+  on direct arcs and indirect output arcs, the input limit × x(availability) on indirect input arcs), without
+  availability for a unit with online variables (its units online at full capacity, ``maxFlow_online``);
 * the floor per unit online (``_unit_floors.arc_floor_share``);
 * the ramp-limit arc sets with their speeds (``process_source_sink_ramp_limit_{side}_{dir}`` without the
   ``conversion_flow_coeff = 0`` arcs, ``_common._drop_uncapped``) and the ramp row's capacity factor c
@@ -102,19 +103,42 @@ def _on_arcs_dt(param, arcs: pl.DataFrame, dt: pl.DataFrame, *, default: float) 
 def arc_capacity_factor(d: "FlexData") -> "pl.DataFrame | None":
     """``(p, source, sink, d, t, value)``: the capacity multiplier of each unit arc's ``maxFlow`` row
     (``core._flows._max_flow_rhs``'s ``cap_mult``: v_flow ≤ value · capacity), rows where it is not 1 (a coarse
-    process's: its coarse-step mean, :func:`_coarse_mean`)."""
+    process's: its coarse-step mean, :func:`_coarse_mean`).  A unit with online variables in this solve takes it
+    without availability: its flow is limited by its units online at full capacity (``maxFlow_online``), and
+    availability limits the units online (``maxOnline``), which the envelope reads from the solution."""
     from flextool.engine.model.core._flows import _max_flow_rhs
 
     arcs = _unit_arcs(d)
     if arcs is None or _dt(d) is None:
         return None
-    _rhs, cap_mult, _upper, _bound = _max_flow_rhs(d)
+    _rhs, cap_mult, _upper, _bound = _max_flow_rhs(_without_online_availability(d))
     if cap_mult is None or cap_mult.height == 0:
         return None
     out = (_utf8(cap_mult.select(*_KEYS, "d", "t", pl.col("value").cast(pl.Float64)), [*_KEYS, "d", "t"])
            .join(arcs, on=_KEYS, how="semi"))
     out = _coarse_mean(out, d, _KEYS, default=1.0).filter(pl.col("value") != 1.0)
     return out if out.height > 0 else None
+
+
+def _without_online_availability(d: "FlexData") -> "FlexData":
+    """*d*, or a shallow copy of it whose ``p_process_availability`` leaves out the processes with online variables
+    (``process_online_linear`` / ``process_online_integer``)."""
+    import copy
+
+    from polar_high import Param
+
+    avail = getattr(d, "p_process_availability", None)
+    online = [f.select(pl.col("p").cast(pl.Utf8)) for f in (getattr(d, "process_online_linear", None),
+                                                           getattr(d, "process_online_integer", None))
+              if _has_rows(f)]
+    if avail is None or not online:
+        return d
+    frame = avail.frame.collect() if isinstance(avail.frame, pl.LazyFrame) else avail.frame
+    on_p = pl.concat(online).unique()["p"].implode()
+    kept = frame.filter(~pl.col("p").cast(pl.Utf8).is_in(on_p))
+    out = copy.copy(d)
+    out.p_process_availability = Param(avail.dims, kept, name=avail.name) if kept.height > 0 else None
+    return out
 
 
 def arc_floor_share(d: "FlexData") -> "pl.DataFrame | None":

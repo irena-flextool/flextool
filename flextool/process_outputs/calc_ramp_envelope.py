@@ -19,7 +19,8 @@ Unit arcs (§2.1-§2.2), in v_flow space then node MW::
 
     U   = (online(t⁺) − startup(t⁺)) · unitsize      units online in both steps (online processes)
         = capacity(d⁺)                                otherwise (incl. a solve that left online out), floor 0
-    C   = κ(t⁺) · U    (κ the arc's maxFlow multiplier, capacity coefficient × availability)
+    C   = κ(t⁺) · U    (κ the arc's maxFlow multiplier, capacity coefficient × availability; without availability
+                       for an online process, whose units online are at full capacity: maxFlow_online)
     L   = F(t⁺) · U    (F the floor per unit online)
     f₂  = f(t) − F(t) · unitsize · shutdown(t⁺)      (the stopping units' output is forced movement; on a link
                                                      carried from the previous roll f₂ = f: the model's carried
@@ -49,6 +50,8 @@ Connections (§2.5) use the node-side range of their flow at t⁺, losses on the
 hold at the node::
 
     up = cap·avail(t⁺) − f_in(t) − R↑_c,n(t⁺),   down = f_in(t) + cap·avail(t⁺)·slope(t⁺) − R↓_c,n(t⁺)
+
+(avail = 1 for a connection's units online: availability limits the units online, maxOnline)
 
 A coarse process (``processCoarse``) has one flow per coarse step: its room is 0 on the rows inside a coarse step,
 and at a coarse step's last fine row ρ̄ uses the coarse step durations (the fine Δt⁺ when t⁺ is in no coarse step
@@ -580,6 +583,8 @@ def _connection_contributions(par, s, r, nx: _Next, shared: _Shared):
         [ends["process"], ["up"] * len(ends), ends["node"]])).to_numpy(dtype=float))
     r_down = np.nan_to_num(res.reindex(columns=pd.MultiIndex.from_arrays(
         [ends["process"], ["down"] * len(ends), ends["node"]])).to_numpy(dtype=float))
+    # The units online are at full capacity (availability limits them, maxOnline); the built capacity is derated.
+    avail = np.where(online, 1.0, avail)
     up = cap * avail - f_in - r_up
     down = f_in + cap * avail * slope - r_down
     coarse_dur = par.process_coarse_step_duration_dt

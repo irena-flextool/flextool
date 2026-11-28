@@ -1748,3 +1748,22 @@ compared as text, timestamps stripped).
   now lists the annuity step (16 820 838 994 → 16 820 528 381) before the storage steps.
 
 **Decision** (agent, pending owner review): accept.
+
+## 2026-11-28 — availability limits the units online (`test_a_lot`, `test_a_lot_but_not_multi_year`)
+
+**Mechanism.** For a unit with online variables, availability is now the share of its units available
+(`maxOnline`: v_online ≤ availability · units built) and a unit online has its full capacity (`maxFlow_online`:
+v_flow ≤ κ · v_online, no availability factor); `min_load` is unchanged. These are the two scenarios whose unit
+has online variables (`coal_plant`, `coal_min_load`: linear, min_load 0.5) and an availability below 1 (the
+`availability` alternative's hourly series, 0.893, 0.374, 0.152, ...). Before, each unit online was derated by
+availability while its minimum load was not, so `coal_plant` could not run in the steps whose availability is
+below 0.5 and ran at most at availability × online elsewhere.
+
+**Files.** Every compared CSV of both scenarios. Check by hand: `coal_plant` → west at the first steps is now 500 MW
+× availability (446.5517 = 500 × 0.893103434, 187.1009 = 500 × 0.374201854), where availability < min_load 0.5 at
+the second step used to force it off (0). With the coal plant usable in those steps, less wind is invested
+(`test_a_lot` p2020 2935.03 → 2491.35 MW, `test_a_lot_but_not_multi_year` 3292.18 → 2867.29 MW) and the total
+discounted cost falls (20 999.51 → 20 785.33); the start-up cost rises (134.90 → 240.45) because the hourly
+availability now takes units offline and back online, which counts as shut-downs and start-ups.
+
+**Decision** (agent, pending owner review): accept; the old values were the behaviour the change replaces.
