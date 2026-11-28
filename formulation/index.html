@@ -8161,7 +8161,7 @@ O&amp;M cost of connections with an efficiency, priced on the flow of each direc
 <div class="highlight"><pre><span></span><code>v_online[p,d,t] − Σ v_invest_p[p,d′] + Σ v_divest_p[p,d′]  ≤ existing_count[p,d]
   ∀ (p,d,t) ∈ p_idx
 </code></pre></div>
-<p>Units online cannot exceed the units built. Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of existing capacity counting until its end of life (none for reinvest_automatic).</p>
+<p>Units online cannot exceed the units built.  Availability does not limit the units online: it derates the built capacity (maxFlow, maxOutputSum), and a unit online has its full capacity in the online rows below, so the flow is at most min(κ · v_online, κ · availability · capacity). Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of existing capacity counting until its end of life (none for reinvest_automatic).</p>
 <p>Source: <code>flextool/engine/model/_online.py:216</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-online_change_linearinteger">EQ. <code>online_change_{linear,integer}</code></h3>
 <p>Names: <code>online_change_linear</code>, <code>online_change_integer</code></p>
@@ -8169,13 +8169,13 @@ O&amp;M cost of connections with an efficiency, priced on the flow of each direc
   ∀ (p,d,t) ∈ p_idx \ free_start;   v_online_prev as derived above (three pieces)
 </code></pre></div>
 <p>The change in units online is the units started minus the units shut down (Backbone's q_startshut).  None at a free start (above): its units online are free, and its start-ups and shut-downs are 0 (no start-up cost or start-up fuel there; the units online still burn no-load fuel). Forecast branches that start at the solve's first step each choose their own units online there unless the step is tied (non_anticipativity_online).  With maxStartup / maxShutdown below, a startup without a unit coming online, or a shutdown without one going offline, is impossible; a fleet (unitsize \&lt; built) can still start and stop units in the same step (both cost nothing extra on the ramp rows of a single-output arc, part C) — a single integer unit cannot (maxStartup / maxShutdown forbid it there).</p>
-<p>Source: <code>flextool/engine/model/_online.py:287</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:289</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-maxstartup_linearinteger">EQ. <code>maxStartup_{linear,integer}</code></h3>
 <p>Names: <code>maxStartup_linear</code>, <code>maxStartup_integer</code></p>
 <div class="highlight"><pre><span></span><code>v_startup[p,d,t] − v_online[p,d,t]  ≤  0                                 ∀ (p,d,t) ∈ p_idx
 </code></pre></div>
 <p>Units started in a step are online in it.</p>
-<p>Source: <code>flextool/engine/model/_online.py:304</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:306</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-maxshutdown_linearinteger">EQ. <code>maxShutdown_{linear,integer}</code></h3>
 <p>Names: <code>maxShutdown_linear</code>, <code>maxShutdown_integer</code></p>
 <div class="highlight"><pre><span></span><code>v_shutdown[p,d,t] + v_online[p,d,t] − Σ v_invest_p[p,d″] + Σ v_divest_p[p,d″]  ≤  existing_count[p,d]
@@ -8184,32 +8184,32 @@ O&amp;M cost of connections with an efficiency, priced on the flow of each direc
   free start (redundant there: v_shutdown = 0)
 </code></pre></div>
 <p>Units shut down in a step are offline in it.  Not built where the predecessor is in another period or carried from an earlier roll (capacity may differ there — a unit online at the end of the previous period / roll must still be able to "shut down" even if this step's capacity is lower); sd ≤ v_online_prev follows there from online_change + maxStartup instead (su ≤ on_t ⇒ sd = su − on_t + on_prev ≤ on_prev). Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of existing capacity counting until its end of life (none for reinvest_automatic).</p>
-<p>Source: <code>flextool/engine/model/_online.py:311</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:313</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-maxflow_online_linearinteger">EQ. <code>maxFlow_online_{linear,integer}</code></h3>
 <p>Names: <code>maxFlow_online_linear</code>, <code>maxFlow_online_integer</code></p>
 <div class="highlight"><pre><span></span><code>v_flow[p,s,k,d,t] + Σ_r v_reserve_up[p,r,k,d,t] + Σ_r v_reserve_down[p,r,s,d,t] · φ[p,s,k,d,t]
-  ≤  κ[p,s,k] · ( v_online[p,d,t] · availability[p,d,t] − red_su[p,s,k,d,t] · v_startup[p,d,t]
+  ≤  κ[p,s,k] · ( v_online[p,d,t] − red_su[p,s,k,d,t] · v_startup[p,d,t]
                   − max(0, red_sd − red_su)[p,s,k,d,t] · v_shutdown[p,d,t⁺] )
   ∀ (p,s,k) capped arc of an online process, (d,t) ∈ dt;   φ as in maxFlow, units only;
   κ = capacity_max_coeff[p,s,k]
 </code></pre></div>
-<p>Source: <code>flextool/engine/model/_online.py:342</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:344</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-maxflow_online_shutdown_linearinteger">EQ. <code>maxFlow_online_shutdown_{linear,integer}</code></h3>
 <p>Names: <code>maxFlow_online_shutdown_linear</code>, <code>maxFlow_online_shutdown_integer</code></p>
 <div class="highlight"><pre><span></span><code>(maxFlow_online LHS)
-  ≤  κ · ( v_online · availability − red_sd · v_shutdown[p,d,t⁺]
+  ≤  κ · ( v_online − red_sd · v_shutdown[p,d,t⁺]
            − max(0, red_su − red_sd) · v_startup[p,d,t] )
   ∀ rows of maxFlow_online with red_sd &gt; 0 and a UNIQUE successor t⁺
 </code></pre></div>
-<p>Source: <code>flextool/engine/model/_online.py:349</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:351</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-maxflow_online_shutdown_branch_linearinteger">EQ. <code>maxFlow_online_shutdown_branch_{linear,integer}</code></h3>
 <p>Names: <code>maxFlow_online_shutdown_branch_linear</code>, <code>maxFlow_online_shutdown_branch_integer</code></p>
 <div class="highlight"><pre><span></span><code>(maxFlow_online LHS)
-  ≤  κ · ( v_online · availability − red_sd · v_shutdown[p,d⁺,t⁺]
+  ≤  κ · ( v_online − red_sd · v_shutdown[p,d⁺,t⁺]
            − max(0, red_su − red_sd) · v_startup[p,d,t] )
   ∀ (row of maxFlow_online, successor (d⁺,t⁺) of (d,t)) with red_sd &gt; 0, at a (d,t) with SEVERAL
     successors (a branch point: several mid-horizon branches continuing from the same trunk step)
-red_su = max(0, availability − SU),
+red_su = 1 − SU,
   SU = min(1, min_load[p,d,t] + ½ · ramp_speed_up · 60 · step_duration[d,t])
   over the sides of the arc with an up ramp limit (process_source_sink_ramp_limit_{sink,source}_up; the
   smaller SU when both); red_sd likewise with ramp_speed_down at the pre-shutdown step (d,t); 0 without a
@@ -8218,70 +8218,70 @@ red_su = max(0, availability − SU),
 </code></pre></div>
 <p>A coarse process (processCoarse): the averaged twins maxFlow_online{sfx}_coarse,</p>
 <div class="highlight"><pre><span></span><code>  maxFlow_online_shutdown{sfx}_coarse and maxFlow_online_shutdown_branch{sfx}_coarse (_coarse_flows.add_cstr)
-  with the reduction on the coarse grid: red_su[p,s,k,d,b] = max(0, ā_b − SU_b) at the start-ups of b and
-  red_sd = max(0, ā_b − SD_b) at the shut-downs of the coarse successor b⁺ (the coarse step whose first
-  step's ramp predecessor lies in b, _coarse_flows.coarse_links); ā_b, m̄l_b the Δt-weighted means over b,
+  with the reduction on the coarse grid: red_su[p,s,k,d,b] = 1 − SU_b at the start-ups of b and
+  red_sd = 1 − SD_b at the shut-downs of the coarse successor b⁺ (the coarse step whose first
+  step's ramp predecessor lies in b, _coarse_flows.coarse_links); m̄l_b the Δt-weighted mean over b,
   SU_b = m̄l_b + ½·ρ_b while ρ_b ≤ 1 − m̄l_b, else 1 − (1 − m̄l_b)²/(2·ρ_b), ρ_b = ramp_speed_up · 60 · Δ_b
   (the mean share over the whole step of a unit started at its start that ramps up to full load within
   it; SD_b with the down speed: a unit stopping at the end of b); κ its step mean.
 </code></pre></div>
-<p>A unit's flow and the reserve that raises it — upward reserve at the arc's sink and "consume more" downward reserve at its source — are limited by the units online (spinning reserve: an offline unit holds neither).  The reserve terms are maxFlow's (units only; an online connection's reserve is in connection_reserve_*_online_*). Units starting in step t reach at most SU of their capacity on average over the step (synchronised at min load, then ramping as fast as they may: half a step's ramp on average; owner question Q-c14a-A), units shutting down after step t at most SD in t.  Two rows, so capacity online for a single step gets the smaller of the two limits instead of both reductions (exact for any mix of starts and stops; GMPL's one row with both reductions forbids one-step runs).  At a branch point (several successors of one (d,t): several mid-horizon branches continuing from the same trunk step) the shutdown cross-term cannot be split across the single maxFlow_online row (one v_flow[t] variable, one row); it is dropped there (maxFlow_online keeps only its startup term, a valid — looser — bound) and maxFlow_online_shutdown_branch gives the tight, correctly-isolated bound per branch instead: summing the branches' v_shutdown into one row would let several mutually-exclusive branches each buy back a whole unit of ramp room from the trunk step.  Only capped arcs (direct arcs and indirect output arcs, see _capped_arcs): indirect input arcs are tied to the outputs by conversion_indirect, and conversion_flow_coeff = 0 arcs are uncapped.  Availability and capacity_max_coeff are densified to their 1.0 defaults so an unauthored unit keeps its row.  The reduction is per arc (a multi-output unit's maxOutputSum_online is not reduced).</p>
-<p>Source: <code>flextool/engine/model/_online.py:354</code> (<code>add_constraints</code>)</p>
+<p>A unit's flow and the reserve that raises it — upward reserve at the arc's sink and "consume more" downward reserve at its source — are limited by the units online (spinning reserve: an offline unit holds neither).  A unit online has its full capacity: availability derates the built capacity (maxFlow), not the output of a unit online.  The reserve terms are maxFlow's (units only; an online connection's reserve is in connection_reserve_*_online_*). Units starting in step t reach at most SU of their capacity on average over the step (synchronised at min load, then ramping as fast as they may: half a step's ramp on average; owner question Q-c14a-A), units shutting down after step t at most SD in t.  Two rows, so capacity online for a single step gets the smaller of the two limits instead of both reductions (exact for any mix of starts and stops; GMPL's one row with both reductions forbids one-step runs).  At a branch point (several successors of one (d,t): several mid-horizon branches continuing from the same trunk step) the shutdown cross-term cannot be split across the single maxFlow_online row (one v_flow[t] variable, one row); it is dropped there (maxFlow_online keeps only its startup term, a valid — looser — bound) and maxFlow_online_shutdown_branch gives the tight, correctly-isolated bound per branch instead: summing the branches' v_shutdown into one row would let several mutually-exclusive branches each buy back a whole unit of ramp room from the trunk step.  Only capped arcs (direct arcs and indirect output arcs, see _capped_arcs): indirect input arcs are tied to the outputs by conversion_indirect, and conversion_flow_coeff = 0 arcs are uncapped.  capacity_max_coeff is densified to its 1.0 default so an unauthored unit keeps its row.  The reduction is per arc (a multi-output unit's maxOutputSum_online is not reduced).</p>
+<p>Source: <code>flextool/engine/model/_online.py:356</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-maxflow_back_online_linearinteger">EQ. <code>maxFlow_back_online_{linear,integer}</code></h3>
 <p>Names: <code>maxFlow_back_online_linear</code>, <code>maxFlow_back_online_integer</code></p>
-<div class="highlight"><pre><span></span><code>v_flow_back[p,s,k,d,t]  ≤  κ[p,s,k] · availability[p,d,t] · v_online[p,d,t]
+<div class="highlight"><pre><span></span><code>v_flow_back[p,s,k,d,t]  ≤  κ[p,s,k] · v_online[p,d,t]
   ∀ (p,s,k) ∈ twoway1var_arcs with p online, (d,t) ∈ dt;   κ = capacity_max_coeff (1.0 defaults)
 </code></pre></div>
-<p>The reverse flow of a one-variable connection is limited by the units online, as its v_flow is by maxFlow_online: one online status covers both directions (the mirror of maxFlow_back).  No reserve term (connection reserve has its own rows, connection_reserve_*).  DC power-flow lines never get here (a startup_method on them raises in core._prepare._prepare).</p>
+<p>The reverse flow of a one-variable connection is limited by the units online, as its v_flow is by maxFlow_online: one online status covers both directions (the mirror of maxFlow_back); availability derates the built capacity there (maxFlow_back), as for v_flow.  No reserve term (connection reserve has its own rows, connection_reserve_*).  DC power-flow lines never get here (a startup_method on them raises in core._prepare._prepare).</p>
 <p>Source: <code>flextool/engine/model/_online.py:456</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-maxinputflow_online_linearinteger">EQ. <code>maxInputFlow_online_{linear,integer}</code></h3>
 <p>Names: <code>maxInputFlow_online_linear</code>, <code>maxInputFlow_online_integer</code></p>
 <div class="highlight"><pre><span></span><code>v_flow[p,s,p,d,t] + Σ_r v_reserve_down[p,r,s,d,t]
-  ≤ input_cap[p,s,p,d,t] · ( v_online[p,d,t] · x(availability)[p,d,t] − red_su · v_startup[p,d,t]
+  ≤ input_cap[p,s,p,d,t] · ( v_online[p,d,t] − red_su · v_startup[p,d,t]
                              − max(0, red_sd − red_su) · v_shutdown[p,d,t⁺] )
   ∀ (p,s,p) input arc of an online indirect unit that is in reserve_down_input_arcs or has a source-side
     ramp limit with a reduction, (d,t) ∈ dt
   input_cap = p_indirect_input_cap (input_share_max × full-load input per unit of capacity)
 </code></pre></div>
-<p>Source: <code>flextool/engine/model/_online.py:480</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:479</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-maxinputflow_online_shutdown_linearinteger">EQ. <code>maxInputFlow_online_shutdown_{linear,integer}</code></h3>
 <p>Names: <code>maxInputFlow_online_shutdown_linear</code>, <code>maxInputFlow_online_shutdown_integer</code></p>
-<div class="highlight"><pre><span></span><code>(maxInputFlow_online LHS) ≤ input_cap · ( v_online · x(availability) − red_sd · v_shutdown[p,d,t⁺]
+<div class="highlight"><pre><span></span><code>(maxInputFlow_online LHS) ≤ input_cap · ( v_online − red_sd · v_shutdown[p,d,t⁺]
                                           − max(0, red_su − red_sd) · v_startup[p,d,t] )
   ∀ rows of maxInputFlow_online with red_sd &gt; 0 and a UNIQUE successor t⁺
 </code></pre></div>
-<p>Source: <code>flextool/engine/model/_online.py:488</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:487</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-maxinputflow_online_shutdown_branch_linearinteger">EQ. <code>maxInputFlow_online_shutdown_branch_{linear,integer}</code></h3>
 <p>Names: <code>maxInputFlow_online_shutdown_branch_linear</code>, <code>maxInputFlow_online_shutdown_branch_integer</code></p>
-<div class="highlight"><pre><span></span><code>(maxInputFlow_online LHS) ≤ input_cap · ( v_online · x(availability) − red_sd · v_shutdown[p,d⁺,t⁺]
+<div class="highlight"><pre><span></span><code>(maxInputFlow_online LHS) ≤ input_cap · ( v_online − red_sd · v_shutdown[p,d⁺,t⁺]
                                           − max(0, red_su − red_sd) · v_startup[p,d,t] )
   ∀ (row of maxInputFlow_online, successor (d⁺,t⁺) of (d,t)) with red_sd &gt; 0, at a (d,t) with several
     successors (a branch point) — split per successor exactly as maxFlow_online_shutdown_branch,
     never summed across mutually-exclusive branches.
 x(y) = (slope · W(y) + section) / (slope · W(1) + section): the input drawn at output level y per unit of
   full-load input (W(y): the output-side fuel width filled up to y, as in p_indirect_input_cap; section
-  only for min_load_efficiency units).  x(availability) replaces availability: the section is drawn per
-  unit online, so availability × full-load input would cap the derated full output (x = availability
-  without a section).
-red_su = max(0, x(availability) − SU_in), SU_in = min(1, x(min_load) / input_share_max[p,s]
+  only for min_load_efficiency units).  A unit online draws up to its full-load input (x(1) = 1):
+  availability derates the built capacity (maxFlow on the input arc, input_cap · x(availability)), not the
+  input of a unit online.
+red_su = 1 − SU_in, SU_in = min(1, x(min_load) / input_share_max[p,s]
   + ½ · ramp_speed_up · 60 · step_duration) from the input node's ramp speeds (red_sd likewise), so a
   started unit can always draw what it needs at min load.  (d⁺,t⁺) = a successor whose ramp
   predecessor (dt_ramp_link) is (d,t) — the same period (today's only case) or the next continuing
   period (#98).
 </code></pre></div>
 <p>A coarse process: the averaged twins maxInputFlow_online{sfx}_coarse (+ _shutdown, _shutdown_branch), with</p>
-<div class="highlight"><pre><span></span><code>  input_cap and x(availability) as step means and the reduction on the coarse grid as in maxFlow_online
+<div class="highlight"><pre><span></span><code>  input_cap as its step mean and the reduction on the coarse grid as in maxFlow_online
   (SU_in_b, SD_in_b from the step-mean x(min_load) / input_share_max and ρ_b).
 </code></pre></div>
 <p>The online analogue of maxFlow on an indirect unit's input arc: consuming more needs online capacity, and a starting (stopping) unit draws at most its startup (pre-shutdown) share of the input.  The other inputs and the outputs are not adjusted (the per-arc simplification of the input-side floors).</p>
-<p>Source: <code>flextool/engine/model/_online.py:492</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:491</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-maxoutputsum_online_linearinteger">EQ. <code>maxOutputSum_online_{linear,integer}</code></h3>
 <p>Names: <code>maxOutputSum_online_linear</code>, <code>maxOutputSum_online_integer</code></p>
-<div class="highlight"><pre><span></span><code>Σ_k v_flow[p,p,k,d,t] + Σ_k Σ_r v_reserve_up[p,r,k,d,t]  ≤  v_online[p,d,t] · availability[p,d,t]
+<div class="highlight"><pre><span></span><code>Σ_k v_flow[p,p,k,d,t] + Σ_k Σ_r v_reserve_up[p,r,k,d,t]  ≤  v_online[p,d,t]
   ∀ p ∈ process_indirect online with an output arc k, (p,d,t) ∈ p_idx
 </code></pre></div>
-<p>The online analogue of maxOutputSum: the sum of an indirect unit's outputs and of the upward reserve it holds at those outputs is limited by the units online.  No capacity_max_coeff term; availability defaults to 1.0.</p>
-<p>Source: <code>flextool/engine/model/_online.py:516</code> (<code>add_constraints</code>)</p>
+<p>The online analogue of maxOutputSum: the sum of an indirect unit's outputs and of the upward reserve it holds at those outputs is limited by the units online.  No capacity_max_coeff term, and no availability (it derates the built capacity, maxOutputSum).</p>
+<p>Source: <code>flextool/engine/model/_online.py:515</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-minimum_uptime_linearinteger">EQ. <code>minimum_uptime_{linear,integer}</code></h3>
 <p>Names: <code>minimum_uptime_linear</code>, <code>minimum_uptime_integer</code></p>
 <div class="highlight"><pre><span></span><code>v_online[p,d,t]  ≥  Σ_{(p,d′,t′,d,t) ∈ uptime_lookback} v_startup[p,d′,t′] + carry_up[p,d,t]
@@ -8299,15 +8299,18 @@ red_su = max(0, x(availability) − SU_in), SU_in = min(1, x(min_load) / input_s
 <p>carry_up[p,d,t] = Σ_{h ∈ online_history} startup[p,h] over the root r ∈ dt_ramp_carry that is (d,t) or an</p>
 <div class="highlight"><pre><span></span><code>  ancestor of it along dt_ramp_link, with elapsed(r → d,t) + hours_to_end[h] &lt; min_uptime[p]
   (d.uptime_carry, 0-filled; absent where no step continues the previous solve's last realized step),
-  and 0 at and after the first step it reaches in B = {min_load[p,d,t] &gt; 0, availability[p,d,t] · κ[p] &lt;
-  min_load[p,d,t]}, κ = Σ_{A_p} capacity_max_coeff (min(Σ, 1) for an indirect unit, maxOutputSum_online)
-  (_mintime.online_blocked_cells: the unit cannot be online there; a coarse process at the first fine step
-  b of each coarse step on ā_b, m̄l_b, as its rows): a carried obligation yields to an outage the solve
-  that started the unit did not see (W-0592; not under a reduce_unit_detail_method with min_limits).
-  Then capped: carry_up[p,d,t] ≤ ĉ[p] = p_roll_continue_online[p] (the units online carried in), so an
+  capped: carry_up[p,d,t] ≤ ĉ[p] = p_roll_continue_online[p] (the units online carried in), so an
   obligation cut in an earlier solve does not come back in a later one (the outage forced ĉ to count only
-  the start-ups after it).  Without such a cut the earlier solve's minimum_uptime row at the carried step
-  already gives carry_up ≤ ĉ.
+  the start-ups after it; without such a cut the earlier solve's minimum_uptime row at the carried step
+  already gives carry_up ≤ ĉ); and 0 at and after the first step it reaches in
+  B = {(p,d,t) : carry_up[p,d,t] &gt; N[p,d,t]}, N the most units online where min_load[p,d,t] &gt; 0 and
+  availability[p,d,t] · κ[p] &lt; min_load[p,d,t]: N = 0 where κ[p] &lt; min_load, else
+  N = κ[p] · availability[p,d,t] · existing_count[p,d] / min_load[p,d,t] (the min load of the units online
+  within the built capacity derated by availability, maxFlow / maxOutputSum), κ = Σ_{A_p} capacity_max_coeff
+  (min(Σ, 1) for an indirect unit) (_mintime.online_limit_cells, cells_over_limit; a coarse process at the
+  first fine step b of each coarse step on ā_b, m̄l_b, as its rows): a carried obligation yields to an outage
+  the solve that started the unit did not see (W-0592; not under a reduce_unit_detail_method with
+  min_limits).
   A start-up within this solve keeps its full minimum up-time (the solve sees the outage), except a start-up
   at a realization pin kept before the unit's first blocked pinned step: uptime_lookback holds no term of it
   at and after that step (its up-time ends at the outage, as the pinned commitment did not see it).
@@ -8318,7 +8321,7 @@ red_su = max(0, x(availability) − SU_in), SU_in = min(1, x(min_load) / input_s
   look-back holds only its own step and no carry (the previous coarse step lasts ≥ min_uptime) is maxStartup
   and is not built.
 </code></pre></div>
-<p>Source: <code>flextool/engine/model/_online.py:547</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:542</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-minimum_downtime_linearinteger">EQ. <code>minimum_downtime_{linear,integer}</code></h3>
 <p>Names: <code>minimum_downtime_linear</code>, <code>minimum_downtime_integer</code></p>
 <div class="highlight"><pre><span></span><code>v_online[p,d,t] + Σ_{(p,d′,t′,d,t) ∈ downtime_lookback} v_shutdown[p,d′,t′] + carry_dn[p,d,t]
@@ -8332,20 +8335,20 @@ red_su = max(0, x(availability) − SU_in), SU_in = min(1, x(min_load) / input_s
 <div class="highlight"><pre><span></span><code>  whose look-back holds only its own step and no carry is implied by maxShutdown / online_change).
 </code></pre></div>
 <p>carry_dn: as carry_up with shutdown[p,h] and min_downtime[p] (d.downtime_carry, 0-filled). Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of existing capacity counting until its end of life (none for reinvest_automatic).</p>
-<p>Source: <code>flextool/engine/model/_online.py:603</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:601</code> (<code>add_constraints</code>)</p>
 <h3 id="eq-online_fix_eq_linearinteger">EQ. <code>online_fix_eq_{linear,integer}</code></h3>
 <p>Names: <code>online_fix_eq_linear</code>, <code>online_fix_eq_integer</code></p>
 <div class="highlight"><pre><span></span><code>v_online[p,d,t] = p_fix_online[p,d,t]   ∀ (p,d,t) ∈ online_rows with a p_fix_online value
   (a coarse process: at the first fine step of each coarse step; its pin is the same on every fine step of
   the step, or the process keeps the solve's step, flex_data.coarse_pin_varies)
 </code></pre></div>
-<p>In a realization solve, pins the units online of the processes with startup_method linear_fix_in_uc (online_fix_eq_linear) or integer_fix_in_uc (online_fix_eq_integer, also when the solve relaxes integers: reduce_unit_detail_method integers*) to the parent's commitment; the units online of linear and integer processes are not pinned (p_fix_online has none: the realization re-decides them with the realized data). At a free start of the realization (its roll 0, a single-solve realization, a period that does not continue the previous one) its units online are free like the parent's; a free start relaxes any predecessor the parent had, so the pinned commitment stays feasible.  A later roll carries the previous realization's units online in both stages (the stochastic roll k and realization roll k). A unit pinned &gt; 0 at a step of B (B as in minimum_uptime; an outage only the realized data have) keeps its</p>
+<p>In a realization solve, pins the units online of the processes with startup_method linear_fix_in_uc (online_fix_eq_linear) or integer_fix_in_uc (online_fix_eq_integer, also when the solve relaxes integers: reduce_unit_detail_method integers*) to the parent's commitment; the units online of linear and integer processes are not pinned (p_fix_online has none: the realization re-decides them with the realized data). At a free start of the realization (its roll 0, a single-solve realization, a period that does not continue the previous one) its units online are free like the parent's; a free start relaxes any predecessor the parent had, so the pinned commitment stays feasible.  A later roll carries the previous realization's units online in both stages (the stochastic roll k and realization roll k). A unit pinned above N at a step (N as in minimum_uptime; an outage only the realized data have) keeps its</p>
 <div class="highlight"><pre><span></span><code>  pins before the first such step and loses them there and at every later step it reaches along the timeline
   (dt_ramp_link): it is decided again under its own rows from the outage on
   (flex_data.carried_obligations_yield_to_outages, W-0592).
 </code></pre></div>
 <p>Only declared v_online cells are pinned.  p_fix_online is Utf8-keyed: it is joined to the native-typed index through Utf8 copies of (p, d, t).</p>
-<p>Source: <code>flextool/engine/model/_online.py:646</code> (<code>add_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_online.py:644</code> (<code>add_constraints</code>)</p>
 <h2 id="the-exact-transfer-method">The exact transfer method</h2>
 <p>The exact transfer method: a connection flows in one direction per time step.</p>
 <h3 id="var-v_exact_forward">VAR. <code>v_exact_forward</code></h3>
@@ -8805,13 +8808,14 @@ x_out[p,n,d,t] − x_in[p,n,d,t] / s_out[p,n,d,t] + Σ_r v_reserve[p,r,down,n,d,
           b.flow_cap_mult: capacity_max_coeff · availability · existing_count and coef · availability)
   a channel p does not have contributes nothing (x = 0, C = 0, M = 0, s_out = 1)
 </code></pre></div>
-<p>Source: <code>flextool/engine/model/_reserve.py:1093</code> (<code>_add_connection_reserve_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_reserve.py:1085</code> (<code>_add_connection_reserve_constraints</code>)</p>
 <h3 id="eq-connection_reserve_updown_online_linearinteger">EQ. <code>connection_reserve_{up,down}_online_{linear,integer}</code></h3>
 <p>Names: <code>connection_reserve_up_online_linear</code>, <code>connection_reserve_up_online_integer</code>, <code>connection_reserve_down_online_linear</code>, <code>connection_reserve_down_online_integer</code></p>
-<div class="highlight"><pre><span></span><code>  same LHS without invest terms  ≤  κ · availability · v_online[p,d,t]   (κ, availability of the up row's
-  in-channel arc / the down row's out-channel arc)   ∀ rows above with p online and that channel present
+<div class="highlight"><pre><span></span><code>  same LHS without invest terms  ≤  κ · v_online[p,d,t]   (κ = capacity_max_coeff of the up row's
+  in-channel arc / the down row's out-channel arc; availability derates the built capacity, the row above)
+  ∀ rows above with p online and that channel present
 </code></pre></div>
-<p>Source: <code>flextool/engine/model/_reserve.py:1108</code> (<code>_add_connection_reserve_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_reserve.py:1100</code> (<code>_add_connection_reserve_constraints</code>)</p>
 <h3 id="eq-connection_reserve_updown_exact">EQ. <code>connection_reserve_{up,down}_exact</code></h3>
 <p>Names: <code>connection_reserve_up_exact</code>, <code>connection_reserve_down_exact</code></p>
 <div class="highlight"><pre><span></span><code>  same LHS − Ū · v_exact_forward[p,d,t]  ≤  0     when that channel is the exact connection's forward arc
@@ -8822,7 +8826,7 @@ x_out[p,n,d,t] − x_in[p,n,d,t] / s_out[p,n,d,t] + Σ_r v_reserve[p,r,down,n,d,
 <div class="highlight"><pre><span></span><code>  (_coarse_flows.add_cstr): one reserve and one flow per step under the step-mean capacity and availability.
 </code></pre></div>
 <p>A connection's reserve at a node is limited by its net position there: upward reserve by the free capacity into n plus the flow out of n it can stop, downward reserve by the flow into n it can stop plus the free capacity out of n (converted to power at n by the efficiency).  One row per capacity bound (built, online, exact direction) of the channel whose capacity the reserve uses, so each row holds one channel's capacity.  A one-way connection gets a floor at its sending node (upward reserve ≤ what it draws there) and its old capacity row at the receiving node; a one-variable connection's rows bound the reserve by its signed flow (C ∓ f).  Reserve at a node the connection does not link is 0.  maxFlow / maxFlow_online carry the upward reserve of units only (b.reserve_up_to_sink_units); the profile cap profile_flow_upper_limit keeps the connection's in-arc term (conservative: it does not count stopping the out-flow). Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of existing capacity counting until its end of life (none for reinvest_automatic).</p>
-<p>Source: <code>flextool/engine/model/_reserve.py:1111</code> (<code>_add_connection_reserve_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_reserve.py:1104</code> (<code>_add_connection_reserve_constraints</code>)</p>
 <h3 id="eq-reserve_storage_up_floor">EQ. <code>reserve_storage_up_floor</code></h3>
 <div class="highlight"><pre><span></span><code>v_state[n,d,t] · state_unitsize[n]
   − Σ_{(p,r,ud,nb,g) ∈ providers_up(n)} v_reserve[p,r,ud,nb,d,t] · unitsize[p] · duration[r,ud,g] · slope[p,d,t]
@@ -8832,7 +8836,7 @@ x_out[p,n,d,t] − x_in[p,n,d,t] / s_out[p,n,d,t] + Σ_r v_reserve[p,r,down,n,d,
     one-variable / DC connection whose arc runs nb → n (its reverse flow v_flow_back runs n → nb; slope 1)
 </code></pre></div>
 <p>Upward reserve from storage is backed by stored energy (MWh) for the reserve duration (hours); slope = 1/η converts output to energy drawn. Reliability is not applied: the energy matches the full committed MW. No slack: with v_reserve = 0 the row is v_state ≥ 0, so a provider that cannot sustain the duration commits less and the group pays the shortfall penalty.  Couples to the intra-period state v_state only, not to the representative-period state v_state_inter. Row rule: a storage node n whose state is coarse (constant within its coarse step, stateConstantCoarse_eq) and whose providers are all coarse processes gets one row per coarse step, reserve_storage_up_floor_coarse (the row's mean over the step of the providers' partition, _coarse_flows.add_cstr): the reserve, the state and the step-mean slope are then all one value per step.  Otherwise the row stays per solve step and reads a coarse provider's reserve at its constant value.  The same for reserve_storage_down_headroom.</p>
-<p>Source: <code>flextool/engine/model/_reserve.py:1484</code> (<code>_add_storage_energy_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_reserve.py:1477</code> (<code>_add_storage_energy_constraints</code>)</p>
 <h3 id="eq-reserve_storage_down_headroom">EQ. <code>reserve_storage_down_headroom</code></h3>
 <div class="highlight"><pre><span></span><code>v_state[n,d,t] · state_unitsize[n]
   + Σ_{(p,r,ud,nb,g) ∈ providers_down(n)} v_reserve[p,r,ud,nb,d,t] · unitsize[p] · duration[r,ud,g] / slope[p,d,t]
@@ -8844,13 +8848,13 @@ x_out[p,n,d,t] − x_in[p,n,d,t] / s_out[p,n,d,t] + Σ_r v_reserve[p,r,down,n,d,
     one-variable / DC connection whose arc runs n → nb (its reverse flow runs nb → n; slope 1)
 </code></pre></div>
 <p>Downward reserve into storage needs free storage capacity (MWh) for the reserve duration; 1/slope = η converts input to energy stored.  The capacity terms are those of maxState, in MWh.  Same notes as the floor. Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of existing capacity counting until its end of life (none for reinvest_automatic).</p>
-<p>Source: <code>flextool/engine/model/_reserve.py:1517</code> (<code>_add_storage_energy_constraints</code>)</p>
+<p>Source: <code>flextool/engine/model/_reserve.py:1510</code> (<code>_add_storage_energy_constraints</code>)</p>
 <h3 id="obj-reserve-shortfall">OBJ. <code>reserve shortfall</code></h3>
 <p>Names: <code>reserve_shortfall_penalty</code></p>
 <div class="highlight"><pre><span></span><code>+ Σ_{(r,ud,g,d,t)} vq_reserve[r,ud,g,d,t] · scale[r,ud,g,d,t] · penalty_reserve[r,ud,g] · w_op[d,t]
 </code></pre></div>
 <p>Prices the shortfall in MW (vq_reserve · scale, the multiplier of the reserveBalance rows) per hour of operation.  penalty_reserve is the authored value, else the default (reserve_penalty).  w_op = b.op_factor.</p>
-<p>Source: <code>flextool/engine/model/_reserve.py:1577</code> (<code>objective_terms</code>)</p>
+<p>Source: <code>flextool/engine/model/_reserve.py:1570</code> (<code>objective_terms</code>)</p>
 <h2 id="investment-floors-cumulative-capacity-limits-group-investment-limits-and-flow-group-limits">Investment floors, cumulative capacity limits, group investment limits and flow-group limits</h2>
 <p>Investment floors, cumulative capacity limits, group investment limits and flow-group limits.</p>
 <h3 id="eq-mininvestdivest_entity_period_pn">EQ. <code>min{Invest,Divest}_entity_period_{p,n}</code></h3>
