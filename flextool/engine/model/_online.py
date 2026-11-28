@@ -30,7 +30,7 @@ from flextool.engine.input._param_shapes import promote_param_to_dt
 from flextool.engine.preprocess.params._ramp_links import online_free_start_cells
 from flextool.engine.model import _coarse_flows, _extend, _retire_built
 from flextool.engine.model._common import (
-    _availability_factor, _capped_arcs, _coef_factor, _drop_uncapped, _entity_rows, _has_rows, _indirect_input_cap,
+    _capped_arcs, _coef_factor, _drop_uncapped, _entity_rows, _has_rows, _indirect_input_cap,
     _indirect_sum_arcs, _utf8_keys, _var_view,
 )
 
@@ -215,27 +215,16 @@ def add_constraints(b: "_Build") -> None:
 
         # ─── EQ. ─── maxOnline_{linear,integer} ──────────────────────────────
         # ─────────────────────────────────────────────────────────────────────
-        # v_online[p,d,t] − av[p,d,t] · Σ v_invest_p[p,d′] + av[p,d,t] · Σ v_divest_p[p,d′]
-        #   ≤ av[p,d,t] · existing_count[p,d]
-        #   ∀ (p,d,t) ∈ p_idx;   av = availability (1 for processes without availability data); a coarse process
-        #   (processCoarse): its Δt-weighted mean over the coarse step, at the step's first fine step
-        #   (_step_mean, as the averaged rows read it)
-        # Units online cannot exceed the units available: availability is the share of the built units that is
-        # available (an outage), and an available unit has its full capacity (maxFlow_online and the other online
-        # rows hold no availability factor).  Integer units online take the whole units available (4 units at
-        # availability 0.75: at most 3).  A unit that goes out counts as shut down (online_change); maxShutdown and
-        # minimum_downtime keep the units built, so the units out are offline there.
+        # v_online[p,d,t] − Σ v_invest_p[p,d′] + Σ v_divest_p[p,d′]  ≤ existing_count[p,d]
+        #   ∀ (p,d,t) ∈ p_idx
+        # Units online cannot exceed the units built.  Availability does not limit the units online: it derates
+        # the built capacity (maxFlow, maxOutputSum), and a unit online has its full capacity in the online rows
+        # below, so the flow is at most min(κ · v_online, κ · availability · capacity).
         # Capacity in service: invested[e,d], retired[e,d] (and prebuilt[e,d]) of _capacity, the retirements of
         # existing capacity counting until its end of life (none for reinvest_automatic).
-        max_lhs = _lhs_with_invdiv(v_online, "online")
-        max_units = b.cap.existing_count_p
-        if d.p_process_availability is not None:
-            av = _step_mean(b, _availability_factor(d, online_set))
-            max_lhs = {k: (v if k == "online" else v * av) for k, v in max_lhs.items()}
-            max_units = max_units * av if max_units is not None else None
         m.add_cstr(f"maxOnline{sfx}",   over=rows, sense="<=",
-                   lhs_terms=max_lhs,
-                   rhs_terms={"max_units": max_units})
+                   lhs_terms=_lhs_with_invdiv(v_online, "online"),
+                   rhs_terms={"max_units": b.cap.existing_count_p})
 
         # The online predecessor v_online_prev of every (p,d,t) ∈ p_idx \ free_start, one of three disjoint pieces:
         # v_online_prev[p,d,t] =
@@ -387,7 +376,7 @@ def add_constraints(b: "_Build") -> None:
         # A unit's flow and the reserve that raises it — upward reserve at the arc's sink and
         # "consume more" downward reserve at its source — are limited by the units online
         # (spinning reserve: an offline unit holds neither).  A unit online has its full capacity: availability
-        # limits the units online (maxOnline), not the output of a unit online.  The reserve terms are maxFlow's
+        # derates the built capacity (maxFlow), not the output of a unit online.  The reserve terms are maxFlow's
         # (units only; an online connection's reserve is in connection_reserve_*_online_*).
         # Units starting in step t reach at most SU of their capacity on average over the step (synchronised at
         # min load, then ramping as fast as they may: half a step's ramp on average; owner question Q-c14a-A),
@@ -469,8 +458,8 @@ def add_constraints(b: "_Build") -> None:
         # v_flow_back[p,s,k,d,t]  ≤  κ[p,s,k] · v_online[p,d,t]
         #   ∀ (p,s,k) ∈ twoway1var_arcs with p online, (d,t) ∈ dt;   κ = capacity_max_coeff (1.0 defaults)
         # The reverse flow of a one-variable connection is limited by the units online, as its v_flow is by
-        # maxFlow_online: one online status covers both directions (the mirror of maxFlow_back), and availability
-        # limits the units online (maxOnline), as there.  No reserve
+        # maxFlow_online: one online status covers both directions (the mirror of maxFlow_back); availability derates
+        # the built capacity there (maxFlow_back), as for v_flow.  No reserve
         # term (connection reserve has its own rows, connection_reserve_*).  DC power-flow lines never get here
         # (a startup_method on them raises in core._prepare._prepare).
         if b.v_flow_back is not None and _has_rows(b.twoway1var_arcs):
@@ -508,7 +497,8 @@ def add_constraints(b: "_Build") -> None:
         # x(y) = (slope · W(y) + section) / (slope · W(1) + section): the input drawn at output level y per unit of
         #   full-load input (W(y): the output-side fuel width filled up to y, as in p_indirect_input_cap; section
         #   only for min_load_efficiency units).  A unit online draws up to its full-load input (x(1) = 1):
-        #   availability limits the units online (maxOnline), not the input of a unit online.
+        #   availability derates the built capacity (maxFlow on the input arc, input_cap · x(availability)), not the
+        #   input of a unit online.
         # red_su = 1 − SU_in, SU_in = min(1, x(min_load) / input_share_max[p,s]
         #   + ½ · ramp_speed_up · 60 · step_duration) from the input node's ramp speeds (red_sd likewise), so a
         #   started unit can always draw what it needs at min load.  (d⁺,t⁺) = a successor whose ramp
@@ -528,7 +518,7 @@ def add_constraints(b: "_Build") -> None:
         #   ∀ p ∈ process_indirect online with an output arc k, (p,d,t) ∈ p_idx
         # The online analogue of maxOutputSum: the sum of an indirect unit's outputs and of the
         # upward reserve it holds at those outputs is limited by the units online.  No
-        # capacity_max_coeff term, and no availability (it limits the units online, maxOnline).
+        # capacity_max_coeff term, and no availability (it derates the built capacity, maxOutputSum).
         sum_arcs = _indirect_sum_arcs(d)
         if sum_arcs is not None:
             sum_arcs_on = sum_arcs.join(online_set.select("p").unique(), on="p", how="semi")
@@ -568,12 +558,14 @@ def add_constraints(b: "_Build") -> None:
         #   obligation cut in an earlier solve does not come back in a later one (the outage forced ĉ to count only
         #   the start-ups after it; without such a cut the earlier solve's minimum_uptime row at the carried step
         #   already gives carry_up ≤ ĉ); and 0 at and after the first step it reaches in
-        #   B = {(p,d,t) : carry_up[p,d,t] > N[p,d,t]}, N the most units online:
-        #   N = 0 where min_load[p,d,t] > 0 and κ[p] < min_load[p,d,t], κ = Σ_{A_p} capacity_max_coeff (min(Σ, 1)
-        #   for an indirect unit, maxOutputSum_online), else N = existing_count[p,d] · availability[p,d,t]
-        #   (maxOnline) (_mintime.online_limit_cells, cells_over_limit; a coarse process at the first fine step b of
-        #   each coarse step on ā_b, m̄l_b, as its rows): a carried obligation yields to an outage the solve that
-        #   started the unit did not see (W-0592).
+        #   B = {(p,d,t) : carry_up[p,d,t] > N[p,d,t]}, N the most units online where min_load[p,d,t] > 0 and
+        #   availability[p,d,t] · κ[p] < min_load[p,d,t]: N = 0 where κ[p] < min_load, else
+        #   N = κ[p] · availability[p,d,t] · existing_count[p,d] / min_load[p,d,t] (the min load of the units online
+        #   within the built capacity derated by availability, maxFlow / maxOutputSum), κ = Σ_{A_p} capacity_max_coeff
+        #   (min(Σ, 1) for an indirect unit) (_mintime.online_limit_cells, cells_over_limit; a coarse process at the
+        #   first fine step b of each coarse step on ā_b, m̄l_b, as its rows): a carried obligation yields to an outage
+        #   the solve that started the unit did not see (W-0592; not under a reduce_unit_detail_method with
+        #   min_limits).
         #   A start-up within this solve keeps its full minimum up-time (the solve sees the outage), except a start-up
         #   at a realization pin kept before the unit's first blocked pinned step: uptime_lookback holds no term of it
         #   at and after that step (its up-time ends at the outage, as the pinned commitment did not see it).
@@ -693,21 +685,6 @@ def add_constraints(b: "_Build") -> None:
             )
 
 
-def _step_mean(b: "_Build", param: Param) -> Param:
-    """``param`` ``(p, d, t)`` with the rows of each coarse process replaced by their Δt-weighted mean over each
-    coarse step at its first fine step (:func:`_coarse_flows.at_first_steps`), divided by the sum of the weights so
-    that a constant comes back unchanged (Σ_t w is 1 only up to rounding, and the units online of an integer
-    process are bounded by it)."""
-    num = _coarse_flows.at_first_steps(b, param)
-    if num is param:
-        return param
-    den = _coarse_flows.at_first_steps(b, Param(param.dims, param.frame.with_columns(value=pl.lit(1.0))))
-    keys = list(param.dims)
-    frame = (num.frame.join(den.frame.rename({"value": "__w"}), on=keys, how="left")
-             .select(*keys, value=pl.col("value") / pl.col("__w").fill_null(1.0)))
-    return Param(param.dims, frame)
-
-
 def _drop_own_step_rows(b: "_Build", idx: pl.DataFrame, lkb: pl.DataFrame,
                         carry: "pl.DataFrame | None") -> "tuple[pl.DataFrame, pl.DataFrame]":
     """``idx`` / ``lkb`` (minimum up / down time rows and their look-back) without the rows of coarse processes
@@ -812,7 +789,7 @@ def _cap_reduction(b: "_Build", arcs: "pl.DataFrame", *,
     branch point (several rows sharing ``(p, source, sink, d, t)``), only rows with ``red_su > 0``
     or (a successor and ``red_sd > 0``); ``None`` when there are none.  See the EQ. header of maxFlow_online:
     ``SU = min(1, ml + ½ · ramp_speed_up · 60 · step_duration)`` over the sides of the arc with an up ramp limit,
-    ``red_su = 1 − SU`` (a unit online has its full capacity: availability limits the units online, maxOnline);
+    ``red_su = 1 − SU`` (a unit online has its full capacity: availability derates the built capacity, maxFlow);
     ``SD`` / ``red_sd`` likewise with the down speeds.  ``ml`` is
     ``min_load`` on an output-measured arc (``input_side`` False) and the input the unit draws at min load as a
     share of the arc's input limit on an indirect unit's input arc (``input_side`` True).

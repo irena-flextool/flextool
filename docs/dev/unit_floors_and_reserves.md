@@ -29,8 +29,9 @@ indirect unit's input; a sink-less unit); `1/slope` for a source-side reserve
 on a direct input→output arc. All rows are dimensionless (unit-count flow
 units) in the autoscale registry.
 
-Decisions: the floor is not scaled by availability (availability limits the units online, `maxOnline`:
-`v_online ≤ availability · (existing + invested − divested)`); connections are excluded;
+Decisions: the floor is not scaled by availability (availability derates the built capacity, `maxFlow` /
+`maxOutputSum`, not the output of a unit online, so it never conflicts with the floor of the units online);
+connections are excluded;
 an indirect unit's input-side `up` reserve gets only the zero floor on that
 input arc (expressing "the input cut takes the outputs below min load" needs
 the conversion mix), so combined with output-side `down` reserve such a unit
@@ -45,16 +46,16 @@ output units of unitsize):
 
 * built capacity, units: `maxFlow` (per arc) and `maxOutputSum`
   (sum of an indirect unit's outputs).  On an indirect unit's INPUT arc
-  `maxFlow`'s M (`core._flows._max_flow_rhs`) uses `x(availability)` (without a
-  section) in place of plain availability for a unit without online variables
-  (#102), and plain availability for a unit with them (the share of its units
-  available, each drawing up to its full-load input);
+  `maxFlow`'s M (`core._flows._max_flow_rhs`) uses `x(availability)` in place of
+  plain availability — the min-load section is drawn per unit online, not
+  per available unit, credited only to a unit with an online variable
+  (#102);
 
 * online capacity, units with online variables (`_online.py`):
   `maxFlow_online_<kind>`: `v_flow + Σ_r Rup ≤ v_online·cap_max_coeff`
   per capped arc, and `maxOutputSum_online_<kind>`:
-  `Σ_k v_flow + Σ_k Σ_r Rup ≤ v_online`; availability limits `v_online`
-  (`maxOnline_<kind>`), a unit online has its full capacity.
+  `Σ_k v_flow + Σ_k Σ_r Rup ≤ v_online` — a unit online has its full
+  capacity; availability is in the built-capacity rows above only.
 
 `maxFlow` / `maxFlow_negCap` / `maxFlow_online_*` read the units-only
 aggregate `b.reserve_up_to_sink_units`; a connection's reserve is limited
@@ -195,7 +196,7 @@ has ramp limits"; GMPL keyed it on the speed alone),
 `red_su = 1 − SU`; `SD` / `red_sd` with the down speed at the
 pre-shutdown step.  The half step is the step average of a unit synchronising at
 min load (owner question Q-c14a-A; GMPL used the full step).  Availability is in
-none of these rows: it limits the units online (`maxOnline`), and a started unit
+none of these rows (it derates the built capacity, `maxFlow`): a started unit
 reaches `SU` of its full capacity.
 
 Rows (`maxFlow_online_<kind>`, and `maxInputFlow_online_<kind>` on an indirect
@@ -230,7 +231,8 @@ load per unit of input limit, `x / input_share_max` with
 width filled to y, as `p_indirect_input_cap`), so a started unit can always draw
 its min-load input.  A ramp-limited input arc of an online indirect unit gets
 `maxInputFlow_online` rows even without reserve: `v_flow + Σ_r Rdn ≤ input_cap·(v_online − red·…)`,
-`red = 1 − SU_in` (a unit online draws up to its full-load input).  Per arc: `maxOutputSum_online`
+`red = 1 − SU_in` (a unit online draws up to its full-load input; availability is in `maxFlow`'s
+`input_cap·x(availability)` on the arc).  Per arc: `maxOutputSum_online`
 of a multi-output unit is not reduced (as GMPL; ramps are arc attributes).
 
 ## Reserve shortfall multiplier
@@ -394,3 +396,10 @@ with the orientation of `nodeBalance_eq` (into the arc's source, out of its sink
    (c14c critique item 10) instead of `F_in = c·ml_in`, which `conversion_indirect` plus the output
    floor would justify structurally. Deliberately left: c14c's target was single-output arcs; see
    `specs/github_issues.md` §3 item 178.
+
+## To do: the schema description of `availability`
+
+The `unit` `availability` description in `flextool/schemas/spinedb_schema.json` still says that "for online units,
+the online variable is multiplied by the availability".  Since 4.7.3 availability derates the built capacity only
+(`maxFlow` / `maxOutputSum`; the online rows have none).  The description changes with the next version that bumps
+the data version (a description of a released version is not rewritten in place).

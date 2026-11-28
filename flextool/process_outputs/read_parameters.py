@@ -471,7 +471,8 @@ def ramp_envelope_params(flex_data: "FlexData", solve_name: str) -> dict[str, pd
 
     * ``process_arc_cap_coef_dt`` / ``process_arc_floor_share_dt`` ``(solve, period, time)`` × ``(process,
       source, sink)``: the capacity multiplier of each unit arc's maxFlow row and its floor per unit online (the
-      cells that differ from 1 / 0);
+      cells that differ from 1 / 0); ``process_arc_online_cap_coef_dt`` the same multiplier in the online rows of
+      a unit with online variables (without availability);
     * ``process_ramp_limit`` ``(solve, period)`` × ``(process, source, sink, limit)``: the ramp speeds of the
       solve's ramp-limit sets (no time axis: one row per period of the solve, the same values); the envelope
       reads the row of the solve that realized each step;
@@ -486,6 +487,9 @@ def ramp_envelope_params(flex_data: "FlexData", solve_name: str) -> dict[str, pd
     out = {
         "process_arc_cap_coef_dt": _pdt_long_multi_col(
             _ramp_inputs.arc_capacity_factor(flex_data), solve_name=solve_name,
+            col_dims=("p", "source", "sink"), col_names=arc),
+        "process_arc_online_cap_coef_dt": _pdt_long_multi_col(
+            _ramp_inputs.arc_online_capacity_factor(flex_data), solve_name=solve_name,
             col_dims=("p", "source", "sink"), col_names=arc),
         "process_arc_floor_share_dt": _pdt_long_multi_col(
             _ramp_inputs.arc_floor_share(flex_data), solve_name=solve_name,

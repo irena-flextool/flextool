@@ -319,6 +319,7 @@
  "tests/engine/test_pss_canonical.py": 5.3,
  "tests/engine/test_ramp_limits.py": 207.8,
  "tests/engine/test_ramp_reserve.py": 12.8,
+ "tests/engine/test_realization_pinned_supply.py": 5.0,
  "tests/engine/test_realization_startup_methods.py": 77.8,
  "tests/engine/test_realized_dispatch_coherence.py": 0.0,
  "tests/engine/test_realized_overlap.py": 0.0,

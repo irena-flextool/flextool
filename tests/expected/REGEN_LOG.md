@@ -1749,21 +1749,22 @@ compared as text, timestamps stripped).
 
 **Decision** (agent, pending owner review): accept.
 
-## 2026-11-28 — availability limits the units online (`test_a_lot`, `test_a_lot_but_not_multi_year`)
+## 2026-11-28 — availability derates the capacity, not the output of a unit online (`test_a_lot`, `test_a_lot_but_not_multi_year`)
 
-**Mechanism.** For a unit with online variables, availability is now the share of its units available
-(`maxOnline`: v_online ≤ availability · units built) and a unit online has its full capacity (`maxFlow_online`:
-v_flow ≤ κ · v_online, no availability factor); `min_load` is unchanged. These are the two scenarios whose unit
-has online variables (`coal_plant`, `coal_min_load`: linear, min_load 0.5) and an availability below 1 (the
-`availability` alternative's hourly series, 0.893, 0.374, 0.152, ...). Before, each unit online was derated by
-availability while its minimum load was not, so `coal_plant` could not run in the steps whose availability is
-below 0.5 and ran at most at availability × online elsewhere.
+**Mechanism.** For a unit with online variables the online rows no longer multiply v_online by availability
+(`maxFlow_online`: v_flow ≤ κ · v_online); availability stays in the built-capacity rows (`maxFlow`: v_flow ≤
+κ · availability · capacity) and `min_load` is unchanged. These are the two scenarios whose unit has online
+variables (`coal_plant`, linear, min_load 0.5, the `coal_ramp` ramp limit) and an availability below 1 (the
+`availability` alternative's hourly series 0.893, 0.374, 0.152, ...).
 
-**Files.** Every compared CSV of both scenarios. Check by hand: `coal_plant` → west at the first steps is now 500 MW
-× availability (446.5517 = 500 × 0.893103434, 187.1009 = 500 × 0.374201854), where availability < min_load 0.5 at
-the second step used to force it off (0). With the coal plant usable in those steps, less wind is invested
-(`test_a_lot` p2020 2935.03 → 2491.35 MW, `test_a_lot_but_not_multi_year` 3292.18 → 2867.29 MW) and the total
-discounted cost falls (20 999.51 → 20 785.33); the start-up cost rises (134.90 → 240.45) because the hourly
-availability now takes units offline and back online, which counts as shut-downs and start-ups.
+**Files.** Every compared CSV of both scenarios. Check by hand: at t0001 / t0002 of each stretch `coal_plant` → west
+now gives its derated capacity, 500 MW × availability (446.5517 = 500 × 0.893103434, 187.1009 = 500 × 0.374201854),
+with v_online = v_flow (0.893, 0.374 units). Before, its flow was online × availability with min_load 0.5 not
+derated, so at t0002 (0.374 < 0.5) it had to be offline, and at t0001 it ran 0.498 units (249 MW) from 0.558 units
+online. Start-ups are still only at the first step of each stretch (the cyclic wrap from an offline last step), none
+at the availability dips; the start-up cost rises (`test_a_lot` 134.90 → 240.45) because the unit now commits
+0.893 units there instead of 0.558 (0.524 in p2025). With the coal plant usable in more steps, less wind is
+invested (p2020 2935.03 → 2491.35 MW, `test_a_lot_but_not_multi_year` 3292.18 → 2867.29 MW) and the total
+discounted cost falls.
 
 **Decision** (agent, pending owner review): accept; the old values were the behaviour the change replaces.

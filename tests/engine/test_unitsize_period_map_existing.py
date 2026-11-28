@@ -8,8 +8,8 @@ and hid it; the rolls of a rolling solve kept it, so a 17 MW unit became 17/1000
 
 Hand derivation: coal_plant has ``existing`` 17 MW (constant, or the Map ``{p2020: 17, p2025: 17}``) and no
 ``virtual_unitsize``, so it is one unit of 17 MW: ``p_unitsize`` = 17 and ``p_process_existing_count`` in p2020 =
-17 / 17 = 1.  It gives at most 17 MW, which meets the 10 MW floor only when its one unit is online (no availability:
-an integer unit of one unit with availability below 1 has no whole unit available, maxOnline).  Fixtures are ``tests.json`` plus one override alternative, built under the pytest tmp dir.
+17 / 17 = 1.  With availability 0.89 it gives at most 0.89 × 17 = 15.13 MW, which meets the 10 MW floor only when
+its one unit is online.  Fixtures are ``tests.json`` plus one override alternative, built under the pytest tmp dir.
 """
 from __future__ import annotations
 
@@ -50,6 +50,7 @@ def _existing(shape: str, p2020: float, p2025: float) -> list:
 def _values(shape: str, mode: str, p2020: float = 17.0, p2025: float = 17.0, *, floor: bool = True) -> list:
     values = uc(PLANT, 0.0, "integer_fix_in_uc") + [
         ["unit", PLANT, "existing", _existing(shape, p2020, p2025)],
+        ["unit", PLANT, "availability", b64(0.89, "float")],
     ]
     if floor:
         values.append(["flowGroup", FLOOR_GROUP, "min_instant_flow", b64(10.0, "float")])

@@ -1099,15 +1099,14 @@ def _add_connection_reserve_constraints(b: "_Build") -> None:
     #   a channel p does not have contributes nothing (x = 0, C = 0, M = 0, s_out = 1)
     # ─── EQ. ─── connection_reserve_{up,down}_online_{linear,integer} ────────
     #   same LHS without invest terms  ≤  κ · v_online[p,d,t]   (κ = capacity_max_coeff of the up row's
-    #   in-channel arc / the down row's out-channel arc; availability limits the units online, maxOnline)
+    #   in-channel arc / the down row's out-channel arc; availability derates the built capacity, the row above)
     #   ∀ rows above with p online and that channel present
     # ─── EQ. ─── connection_reserve_{up,down}_exact ──────────────────────────
     #   same LHS − Ū · v_exact_forward[p,d,t]  ≤  0     when that channel is the exact connection's forward arc
     #   same LHS + Ū · v_exact_forward[p,d,t]  ≤  Ū     when it is the reverse arc
     #   ∀ rows above with p ∈ process_exact;  Ū = p_flow_upper · capacity_max_coeff · availability of the arc
     # A coarse connection: each family as <family>_coarse, the row's mean over each coarse step
-    #   (_coarse_flows.add_cstr): one reserve and one flow per step under the step-mean capacity and availability
-    #   (of the built capacity, and of the units online through maxOnline).
+    #   (_coarse_flows.add_cstr): one reserve and one flow per step under the step-mean capacity and availability.
     # A connection's reserve at a node is limited by its net position there: upward reserve by the free capacity
     # into n plus the flow out of n it can stop, downward reserve by the flow into n it can stop plus the free
     # capacity out of n (converted to power at n by the efficiency).  One row

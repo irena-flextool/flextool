@@ -268,20 +268,23 @@ def mintime_roll_carry(dt: "pl.DataFrame | None", step_duration: "object | None"
 
 
 def online_limit_cells(d: object) -> "pl.DataFrame | None":
-    """``(p, d, t, cap)`` (Utf8 keys): the most units online ``cap`` of each process with online variables
-    (``process_online_linear`` / ``process_online_integer``) at the steps where it is below the units built —
-    the ceiling an obligation carried in from an earlier solve meets:
+    """``(p, d, t, cap)`` (Utf8 keys): the most units online ``cap`` of a unit with online variables
+    (``process_online_linear`` / ``process_online_integer``) and min_load at the steps where its availability keeps
+    it below its units built — the ceiling an obligation carried in from an earlier solve meets:
 
-        cap[p,d,t] = 0                                   min_load[p,d,t] > 0 and κ[p] < min_load[p,d,t]
-                   = existing_count[p,d] · availability[p,d,t]   otherwise (maxOnline)
+        cap[p,d,t] = 0                                                      κ[p] < min_load[p,d,t]
+                   = κ[p] · availability[p,d,t] · existing_count[p,d] / min_load[p,d,t]   otherwise
 
-    κ[p] = Σ capacity_max_coeff over the unit's output measure A_p (``model._unit_floors.unit_measured_arcs``; 1 by
-    default), for an indirect unit min(Σ, 1): where κ < min_load, ``minFlow_minload`` (Σ_{A_p} flow ≥ min_load ·
-    v_online), ``maxFlow_online`` (≤ capacity_max_coeff · v_online on each arc of A_p) and, for an indirect unit,
-    ``maxOutputSum_online`` (Σ_{A_p} flow ≤ v_online) leave only v_online = 0.  Elsewhere ``maxOnline`` keeps the
-    units online at or below the units available.  existing_count is the solve's existing units (the investments
-    of earlier solves included); a unit this solve invests in may get more.  Rows only where availability < 1 or
-    κ < min_load; availability 0 gives cap 0, also without min_load.
+    over B = {min_load[p,d,t] > 0 and availability[p,d,t] · κ[p] < min_load[p,d,t]}.  κ[p] = Σ capacity_max_coeff over
+    the unit's output measure A_p (``model._unit_floors.unit_measured_arcs``; 1 by default), for an indirect unit
+    min(Σ, 1).  ``minFlow_minload`` (Σ_{A_p} flow ≥ min_load · v_online) against ``maxFlow_online`` (≤
+    capacity_max_coeff · v_online on each arc of A_p) leaves only v_online = 0 where κ < min_load; against the built
+    capacity derated by availability (``maxFlow``: ≤ capacity_max_coeff · availability · existing_count on each arc,
+    ``maxOutputSum`` for an indirect unit) it allows v_online ≤ κ · availability · existing_count / min_load.
+    existing_count is the solve's existing units (the investments of earlier solves included); a unit this solve
+    invests in or retires is judged on them as well (an investment can only raise the ceiling, so the obligation
+    may yield where it need not; a retirement in the same solve is not seen).  A unit without an existing_count
+    value has no row.
 
     A coarse process (``processCoarse``, ``process_coarse_step``) is judged as its rows are: once per coarse step,
     at the step's first fine step, on the Δt-weighted means of availability and min_load over the step.  ``None``
@@ -291,69 +294,68 @@ def online_limit_cells(d: object) -> "pl.DataFrame | None":
     from flextool.engine.model._common import _availability_factor, _coef_factor
     from flextool.engine.model._unit_floors import unit_measured_arcs
 
-    dt = getattr(d, "dt", None)
+    ml, dt = getattr(d, "p_min_load", None), getattr(d, "dt", None)
+    ec = getattr(d, "p_process_existing_count", None)
     online = [f.select(pl.col("p").cast(pl.Utf8)) for f in (getattr(d, "process_online_linear", None),
                                                            getattr(d, "process_online_integer", None))
               if f is not None and f.height > 0]
-    if not online or dt is None or dt.height == 0:
+    if (ml is None or ml.frame.height == 0 or dt is None or dt.height == 0 or not online or ec is None
+            or ec.frame.height == 0):
         return None
-    procs = pl.concat(online).unique().sort("p")
-    keys = ["p", "d", "t"]
-    if getattr(d, "p_process_availability", None) is not None:
-        cells = _availability_factor(d, procs).frame.select(
-            *(pl.col(k).cast(pl.Utf8) for k in keys), pl.col("value").cast(pl.Float64).alias("av"))
-    else:
-        cells = procs.join(dt.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)), how="cross").with_columns(
-            av=pl.lit(1.0))
-    ml = getattr(d, "p_min_load", None)
     arcs = unit_measured_arcs(d)
-    if ml is not None and ml.frame.height > 0 and arcs is not None:
-        coef = getattr(d, "p_arc_max_cap_coef", None)
-        arc_keys = ["p", "source", "sink"]
-        kappa = (_coef_factor(arcs, coef, arc_keys).frame if coef is not None
-                 else arcs.select(arc_keys).unique().with_columns(value=pl.lit(1.0)))
-        kappa = kappa.group_by(pl.col("p").cast(pl.Utf8)).agg(pl.col("value").sum().alias("kappa"))
-        indirect = getattr(d, "process_indirect", None)
-        if indirect is not None and indirect.height > 0:
-            ind = indirect.select(pl.col("p").cast(pl.Utf8)).unique()["p"].implode()
-            kappa = kappa.with_columns(pl.when(pl.col("p").is_in(ind)).then(pl.min_horizontal("kappa", pl.lit(1.0)))
-                                       .otherwise(pl.col("kappa")).alias("kappa"))
-        mls = (promote_param_to_dt(ml, dt)
-               .select(*(pl.col(k).cast(pl.Utf8) for k in keys), pl.col("value").cast(pl.Float64).alias("ml"))
-               .collect())
-        cells = cells.join(mls, on=keys, how="left").join(kappa, on="p", how="left")
+    if arcs is None:
+        return None
+    procs = pl.concat(online).unique()
+    keys = ["p", "source", "sink"]
+    coef = getattr(d, "p_arc_max_cap_coef", None)
+    kappa = (_coef_factor(arcs, coef, keys).frame if coef is not None
+             else arcs.select(keys).unique().with_columns(value=pl.lit(1.0)))
+    kappa = kappa.group_by(pl.col("p").cast(pl.Utf8)).agg(pl.col("value").sum().alias("kappa"))
+    indirect = getattr(d, "process_indirect", None)
+    if indirect is not None and indirect.height > 0:
+        ind = indirect.select(pl.col("p").cast(pl.Utf8)).unique()["p"].implode()
+        kappa = kappa.with_columns(pl.when(pl.col("p").is_in(ind)).then(pl.min_horizontal("kappa", pl.lit(1.0)))
+                                   .otherwise(pl.col("kappa")).alias("kappa"))
+    kappa = kappa.join(procs, on="p", how="semi")
+    cells = (promote_param_to_dt(ml, dt)
+             .select(pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8),
+                     pl.col("value").cast(pl.Float64).alias("ml"))
+             .collect()
+             .join(kappa, on="p", how="inner"))
+    if cells.height == 0:
+        return None
+    if getattr(d, "p_process_availability", None) is not None:
+        av = _availability_factor(d, arcs.select("p").unique()).frame.select(
+            pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8),
+            pl.col("value").alias("av"))
+        cells = cells.join(av, on=["p", "d", "t"], how="left").with_columns(pl.col("av").fill_null(1.0))
     else:
-        cells = cells.with_columns(ml=pl.lit(None, pl.Float64), kappa=pl.lit(None, pl.Float64))
-    cells = (cells.with_columns(pl.col("ml").fill_null(0.0), pl.col("kappa").fill_null(1.0))
-             .select("p", "d", "t", "ml", "kappa", "av"))
+        cells = cells.with_columns(av=pl.lit(1.0))
     cells = _at_coarse_steps(cells, getattr(d, "process_coarse_step", None))
-    ec = getattr(d, "p_process_existing_count", None)
-    if ec is not None and ec.frame.height > 0:
-        count = (promote_param_to_dt(ec, dt)
-                 .select(*(pl.col(k).cast(pl.Utf8) for k in keys), pl.col("value").cast(pl.Float64).alias("count"))
-                 .collect())
-        cells = cells.join(count, on=keys, how="left")
-    else:
-        cells = cells.with_columns(count=pl.lit(None, pl.Float64))
-    blocked = (pl.col("ml") > 0.0) & (pl.col("kappa") < pl.col("ml"))
-    out = (cells.filter(blocked | (pl.col("av") < 1.0))
-           .select("p", "d", "t", cap=pl.when(blocked).then(0.0)
-                   .otherwise(pl.col("count").fill_null(0.0) * pl.col("av")))
+    count = (promote_param_to_dt(ec, dt)
+             .select(pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8),
+                     pl.col("value").cast(pl.Float64).alias("count"))
+             .collect())
+    out = (cells.filter((pl.col("ml") > 0.0) & (pl.col("av") * pl.col("kappa") < pl.col("ml")))
+           .join(count, on=["p", "d", "t"], how="inner")
+           .select("p", "d", "t", cap=pl.when(pl.col("kappa") < pl.col("ml")).then(0.0)
+                   .otherwise(pl.col("kappa") * pl.col("av") * pl.col("count") / pl.col("ml")))
            .sort("p", "d", "t"))
     return out if out.height > 0 else None
 
 
 def cells_over_limit(frame: "pl.DataFrame | None", limit: "pl.DataFrame | None",
-                     tol: float = 1e-9) -> "pl.DataFrame | None":
+                     tol: float = 1e-6) -> "pl.DataFrame | None":
     """``(p, d, t)`` (Utf8) of the rows of *frame* ``(p, d, t, value, …)`` — units online an earlier solve obliges
     (the carried minimum up-time, a realization pin) — whose value exceeds the most units online there, *limit*
-    ``(p, d, t, cap)`` (:func:`online_limit_cells`) by more than *tol*; ``None`` when there is none."""
+    ``(p, d, t, cap)`` (:func:`online_limit_cells`), by more than *tol* (relative to max(1, cap)); ``None`` when there
+    is none."""
     if frame is None or frame.height == 0 or limit is None or limit.height == 0:
         return None
     keys = ["p", "d", "t"]
     out = (frame.select(*(pl.col(k).cast(pl.Utf8) for k in keys), pl.col("value").cast(pl.Float64))
            .join(limit, on=keys, how="inner")
-           .filter(pl.col("value") > pl.col("cap") + tol)
+           .filter(pl.col("value") > pl.col("cap") + tol * pl.max_horizontal(pl.lit(1.0), pl.col("cap")))
            .select(keys).unique().sort(keys))
     return out if out.height > 0 else None
 

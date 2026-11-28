@@ -2,25 +2,26 @@
 
 ### Behaviour changes — read before upgrading
 
-- **`availability` of a unit or connection with online variables limits its units online.** Availability is now
-  the share of the units that is available (an outage), and each unit online has its full capacity:
-  units online ≤ `availability` × (existing + invested − retired units), flow ≤ units online × capacity of a unit,
-  flow ≥ units online × `min_load` × capacity of a unit. Before, availability derated every unit online (flow ≤
-  units online × `availability`), while the minimum load was not derated, so a unit whose availability fell below
-  its `min_load` could not be online at all (e.g. a plant of four units with one in maintenance, availability
-  0.75, and `min_load` 0.9 was forced off), and an availability just above `min_load` left almost no operating
-  range. Now three of the four units run at full output. The start-up and shut-down ramp allowance, the input
-  limits and the reserve limits of units online no longer carry availability either. Results change for models
-  with online variables (`startup_method` other than *no_startup*, or a `minimum_time_method`) and an availability
-  below 1; models with availability 1 and units without online variables (flow ≤ capacity × `availability`) are
-  unchanged, and so is the capacity margin (capacity × `availability`). Consequences: with *integer* online
-  variables only whole units can be online (4 units at 0.7 allow 2; a plant modelled as one unit cannot be online
-  while its availability is below 1 — use *linear* online variables or a `virtual_unitsize` to model a derating);
-  a unit taken offline by a fall in availability counts as shut down (its start-up cost is paid when it returns,
-  and `min_downtime` applies); a minimum up-time or a realization pin carried in from an earlier solve now yields
-  (W-0592) where the realized data have fewer units available than it keeps online, not only where availability
-  is below `min_load`. In the ramp envelope output, units and connections with online variables count the
-  capacity of their units online without availability.
+- **`availability` of a unit or connection with online variables derates its capacity, not the output of a unit
+  online.** The flow (and the upward reserve) stays within capacity × `availability`, as before, but a unit online
+  now has its full capacity: flow ≤ units online × capacity of a unit, flow ≥ units online × `min_load` × capacity of
+  a unit. Before, availability also derated every unit online (flow ≤ units online × `availability`) while the
+  minimum load was not derated, so a unit whose availability fell below its `min_load` could not be online at all
+  (e.g. a plant of four units with one in maintenance, availability 0.75, and `min_load` 0.9 was forced off), and an
+  availability just above `min_load` left almost no operating range. Now that plant gives 0.75 of its capacity with
+  3 to 3.33 units online (3 with *integer* online variables), and a single integer unit at availability 0.95 runs at
+  0.95. A fall in availability starts or stops no units unless `min_load` forces fewer units online. The start-up
+  and shut-down ramp allowance (now 1 − the start-up share), the input limits and the reserve limits of units online
+  no longer carry availability either. Inertia counts the units online, which availability does not limit. Results
+  change for models with online variables (`startup_method` other than *no_startup*, or a `minimum_time_method`) and
+  an availability below 1; models with availability 1, units without online variables and the capacity margin
+  (capacity × `availability`) are unchanged. A minimum up-time or a realization pin carried in from an earlier solve
+  yields (W-0592) only where the realized availability leaves less capacity than the minimum load of the units it
+  keeps online (capacity × `availability` < units online × `min_load` × capacity of a unit), and the pre-solve check
+  of a realization solve without balance slack counts a pinned unit at min(units online, capacity × `availability`);
+  the ramp envelope output counts units online at full capacity within capacity × `availability`.
+  The parameter description of unit `availability` in the database still describes the old behaviour; it is
+  updated with the next data version.
 
 ### Fixes
 

@@ -6,7 +6,7 @@ step t at most ``SD`` (down speed) in t.  The online capacity rows lose ``(1 −
 ``(1 − SD) · v_shutdown[t⁺]`` as a pair of rows (``maxFlow_online_*`` + ``maxFlow_online_shutdown_*``;
 ``maxInputFlow_online_*`` + ``…_shutdown_*`` on an indirect unit's input arc), so capacity online for one step gets
 the smaller limit.  Only where the arc has a ramp limit (``ramp_method`` set).  A unit online has its full
-capacity: availability limits the units online (``maxOnline``), so it is in none of these rows.
+capacity: availability derates the built capacity (``maxFlow``), so it is in none of these rows.
 
 Fixtures: ``tests.json`` (coal_plant 500 MW at west, coal_chp indirect coal_market → west + heat) plus override
 alternatives, built from JSON.  Coefficients are computed in the tests from the inputs.
@@ -137,8 +137,8 @@ def test_one_step_run_feasible(tmp_path_factory) -> None:
 
 def test_reduction_does_not_depend_on_availability(tmp_path_factory) -> None:
     """availability 0.4 (< SU = 0.45) and 0.9: the startup coefficient is 1 − SU = 0.55 in both, and v_online has
-    coefficient −1 (a unit online has its full capacity); availability is the coefficient of the units built in
-    maxOnline_linear instead (v_online ≤ availability · existing_count, existing_count = 1: coal_plant is one unit).
+    coefficient −1 (a unit online has its full capacity); availability is in maxFlow's bound instead (v_flow ≤
+    availability · existing_count, existing_count = 1: coal_plant is one unit), and maxOnline keeps v_online ≤ 1.
     Before: availability · v_online, and a startup coefficient availability − SU (none at 0.4)."""
     for avail, alt in ((0.4, "su_av4"), (0.9, "su_av9")):
         step = _last(_solve(tmp_path_factory, alt, _uc() + _ramp() + [["unit", PLANT, "availability",
@@ -150,13 +150,10 @@ def test_reduction_does_not_depend_on_availability(tmp_path_factory) -> None:
             d, t = step_of(row)
             assert coef(terms, f"v_online_linear[{PLANT},{d},{t}]") == pytest.approx(-1.0), row
             assert coef(terms, "v_startup_linear") == pytest.approx(1.0 - SU), row
-        on_rows = row_terms(pb, "maxOnline_linear", f"{PLANT},")
-        assert on_rows
-        bounds = row_bounds(pb, "maxOnline_linear", f"{PLANT},")
-        for row, terms in on_rows.items():
-            d, t = step_of(row)
-            assert terms == {f"v_online_linear[{PLANT},{d},{t}]": 1.0}, row
-            assert bounds[row][1] == pytest.approx(avail * 1.0), row
+        on_bounds = row_bounds(pb, "maxOnline_linear", f"{PLANT},")
+        assert on_bounds and all(ub == pytest.approx(1.0) for _lb, ub in on_bounds.values())
+        flow_bounds = row_bounds(pb, "maxFlow", ARC)
+        assert flow_bounds and all(ub == pytest.approx(avail * 1.0) for _lb, ub in flow_bounds.values())
 
 
 def test_no_reduction_without_ramp_limit(tmp_path_factory) -> None:
@@ -240,7 +237,7 @@ def _online_rows(steps) -> list:
     for s in steps.values():
         pb = build(s.flex_data)
         out.append({fam: (row_terms(pb, fam), row_bounds(pb, fam))
-                    for fam in ("maxOnline_linear", "maxFlow_online_linear", "maxFlow_online_shutdown_linear")})
+                    for fam in ("maxFlow", "maxFlow_online_linear", "maxFlow_online_shutdown_linear")})
     return out
 
 
@@ -273,8 +270,8 @@ def test_min_load_and_availability_shapes_same_lp(tmp_path_factory, solve_kind) 
     ref = results[("constant", "constant")]
     assert any(any("v_startup_linear" in c for terms in rows["maxFlow_online_linear"][0].values() for c in terms)
                for rows in ref)
-    # availability 0.9 is in the maxOnline bounds (0.9 · existing_count), so the comparison covers its shapes.
-    assert all(rows["maxOnline_linear"][1] for rows in ref)
+    # availability 0.9 is in the maxFlow bounds (0.9 · existing_count), so the comparison covers its shapes.
+    assert all(rows["maxFlow"][1] for rows in ref)
     for key, got in results.items():
         assert got == ref, key
 
@@ -304,11 +301,13 @@ def _x(fd, y: float) -> float:
 
 
 def test_input_limit_keeps_derated_full_output(tmp_path_factory) -> None:
-    """coal_chp (min_load_efficiency, availability 0.8, demand far above capacity, online all the time): 0.8 of
-    its units are online (maxOnline), each at full output and full-load fuel.  The fuel arc's online coefficient
-    (maxInputFlow_online, ramp-limited case) is input_cap (no availability factor: x(1) = 1), its startup
-    coefficient input_cap · (1 − SU_in), and the output reaches 0.8 × capacity with or without the ramp limit
-    (#102).  Before: input_cap · x(0.8) · v_online, the section drawn by every unit online."""
+    """coal_chp (min_load_efficiency, availability 0.8, demand far above capacity, online all the time): the
+    output reaches the derated capacity, 0.8 × capacity, with or without the ramp limit (#102).  The fuel arc's
+    online coefficient (maxInputFlow_online, ramp-limited case) is input_cap (a unit online draws up to its
+    full-load fuel, no availability factor), its startup coefficient input_cap · (1 − SU_in); the built-capacity
+    bound on the fuel (maxFlow's M, a v_flow bound without investment) keeps input_cap · x(0.8), the fuel of the
+    derated output with the section of every unit online.  Before: input_cap · x(0.8) · v_online in the online row
+    too."""
     no_ramp = _last(_solve(tmp_path_factory, "av_noramp", _chp_mle(0.8, ramp=False),
                            chain=("init", "west", "coal_chp", "heat")))
     with_ramp = _last(_solve(tmp_path_factory, "av_ramp", _chp_mle(0.8, ramp=True),
@@ -331,7 +330,7 @@ def test_input_limit_keeps_derated_full_output(tmp_path_factory) -> None:
         assert coef(terms, f"v_online_linear[{CHP},{d},{t}]") == pytest.approx(-cap), row
         assert coef(terms, "v_startup_linear") == pytest.approx(cap * (1.0 - su_in)), row
     on = _vals(with_ramp, "v_online_linear", CHP)
-    assert max(on.values()) == pytest.approx(0.8 * cap_units, rel=1e-6)
+    assert min(on.values()) >= 0.8 * cap_units - 1e-6
 
 
 def test_consume_more_row_at_derated_full_output(tmp_path_factory) -> None:

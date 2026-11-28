@@ -1,12 +1,12 @@
 """Obligations carried in from an earlier solve yield to an outage that solve did not see (fix (a), W-0592).
 
-N = the most units online (``_mintime.online_limit_cells``): existing_count · availability (maxOnline: availability
-is the share of the units available), and 0 where min_load > κ, the summed capacity_max_coeff of the unit's output
-measure (min load ≥ min_load · online and the online capacity ≤ κ · online leave only online = 0).  B = the steps
-where a carried obligation exceeds N (``cells_over_limit``).  (a1) the carried minimum up-time ends at the first step
-of B it reaches and does not resume; (a2) a realization pin above N drops the pins of that unit from there on; (a3)
-the carried ramp-down of a unit without online variables asks at most its output ceiling.  Inside a solve an outage
-it sees is obeyed.
+Where min_load > 0 and availability · κ < min_load (κ the summed capacity_max_coeff of the unit's output measure),
+min load (≥ min_load · online) against the built capacity derated by availability (≤ κ · availability · existing)
+allows at most N = κ · availability · existing / min_load units online (0 where κ < min_load: the online capacity
+≤ κ · online leaves only online = 0) — ``_mintime.online_limit_cells``; B = the steps where a carried obligation
+exceeds N (``cells_over_limit``).  (a1) the carried minimum up-time ends at the first step of B it reaches and does
+not resume; (a2) a realization pin above N drops the pins of that unit from there on; (a3) the carried ramp-down of
+a unit without online variables asks at most its output ceiling.  Inside a solve an outage it sees is obeyed.
 
 Hand-derived oracles (``tests.json``: ``coal_plant`` one 500 MW unit, ``dispatch_fullYear_roll`` cut to p2020):
 
@@ -37,18 +37,19 @@ Hand-derived oracles (``tests.json``: ``coal_plant`` one 500 MW unit, ``dispatch
   flow ≥ 0.22 − 0.12 = 0.1 = U: flow(t0021) = 0.1 exactly (today 0.212 > 0.1: infeasible).  Availability 0.25:
   U + ρ̄ = 0.37 ≥ 0.332, no cap and no note; the row asks flow(t0021) ≥ 0.212 ≤ 0.25 (feasible today, unchanged).
 * T-a4: one W-0592 line per run, naming coal_plant (the cut also repeats in the next roll).
-* T-a1x (indirect, extraction CHP ``coal_chp``: capacity_max_coeff heat 1.0, west 0.8, Σ = 1.8, one unit): min_load
-  0.5, availability 0.4 from t0021.  κ = min(1.8, 1) = 1 ≥ 0.5, so the available units can run: N = 0.4 at
-  t0021-28 and the units online stay at most 0.4 there (before: maxOutputSum_online capped heat + west at 0.4 ·
-  online, below 0.5 · online, so no unit could be online); every roll optimal.
+* T-a1x (indirect, extraction CHP ``coal_chp``, one unit: capacity_max_coeff heat 1.0, west 0.8, Σ = 1.8): min_load
+  0.5, availability a from t0021.  maxOutputSum caps heat + west at a · existing = a, so 0.5 · online ≤ a: N = 2a
+  units online at t0021-28 (κ = min(1.8, 1) = 1; with κ = 1.8 the limit would be 3.6a).  The carried minimum
+  up-time of 100 h asks between 0.2 and 0.8 units online there (the start-ups of rolls 2-4, capped by the units
+  online carried in).  a = 0.1: N = 0.2 is below it, so it ends at t0021 (else roll 5 is infeasible), one W-0592;
+  a = 0.4: N = 0.8 holds it, nothing yields.  Online ≤ N at t0021-28, every roll optimal.
 * T-a1c (coarse, ``lh2_three_region`` ``liquefier_A`` with 24-h coarse steps, rolling 72 / 36 h, min_load 0.5,
   min_uptime 96 h): availability 0 at the single hour t0080 only.  The coarse rows read the step means: the step
-  t0073-96 has mean availability 23/24, so N = 23/24 of the units there (not 0 at t0080 alone), the carry stays
-  within it and nothing yields (no W-0592, roll 2 keeps its carry at every step).
+  t0073-96 has mean availability 23/24 ≥ 0.5, so no step of the unit is blocked and nothing yields — the run solves as
+  without fix (a) (no W-0592, roll 2 keeps its carry at every step).
 * T-a2r: T-a2 under ``reduce_unit_detail_method integers_min_limits`` (startup_cost 1 keeps the online variables):
-  the level drops min_load, but availability 0 still leaves no unit of the cheap peaker available at t2 (N = 0):
-  its pin 1 there yields as in T-a2 (pins t1 kept, online (1, 0, 1): at t3 the 150 MW demand needs it again), the
-  dear one keeps its three pins.
+  the level drops min_load, so the pinned cheap peaker can be online at t2 with output 0: nothing yields, the
+  realization keeps all six pins and the cheap peaker online (1, 1, 1).
 """
 from __future__ import annotations
 
@@ -127,23 +128,26 @@ def _count(units: dict[str, float]) -> Param:
 
 
 def test_t_a1b_limit_cells_boundary() -> None:
-    """The most units online N (``online_limit_cells``), all units online (linear): u: 2 units, min_load 0.5,
-    availability 0.4 at t1 and 0.6 at t2: N = 0.8, 1.2 (each available unit can run: κ = 1 ≥ 0.5); z: availability 0
-    and min_load 0: N = 0 (availability limits the units online, also without min_load); k: capacity_max_coeff 0.4
-    < min_load 0.5: no unit can run, N = 0 at t1 (availability 0.9) and t2 (availability 1); w: availability not
-    authored (1), min_load 0.5: no row (N = the units built); x: indirect with two outputs of capacity_max_coeff
-    1.0 (Σ 2, κ = min(2, 1) = 1 ≥ 0.5), availability 0.4 / 0.6, one unit: N = 0.4, 0.6.  An obligation of 1 unit
-    exceeds N at u t1 (1 > 0.8, not at t2: 1 ≤ 1.2), at k t1 and t2 and at x t1 and t2."""
+    """The most units online N (``online_limit_cells``), all units online (linear), N = κ · av · count / min_load
+    where min_load > 0 and av · κ < min_load:
+    u: 2 units, min_load 0.5, availability 0.4 at t1 (N = 0.4 · 2 / 0.5 = 1.6) and 0.6 at t2 (no row: 0.6 ≥ 0.5);
+    z: availability 0 and min_load 0 (no row: online at zero output is feasible); k: capacity_max_coeff 0.4 <
+    min_load 0.5: N = 0 at t1 (availability 0.9) and t2 (availability 1); w: availability not authored (1), min_load
+    0.5 (no row); x: indirect with two outputs of capacity_max_coeff 1.0 (Σ 2, κ = min(2, 1) = 1), one unit,
+    availability 0.4 at t1 (N = 0.8, although 2 · 0.4 ≥ 0.5) and 0.6 at t2 (no row); n: availability 0.1, min_load
+    0.5, but no existing_count value (no row).  An obligation of 1 unit exceeds N at k t1, k t2 and x t1 only
+    (u: 1 ≤ 1.6); one within 1e-9 of N does not."""
     from flextool.engine.preprocess.params._mintime import cells_over_limit, online_limit_cells
 
-    units = ["u", "z", "k", "w", "x"]
+    units = ["u", "z", "k", "w", "x", "n"]
     dt = pl.DataFrame({"d": ["p"] * 2, "t": ["t1", "t2"]})
     cells = [(p, t) for p in units for t in ("t1", "t2")]
-    ml = {"u": 0.5, "z": 0.0, "k": 0.5, "w": 0.5, "x": 0.5}
+    ml = {"u": 0.5, "z": 0.0, "k": 0.5, "w": 0.5, "x": 0.5, "n": 0.5}
     av = {("u", "t1"): 0.4, ("u", "t2"): 0.6, ("z", "t1"): 0.0, ("z", "t2"): 0.0, ("k", "t1"): 0.9, ("k", "t2"): 1.0,
-          ("x", "t1"): 0.4, ("x", "t2"): 0.6}
-    pss = pl.DataFrame({"p": [*units[:4], "x", "x", "x"], "source": [*units[:4], "f", "x", "x"],
-                        "sink": ["n"] * 4 + ["x", "h", "e"]})
+          ("x", "t1"): 0.4, ("x", "t2"): 0.6, ("n", "t1"): 0.1, ("n", "t2"): 0.1}
+    direct = ["u", "z", "k", "w", "n"]
+    pss = pl.DataFrame({"p": [*direct, "x", "x", "x"], "source": [*direct, "f", "x", "x"],
+                        "sink": ["n"] * len(direct) + ["x", "h", "e"]})
     d = SimpleNamespace(
         dt=dt,
         process_online_linear=pl.DataFrame({"p": units}), process_online_integer=None,
@@ -161,22 +165,20 @@ def test_t_a1b_limit_cells_boundary() -> None:
         process_output_flows=pl.DataFrame({"p": ["x", "x"], "source": ["x", "x"], "sink": ["h", "e"]}),
         process_source_sink_uncapped=None)
     got = online_limit_cells(d)
-    assert [(p, t) for p, _d, t, _c in got.rows()] == [("k", "t1"), ("k", "t2"), ("u", "t1"), ("u", "t2"),
-                                                        ("x", "t1"), ("x", "t2"), ("z", "t1"), ("z", "t2")]
-    assert got["cap"].to_list() == pytest.approx([0.0, 0.0, 0.8, 1.2, 0.4, 0.6, 0.0, 0.0])
+    assert [(p, t) for p, _d, t, _c in got.rows()] == [("k", "t1"), ("k", "t2"), ("u", "t1"), ("x", "t1")]
+    assert got["cap"].to_list() == pytest.approx([0.0, 0.0, 1.6, 0.8])
     one = pl.DataFrame({"p": [p for p, _ in cells], "d": ["p"] * len(cells), "t": [t for _, t in cells],
                         "value": [1.0] * len(cells)})
-    assert cells_over_limit(one, got).rows() == [("k", "p", "t1"), ("k", "p", "t2"), ("u", "p", "t1"),
-                                                 ("x", "p", "t1"), ("x", "p", "t2"), ("z", "p", "t1"),
-                                                 ("z", "p", "t2")]
-    assert cells_over_limit(one.with_columns(value=pl.lit(0.0)), got) is None
+    assert cells_over_limit(one, got).rows() == [("k", "p", "t1"), ("k", "p", "t2"), ("x", "p", "t1")]
+    at_cap = pl.DataFrame({"p": ["u", "x"], "d": ["p", "p"], "t": ["t1", "t1"], "value": [1.6 + 1e-9, 0.8 + 1e-9]})
+    assert cells_over_limit(at_cap, got) is None
 
 
 def test_t_a1b_coarse_unit_on_step_means() -> None:
     """Coarse units judged once per coarse step, at its first fine step, on the Δt-weighted means (w 0.5 each over
-    t1-t2), one unit each: c1 availability (1.0, 0.0), mean 0.5: N = 0.5 at t1 (not 0 at t2, although t2 alone
-    has no unit available); c2 (0.6, 0.2), mean 0.4: N = 0.4 at t1; f, fine, (0.6, 0.2): N = 0.6, 0.2.  An obligation
-    of 0.45 exceeds N at c2 t1 and f t2 only."""
+    t1-t2), one unit each, min_load 0.5: c1 availability (1.0, 0.0), mean 0.5 (no row, although t2 alone has
+    availability 0); c2 (0.6, 0.2), mean 0.4: N = 0.4 / 0.5 = 0.8 at t1 (although t1 alone has no row); f, fine,
+    (0.6, 0.2): N = 0.4 at t2.  An obligation of 0.5 exceeds N at f t2 only, one of 1 at c2 t1 and f t2."""
     from flextool.engine.preprocess.params._mintime import cells_over_limit, online_limit_cells
 
     units = ["c1", "c2", "f"]
@@ -199,11 +201,14 @@ def test_t_a1b_coarse_unit_on_step_means() -> None:
         process_coarse_step=pl.DataFrame({"p": ["c1", "c1", "c2", "c2"], "d": ["p"] * 4,
                                           "b_first": ["t1"] * 4, "t": ["t1", "t2"] * 2, "w": [0.5] * 4}))
     got = online_limit_cells(d)
-    assert [(p, t) for p, _d, t, _c in got.rows()] == [("c1", "t1"), ("c2", "t1"), ("f", "t1"), ("f", "t2")]
-    assert got["cap"].to_list() == pytest.approx([0.5, 0.4, 0.6, 0.2])
-    half = pl.DataFrame({"p": [p for p, _ in cells], "d": ["p"] * len(cells), "t": [t for _, t in cells],
-                         "value": [0.45] * len(cells)})
-    assert cells_over_limit(half, got).rows() == [("c2", "p", "t1"), ("f", "p", "t2")]
+    assert [(p, t) for p, _d, t, _c in got.rows()] == [("c2", "t1"), ("f", "t2")]
+    assert got["cap"].to_list() == pytest.approx([0.8, 0.4])
+
+    def ob(v):
+        return pl.DataFrame({"p": [p for p, _ in cells], "d": ["p"] * len(cells), "t": [t for _, t in cells],
+                             "value": [v] * len(cells)})
+    assert cells_over_limit(ob(0.5), got).rows() == [("f", "p", "t2")]
+    assert cells_over_limit(ob(1.0), got).rows() == [("c2", "p", "t1"), ("f", "p", "t2")]
 
 
 # ─── T-a1 / T-a3 / T-a4: rolling single-stage toys ──────────────────────────
@@ -461,17 +466,30 @@ CHP = "coal_chp"
 
 
 @pytest.mark.solver
-def test_t_a1x_indirect_unit_online_limited_to_its_available_units(tmp_path_factory) -> None:
+@pytest.mark.parametrize("level", [0.1, 0.4])
+def test_t_a1x_indirect_unit_limited_by_its_output_sum(tmp_path_factory, level) -> None:
     outage = [t for t in TIMESTEPS if t >= "t0021"]
+    limit = level / 0.5          # N = κ · availability · existing / min_load, κ = 1, existing 1
     unit = [["unit", CHP, "min_load", b64(0.5, "float")], ["unit", CHP, "startup_method", b64("linear", "str")],
             ["unit", CHP, "startup_cost", b64(10.0, "float")], ["unit", CHP, "min_uptime", b64(100.0, "float")],
             ["unit", CHP, "minimum_time_method", b64("min_uptime", "str")]]
-    rolls, got = _rolls(tmp_path_factory, "chp_outage", unit + _roll_values(4.0, 4.0, 28.0, outage, 0.4, CHP),
+    rolls, got = _rolls(tmp_path_factory, f"chp_outage_{level}",
+                        unit + _roll_values(4.0, 4.0, 28.0, outage, level, CHP),
                         ["init", "west", "coal_chp", "heat", "coal_chp_extraction", "fullYear", ROLL])
     assert len(rolls) == 7
     for roll in rolls[5:]:
         df = utf8(roll.solution.value("v_online_linear")).filter(pl.col("p") == CHP)
-        assert df["value"].max() <= 0.4 + 1e-9
+        assert df["value"].max() <= limit + 1e-6
+    if level == 0.1:
+        assert got.names("W-0592") == [CHP]
+        assert "carried minimum up-time ends at step (p2020, t0021)" in got.detail("W-0592", CHP)
+    else:
+        assert got.names("W-0592") == []
+        # Roll 5 keeps its carried minimum up-time (the start-ups of rolls 2-4 within 100 h, capped by the units
+        # online carried in), which lies between both limits; roll 4 does not see the outage, so it is the same
+        # carry that the level 0.1 cuts.
+        carry = utf8(rolls[5].flex_data.uptime_carry).filter(pl.col("p") == CHP)["value"]
+        assert carry.len() > 0 and carry.min() > 0.2 + 1e-3 and carry.max() < 0.8 - 1e-3
 
 
 # ─── T-a1c: a coarse unit is judged on its coarse-step means ────────────────
@@ -507,11 +525,11 @@ def test_t_a1c_coarse_unit_keeps_its_carry(tmp_path_factory) -> None:
     assert got.names("W-0592") == []
 
 
-# ─── T-a2r: a level without min limits still yields to an outage ────────────
+# ─── T-a2r: a level without min limits keeps the pins ───────────────────────
 
 
 @pytest.mark.solver
-def test_t_a2r_min_limits_level_yields_to_the_outage(tmp_path) -> None:
+def test_t_a2r_min_limits_level_keeps_the_pins(tmp_path) -> None:
     from flextool.engine import run_chain_from_db
     from flextool.update_flextool.db_migration import migrate_database
     from tests.db_utils import json_to_db
@@ -531,11 +549,10 @@ def test_t_a2r_min_limits_level_yields_to_the_outage(tmp_path) -> None:
     assert list(steps) == [PARENT, SIBLING]
     assert all(s.solution.optimal for s in steps.values())
     pins = utf8(steps[SIBLING].flex_data.p_fix_online.frame)
-    assert sorted(pins.select("p", "t").rows()) == [
-        ("dear", "t0001"), ("dear", "t0002"), ("dear", "t0003"), ("peaker", "t0001")]
+    assert sorted(set(pins["p"])) == ["dear", "peaker"] and pins.height == 6
     df = utf8(steps[SIBLING].solution.value("v_online_integer")).filter(pl.col("p") == "peaker").sort("t")
-    assert [round(v, 9) + 0.0 for v in df["value"]] == [1.0, 0.0, 1.0]
-    assert got.names("W-0592") == ["peaker"]
+    assert [round(v, 9) + 0.0 for v in df["value"]] == [1.0, 1.0, 1.0]
+    assert got.names("W-0592") == []
 
 
 # ─── T-a1r: a carried up-time cut by an outage does not come back in the next roll ──

@@ -19,8 +19,9 @@ Unit arcs (§2.1-§2.2), in v_flow space then node MW::
 
     U   = (online(t⁺) − startup(t⁺)) · unitsize      units online in both steps (online processes)
         = capacity(d⁺)                                otherwise (incl. a solve that left online out), floor 0
-    C   = κ(t⁺) · U    (κ the arc's maxFlow multiplier, capacity coefficient × availability; without availability
-                       for an online process, whose units online are at full capacity: maxFlow_online)
+    C   = κ(t⁺) · U    (κ the arc's maxFlow multiplier, capacity coefficient × availability)
+        = min(κ_on(t⁺) · U, κ(t⁺) · capacity(d⁺))    online processes: κ_on the multiplier of the online rows
+                                                     (maxFlow_online: capacity coefficient, no availability)
     L   = F(t⁺) · U    (F the floor per unit online)
     f₂  = f(t) − F(t) · unitsize · shutdown(t⁺)      (the stopping units' output is forced movement; on a link
                                                      carried from the previous roll f₂ = f: the model's carried
@@ -49,9 +50,9 @@ where t⁺ has no such link; D the net draw from S at t, η = 1/slope(t⁺) of t
 Connections (§2.5) use the node-side range of their flow at t⁺, losses on the drawing side, with the reserve they
 hold at the node::
 
-    up = cap·avail(t⁺) − f_in(t) − R↑_c,n(t⁺),   down = f_in(t) + cap·avail(t⁺)·slope(t⁺) − R↓_c,n(t⁺)
-
-(avail = 1 for a connection's units online: availability limits the units online, maxOnline)
+    up = cap′ − f_in(t) − R↑_c,n(t⁺),   down = f_in(t) + cap′·slope(t⁺) − R↓_c,n(t⁺)
+    cap′ = capacity(d⁺)·avail(t⁺), or min(units online in both steps · unitsize, capacity(d⁺)·avail(t⁺)) for an
+    online connection
 
 A coarse process (``processCoarse``) has one flow per coarse step: its room is 0 on the rows inside a coarse step,
 and at a coarse step's last fine row ρ̄ uses the coarse step durations (the fine Δt⁺ when t⁺ is in no coarse step
@@ -375,7 +376,8 @@ def _unit_contributions(par, s, r, nx: _Next, dur, dur_next, shared: _Shared):
 
     # U: units online in both steps (online processes not left out by the solve that realized t⁺), else the
     # built capacity at d⁺.
-    cap_u = nx.by_period(r.entity_all_capacity, procs).to_numpy(dtype=float, copy=True)
+    built = nx.by_period(r.entity_all_capacity, procs).to_numpy(dtype=float, copy=True)
+    cap_u = built.copy()
     online = np.zeros((n_rows, n_arcs), dtype=bool)
     shutdown = np.zeros((n_rows, n_arcs))
     on_pos = np.flatnonzero(procs.isin(s.process_online))
@@ -404,13 +406,23 @@ def _unit_contributions(par, s, r, nx: _Next, dur, dur_next, shared: _Shared):
         f2[:, fl_pos] -= floor_now * unitsize[fl_pos][None, :] * shutdown[:, fl_pos]
         low = floor_next * cap_u[:, fl_pos]
         del floor_now, floor_next
-    del online, shutdown
+    del shutdown
 
-    # C = κ(t⁺)·U; a VRE arc's capacity toward t⁺ is its potential at t⁺.
-    cap = cap_u.copy()
+    # C = κ(t⁺)·U, for the units online min(κ_on(t⁺)·U, κ(t⁺)·capacity(d⁺)); a VRE arc's capacity toward t⁺ is its
+    # potential at t⁺.
+    kappa_all = np.ones((n_rows, n_arcs))
     k_pos, kappa = _arc_columns(par.process_arc_cap_coef_dt, arcs)
     if len(k_pos):
-        cap[:, k_pos] *= np.nan_to_num(nx.frame(kappa).to_numpy(dtype=float), nan=1.0)
+        kappa_all[:, k_pos] = np.nan_to_num(nx.frame(kappa).to_numpy(dtype=float), nan=1.0)
+    cap = cap_u * kappa_all
+    if online.any():
+        kappa_on = np.ones((n_rows, n_arcs))
+        ko_pos, kappa_o = _arc_columns(getattr(par, "process_arc_online_cap_coef_dt", None), arcs)
+        if len(ko_pos):
+            kappa_on[:, ko_pos] = np.nan_to_num(nx.frame(kappa_o).to_numpy(dtype=float), nan=1.0)
+        cap = np.where(online, np.minimum(cap_u * kappa_on, built * kappa_all), cap)
+        del kappa_on
+    del online, kappa_all, built
     pot = r.potentialVREgen_dt
     vre_cols = pd.MultiIndex.from_arrays([p, snk], names=["process", "node"])
     vre_pos = np.flatnonzero(np.asarray(vre_cols.isin(pot.columns)) & ~is_in)
@@ -575,18 +587,17 @@ def _connection_contributions(par, s, r, nx: _Next, shared: _Shared):
     online = (np.asarray(conn.isin(s.process_online))[None, :] & ~np.isnan(online_next)
               & ~_reduced_online(s, nx.index, conn))
     built = nx.by_period(r.entity_all_capacity, conn).to_numpy(dtype=float)
-    cap = np.where(online, (online_next - startup_next) * unitsize[None, :], built)
     avail = np.nan_to_num(nx.frame(par.process_availability, columns=conn).to_numpy(dtype=float), nan=1.0)
+    # Availability derates the built capacity; the units online have their full capacity (maxFlow_online).
+    cap = np.where(online, np.minimum((online_next - startup_next) * unitsize[None, :], built * avail), built * avail)
     slope = np.nan_to_num(nx.frame(par.process_slope, columns=conn).to_numpy(dtype=float), nan=1.0)
     res = nx.frame(shared.reserves)
     r_up = np.nan_to_num(res.reindex(columns=pd.MultiIndex.from_arrays(
         [ends["process"], ["up"] * len(ends), ends["node"]])).to_numpy(dtype=float))
     r_down = np.nan_to_num(res.reindex(columns=pd.MultiIndex.from_arrays(
         [ends["process"], ["down"] * len(ends), ends["node"]])).to_numpy(dtype=float))
-    # The units online are at full capacity (availability limits them, maxOnline); the built capacity is derated.
-    avail = np.where(online, 1.0, avail)
-    up = cap * avail - f_in - r_up
-    down = f_in + cap * avail * slope - r_down
+    up = cap - f_in - r_up
+    down = f_in + cap * slope - r_down
     coarse_dur = par.process_coarse_step_duration_dt
     if coarse_dur.shape[1] > 0:
         last = par.process_coarse_step_last_dt.reindex(index=rows, columns=conn).to_numpy(dtype=float)
